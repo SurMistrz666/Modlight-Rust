@@ -20,7 +20,9 @@
       "next/navigation": ["./src/shims/next/navigation.ts"],
       "next/dynamic": ["./src/shims/next/dynamic.tsx"],
       "next-intl": ["./src/shims/next-intl.tsx"],
-      "client-only": ["./src/shims/empty.ts"]
+      "client-only": ["./src/shims/empty.ts"],
+      "geist/font/sans": ["./src/shims/geist/font.ts"],
+      "geist/font/mono": ["./src/shims/geist/font.ts"]
     }
   },
   "include": ["src", "components", "hooks", "types", "lib", "app", "tests"],

@@ -28,6 +28,8 @@ const SHIMMED: Record<string, string> = {
   "next/dynamic": path.join(SHIMS, "next", "dynamic.tsx"),
   "next-intl": path.join(SHIMS, "next-intl.tsx"),
   "client-only": path.join(SHIMS, "empty.ts"),
+  "geist/font/sans": path.join(SHIMS, "geist", "font.ts"),
+  "geist/font/mono": path.join(SHIMS, "geist", "font.ts"),
 };
 
 /**
