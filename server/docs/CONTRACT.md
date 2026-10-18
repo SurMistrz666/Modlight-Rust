@@ -134,7 +134,11 @@ after the same request processing upstream applies to a page:
    body needed), `404` (not-found document), or the page.
 
 Unknown paths that are neither a page nor a route handler get the not-found
-document with status `404` (PORT.md section 6).
+document with status `404` (PORT.md section 6). A path ending in `/` (other
+than `/` itself) is first answered with `308` to the same path without the
+slash, query kept (Next's default `trailingSlash: false`; seen on the
+reference: `/login/?x=1` -> `308 /login?x=1`). On `/_page` that is
+`{"redirect": "/login?x=1", "status": 308}`.
 
 Status codes, as the reference build answers them:
 
@@ -758,6 +762,12 @@ Legend:
 ---
 
 ### 7.4 Per-action contract
+
+Reading the blocks: "Revalidate" lists the `revalidatePath` calls an action
+makes. Per 7.1 the envelope **also** carries `"revalidate": true` whenever the
+response sets or deletes a cookie, so every action whose "Cookies" line names a
+cookie (and any action during which the session cookie was refreshed or
+expired, 7.2.3) revalidates even where its "Revalidate" line says none.
 
 #### Module `account` (app/actions/account.ts)
 
@@ -2659,6 +2669,12 @@ browser: `/2fa` and `/login` (`next`, through upstream's `safeNext`) and
 
 **Infrastructure**:
 
+- No server-rendered body. Upstream's first response already contains the
+  page's HTML (under `/dashboard`, the shell and the loading skeleton first);
+  the SPA's document carries the head, the `<html>` attributes, the theme script
+  and the page data, and the body appears when the JS has loaded (one entry
+  chunk plus the page's chunk, all cacheable). Link-preview bots read only the
+  head, which is complete.
 - Fonts: the same Geist woff2 files and `@font-face` rules as upstream's
   `next/font` output, served from `/assets/` with the stable class names
   `geist-sans` / `geist-mono` (Next's are hashed).
