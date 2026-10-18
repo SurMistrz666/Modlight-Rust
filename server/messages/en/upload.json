@@ -1,0 +1,140 @@
+{
+  "page": {
+    "title": "Upload",
+    "metaDescription": "Drag, drop, or paste files. Resumable uploads built for multi-GB files.",
+    "lead": "Drag files anywhere in the panel and they land in the folder you have open. Uploads resume automatically if your connection drops, so multi-GB files survive a bad line."
+  },
+  "highlights": {
+    "resume": {
+      "title": "Resumes on drop-out",
+      "body": "Lose your connection mid-transfer? It picks up from the last chunk, with no restart."
+    },
+    "huge": {
+      "title": "Built for huge files",
+      "body": "Multi-GB videos and archives upload in chunks, kept stable end to end."
+    },
+    "anywhere": {
+      "title": "Drop anywhere",
+      "body": "Drop files onto any panel page, or paste a screenshot straight from your clipboard."
+    }
+  },
+  "dashboardNote": "Drag, drop, or paste from your clipboard. Any size, any type, and uploads resume on their own.",
+  "preparing": "Preparing your dropzone...",
+  "target": {
+    "folder": "New files land in {folder}",
+    "library": "New files land in your library",
+    "unsorted": "New files land outside any folder",
+    "thisFolder": "this folder"
+  },
+  "dropzone": {
+    "title": "Drop to upload",
+    "toFolder": "into {folder}",
+    "toLibrary": "into your library",
+    "toUnsorted": "outside any folder",
+    "thisFolder": "this folder",
+    "hint": "Release to start uploading. Press Esc to cancel."
+  },
+  "duplicates": {
+    "checking": "Checking your library...",
+    "title": "{count, plural, one {You already have this file} other {You already have # of these files}}",
+    "body": "{count, plural, one {A file with exactly these bytes is already in your library.} other {# of the files you picked have exactly the same bytes as files you already keep.}}",
+    "bodyPartial": "{count} of the {total} files you picked have exactly the same bytes as files you already keep.",
+    "existing": "Already here as {size}, uploaded {date}",
+    "inFolder": "in {folder}",
+    "inLibrary": "outside any folder",
+    "copies": "{count, plural, one {# copy stored} other {# copies stored}}",
+    "copyExisting": "Copy the link to {name}",
+    "openExisting": "Open {name} in a new tab",
+    "uncompared": "{count, plural, one {# more file could not be compared, so it may be a copy too.} other {# more files could not be compared, so they may be copies too.}}",
+    "hint": "Nothing is removed either way. Skipping only leaves the file out of this upload.",
+    "uploadAnyway": "{count, plural, one {Upload it anyway} other {Upload them anyway}}",
+    "skip": "{count, plural, one {Skip it} other {Skip these #}}",
+    "skipped": "{count, plural, one {# file was already in your library, so it was skipped} other {# files were already in your library, so they were skipped}}"
+  },
+  "toast": {
+    "one": "Upload complete",
+    "copied": "Link copied to your clipboard.",
+    "many": "{count} uploads complete",
+    "failed": "{count, plural, one {An upload failed} other {# uploads failed}}",
+    "failedHint": "Your progress was kept. Retry from the transfers panel."
+  },
+  "results": {
+    "title": "{count, plural, one {File uploaded} other {# files uploaded}}",
+    "copyAll": "Copy all",
+    "viewFiles": "View files",
+    "copyOne": "Copy link to {name}",
+    "copyFailed": "Could not copy to the clipboard",
+    "copiedAll": "{count} links copied",
+    "failed": "{count, plural, one {One file did not finish.} other {# files did not finish.}} Your progress was saved, so you can retry without starting over."
+  },
+  "dock": {
+    "uploading": "Uploading",
+    "paused": "Paused",
+    "finished": "Uploads finished",
+    "finishedWithErrors": "{count, plural, one {1 upload failed} other {# uploads failed}}",
+    "progress": "{done} of {total}",
+    "speed": "{speed}/s",
+    "average": "{speed}/s on average",
+    "etaSeconds": "{count}s left",
+    "etaMinutes": "{count}m left",
+    "etaHours": "{count}h left",
+    "pauseAll": "Pause all uploads",
+    "resumeAll": "Resume all uploads",
+    "cancelAll": "Cancel all uploads",
+    "close": "Close transfers",
+    "expand": "Show transfers",
+    "collapse": "Hide the list",
+    "clearFinished": "Clear finished",
+    "overallAria": "Overall upload progress",
+    "fileAria": "Upload progress for {name}",
+    "live": "Uploading, {done} of {total} done.",
+    "liveDone": "{failed, plural, =0 {All {total} uploads finished.} other {Uploads finished, # failed.}}",
+    "copy": "Copy link",
+    "copied": "Link copied",
+    "open": "Open file",
+    "retry": "Retry",
+    "pause": "Pause",
+    "resume": "Resume",
+    "cancel": "Cancel",
+    "remove": "Remove from the list",
+    "noneAdded": "Nothing was added. Those files are already in the queue.",
+    "status": {
+      "waiting": "Waiting",
+      "uploading": "Uploading",
+      "paused": "Paused",
+      "done": "Done",
+      "error": "Failed"
+    }
+  },
+  "modes": {
+    "label": "Upload mode",
+    "standard": {
+      "title": "Standard upload",
+      "hint": "Resumable, previewable, convertible. The server can read the file."
+    },
+    "encrypted": {
+      "title": "End-to-end encrypted",
+      "hint": "Encrypted in this tab before it leaves. We never see the file or the key."
+    }
+  },
+  "encrypted": {
+    "deal": {
+      "title": "What you get, and what you give up",
+      "link": "The key travels inside the link, in the part after the hash. Browsers never send that part to a server, so it never reaches us.",
+      "lost": "Whoever holds the link holds the key. Lose the link and the file is gone: we cannot recover it for you.",
+      "leaks": "We still see the size, the time and the account it belongs to. The filename and the file type are encrypted with the contents.",
+      "noPreview": "No thumbnails, no moving previews, no format conversion. All of those need the file, and we do not have it.",
+      "tab": "Keep this tab open until the upload finishes. The key lives only here, so a reload cancels the transfer."
+    },
+    "dashboardNote": "Encrypted in your browser before a single byte is sent. Any size, any type.",
+    "copyFailed": "Could not copy to the clipboard",
+    "copiedAll": "{count} links copied",
+    "results": {
+      "title": "{count, plural, one {File encrypted and uploaded} other {# files encrypted and uploaded}}",
+      "copyAll": "Copy all",
+      "viewFiles": "View files",
+      "copyOne": "Copy link to {name}",
+      "warning": "Save these links now. They carry the only copy of the keys, and nothing else keeps one, including us."
+    }
+  }
+}

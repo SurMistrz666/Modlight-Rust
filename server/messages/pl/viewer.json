@@ -1,0 +1,181 @@
+{
+  "views": "{count, plural, one {# wyświetlenie} few {# wyświetlenia} many {# wyświetleń} other {# wyświetlenia}}",
+  "downloads": "{count, plural, one {# pobranie} few {# pobrania} many {# pobrań} other {# pobrania}}",
+  "videoUnsupported": "Twoja przeglądarka nie obsługuje osadzonego wideo.",
+  "audioUnsupported": "Twoja przeglądarka nie obsługuje osadzonego dźwięku.",
+  "noInlinePreview": "Podgląd w treści niedostępny",
+  "copyRawLink": "Kopiuj link bezpośredni",
+  "actions": {
+    "copyLink": "Kopiuj link",
+    "copyRaw": "Kopiuj link bezpośredni",
+    "directLinkCopied": "Skopiowano link bezpośredni",
+    "rawLinkCopied": "Skopiowano surowy link",
+    "moreCopyFormats": "Więcej formatów kopiowania",
+    "formats": "Formaty",
+    "copyAs": "Kopiuj jako…",
+    "downloadAsFormat": "Pobierz w innym formacie",
+    "downloadAs": "Pobierz jako",
+    "downloadAsLabel": "Pobierz jako…",
+    "openRaw": "Otwórz oryginał",
+    "formatCopied": "Skopiowano: {label}",
+    "copyFailed": "Nie udało się skopiować do schowka",
+    "approxSize": "~{size}",
+    "moreFormatsSignedIn": "Więcej formatów po zalogowaniu"
+  },
+  "player": {
+    "tooltip": {
+      "play": "Odtwórz",
+      "pause": "Wstrzymaj",
+      "mute": "Wycisz",
+      "unmute": "Włącz dźwięk",
+      "enterFullscreen": "Pełny ekran",
+      "exitFullscreen": "Zamknij pełny ekran",
+      "enterPip": "Obraz w obrazie",
+      "exitPip": "Zamknij obraz w obrazie",
+      "playbackRate": "Prędkość odtwarzania",
+      "seekBackward": "Cofnij o 5 sekund",
+      "seekForward": "Przewiń o 5 sekund"
+    },
+    "aria": {
+      "play": "odtwórz",
+      "pause": "wstrzymaj",
+      "mute": "wycisz",
+      "unmute": "włącz dźwięk",
+      "enterFullscreen": "włącz pełny ekran",
+      "exitFullscreen": "wyłącz pełny ekran",
+      "enterPip": "włącz obraz w obrazie",
+      "exitPip": "wyłącz obraz w obrazie",
+      "playbackRate": "Prędkość odtwarzania {playbackRate}",
+      "seekBackward": "cofnij o {seekOffset} sekund",
+      "seekForward": "przewiń o {seekOffset} sekund do przodu",
+      "seek": "przewijanie",
+      "volume": "głośność",
+      "playbackTime": "czas odtwarzania",
+      "loading": "wczytywanie",
+      "videoPlayer": "odtwarzacz wideo",
+      "audioPlayer": "odtwarzacz dźwięku",
+      "timeOf": "{currentTime} z {totalTime}",
+      "timeUnknown": "plik nie został wczytany, nieznany czas."
+    },
+    "unit": {
+      "hour": "godzina",
+      "hours": "godzin",
+      "minute": "minuta",
+      "minutes": "minut",
+      "second": "sekunda",
+      "seconds": "sekund"
+    },
+    "error": {
+      "network": "Błąd sieci",
+      "decode": "Błąd dekodowania",
+      "unsupported": "Format nieobsługiwany",
+      "encrypted": "Błąd szyfrowania",
+      "networkMessage": "Połączenie zerwało się w trakcie wczytywania pliku. Sprawdź połączenie i odśwież stronę.",
+      "decodeMessage": "Odtwarzanie przerwane: plik jest uszkodzony albo używa kodeka, którego przeglądarka nie potrafi zdekodować. Pobierz go, aby odtworzyć lokalnie.",
+      "unsupportedMessage": "Twoja przeglądarka nie odtworzy tego formatu. Pobierz plik i otwórz go we własnym odtwarzaczu.",
+      "encryptedMessage": "Ten plik jest zaszyfrowany i nie ma klucza do jego odszyfrowania."
+    }
+  },
+  "copyButton": {
+    "copyFailedBlocked": "Nie udało się skopiować - przeglądarka zablokowała dostęp do schowka"
+  },
+  "image": {
+    "openFullSize": "Otwórz w pełnym rozmiarze"
+  },
+  "text": {
+    "tooLarge": "Ten plik ma {size}, czyli za dużo, by pokazać go tutaj.",
+    "copyContents": "Kopiuj zawartość",
+    "unreadable": "Nie udało się odczytać zawartości tego pliku.",
+    "openRaw": "Otwórz surowy plik"
+  },
+  "render": {
+    "label": "Tryb podglądu",
+    "source": "Kod źródłowy",
+    "page": "Pokaż stronę",
+    "notice": "Renderowanie uruchamia ten wgrany plik w izolowanej ramce, bez dostępu do Twojego konta, i robisz to na własną odpowiedzialność.",
+    "inert": "Linki, formularze i pobieranie w ramce są nieaktywne.",
+    "frameTitle": "Izolowany podgląd pliku {filename}",
+    "raw": "Raw",
+    "rawTitle": "Otwórz surowy plik w nowej karcie",
+    "languageLabel": "Język: {language}"
+  },
+  "password": {
+    "protectedFile": "Plik chroniony",
+    "prompt": "Ten plik jest chroniony hasłem. Wpisz hasło, aby go wyświetlić.",
+    "passwordLabel": "Hasło",
+    "passwordPlaceholder": "Wpisz hasło",
+    "incorrect": "Nieprawidłowe hasło. Spróbuj ponownie.",
+    "error": "Coś poszło nie tak. Spróbuj ponownie.",
+    "unlocking": "Odblokowywanie…",
+    "unlock": "Odblokuj",
+    "protectedBy": "Chronione przez",
+    "remember30": "Zapamiętaj mnie na 30 dni",
+    "remember30Help": "Inne pliki chronione tym samym hasłem otworzą się bez pytania. Wszystko, co ta osoba ochroni nowym hasłem, zapyta ponownie.",
+    "rememberThisFile": "Zapamiętaj dla tego pliku",
+    "rememberThisFileHelp": "Ten plik ma własne hasło, więc zapamiętanie obejmie tylko jego."
+  },
+  "convert": {
+    "containerCopy": "ten sam obraz i dźwięk, bez przekodowania",
+    "webPlayable": "przekodowane tak, żeby przeglądarka odtwarzała je płynnie",
+    "webPlayableLabel": "MP4 do przeglądarki",
+    "animationClip": "krótki fragment, bez dźwięku",
+    "keepsMotion": "zachowuje ruch",
+    "audioTrack": "sam dźwięk, bez obrazu",
+    "audioFormat": "ten sam dźwięk w innym formacie",
+    "audioAsVideo": "dźwięk na nieruchomym znaku Modlight, dla miejsc, które przyjmują tylko wideo",
+    "keepsAnimation": "zachowuje animację",
+    "singleFrame": "jedna klatka z wielu",
+    "frameIfAnimated": "jeśli plik jest animowany, tylko pierwsza klatka",
+    "frameSection": "Pojedyncza klatka"
+  },
+  "document": {
+    "notice": "To podgląd treści dokumentu, a nie jego wydrukowanych stron. Układ, podziały stron, nagłówki i stopki nie są pokazywane. Renderuje się w izolowanej ramce, bez dostępu do Twojego konta.",
+    "frameTitle": "Podgląd dokumentu {filename}",
+    "legacyDoc": "To dokument Word 97-2003 (.doc), starszy format binarny, którego nie potrafimy pokazać. Pobierz go, aby otworzyć w Wordzie lub zgodnym edytorze.",
+    "tooLarge": "Ten dokument ma {size} i jest za duży na podgląd. Pobierz go, aby otworzyć.",
+    "copyLink": "Kopiuj link"
+  },
+  "backToPanel": "Wróć do {appName}",
+  "encrypted": {
+    "badge": "Szyfrowane end-to-end",
+    "unknownName": "Zaszyfrowany plik",
+    "copyLink": "Kopiuj link",
+    "copied": "Skopiowano",
+    "copyFailed": "Nie udało się skopiować do schowka",
+    "save": "Zapisz plik",
+    "saved": "Plik zapisany",
+    "savingPercent": "Odszyfrowuję {percent}%",
+    "tooBigToSave": "Ta przeglądarka zapisze zaszyfrowany plik najwyżej do {size}. Otwórz link w Chrome albo Edge, aby zapisać go prosto na dysk.",
+    "playerUnsupported": "Twoja przeglądarka nie odtworzy tego pliku.",
+    "opening": {
+      "title": "Otwieram plik",
+      "body": "Czytam nagłówek i otwieram go kluczem z Twojego linku."
+    },
+    "decrypting": {
+      "title": "Odszyfrowuję w Twojej przeglądarce",
+      "body": "Gotowe w {percent}%. Nic nie opuszcza tej karty."
+    },
+    "noKey": {
+      "title": "W tym linku brakuje klucza",
+      "body": "Klucz siedzi w części linku po znaku hash, a tutaj go nie ma. Skopiuj cały link jeszcze raz, razem ze wszystkim po znaku hash. Bez niego nikt nie otworzy tego pliku, my również."
+    },
+    "noPreview": {
+      "tooLarge": "Ten plik ma {size} i jest za duży, aby rozpakować go w karcie przeglądarki. Zapisz go: odszyfruje się w trakcie pobierania.",
+      "type": "Tego rodzaju pliku nie pokazujemy w przeglądarce. Zapisz go i otwórz we właściwym programie."
+    },
+    "failed": {
+      "title": "Nie udało się otworzyć tego pliku"
+    },
+    "errors": {
+      "badKey": "Klucz z tego linku nie otwiera tego pliku albo plik został zmieniony.",
+      "notAContainer": "To nie jest zaszyfrowany plik.",
+      "truncated": "Ten plik jest niekompletny, więc nie da się go odszyfrować.",
+      "version": "Ten plik zapisała nowsza wersja aplikacji.",
+      "malformed": "Nie udało się odczytać tego pliku.",
+      "gone": "Ten link już nie działa. Mógł wygasnąć albo zostać zużyty.",
+      "locked": "Ten plik jest chroniony hasłem. Najpierw go odblokuj.",
+      "network": "Pobieranie się nie udało. Sprawdź połączenie i spróbuj ponownie.",
+      "cancelled": "Pobieranie zostało anulowane."
+    }
+  }
+}

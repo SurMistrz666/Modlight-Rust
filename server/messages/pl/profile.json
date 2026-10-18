@@ -1,0 +1,465 @@
+{
+  "pageTitle": "Profil",
+  "pageIntro": "Zarządzaj kontem, domyślnymi ustawieniami przesyłania i zabezpieczeniami.",
+  "groups": {
+    "account": "Konto i pamięć",
+    "links": "Linki i nazewnictwo",
+    "personal": "Wygląd i bezpieczeństwo"
+  },
+  "permissions": {
+    "rootLinksAlwaysAdmin": "Administrator ma to uprawnienie zawsze, więc nie da się go tutaj wyłączyć. Można je nadawać i odbierać tylko zwykłym kontom."
+  },
+  "appearance": "Wygląd",
+  "language": "Język",
+  "auto": "Automatycznie (system)",
+  "theme": "Motyw",
+  "themeNote": "Twój motyw widzą też osoby otwierające Twoje linki.",
+  "themes": {
+    "default": {
+      "name": "Klasyczny",
+      "desc": "Czysty, fioletowy akcent, bez hałasu. Pierwotny wygląd Modlighta."
+    },
+    "glass": {
+      "name": "Liquid Glass",
+      "desc": "Neutralne, półprzezroczyste panele z rozświetloną krawędzią."
+    },
+    "synthwave": {
+      "name": "Synthwave",
+      "desc": "Neonowy róż i cyjan na głębokim fiolecie."
+    },
+    "terminal": {
+      "name": "Terminal",
+      "desc": "Zieleń na czerni, wszystko czcionką o stałej szerokości."
+    },
+    "paper": {
+      "name": "Papier",
+      "desc": "Ciepła, szeryfowa papeteria jak dobry notes."
+    },
+    "win98": {
+      "name": "Windows 98",
+      "desc": "Szare panele z fazowaniem na turkusowym pulpicie."
+    },
+    "nebula": {
+      "name": "Mgławica",
+      "desc": "Prawdziwe gwiazdy w świetle mgławic, panele rozświetlone górną krawędzią."
+    },
+    "grimoire": {
+      "name": "Grimuar",
+      "desc": "Pergamin i złocenia. Stara antykwa, ramowane panele, po zmroku blask świec."
+    },
+    "cartoon": {
+      "name": "Kreskówka",
+      "desc": "Grube kontury, płaskie kolory, twarde cienie i przyciski, które podskakują."
+    },
+    "mono": {
+      "name": "Monochrom",
+      "desc": "Czerń, biel i jedna czerwień. Resztę robi siatka, cienkie linie i typografia."
+    },
+    "deco": {
+      "name": "Art déco",
+      "desc": "Złoto na granacie, promienista tapeta i szeroko rozstrzelone wersaliki."
+    },
+    "riso": {
+      "name": "Riso Press",
+      "desc": "Druk powielaczowy: raster, ziarno papieru i farba nietrafiona w pasowanie."
+    },
+    "discord": {
+      "name": "Późna noc",
+      "desc": "Głęboki niebieski łupek w warstwach, jeden indygowy akcent, wszystko miękko zaokrąglone."
+    },
+    "spotify": {
+      "name": "Nocny odtwarzacz",
+      "desc": "Prawie czerń z uniesionymi kartami i jedną żywą zielenią, która robi całą robotę."
+    }
+  },
+  "appearanceDesc": "Wybierz motyw i język swojego panelu.",
+  "languageHelp": "Wybierz Automatycznie, aby podążać za językiem systemu.",
+  "themeUpdated": "Motyw zaktualizowany.",
+  "themeError": "Nie udało się zmienić motywu. Spróbuj ponownie.",
+  "languageUpdated": "Język zaktualizowany.",
+  "languageError": "Nie udało się zmienić języka. Spróbuj ponownie.",
+  "storage": {
+    "title": "Pamięć",
+    "desc": "Ile ze swojego limitu wykorzystujesz.",
+    "used": "Wykorzystano",
+    "unlimited": "Bez limitu",
+    "of": "z {amount}",
+    "files": "Pliki",
+    "totalViews": "Wyświetlenia łącznie",
+    "stored": "Zapisane"
+  },
+  "account": {
+    "title": "Konto",
+    "desc": "Twoja publiczna tożsamość i domyślne ustawienia przesyłania.",
+    "displayName": "Nazwa wyświetlana",
+    "namePlaceholder": "Twoje imię",
+    "email": "E-mail",
+    "userCode": "Kod użytkownika",
+    "copyUserCode": "Skopiuj kod użytkownika",
+    "userCodeHint": "Prefiks w każdym linku do udostępniania:",
+    "userCodeCopied": "Skopiowano kod użytkownika.",
+    "copyError": "Nie udało się skopiować do schowka.",
+    "uploadDefaults": "Domyślne ustawienia przesyłania",
+    "privateByDefault": "Domyślnie prywatne",
+    "privateByDefaultHelp": "Nowe pliki są domyślnie niewidoczne na liście - zobaczą je tylko osoby z linkiem.",
+    "copyRaw": "Kopiuj surowy URL",
+    "copyRawHelp": "Po przesłaniu kopiuj bezpośredni link do pliku zamiast strony podglądu.",
+    "nameEmpty": "Nazwa wyświetlana nie może być pusta.",
+    "saved": "Profil zapisany.",
+    "saveError": "Nie udało się zapisać profilu. Spróbuj ponownie.",
+    "discard": "Odrzuć",
+    "saveChanges": "Zapisz zmiany"
+  },
+  "tag": {
+    "title": "Twój tag",
+    "desc": "Pierwszy człon każdego udostępnianego linku. Możesz go zmienić, kiedy chcesz.",
+    "label": "Tag",
+    "checking": "Sprawdzam dostępność…",
+    "available": "„{tag}” jest wolny.",
+    "unchanged": "To Twój obecny tag.",
+    "previewLabel": "Twoje linki będą wyglądać tak",
+    "previewFallback": "twoj-tag",
+    "aliasTitle": "Linki, które już udostępniłeś, będą działać dalej",
+    "aliasBody": "Stary tag zostaje zachowany na zawsze i nadal się otwiera, więc każdy link będący już w obiegu - na Discordzie, w dokumentach, w zakładkach - działa jak wcześniej. Nikt inny nie może go przejąć.",
+    "skipLabel": "Pomijaj tag w nowych linkach",
+    "skipHelp": "Nowe pliki dostaną linki w postaci host/screenshot.png zamiast host/tag/screenshot.png.",
+    "skipWarning": "Tylko dla administratorów. Linki bez tagu żyją w tej samej przestrzeni nazw co strony aplikacji, więc nazwy zarezerwowane (/login, /dashboard, …) pozostają niedostępne. Wcześniej przesłane pliki zachowują swoje linki.",
+    "skipEnabled": "Nowe linki będą bez tagu.",
+    "skipDisabled": "Nowe linki będą zawierać tag.",
+    "skipError": "Nie udało się tego zmienić. Spróbuj ponownie.",
+    "saved": "Tag zaktualizowany.",
+    "discard": "Odrzuć",
+    "save": "Zapisz tag",
+    "issue": {
+      "too-short": "Tag musi mieć co najmniej 2 znaki.",
+      "too-long": "Tag może mieć najwyżej 32 znaki.",
+      "charset": "Używaj tylko liter, cyfr, myślników i podkreśleń; zacznij od litery lub cyfry.",
+      "reserved": "Ta nazwa jest zarezerwowana przez aplikację.",
+      "taken": "Ten tag jest już zajęty.",
+      "retired": "Ten tag należał do innego konta i nie może zostać użyty ponownie.",
+      "error": "Nie udało się zapisać tagu. Spróbuj ponownie."
+    }
+  },
+  "naming": {
+    "title": "Jak nazywają się nowe pliki",
+    "desc": "Druga część Twoich linków. Dotyczy tylko nowych plików - te już udostępnione zachowują swoje nazwy.",
+    "label": "Sposób nazywania",
+    "previewLabel": "Nowy plik wyglądałby tak",
+    "reroll": "Losuj ponownie",
+    "existingSafe": "Ta zmiana nigdy nie rusza linków, które już udostępniłeś: każdy plik przechowuje nazwę, z którą powstał.",
+    "saved": "Sposób nazywania zaktualizowany.",
+    "error": "Nie udało się zapisać sposobu nazywania. Spróbuj ponownie.",
+    "discard": "Odrzuć",
+    "save": "Zapisz",
+    "scheme": {
+      "random": {
+        "name": "Losowy kod",
+        "hint": "Bocugavi42 - wymawialny, nie do zgadnięcia"
+      },
+      "words": {
+        "name": "Słowa",
+        "hint": "funny-cat, ineffable-guitar - łatwe do podyktowania"
+      },
+      "random-chars": {
+        "name": "Losowe znaki",
+        "hint": "fJ4as - krótkie, bez mylących znaków"
+      },
+      "filename": {
+        "name": "Oryginalna nazwa pliku",
+        "hint": "zdjecie-z-wakacji.jpg - czytelne, ale łatwe do zgadnięcia"
+      },
+      "filename-random": {
+        "name": "Nazwa pliku + końcówka",
+        "hint": "zdjecie-z-wakacji-k3xz.jpg - czytelne i bezpieczne"
+      },
+      "date-filename": {
+        "name": "Data + nazwa pliku",
+        "hint": "2026-07-31-zdjecie-z-wakacji.jpg"
+      },
+      "custom": {
+        "name": "Własny wzorzec",
+        "hint": "Złóż własny ze zmiennych poniżej"
+      }
+    },
+    "words": {
+      "label": "Ile słów",
+      "count": "Słowa: {count}",
+      "pool": "Około {pool} różnych nazw przy tym ustawieniu."
+    },
+    "chars": {
+      "label": "Ile znaków",
+      "pool": "Znaków: {length} → około {pool} różnych kodów.",
+      "unambiguousTitle": "Bez znaków, które łatwo pomylić",
+      "unambiguousBody": "Pomijamy 0, O i o oraz 1, l i I - to właśnie te pary ludzie mylą, przepisując link z ekranu albo dyktując go przez telefon.",
+      "growWarning": "Gdyby kody o tej długości się wyczerpały, nowe pliki automatycznie dostaną kod o jeden znak dłuższy. Nic się nie psuje i nic nie zostaje odrzucone."
+    },
+    "custom": {
+      "label": "Wzorzec",
+      "tokensTitle": "Dostępne zmienne",
+      "token": {
+        "words2": "Dwa słowa - użyj words3 lub words4, by mieć więcej",
+        "rand5": "Pięć losowych znaków - dowolna długość",
+        "name": "Oryginalna nazwa pliku, oczyszczona",
+        "ext": "Rozszerzenie pliku",
+        "date": "Data, np. 2026-07-31",
+        "time": "Godzina, np. 140509",
+        "year": "Rok",
+        "month": "Miesiąc",
+        "day": "Dzień",
+        "random": "Wymawialna końcówka"
+      }
+    }
+  },
+  "domain": {
+    "title": "Domena linków",
+    "desc": "Z jakiego adresu budowane są Twoje linki. Aplikacja odpowiada na każdy z nich.",
+    "label": "Generuj moje linki na",
+    "followDefault": "Użyj domyślnej ({host})",
+    "previewLabel": "Twoje linki będą wyglądać tak",
+    "safeTitle": "Każdy udostępniony link działa dalej",
+    "safeBody": "Wszystkie adresy ({count}) prowadzą do tej samej aplikacji i serwują te same pliki - bezterminowo. Zmiana wpływa tylko na NOWE linki; nic, co już jest w obiegu, nie przestaje działać.",
+    "sharexTitle": "Pobierz nową konfigurację ShareX",
+    "sharexBody": "ShareX zapisuje adres w swoim pliku konfiguracyjnym, więc sam się o tym nie dowie. Po tej zmianie pobierz świeżą konfigurację z <link>ShareX i API</link>.",
+    "saved": "Domena linków zaktualizowana.",
+    "error": "Nie udało się zmienić domeny linków. Spróbuj ponownie."
+  },
+  "uploadFolder": {
+    "title": "Domyślny folder",
+    "desc": "Gdzie trafiają nowe pliki, jeśli sam nie wskażesz folderu.",
+    "label": "Nowe pliki trafiają do",
+    "none": "Bez folderu",
+    "help": "Dotyczy zarówno przesyłania przez WWW, jak i ShareX. Pliki możesz później przenieść.",
+    "emptyHelp": "Najpierw utwórz folder, a pojawi się na tej liście.",
+    "saved": "Domyślny folder zaktualizowany.",
+    "error": "Nie udało się zmienić domyślnego folderu. Spróbuj ponownie."
+  },
+  "security": {
+    "title": "Zabezpieczenia",
+    "desc": "Zadbaj o bezpieczeństwo swojego konta.",
+    "password": "Hasło",
+    "currentPassword": "Obecne hasło",
+    "newPassword": "Nowe hasło",
+    "newPasswordPlaceholder": "Co najmniej 8 znaków",
+    "confirmPassword": "Potwierdź nowe hasło",
+    "passwordSignOutNote": "Zmiana hasła wyloguje wszystkie pozostałe urządzenia.",
+    "updatePassword": "Zaktualizuj hasło",
+    "passwordTooShort": "Nowe hasło musi mieć co najmniej 8 znaków.",
+    "passwordMismatch": "Nowe hasła nie są takie same.",
+    "passwordChangeError": "Nie udało się zmienić hasła.",
+    "passwordChanged": "Hasło zmienione. Pozostałe sesje zostały wylogowane.",
+    "defaultPassword": {
+      "title": "Chroń nowe pliki hasłem",
+      "desc": "Każdy plik wysłany od teraz dostanie to hasło, zarówno z panelu, jak i z ShareXa.",
+      "newLabel": "Hasło domyślne",
+      "placeholder": "Co najmniej 4 znaki",
+      "save": "Zapisz hasło domyślne",
+      "saved": "Hasło domyślne zapisane. Nowe pliki będą go używać.",
+      "disabled": "Hasło domyślne wyłączone. Nowe pliki będą bez hasła.",
+      "tooShort": "Hasło domyślne musi mieć co najmniej 4 znaki.",
+      "saveError": "Nie udało się zapisać hasła domyślnego. Spróbuj ponownie.",
+      "warningTitle": "Zmiana tego hasła ma dwa skutki",
+      "warningBody": "Wszystko, co udostępnisz od teraz, będzie pytać o nowe hasło, również osoby, które zaznaczyły \"zapamiętaj mnie na 30 dni\". Pliki już wysłane zachowują hasło, z którym je udostępniłeś, więc te linki działają dokładnie jak dotąd.",
+      "appliesNote": "Hasło nadane pojedynczemu plikowi nigdy nie jest tym ruszane.",
+      "applyExisting": "Zmień też {count, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}}, które już go używają",
+      "applyExistingOn": "Linki zostaną te same, ale zaczną pytać o nowe hasło. Trzeba je podać osobom, którym je wysłałeś.",
+      "applyExistingOff": "Pliki już wysłane zachowają hasło, z którym je udostępniłeś, więc te linki działają dokładnie jak dotąd.",
+      "warningRewrite": "To nadpisze hasło w {count, plural, one {# pliku} few {# plikach} many {# plikach} other {# pliku}}, które już udostępniłeś. Linki się nie zmienią, ale stare hasło przestanie działać wszędzie, również u osób, które zaznaczyły \"zapamiętaj mnie na 30 dni\". Nie da się tego cofnąć: powrót wymagałby wpisania poprzedniego hasła z pamięci.",
+      "confirmRewrite": "Tak, zmień {count, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}}",
+      "savedFiles": "Zapisano. {count, plural, one {# plik przeszedł} few {# pliki przeszły} many {# plików przeszło} other {# pliku przeszło}} na nowe hasło.",
+      "clearedFiles": "Hasło domyślne wyłączone. {count, plural, one {# plik nie jest} few {# pliki nie są} many {# plików nie jest} other {# pliku nie jest}} już chroniony.",
+      "offTitle": "Co z plikami, które już udostępniłeś?",
+      "offBody": "{count, plural, one {# plik jest chroniony} few {# pliki są chronione} many {# plików jest chronionych} other {# pliku jest chronionych}} Twoim hasłem domyślnym. Wyłączenie ustawienia zawsze przestaje chronić NOWE pliki. Wybierz, co ma się stać z tamtymi.",
+      "offKeep": "Zostaw chronione",
+      "offStrip": "Zdejmij hasło z {count, plural, one {# pliku} few {# plików} many {# plików} other {# pliku}}",
+      "embedTitle": "Discord nie zamieni tych linków w obrazki",
+      "embedBody": "Plik z hasłem nie pokaże podglądu na Discordzie, Twitterze ani Telegramie i o to chodzi: Discord kopiuje podglądy na swoje serwery i udostępnia je publicznie, więc podgląd rozdałby plik wszystkim na kanale z pominięciem hasła. Pliki bez hasła nadal pokazują się normalnie."
+    },
+    "twoFactor": "Uwierzytelnianie dwuskładnikowe",
+    "on": "Włączone",
+    "off": "Wyłączone",
+    "twoFactorDesc": "Wymagaj jednorazowego kodu z aplikacji uwierzytelniającej przy logowaniu.",
+    "disable": "Wyłącz",
+    "enable": "Włącz",
+    "verifyEmailFirst": "Najpierw zweryfikuj e-mail",
+    "verifyEmailDesc": "Zalecamy potwierdzenie adresu e-mail przed włączeniem 2FA, abyś mógł odzyskać dostęp.",
+    "scanTitle": "1. Zeskanuj ten kod QR aplikacją uwierzytelniającą",
+    "scanDesc": "Otwórz Google Authenticator, 1Password, Authy lub podobną aplikację i zeskanuj poniższy kod. Nie możesz zeskanować? Wpisz klucz konfiguracyjny ręcznie.",
+    "qrLabel": "Kod QR konfiguracji dwuskładnikowej",
+    "qrAlt": "Kod QR do konfiguracji aplikacji uwierzytelniającej",
+    "setupKey": "Klucz konfiguracyjny",
+    "otpauthUri": "URI otpauth",
+    "openInApp": "Otwórz w aplikacji uwierzytelniającej",
+    "backupCodes": "Kody zapasowe",
+    "saveBackupTitle": "Zapisz je w bezpiecznym miejscu",
+    "saveBackupDesc": "Każdy kod działa raz, jeśli utracisz dostęp do aplikacji uwierzytelniającej.",
+    "copyAllCodes": "Skopiuj wszystkie kody",
+    "backupCodesCopied": "Skopiowano kody zapasowe.",
+    "enterCodeTitle": "2. Wpisz 6-cyfrowy kod, aby potwierdzić",
+    "enterCodeDesc": "Wpisz aktualny kod widoczny w aplikacji uwierzytelniającej.",
+    "verifyAndEnable": "Zweryfikuj i włącz",
+    "enterPasswordToContinue": "Wpisz hasło, aby kontynuować.",
+    "enableError": "Nie udało się rozpocząć konfiguracji 2FA. Sprawdź hasło.",
+    "disableError": "Nie udało się wyłączyć 2FA. Sprawdź hasło.",
+    "twoFactorDisabled": "Uwierzytelnianie dwuskładnikowe wyłączone.",
+    "twoFactorEnabled": "Uwierzytelnianie dwuskładnikowe włączone.",
+    "enterSixDigit": "Wpisz 6-cyfrowy kod z aplikacji uwierzytelniającej.",
+    "codeMismatch": "Ten kod się nie zgadza. Spróbuj najnowszego.",
+    "copyLabelCopied": "Skopiowano: {label}.",
+    "copyError": "Nie udało się skopiować do schowka.",
+    "protectedNote": "Twoje konto jest chronione aplikacją uwierzytelniającą.",
+    "confirmPasswordTitle": "Potwierdź hasło",
+    "disableTitle": "Wyłącz dwuskładnikowe",
+    "confirmPasswordDesc": "Wpisz hasło, aby rozpocząć konfigurację uwierzytelniania dwuskładnikowego.",
+    "disableDesc": "Wpisz hasło, aby wyłączyć uwierzytelnianie dwuskładnikowe. Twoje konto będzie mniej bezpieczne.",
+    "passwordLabel": "Hasło",
+    "continue": "Kontynuuj",
+    "disable2fa": "Wyłącz 2FA",
+    "showPassword": "Pokaż hasło",
+    "hidePassword": "Ukryj hasło"
+  },
+  "background": {
+    "title": "Tapeta",
+    "desc": "Ustaw obraz za swoim panelem. Widzą go też wszyscy otwierający Twoje linki, tak samo jak Twoją skórkę.",
+    "empty": "Brak tapety",
+    "sample": "Tekst pozostaje tak czytelny",
+    "choose": "Wybierz obraz",
+    "replace": "Zmień obraz",
+    "remove": "Usuń",
+    "dim": "Przesłona",
+    "dimHelp": "Jak mocno skórka przykrywa obraz. Więcej = spokojniejsze tło i ostrzejszy tekst.",
+    "note": "Do 12 MB. Obraz jest przekodowywany na WebP przy wysyłce, co usuwa też dane EXIF, więc zdjęcie nie opublikuje miejsca, w którym powstało.",
+    "saved": "Tapeta zapisana.",
+    "removed": "Tapeta usunięta.",
+    "tooLarge": "Ten obraz ma ponad 12 MB. Wybierz mniejszy.",
+    "badType": "Tego pliku nie da się użyć jako obrazu. Spróbuj PNG, JPEG, WebP albo AVIF.",
+    "uploadError": "Nie udało się zapisać tapety. Spróbuj ponownie.",
+    "removeError": "Nie udało się usunąć tapety. Spróbuj ponownie.",
+    "dimError": "Nie udało się zapisać ustawienia przesłony.",
+    "dimWarning": "Przy tym ustawieniu tekst może być trudny do odczytania na niespokojnym obrazie. Podnieś przesłonę, jeśli panel zrobi się nieczytelny."
+  },
+  "avatar": {
+    "title": "Awatar",
+    "desc": "Obrazek pokazywany przy Twojej nazwie, w panelu i wszędzie tam, gdzie pojawia się Twoje konto. Animowane GIF-y pozostają animowane.",
+    "sizesNote": "W takich rozmiarach rysuje go pasek boczny i górny.",
+    "choose": "Wyślij obraz",
+    "replace": "Zmień obraz",
+    "fromFiles": "Wybierz z moich plików",
+    "remove": "Usuń",
+    "saved": "Awatar zapisany.",
+    "removed": "Awatar usunięty. Wracają inicjały.",
+    "note": "Do 8 MB. Obraz jest przekodowywany na kwadrat 256 px w formacie WebP, co przy okazji usuwa dane EXIF, więc zdjęcie nie opublikuje miejsca, w którym powstało.",
+    "visibility": "Awatar jest publiczny: widzi go każdy, kto widzi Twoje linki albo galerie. Wybór własnego pliku tworzy z niego mały kwadrat, więc sam plik pozostaje dokładnie tak prywatny, jak był.",
+    "tooLarge": "Ten obraz ma ponad 8 MB. Wybierz mniejszy.",
+    "tooManyPixels": "Ten obraz deklaruje więcej pikseli, niż zdekodujemy. Wybierz mniejszy.",
+    "badType": "To nie jest obraz, którego możemy użyć. Spróbuj PNG, JPEG, WebP, AVIF albo GIF.",
+    "busy": "Serwer jest teraz zajęty przetwarzaniem obrazów. Spróbuj za chwilę.",
+    "uploadError": "Nie udało się zapisać awatara. Spróbuj ponownie.",
+    "removeError": "Nie udało się usunąć awatara. Spróbuj ponownie.",
+    "pickMissing": "Tego pliku już nie ma.",
+    "degradedFrames": "Animacja była za długa, więc awatar został zapisany jako nieruchomy obraz.",
+    "degradedPixels": "Animacja była za duża, by ją przekodować, więc awatar został zapisany jako nieruchomy obraz.",
+    "degradedSize": "Animacja wyszła za ciężka jak na awatar, więc została zapisana jako nieruchomy obraz.",
+    "pickerTitle": "Wybierz z moich plików",
+    "pickerDesc": "Dowolny obraz, który już wysłałeś. Powstaje z niego mała kwadratowa kopia, więc późniejsze usunięcie pliku nie skasuje awatara.",
+    "pickerSearch": "Szukaj po nazwie albo kodzie",
+    "pickerEmpty": "Nie znaleziono obrazów.",
+    "pickerTooLarge": "Ten plik jest za duży na awatar.",
+    "pickerPrivate": "Ten plik nie jest publiczny.",
+    "pickerPrivateNote": "Prywatnego pliku też można użyć. Publiczny staje się tylko mały kwadrat, nigdy plik.",
+    "pickerPrev": "Poprzednia strona",
+    "pickerNext": "Następna strona"
+  },
+  "duplicates": {
+    "title": "Wykryj duplikaty",
+    "desc": "Przejrzyj już wysłane pliki w poszukiwaniu kopii dokładnie tego samego pliku i zaproponuj ich usunięcie.",
+    "byChecksumTitle": "Porównanie po sumie kontrolnej, nigdy po nazwie",
+    "byChecksumBody": "Dwa pliki są kopiami tylko wtedy, gdy ich zawartość daje tę samą sumę sha256. Nazwy nie mają znaczenia, więc dwadzieścia niezwiązanych zrzutów o nazwie image.png zostaje dwudziestoma plikami, a clip.mp4 obok clip (1).mp4 zostaje znaleziony.",
+    "idle": "Nic jeszcze nie zostało przeskanowane. Skanowanie tylko czyta bibliotekę, samo z siebie niczego nie usuwa.",
+    "scanning": "Trwa przeglądanie biblioteki...",
+    "none": "Nie znaleziono duplikatów. Każdy Twój plik jest jedyny w swoim rodzaju.",
+    "scan": "Skanuj w poszukiwaniu duplikatów",
+    "rescan": "Skanuj ponownie",
+    "resetSelection": "Zostaw najstarszy",
+    "trashSelected": "Przenieś do kosza {count, plural, one {# kopię} few {# kopie} many {# kopii} other {# kopii}}",
+    "trashNote": "Wszystko, co usuniesz tutaj, trafia do kosza, skąd można to przywrócić przez 30 dni.",
+    "stats": {
+      "groups": "Zestawy duplikatów",
+      "files": "Plików w zestawach",
+      "reclaimable": "Miejsce do odzyskania"
+    },
+    "unchecksummed": "{count, plural, one {# plik nie ma} other {# pliki/plików nie ma}} zapisanej sumy kontrolnej, więc to wyszukiwanie ich nie widzi. Duże pliki dostają ją przy pierwszym pełnym odczycie, więc ta liczba spada sama.",
+    "truncated": "Pokazano {shown} największych zestawów z {total}. Uporządkuj te i przeskanuj ponownie, żeby zobaczyć resztę.",
+    "selection": "Zaznaczono {count, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}}, {size}",
+    "emptiedWarning": "W {count, plural, one {jednym zestawie} few {# zestawach} many {# zestawach} other {# zestawu}} zaznaczono wszystkie kopie, więc nic nie zostanie.",
+    "copies": "{count, plural, one {# kopia} few {# kopie} many {# kopii} other {# kopii}} tego samego pliku",
+    "each": "po {size}",
+    "saves": "Zwalnia {size}",
+    "oldest": "Najstarszy",
+    "removeAria": "Przenieś {filename} do kosza",
+    "openAria": "Otwórz {filename} w nowej karcie",
+    "noCopyKept": "W tym zestawie zaznaczono każdą kopię, więc nie zostanie żadna.",
+    "trashed": "Przeniesiono do kosza {count, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}}, {size}. Miejsce wraca po opróżnieniu kosza.",
+    "page": {
+      "metaTitle": "Duplikaty",
+      "title": "Zduplikowane pliki",
+      "subtitle": "Kopie dokładnie tego samego pliku, znalezione po sumie kontrolnej. Nic nie znika z biblioteki, dopóki tego nie potwierdzisz.",
+      "back": "Wróć do plików"
+    },
+    "keepOnly": "Zostaw tylko ten",
+    "keepOnlyAria": "Zostaw tylko {filename}, a pozostałe kopie zaznacz do kosza",
+    "keeping": "Zostaje",
+    "keepSet": "Chcę mieć te kopie",
+    "keepAll": "Chcę mieć wszystkie wypisane zestawy",
+    "keptBadge": "Zachowane celowo",
+    "keptHeading": "Zestawy, które chcesz zachować",
+    "keptNote": "Zostają dokładnie tam, gdzie są, i przestają liczyć się do przypomnienia. Kolejne liczenie zaczyna się od tego, co zostało.",
+    "keptToast": "Pomijamy od teraz {count, plural, one {# zestaw} few {# zestawy} many {# zestawów} other {# zestawu}} w liczeniu i przypomnieniach.",
+    "keptExcluded": "Celowo zachowujesz {count, plural, one {# zestaw} few {# zestawy} many {# zestawów} other {# zestawu}}, więc {size} nie wlicza się do liczenia.",
+    "countAgain": "Licz ponownie",
+    "countAgainToast": "Znowu liczymy {count, plural, one {# zestaw} few {# zestawy} many {# zestawów} other {# zestawu}}.",
+    "undo": "Cofnij",
+    "moreCopies": "Pokazano {shown} z {total} kopii w tym zestawie. Uporządkuj te i przeskanuj ponownie, żeby zobaczyć resztę.",
+    "reminder": {
+      "body": "Masz {count, plural, one {# zduplikowany plik} few {# zduplikowane pliki} many {# zduplikowanych plików} other {# zduplikowanego pliku}} na {size}.",
+      "review": "Przejrzyj",
+      "later": "Nie teraz"
+    },
+    "error": {
+      "unauthorized": "Sesja wygasła. Zaloguj się ponownie.",
+      "failed": "Nie udało się tego dokończyć. Spróbuj za chwilę.",
+      "empty": "Nic nie zaznaczono.",
+      "malformed": "To zaznaczenie jest już nieaktualne. Przeskanuj ponownie.",
+      "too-many": "Za dużo plików naraz. Usuń najpierw część z nich, potem przeskanuj ponownie."
+    }
+  },
+  "sessions": {
+    "title": "Urządzenia i sesje",
+    "desc": "Wszystkie miejsca, w których Twoje konto jest teraz zalogowane. Wyloguj wszystko, czego nie rozpoznajesz.",
+    "thisDevice": "To urządzenie",
+    "impersonated": "Otwarta przez administratora",
+    "unknownDevice": "Nierozpoznane urządzenie",
+    "signedIn": "Zalogowano {time}",
+    "renewed": "Odnowiono {time}",
+    "expires": "Wygasa {time}",
+    "ip": "IP {ip}",
+    "ipUnknown": "Brak zapisanego adresu IP",
+    "uaLabel": "Zgłoszone przez przeglądarkę",
+    "signOut": "Wyloguj",
+    "signingOut": "Wylogowywanie…",
+    "signOutAria": "Wyloguj: {device}",
+    "currentHint": "To sesja, z której korzystasz w tej chwili. Aby ją zakończyć, użyj Wyloguj w menu konta.",
+    "signOutOthers": "Wyloguj wszystkie pozostałe",
+    "confirmTitle": "Wylogować wszystkie pozostałe?",
+    "confirmBody": "To zakończy {count, plural, one {# inną sesję} few {# inne sesje} many {# innych sesji} other {# innej sesji}}. Każdy, kto jest tam zalogowany, w tym Ty na swoich innych urządzeniach, będzie musiał zalogować się ponownie. Sesja, z której korzystasz teraz, zostaje otwarta.",
+    "confirmCta": "Wyloguj {count, plural, one {# sesję} few {# sesje} many {# sesji} other {# sesji}}",
+    "notesTitle": "Co znaczą te czasy",
+    "renewNote": "\"Odnowiono\" to nie czas ostatniego użycia. Sesja stempluje się najwyżej raz dziennie, kiedy sama się odnawia, i nic tutaj nie zapisuje pojedynczych żądań.",
+    "ipNote": "Adres pokazujemy dokładnie tak, jak dotarł do serwera. Nigdy nie sprawdzamy po nim miasta ani kraju, więc nic na tym ekranie nie zgaduje, gdzie byłeś.",
+    "revoked": "Sesja została wylogowana.",
+    "revokedOthers": "Wylogowano {count, plural, one {# inną sesję} few {# inne sesje} many {# innych sesji} other {# innej sesji}}.",
+    "revokeError": "Nie udało się wylogować tej sesji. Spróbuj ponownie.",
+    "currentRefused": "To sesja, z której właśnie korzystasz. Aby ją zakończyć, użyj Wyloguj w menu konta.",
+    "gone": "Ta sesja już się zakończyła.",
+    "empty": "Brak aktywnych sesji."
+  }
+}

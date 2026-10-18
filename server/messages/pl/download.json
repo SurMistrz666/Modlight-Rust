@@ -1,0 +1,22 @@
+{
+  "tagline": "Pobieraj z YouTube, TikToka i setek innych stron, a plik od razu ląduje w {appName}. Link trafia na schowek w chwili zakończenia wysyłki.",
+  "downloadFor": "Pobierz {version}",
+  "size": "Rozmiar",
+  "published": "Opublikowano",
+  "none": "Nie opublikowano jeszcze żadnej wersji. Zajrzyj za chwilę.",
+  "getConfig": "Pobierz swój plik konfiguracyjny w panelu",
+  "features": {
+    "clipboard": {
+      "title": "Link na schowku",
+      "desc": "Dokładnie jak w ShareX: wysyłka się kończy, a link jest już skopiowany."
+    },
+    "folders": {
+      "title": "Prosto do folderu",
+      "desc": "Wybierz, gdzie mają trafiać pliki, albo pozwól każdej pozycji wybrać własny."
+    },
+    "resumable": {
+      "title": "Przetrwa zerwane łącze",
+      "desc": "Duże pliki wznawiają się od miejsca przerwania, zamiast zaczynać od zera."
+    }
+  }
+}
