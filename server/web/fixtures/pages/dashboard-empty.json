@@ -1,0 +1,53 @@
+{
+  "url": "/dashboard?search=nothing",
+  "payload": {
+    "route": "/(app)/dashboard",
+    "params": {},
+    "layouts": "$app",
+    "props": {
+      "search": "nothing",
+      "sort": "newest",
+      "view": "grid",
+      "includeSubfolders": false,
+      "filtering": true,
+      "counts": {
+        "image": 25,
+        "video": 4,
+        "audio": 1,
+        "document": 6,
+        "archive": 2,
+        "paste": 3,
+        "other": 1
+      },
+      "result": {
+        "total": 0,
+        "page": 1,
+        "perPage": 30
+      },
+      "items": [],
+      "breadcrumb": [],
+      "linkBase": "https://files.example.com",
+      "userCode": "alicja",
+      "copyRaw": false
+    },
+    "meta": {
+      "title": "Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

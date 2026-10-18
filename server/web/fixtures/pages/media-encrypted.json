@@ -1,0 +1,40 @@
+{
+  "url": "/alicja/sealed.mlenc",
+  "payload": {
+    "route": "/[userCode]/[mediaCode]",
+    "params": {
+      "userCode": "alicja",
+      "mediaCode": "sealed.mlenc"
+    },
+    "layouts": "$root",
+    "props": {
+      "ownerTheme": "synthwave",
+      "ownerBackground": null,
+      "view": "encrypted",
+      "rawPath": "/alicja/sealed/raw.mlenc",
+      "cipherSize": 40960,
+      "createdAt": "2026-10-12T12:00:00.000Z",
+      "views": 0,
+      "downloads": 0
+    },
+    "meta": {
+      "title": "Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

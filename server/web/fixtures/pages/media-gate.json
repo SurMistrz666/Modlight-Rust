@@ -1,0 +1,37 @@
+{
+  "url": "/alicja/locked.png",
+  "payload": {
+    "route": "/[userCode]/[mediaCode]",
+    "params": {
+      "userCode": "alicja",
+      "mediaCode": "locked.png"
+    },
+    "layouts": "$root",
+    "props": {
+      "ownerTheme": "synthwave",
+      "ownerBackground": null,
+      "view": "gate",
+      "mediaId": "aaaaaaaa-0000-4000-8000-000000000003",
+      "onDefaultPassword": true
+    },
+    "meta": {
+      "title": "Protected file - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

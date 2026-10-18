@@ -1,0 +1,62 @@
+{
+  "url": "/alicja/clip.mp4",
+  "payload": {
+    "route": "/[userCode]/[mediaCode]",
+    "params": {
+      "userCode": "alicja",
+      "mediaCode": "clip.mp4"
+    },
+    "layouts": "$root",
+    "props": {
+      "ownerTheme": "synthwave",
+      "ownerBackground": null,
+      "view": "media",
+      "viewer": {
+        "filename": "clip.mp4",
+        "mimeType": "video/mp4",
+        "ext": "mp4",
+        "size": 123456,
+        "views": 7,
+        "downloads": 1,
+        "createdAt": {
+          "$date": "2026-10-11T12:00:00.000Z"
+        },
+        "width": 1280,
+        "height": 720,
+        "frames": 900,
+        "publicUrl": "https://files.example.com/alicja/clip.mp4",
+        "rawUrl": "https://files.example.com/alicja/clip/raw.mp4",
+        "downloadUrl": "https://files.example.com/alicja/clip/download",
+        "copyRaw": false,
+        "canEncode": true,
+        "signInUrl": null,
+        "textContent": null,
+        "textUnavailable": null,
+        "renderPath": null,
+        "timelineTrack": "/alicja/clip/timeline.vtt",
+        "posterUrl": "/alicja/clip/raw?w=800",
+        "playback": null,
+        "playbackRepair": null
+      }
+    },
+    "meta": {
+      "title": "clip.mp4 - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "url": "/dashboard/tokens",
+  "payload": {
+    "route": "/(app)/dashboard/tokens",
+    "params": {},
+    "layouts": "$app",
+    "props": {
+      "tokens": [
+        {
+          "id": "t1",
+          "name": "ShareX",
+          "scope": "upload",
+          "preview": "…a1b2",
+          "createdAt": "2026-10-01T09:00:00.000Z",
+          "lastUsedAt": "2026-10-17T09:00:00.000Z",
+          "revokedAt": null
+        }
+      ],
+      "appUrl": "https://files.example.com",
+      "username": "Alicja",
+      "user": {
+        "userCode": "alicja",
+        "name": "Alicja",
+        "email": "alicja@example.com"
+      },
+      "release": null
+    },
+    "meta": {
+      "title": "Integrations - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

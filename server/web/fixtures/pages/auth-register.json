@@ -1,0 +1,34 @@
+{
+  "url": "/register",
+  "payload": {
+    "route": "/(auth)/register",
+    "params": {},
+    "layouts": "$auth",
+    "props": {
+      "state": {
+        "open": true,
+        "bootstrap": false,
+        "keyRequired": true
+      }
+    },
+    "meta": {
+      "title": "Sign up - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

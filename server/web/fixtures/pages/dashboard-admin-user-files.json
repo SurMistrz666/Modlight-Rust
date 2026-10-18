@@ -1,0 +1,100 @@
+{
+  "url": "/dashboard/admin/users/u2/files",
+  "payload": {
+    "route": "/(app)/dashboard/admin/users/[id]/files",
+    "params": {
+      "id": "u2"
+    },
+    "layouts": "$app",
+    "props": {
+      "sort": "newest",
+      "view": "grid",
+      "trashed": false,
+      "data": {
+        "target": {
+          "id": "u2",
+          "name": "Bob",
+          "email": "bob@example.com",
+          "tag": "bobby",
+          "avatar": null,
+          "role": "user",
+          "banned": false,
+          "linkBase": "https://files.example.com",
+          "copyRaw": false,
+          "usedQuota": 5242880,
+          "maxQuota": -1
+        },
+        "items": [
+          {
+            "id": "aaaaaaaa-0000-4000-8000-000000000001",
+            "code": "brisk-otter-1",
+            "filename": "screenshot-1.png",
+            "ext": "png",
+            "mimeType": "image/png",
+            "size": 123456,
+            "width": 1920,
+            "height": 1080,
+            "frames": null,
+            "blurhash": null,
+            "published": true,
+            "views": 3,
+            "downloads": 1,
+            "createdAt": "2026-10-11T12:00:00.000Z",
+            "kind": "image",
+            "folderId": null,
+            "folderName": null,
+            "expiresAt": null,
+            "maxViews": null,
+            "hasPassword": false
+          },
+          {
+            "id": "aaaaaaaa-0000-4000-8000-000000000002",
+            "code": "brisk-otter-2",
+            "filename": "clip.mp4",
+            "ext": "mp4",
+            "mimeType": "video/mp4",
+            "size": 246912,
+            "width": 1280,
+            "height": 720,
+            "frames": 900,
+            "blurhash": null,
+            "published": true,
+            "views": 6,
+            "downloads": 2,
+            "createdAt": "2026-10-12T12:00:00.000Z",
+            "kind": "video",
+            "folderId": null,
+            "folderName": null,
+            "expiresAt": null,
+            "maxViews": null,
+            "hasPassword": false
+          }
+        ],
+        "trashItems": null,
+        "total": 2,
+        "page": 1,
+        "perPage": 30,
+        "liveTotal": 2
+      }
+    },
+    "meta": {
+      "title": "Files - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -64,18 +64,24 @@ function modlightResolve(): Plugin {
   };
 }
 
-/** Same-origin paths the SPA renders itself (everything else goes to the Rust server in dev). */
+/**
+ * Same-origin document requests the SPA renders itself; everything else goes to
+ * the Rust server in dev. Mirrors the page / route-handler split of
+ * src/routes/tree.tsx (ROUTES vs SERVER_PATHS).
+ */
 function isSpaDocument(url: string, accept: string): boolean {
   if (!accept.includes("text/html")) return false;
   const pathname = url.split("?")[0];
-  const segments = pathname.split("/").filter(Boolean);
-  if (segments[0] === "_rpc" || segments[0] === "_page" || segments[0] === "api") return false;
-  if (segments[0] === "s") return segments[segments.length - 1] === "unlock";
-  if (segments[0] === "a") return segments.length === 3;
-  if (segments[0] === "u") return segments.length === 2;
-  if (segments[0] === "download") return segments.length === 1;
-  if (segments[0] === "dashboard") return true;
-  return segments.length <= 2;
+  const s = pathname.split("/").filter(Boolean);
+  const SERVER_FIRST = ["_rpc", "_page", "api", "avatar", "bg", "embed", "oembed", "upload", "brand", "fonts", "icon.svg", "apple-icon.png"];
+  if (s.length > 0 && SERVER_FIRST.includes(s[0])) return false;
+  if (s[0] === "dashboard") return true;
+  if (s[0] === "s") return s[s.length - 1] === "unlock" && (s.length === 3 || s.length === 4);
+  if (s[0] === "a") return s.length === 3;
+  if (s[0] === "u") return s.length === 2;
+  if (s[0] === "download") return s.length === 1;
+  if (s[0] === "invite") return s.length === 2;
+  return s.length <= 2;
 }
 
 const VITE_OWN = /^\/(@vite|@id|@fs|@react-refresh|src\/|node_modules\/|components\/|lib\/|hooks\/|app\/|messages\/|types\/|__vitest|index\.html)/;

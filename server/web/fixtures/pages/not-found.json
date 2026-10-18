@@ -1,0 +1,11 @@
+{
+  "url": "/nothing/here",
+  "payload": {
+    "notFound": true,
+    "layouts": "$root",
+    "meta": {
+      "title": "Not found",
+      "tags": []
+    }
+  }
+}
