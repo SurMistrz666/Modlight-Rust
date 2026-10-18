@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, matchRoutes, RouterProvider } from "react-router";
 import { decodeTagged, encodeTagged } from "../src/runtime/tagged-json";
 import { callAction, httpTransport, setActionTransport } from "../src/runtime/rpc";
 import { pageDataUrl } from "../src/runtime/payload";
@@ -119,9 +119,16 @@ describe("navigation", () => {
     for (const p of ["/", "/login", "/dashboard", "/dashboard/admin/users/u1/files", "/alicja/x.png", "/x.png", "/a/t/s", "/u/t", "/s/c/unlock", "/s/t/n/unlock", "/invite/abc"]) {
       expect([p, isSpaPath(p)]).toEqual([p, true]);
     }
-    for (const p of ["/s/promo", "/alicja/x/raw.png", "/a/t/s/zip", "/download/app", "/alicja/x/delete/tok"]) {
+    for (const p of ["/s/promo", "/alicja/x/raw.png", "/a/t/s/zip", "/download/app", "/alicja/x/delete/tok", "/dashboard/admin/x", "/dashboard/admin/users/x"]) {
       expect([p, isSpaPath(p)]).toEqual([p, false]);
     }
+  });
+
+  it("matches case-sensitively, as Next does (/Dashboard is a [userCode])", () => {
+    const matches = matchRoutes(routes, "/Dashboard");
+    expect(matches?.[matches.length - 1]?.route.id).toBe("/[userCode]");
+    const login = matchRoutes(routes, "/LOGIN");
+    expect(login?.[login.length - 1]?.route.id).toBe("/[userCode]");
   });
 
   it("turns a Link click into a client navigation that fetches the next page", async () => {

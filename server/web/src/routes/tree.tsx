@@ -95,7 +95,15 @@ export const SERVER_PATHS = [
   "/fonts/*", // public/fonts
 ];
 
-export const routes: RouteObject[] = [
+/** Next matches paths case-sensitively (/Dashboard is a [userCode]); react-router does not by default. */
+function caseSensitive(list: RouteObject[]): RouteObject[] {
+  return list.map((r) => {
+    const children = r.children ? caseSensitive(r.children) : undefined;
+    return { ...r, ...(r.path !== undefined ? { caseSensitive: true } : {}), ...(children ? { children } : {}) } as RouteObject;
+  });
+}
+
+export const routes: RouteObject[] = caseSensitive([
   {
     id: "root",
     path: "/",
@@ -132,4 +140,4 @@ export const routes: RouteObject[] = [
       { id: CATCH_ALL, path: "*", element: <CatchAllRoute /> },
     ],
   },
-];
+]);
