@@ -1,5 +1,6 @@
 [package]
 name = "modlight-core"
+description = "Modlight App without windows: texts, formats, skins, settings and their sync, the account, the library's logic."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,3 +9,16 @@ publish.workspace = true
 
 [dependencies]
 modlight-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+hex.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[build-dependencies]
+roxmltree.workspace = true
+serde_json.workspace = true

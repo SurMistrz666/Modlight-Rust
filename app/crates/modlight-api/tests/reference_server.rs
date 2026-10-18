@@ -270,7 +270,11 @@ async fn folders_files_links_and_the_trash() {
 
     // Move the text file out to "no folder", then publish/hide both at once.
     let moved = api
-        .edit_uploads(me, &[text_id.clone()], &UploadEdit::new().move_to(None))
+        .edit_uploads(
+            me,
+            std::slice::from_ref(&text_id),
+            &UploadEdit::new().move_to(None),
+        )
         .await
         .unwrap();
     assert_eq!(moved.affected, 1);
@@ -298,7 +302,7 @@ async fn folders_files_links_and_the_trash() {
     let coded = api
         .edit_uploads(
             me,
-            &[picture_id.clone()],
+            std::slice::from_ref(&picture_id),
             &UploadEdit::new().set_code(&code),
         )
         .await
@@ -308,7 +312,11 @@ async fn folders_files_links_and_the_trash() {
         Some(code.as_str())
     );
     let taken = api
-        .edit_uploads(me, &[text_id.clone()], &UploadEdit::new().set_code(&code))
+        .edit_uploads(
+            me,
+            std::slice::from_ref(&text_id),
+            &UploadEdit::new().set_code(&code),
+        )
         .await
         .unwrap_err();
     assert!(taken.is_name_taken(), "expected code-taken, got {taken:?}");
@@ -318,7 +326,7 @@ async fn folders_files_links_and_the_trash() {
     let gated = api
         .edit_uploads(
             me,
-            &[picture_id.clone()],
+            std::slice::from_ref(&picture_id),
             &UploadEdit::new()
                 .set_expiry(Some(chrono::Utc::now() + chrono::Duration::hours(24)))
                 .set_max_views(Some(5))
@@ -333,7 +341,7 @@ async fn folders_files_links_and_the_trash() {
     let cleared = api
         .edit_uploads(
             me,
-            &[picture_id.clone()],
+            std::slice::from_ref(&picture_id),
             &UploadEdit::new()
                 .set_expiry(None)
                 .set_max_views(None)
@@ -390,7 +398,7 @@ async fn folders_files_links_and_the_trash() {
     assert_eq!(trashed_row.url, None, "a trashed row has no public link");
 
     let restored = api
-        .delete_uploads(me, &[picture_id.clone()], "restore")
+        .delete_uploads(me, std::slice::from_ref(&picture_id), "restore")
         .await
         .unwrap();
     assert_eq!(restored.affected, 1);
@@ -518,7 +526,9 @@ async fn duplicates_are_found_kept_and_counted_again() {
     assert_eq!(files[0].id, a.id, "oldest first");
 
     assert_eq!(
-        api.keep_duplicate_sets(me, &[group.clone()]).await.unwrap(),
+        api.keep_duplicate_sets(me, std::slice::from_ref(&group))
+            .await
+            .unwrap(),
         1
     );
     let scan = api.get_duplicates(me).await.unwrap();
@@ -529,7 +539,7 @@ async fn duplicates_are_found_kept_and_counted_again() {
             .any(|g| g.checksum.as_deref() == Some(checksum.as_str()) && g.dismissed)
     );
     assert_eq!(
-        api.count_duplicate_sets_again(me, &[checksum.clone()])
+        api.count_duplicate_sets_again(me, std::slice::from_ref(&checksum))
             .await
             .unwrap(),
         1
