@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Modlight">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.55" y2="1">
+      <stop offset="0" stop-color="#6E6BF5"/>
+      <stop offset="1" stop-color="#3B2FC2"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.22"/>
+      <stop offset="0.55" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="url(#tile)"/>
+  <rect width="32" height="32" rx="7" fill="url(#gloss)"/>
+  <path d="M16 5.4 L25.6 15.6 L19.6 15.6 L16 11.0 L12.4 15.6 L6.4 15.6 Z"
+        fill="#fff" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>
+  <rect x="9.2" y="18.8" width="13.6" height="3.4" rx="1.7" fill="#fff"/>
+  <rect x="12.4" y="24" width="7.2" height="3.4" rx="1.7" fill="#fff" opacity="0.85"/>
+</svg>

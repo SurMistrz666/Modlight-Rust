@@ -1,0 +1,181 @@
+{
+  "views": "{count, plural, one {# view} other {# views}}",
+  "downloads": "{count, plural, one {# download} other {# downloads}}",
+  "videoUnsupported": "Your browser doesn't support embedded video.",
+  "audioUnsupported": "Your browser doesn't support embedded audio.",
+  "noInlinePreview": "No inline preview available",
+  "copyRawLink": "Copy raw link",
+  "actions": {
+    "copyLink": "Copy link",
+    "copyRaw": "Copy raw",
+    "directLinkCopied": "Direct link copied",
+    "rawLinkCopied": "Raw link copied",
+    "moreCopyFormats": "More copy formats",
+    "formats": "Formats",
+    "copyAs": "Copy as…",
+    "downloadAsFormat": "Download as another format",
+    "downloadAs": "Download as",
+    "downloadAsLabel": "Download as…",
+    "openRaw": "Open raw",
+    "formatCopied": "{label} copied",
+    "copyFailed": "Couldn't copy to clipboard",
+    "approxSize": "~{size}",
+    "moreFormatsSignedIn": "More formats when signed in"
+  },
+  "player": {
+    "tooltip": {
+      "play": "Play",
+      "pause": "Pause",
+      "mute": "Mute",
+      "unmute": "Unmute",
+      "enterFullscreen": "Fullscreen",
+      "exitFullscreen": "Exit fullscreen",
+      "enterPip": "Picture in picture",
+      "exitPip": "Exit picture in picture",
+      "playbackRate": "Playback speed",
+      "seekBackward": "Back 5 seconds",
+      "seekForward": "Forward 5 seconds"
+    },
+    "aria": {
+      "play": "play",
+      "pause": "pause",
+      "mute": "mute",
+      "unmute": "unmute",
+      "enterFullscreen": "enter fullscreen mode",
+      "exitFullscreen": "exit fullscreen mode",
+      "enterPip": "enter picture in picture mode",
+      "exitPip": "exit picture in picture mode",
+      "playbackRate": "Playback speed {playbackRate}",
+      "seekBackward": "seek back {seekOffset} seconds",
+      "seekForward": "seek forward {seekOffset} seconds",
+      "seek": "seek",
+      "volume": "volume",
+      "playbackTime": "playback time",
+      "loading": "media loading",
+      "videoPlayer": "video player",
+      "audioPlayer": "audio player",
+      "timeOf": "{currentTime} of {totalTime}",
+      "timeUnknown": "media not loaded, unknown time."
+    },
+    "unit": {
+      "hour": "hour",
+      "hours": "hours",
+      "minute": "minute",
+      "minutes": "minutes",
+      "second": "second",
+      "seconds": "seconds"
+    },
+    "error": {
+      "network": "Network error",
+      "decode": "Decode error",
+      "unsupported": "Format not supported",
+      "encrypted": "Encryption error",
+      "networkMessage": "The connection dropped while the file was loading. Check your connection and reload the page.",
+      "decodeMessage": "Playback stopped: this file is damaged or uses a codec your browser cannot decode. Download it to play it locally.",
+      "unsupportedMessage": "Your browser cannot play this format. Download the file to open it in a player of your own.",
+      "encryptedMessage": "This file is encrypted and there is no key to decrypt it."
+    }
+  },
+  "copyButton": {
+    "copyFailedBlocked": "Couldn't copy - your browser blocked clipboard access"
+  },
+  "image": {
+    "openFullSize": "Open full size"
+  },
+  "text": {
+    "tooLarge": "This file is {size}, which is too large to show here.",
+    "copyContents": "Copy contents",
+    "unreadable": "The contents of this file could not be read.",
+    "openRaw": "Open raw file"
+  },
+  "render": {
+    "label": "Preview mode",
+    "source": "Source",
+    "page": "Render page",
+    "notice": "Rendering runs this uploaded file in an isolated frame with no access to your account, and you do it at your own risk.",
+    "inert": "Links, forms and downloads inside the frame are disabled.",
+    "frameTitle": "Isolated preview of {filename}",
+    "raw": "Raw",
+    "rawTitle": "Open the raw file in a new tab",
+    "languageLabel": "Language: {language}"
+  },
+  "password": {
+    "protectedFile": "Protected file",
+    "prompt": "This file is password-protected. Enter the password to view it.",
+    "passwordLabel": "Password",
+    "passwordPlaceholder": "Enter password",
+    "incorrect": "Incorrect password. Please try again.",
+    "error": "Something went wrong. Please try again.",
+    "unlocking": "Unlocking…",
+    "unlock": "Unlock",
+    "protectedBy": "Protected by",
+    "remember30": "Remember me for 30 days",
+    "remember30Help": "Other files this person protects with the same password will open without asking. Anything they protect with a new password asks again.",
+    "rememberThisFile": "Remember this file",
+    "rememberThisFileHelp": "This file has its own password, so remembering it covers only this file."
+  },
+  "convert": {
+    "containerCopy": "same picture and sound, no re-encoding",
+    "webPlayable": "re-encoded so a browser can play it smoothly",
+    "webPlayableLabel": "Web-playable MP4",
+    "animationClip": "short clip, no sound",
+    "keepsMotion": "keeps the movement",
+    "audioTrack": "the sound only, without the picture",
+    "audioFormat": "the same sound in another format",
+    "audioAsVideo": "sound on a still Modlight image, for places that only take video",
+    "keepsAnimation": "keeps animation",
+    "singleFrame": "one frame out of many",
+    "frameIfAnimated": "if this file moves, only the first frame",
+    "frameSection": "Single frame"
+  },
+  "document": {
+    "notice": "This is a preview of the document text, not of its printed pages. Layout, page breaks, headers and footers are not shown. It renders in an isolated frame with no access to your account.",
+    "frameTitle": "Document preview of {filename}",
+    "legacyDoc": "This is a Word 97-2003 document (.doc), an older binary format we cannot preview. Download it to open it in Word or a compatible editor.",
+    "tooLarge": "This document is {size}, which is too large to preview. Download it to open it.",
+    "copyLink": "Copy link"
+  },
+  "backToPanel": "Back to {appName}",
+  "encrypted": {
+    "badge": "End-to-end encrypted",
+    "unknownName": "Encrypted file",
+    "copyLink": "Copy link",
+    "copied": "Copied",
+    "copyFailed": "Could not copy to the clipboard",
+    "save": "Save file",
+    "saved": "File saved",
+    "savingPercent": "Decrypting {percent}%",
+    "tooBigToSave": "This browser can only save encrypted files up to {size}. Open the link in Chrome or Edge to write it straight to disk instead.",
+    "playerUnsupported": "Your browser cannot play this file.",
+    "opening": {
+      "title": "Opening the file",
+      "body": "Reading the header and unlocking it with the key from your link."
+    },
+    "decrypting": {
+      "title": "Decrypting in your browser",
+      "body": "{percent}% done. Nothing leaves this tab."
+    },
+    "noKey": {
+      "title": "This link is missing its key",
+      "body": "The key sits in the part of the link after the hash, and it is not here. Copy the whole link again, everything after the hash included. Without it nobody can open this file, us included."
+    },
+    "noPreview": {
+      "tooLarge": "This file is {size}, too large to unpack inside a browser tab. Save it instead: it is decrypted as it downloads.",
+      "type": "This kind of file is not shown in the browser. Save it and open it in the right application."
+    },
+    "failed": {
+      "title": "Could not open this file"
+    },
+    "errors": {
+      "badKey": "The key in this link does not open this file, or the file has been altered.",
+      "notAContainer": "This is not an encrypted file.",
+      "truncated": "This file is incomplete, so it cannot be decrypted.",
+      "version": "This file was written by a newer version of the app.",
+      "malformed": "This file could not be read.",
+      "gone": "This link no longer works. It may have expired or been used up.",
+      "locked": "This file is password protected. Unlock it first.",
+      "network": "The download failed. Check your connection and try again.",
+      "cancelled": "The download was cancelled."
+    }
+  }
+}

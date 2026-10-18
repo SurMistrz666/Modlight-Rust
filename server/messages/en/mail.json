@@ -1,0 +1,59 @@
+{
+  "common": {
+    "linkFallback": "If the button does not work, copy this address into your browser:",
+    "footer": "{appName}, self-hosted file sharing.",
+    "automated": "This is an automated message, so please do not reply to it.",
+    "logoAlt": "{appName} logo"
+  },
+  "verifyEmail": {
+    "subject": "Confirm your {appName} address",
+    "preheader": "One click and your account is active.",
+    "title": "Confirm your email address",
+    "intro": "Welcome to {appName}. Confirm that {email} belongs to you and your account is ready to use.",
+    "button": "Confirm address",
+    "expiry": "The link stays valid for a limited time. If it has expired, request a new one from the sign-in page.",
+    "ignore": "If you did not create this account, you can ignore this message and nothing will happen."
+  },
+  "resetPassword": {
+    "subject": "Reset your {appName} password",
+    "preheader": "A link to choose a new password.",
+    "title": "Reset your password",
+    "intro": "Somebody asked to reset the password for {email}. Choose a new one with the button below.",
+    "button": "Choose a new password",
+    "expiry": "The link stays valid for a limited time and can be used once.",
+    "ignore": "If this was not you, ignore this message. Your password stays as it is."
+  },
+  "accountInvited": {
+    "subject": "Your {appName} account is ready",
+    "preheader": "Set a password and you are in.",
+    "title": "An account was created for you",
+    "intro": "An administrator created a {appName} account for {email}. Set your password to finish and sign in.",
+    "button": "Set my password",
+    "expiry": "The invitation stays valid for 7 days. After that, ask the administrator for a fresh one.",
+    "ignore": "If you were not expecting this, tell the person who runs this site before using the link."
+  },
+  "smtpTest": {
+    "subject": "{appName} test message",
+    "preheader": "Outgoing mail works.",
+    "title": "Outgoing mail works",
+    "intro": "This message was sent from the administration panel of {appName} to check the mail configuration.",
+    "detail": "Sent from {host} on port {port} as {from}.",
+    "closing": "Nothing else was changed. You can delete this message."
+  },
+  "passwordChanged": {
+    "subject": "Your {appName} password was changed",
+    "preheader": "If this was not you, act now.",
+    "title": "Your password was changed",
+    "intro": "The password for {email} has just been changed, and every other session on the account was signed out.",
+    "closing": "If you made this change, there is nothing to do.",
+    "warning": "If you did not, contact the administrator of this site straight away: somebody else has control of the account."
+  },
+  "emailChanged": {
+    "subject": "Your {appName} address was changed",
+    "preheader": "Your account now uses a different address.",
+    "title": "Your email address was changed",
+    "intro": "The address on your {appName} account was changed from {oldEmail} to {newEmail}.",
+    "closing": "This message went to the previous address, which will no longer receive account mail.",
+    "warning": "If you did not ask for this, contact the administrator of this site straight away."
+  }
+}

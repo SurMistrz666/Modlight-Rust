@@ -1,0 +1,4 @@
+# Migration hashes are SHA-256 of the file bytes (drizzle compatibility):
+# never let git convert line endings in them.
+migrations/** -text
+messages/** -text
