@@ -4,6 +4,8 @@
  * Without an inlined page (the vite dev server) the router asks /_page itself.
  */
 import "@/app/globals.css";
+// next/font output for geist/font/{sans,mono}; the classes are on <html> in the
+// document template (src/shims/geist/font.ts names them for any importer).
 import "./fonts/geist.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
