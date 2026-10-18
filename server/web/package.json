@@ -15,7 +15,9 @@
     "sync:check": "node scripts/sync-upstream.mjs --check",
     "gen:actions": "node scripts/gen-actions.mjs",
     "audit:bundle": "node scripts/audit-bundle.mjs",
-    "size": "node scripts/size-report.mjs"
+    "size": "node scripts/size-report.mjs",
+    "gen:mirrors": "node scripts/gen-type-mirrors.mjs",
+    "verify": "npm run typecheck && npm test && vite build && npm run audit:bundle && npm run sync:check"
   },
   "dependencies": {
     "@uppy/core": "^5.2.0",

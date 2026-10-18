@@ -60,11 +60,18 @@ npx -y pnpm@10.33.0 install          # versions pinned by pnpm-lock.yaml (seeded
 npm run build                        # tsc --noEmit, then vite build -> dist/
 npm test                             # vitest: 42 smoke + 9 runtime tests
 npm run audit:bundle                 # after a build: no server code in dist/
-npm run size                         # first-load sizes against the reference on :8420
 npm run sync:check                   # copies verbatim, ports current
+npm run verify                       # all of the above in one go (about 10 s)
+npm run size                         # first-load sizes against the reference on :8420
 npm run dev                          # vite on 127.0.0.1:5173, proxying to the Rust dev server :8421
 npm run dev:fixtures                 # vite on 127.0.0.1:5173, no backend: fixtures/pages/*.json
 ```
+
+After upstream changes: `npm run sync:upstream` (copies, rewrites the
+manifest, warns about ports whose upstream moved), `npm run gen:actions` (RPC
+stubs and `src/rpc/actions.manifest.json`), `npm run gen:mirrors` (type
+mirrors), then update the ports `sync:check` names and accept them with
+`node scripts/sync-upstream.mjs --accept`.
 
 `dist/` is what the Rust server serves: `dist/index.html` (the document
 template, section 2), `dist/assets/*` (hashed JS, CSS, fonts; immutable) and
