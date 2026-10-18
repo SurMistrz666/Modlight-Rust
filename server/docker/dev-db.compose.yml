@@ -1,9 +1,11 @@
 # Development PostgreSQL for the Rust server (PORT.md section 3).
 # Only on this Mac: published on 127.0.0.1:55421, never on 0.0.0.0.
 #
-#   docker compose -f server/docker/dev-db.compose.yml --env-file server/docker/.env.devdb up -d
+#   docker compose -f server/docker/dev-db.compose.yml --env-file <main checkout>/server/docker/.env.devdb up -d
 #
-# server/scripts/dev.sh generates .env.devdb (gitignored) and runs this for you.
+# server/scripts/dev.sh generates .env.devdb (gitignored) in the MAIN checkout,
+# so every worktree shares one password for the one database volume, and runs
+# this for you.
 name: modlight-devdb
 
 services:

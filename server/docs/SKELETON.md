@@ -15,7 +15,10 @@ cargo fmt --check                # rustfmt.toml: max_width 120
 ```
 
 `dev.sh` generates `server/docker/.env.devdb` (database password, gitignored)
-on first use and never prints it. Extra variables for the server can go into
+on first use and never prints it. The file lives in the MAIN checkout
+(`/Users/marcinasdfg/Desktop/modlight/server/docker/.env.devdb`, found through
+the shared git directory): every worktree uses the same database volume, so
+they must share one password. Extra variables for the server can go into
 `server/.env` (gitignored, loaded like `dotenv/config` upstream; variables
 already in the shell win). Logs go to stderr, filtered by `RUST_LOG`.
 
@@ -23,7 +26,7 @@ Database tests (`tests/db_compat.rs`) run only when a server they may create
 databases on is given; each run creates and drops its own database:
 
 ```sh
-set -a; source server/docker/.env.devdb; set +a
+set -a; source "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/server/docker/.env.devdb"; set +a
 MODLIGHT_TEST_DATABASE_URL="postgresql://modlight:${POSTGRES_PASSWORD}@127.0.0.1:55421/modlight" \
   cargo test --test db_compat
 ```
