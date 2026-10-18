@@ -43,7 +43,9 @@
 pub mod admin;
 pub mod api;
 pub mod cookies;
+pub mod crypto;
 pub mod email;
+pub mod error;
 pub mod password;
 pub mod session;
 pub mod two_factor;
