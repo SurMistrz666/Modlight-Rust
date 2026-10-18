@@ -4,12 +4,13 @@
  * next/navigation's useRouter() and next/link both end up here, so a link and
  * a programmatic push follow the same rules:
  *
- *  - another origin, or a route handler or file of the Rust server (/s/{code},
- *    /{tag}/{code}/raw, /download/app, src/contract/routes.ts SERVER_PATHS): a
- *    document load, like Next's MPA fallback;
- *  - otherwise a client navigation that fetches /_page, also for a URL that
- *    matches no page: the server answers `{"notFound": true}` (rendered as the
- *    not-found page, a soft navigation as in Next) or `{"reload": true}`.
+ *  - another origin, a route handler or file of the Rust server (/s/{code},
+ *    /{tag}/{code}/raw, /download/app: src/contract/routes.ts SERVER_PATHS), or
+ *    a URL no route matches: a document load. That is Next's fallback to a
+ *    browser navigation: a route handler does not answer with RSC, and an
+ *    unmatched URL answers its RSC request with a 404;
+ *  - otherwise a client navigation that fetches /_page. A page that calls
+ *    notFound() is rendered in place (its RSC answer is a 200 upstream).
  */
 import { matchRoutes, type RouteObject } from "react-router";
 import type { createBrowserRouter } from "react-router";
@@ -32,12 +33,12 @@ export function getRouter(): DataRouter | null {
 export const CATCH_ALL = "catch-all";
 export const SERVER_PATH = "server:";
 
-/** Is this path rendered by the SPA (a page, or no route: the not-found page)? */
+/** Is this path one of the SPA's pages (a client navigation)? */
 export function isSpaPath(pathname: string): boolean {
   const matches = matchRoutes(routeTable, pathname);
   if (!matches || matches.length === 0) return false;
   const id = matches[matches.length - 1].route.id ?? "";
-  return !id.startsWith(SERVER_PATH);
+  return id !== CATCH_ALL && !id.startsWith(SERVER_PATH);
 }
 
 export interface NavigateOptions {

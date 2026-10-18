@@ -7,12 +7,12 @@ import { act, fireEvent, render } from "@testing-library/react";
 import { createMemoryRouter, matchRoutes, RouterProvider } from "react-router";
 import { decodeTagged, encodeTagged } from "../src/runtime/tagged-json";
 import { callAction, httpTransport, setActionTransport } from "../src/runtime/rpc";
-import { fetchPagePayload, pageDataUrl, type PageOk } from "../src/runtime/payload";
+import { fetchPagePayload, isFailure, pageDataUrl, type PageOk } from "../src/runtime/payload";
 import { resetMessages } from "../src/runtime/messages";
 import { isRedirectError, MASKED_SERVER_ERROR } from "../src/runtime/errors";
 import { installRouter, isSpaPath } from "../src/runtime/navigation";
 import { routes } from "../src/routes/tree";
-import { setLoaderRoutes, setPageSource, settle } from "../src/routes/loader";
+import { resetLoader, setLoaderRoutes, setPageSource, settle } from "../src/routes/loader";
 import { expandFixture, FIXTURES } from "../src/fixtures/source";
 import * as uploads from "../src/rpc/actions/uploads";
 import * as account from "../src/rpc/actions/account";
@@ -117,6 +117,47 @@ describe("page data URL", () => {
   });
 });
 
+describe("answers that are not page payloads", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("become a document load, as Next falls back to a browser navigation", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const url = new URL("https://x.test/a%ZZ/b");
+    const answers = [
+      // the server's 400 for a malformed path
+      () => new Response(JSON.stringify({ message: "Bad Request" }), { status: 400, headers: { "content-type": "application/json" } }),
+      // a proxy's error page
+      () => new Response("<html>bad gateway</html>", { status: 502, headers: { "content-type": "text/html" } }),
+      // no connection
+      () => {
+        throw new TypeError("Failed to fetch");
+      },
+    ];
+    for (const answer of answers) {
+      vi.stubGlobal("fetch", async () => answer());
+      expect(await fetchPagePayload(url)).toEqual({ reload: true });
+    }
+  });
+
+  it("keeps a 500 page payload for the error boundary (upstream's RSC answer is a 200 with the error)", async () => {
+    const body = { error: { message: MASKED_SERVER_ERROR }, layouts: {} };
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify(body), { status: 500, headers: { "content-type": "application/json" } }));
+    expect(await fetchPagePayload(new URL("https://x.test/dashboard"))).toEqual(body);
+  });
+
+  it("never reloads the document that is still loading (no reload loop)", async () => {
+    resetLoader();
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign, pathname: window.location.pathname, search: window.location.search });
+    const out = await settle({ reload: true }, new URL(window.location.href));
+    expect(isFailure(out)).toBe(true);
+    expect(assign).not.toHaveBeenCalled();
+  });
+});
+
 describe("translations from the root layout", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -153,18 +194,20 @@ describe("translations from the root layout", () => {
 
 describe("navigation", () => {
   it("knows which paths are SPA pages", () => {
+    setPageSource(async () => expandFixture(FIXTURES["welcome"]));
     setLoaderRoutes(routes);
     const router = createMemoryRouter(routes, { initialEntries: ["/welcome"] });
     installRouter(router, routes);
     const pages = ["/", "/login", "/dashboard", "/dashboard/admin/users/u1/files", "/alicja/x.png", "/x.png", "/a/t/s", "/u/t", "/s/c/unlock", "/s/t/n/unlock", "/invite/abc"];
-    // No route: rendered by the SPA too (the server answers notFound or reload).
-    const unmatched = ["/dashboard/admin/users/x", "/x/y/z/w"];
     // GET /upload and /api/upload are pages: upstream server.ts takes only their POSTs.
     const getPages = ["/upload", "/api/upload", "/api/foo"];
-    for (const p of [...pages, ...unmatched, ...getPages]) {
+    for (const p of [...pages, ...getPages]) {
       expect([p, isSpaPath(p)]).toEqual([p, true]);
     }
-    for (const p of ["/s/promo", "/alicja/x/raw.png", "/a/t/s/zip", "/download/app", "/alicja/x/delete/tok", "/dashboard/admin/x", "/api/files/abc", "/api/auth/get-session", "/assets/index.js"]) {
+    const handlers = ["/s/promo", "/alicja/x/raw.png", "/a/t/s/zip", "/download/app", "/alicja/x/delete/tok", "/dashboard/admin/x", "/api/files/abc", "/api/auth/get-session", "/assets/index.js"];
+    // No route: a document load, as Next (its RSC request answers 404).
+    const unmatched = ["/dashboard/admin/users/x", "/x/y/z/w"];
+    for (const p of [...handlers, ...unmatched]) {
       expect([p, isSpaPath(p)]).toEqual([p, false]);
     }
   });

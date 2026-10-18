@@ -107,10 +107,11 @@ export type LayoutId = "root" | "(app)" | "(auth)";
  *
  * Matching ranks static segments over dynamic ones, as Next does, so /s/promo
  * is the short-link handler, not a [userCode]/[mediaCode] page. A URL that
- * matches no page and none of these (a public file path the table does not
- * spell out, a typo) navigates client-side; the server answers it with
- * `{"reload": true}` or `{"notFound": true}` (CONTRACT.md section 4.2).
- * tests/route-table.test.ts checks this list against table.rs.
+ * matches neither a page nor one of these is a document load as well (Next
+ * answers its RSC request with a 404 and falls back to a browser navigation);
+ * should the table miss a file path, the server's `{"reload": true}` answer
+ * gets there too (CONTRACT.md section 4.2). tests/route-table.test.ts checks
+ * this list against table.rs.
  */
 export const SERVER_PATHS = [
   "/:userCode/:mediaCode/:action", // app/[userCode]/[mediaCode]/[action]/route.ts
