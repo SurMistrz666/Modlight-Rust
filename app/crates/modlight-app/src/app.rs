@@ -1,0 +1,530 @@
+//! The eframe application: one frame of the main window, the secondary windows as
+//! immediate viewports, background completions, and the platform effects.
+
+use egui::{Rect, Ui, Vec2, ViewportBuilder, ViewportCommand, ViewportId, pos2, vec2};
+use modlight_core::l10n::{s, t};
+
+use crate::dialogs::{confirm, duplicates, folder_delete, link_settings, prompt};
+use crate::notification::NotificationOutcome;
+use crate::state::{AppState, Effect};
+
+/// The main window's size (`MainWindow.axaml`).
+pub const MAIN_SIZE: Vec2 = Vec2::new(1040.0, 720.0);
+pub const MAIN_MIN_SIZE: Vec2 = Vec2::new(880.0, 540.0);
+
+/// How the app was started.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// The real app: tray, Keychain, windows.
+    Normal,
+    /// `--qa-profile` with a window a person drives: no tray, no Keychain.
+    Qa,
+    /// A headless render: nothing is started, nothing talks to a server.
+    Shot,
+}
+
+pub struct ModlightApp {
+    pub state: AppState,
+    pub mode: Mode,
+    logo: Option<egui::TextureHandle>,
+    tray: Option<crate::tray::Tray>,
+    clipboard: Option<arboard::Clipboard>,
+    allow_close: bool,
+    focused: bool,
+    system_dark: Option<bool>,
+    /// The last thing copied, for headless checks.
+    pub copied: Vec<String>,
+}
+
+/// The app icon (`ShareX/Modlight_Icon.ico`), decoded at its largest.
+pub fn app_icon() -> Option<image::RgbaImage> {
+    let bytes = include_bytes!("../../../assets/upstream/icons/Modlight_Icon.ico");
+    image::load_from_memory_with_format(bytes, image::ImageFormat::Ico)
+        .ok()
+        .map(|i| i.to_rgba8())
+}
+
+impl ModlightApp {
+    pub fn new(cc: &eframe::CreationContext<'_>, state: AppState, mode: Mode) -> ModlightApp {
+        let ctx = &cc.egui_ctx;
+        ctx.set_fonts(crate::theme::fonts());
+        state.rt.attach(ctx);
+        crate::theme::apply_style(ctx, &state.colors);
+        let logo = app_icon().map(|icon| {
+            let small =
+                image::imageops::resize(&icon, 34, 34, image::imageops::FilterType::Lanczos3);
+            let image = egui::ColorImage::from_rgba_unmultiplied([34, 34], small.as_raw());
+            ctx.load_texture("title-logo", image, egui::TextureOptions::LINEAR)
+        });
+        let mut app = ModlightApp {
+            state,
+            mode,
+            logo,
+            tray: None,
+            clipboard: None,
+            allow_close: false,
+            focused: true,
+            system_dark: None,
+            copied: Vec::new(),
+        };
+        if mode != Mode::Shot {
+            app.start(ctx);
+        }
+        if mode == Mode::Normal && app.state.config.show_tray() {
+            app.tray = crate::tray::Tray::new(ctx, &app.state);
+        }
+        app
+    }
+
+    /// What the window does once when it opens: the account, the library, the skin.
+    fn start(&mut self, ctx: &egui::Context) {
+        let state = &mut self.state;
+        state.schedule.start(std::time::Instant::now());
+        state.refresh_account_strip();
+        state.request_avatar(ctx);
+        state.space_refresh_account();
+        state.sync_skin();
+    }
+
+    /// Everything that is not drawing, before the frame.
+    fn before(&mut self, ctx: &egui::Context) {
+        let state = &mut self.state;
+        state.time = ctx.input(|i| i.time);
+        for completion in state.rt.drain() {
+            completion(state, ctx);
+        }
+        // The system appearance, when following it.
+        let system = ctx
+            .input(|i| i.raw.system_theme)
+            .map(|theme| theme == egui::Theme::Dark);
+        if system.is_some() && system != self.system_dark {
+            self.system_dark = system;
+            state.env.system_dark = system;
+            state.refresh_theme(Some(ctx));
+        }
+        // Coming back to the window refreshes the storage reading (at most every 20 s).
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        if focused && !self.focused && self.mode != Mode::Shot {
+            state.refresh_account_strip();
+        }
+        self.focused = focused;
+        // Files from Finder: the overlay while they hover, an upload into the open
+        // folder when they land.
+        let (hovering, dropped) =
+            ctx.input(|i| (!i.raw.hovered_files.is_empty(), i.raw.dropped_files.clone()));
+        state.drop_hover = hovering && state.account.is_signed_in();
+        let paths: Vec<std::path::PathBuf> = dropped
+            .iter()
+            .map(|f| f.path().to_path_buf())
+            .filter(|p| !p.as_os_str().is_empty())
+            .collect();
+        if !paths.is_empty() && self.mode != Mode::Shot {
+            let folder = state.space.current_folder.clone();
+            state.upload_paths(paths, folder);
+        }
+        if state.tab == crate::state::Tab::MySpace && !state.windows.modal_open() {
+            state.my_space_keys(ctx);
+        }
+        state.details_tick(ctx);
+        state.tick_motion(ctx);
+        if self.mode != Mode::Shot {
+            state.tick_settings_sync(ctx);
+        }
+        if let Some(tray) = &mut self.tray {
+            tray.update(&self.state);
+            for command in tray.commands() {
+                self.state.push(command);
+            }
+        }
+    }
+
+    /// The main window's close button: hide to the tray, or quit (`OnClosing`).
+    fn handle_close(&mut self, ctx: &egui::Context) {
+        if !ctx.input(|i| i.viewport().close_requested()) || self.allow_close {
+            return;
+        }
+        if self.tray.is_some() && self.state.config.show_tray() {
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+            if self.state.config.first_time_minimize_to_tray() {
+                self.state.config.set_first_time_minimize_to_tray(false);
+                self.state.save_config();
+                self.state.show_notification_tip(
+                    t(s::ShareXIsMinimizedToTheSystemTray),
+                    "Modlight",
+                    Some(8000.0),
+                );
+            }
+            return;
+        }
+        self.state.save_config();
+        self.allow_close = true;
+    }
+
+    /// After drawing: commands, then the platform effects.
+    fn after(&mut self, ctx: &egui::Context) {
+        let pending = std::mem::take(&mut self.state.pending);
+        for command in pending {
+            self.state.run(command, ctx);
+        }
+        for effect in std::mem::take(&mut self.state.effects) {
+            match effect {
+                Effect::OpenUrl(url) => {
+                    if self.mode == Mode::Normal {
+                        modlight_macos::system::open_url(&url);
+                    } else {
+                        log::info!("QA mode: not opening {url}");
+                    }
+                }
+                Effect::CopyText(text) => {
+                    self.copied.push(text.clone());
+                    if self.mode != Mode::Shot {
+                        let clipboard = self.clipboard.get_or_insert_with(|| {
+                            arboard::Clipboard::new().expect("the clipboard opens")
+                        });
+                        if let Err(error) = clipboard.set_text(text) {
+                            log::warn!("Modlight: the clipboard refused the text: {error}");
+                        }
+                    }
+                }
+                Effect::Quit => self.state.quit_requested = true,
+            }
+        }
+        if self.state.quit_requested {
+            self.state.quit_requested = false;
+            self.state.save_config();
+            self.allow_close = true;
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
+    }
+
+    /// The secondary windows, each its own native window.
+    fn viewports(&mut self, ctx: &egui::Context) {
+        let main = ctx.input(|i| i.viewport().outer_rect);
+        let state = &mut self.state;
+        let colors = state.colors.clone();
+
+        if state.windows.sign_in.is_some() {
+            let height = state
+                .windows
+                .sign_in
+                .as_ref()
+                .map(|w| w.content_height)
+                .unwrap_or(300.0);
+            let (action, close) = dialog(
+                ctx,
+                "sign-in",
+                t(s::SignInWindow_Title),
+                vec2(crate::signin::WIDTH, height),
+                main,
+                false,
+                |ui| {
+                    state.sign_in_opened();
+                    crate::signin::ui(ui, state)
+                },
+            );
+            if let Some(action) = action {
+                state.sign_in_action(action);
+            }
+            if close {
+                state.sign_in_action(crate::signin::SignInAction::Close);
+            }
+        }
+
+        if state.windows.settings.is_some() {
+            let size = vec2(crate::settings::WIDTH, crate::settings::HEIGHT);
+            let builder_min = vec2(crate::settings::MIN_WIDTH, crate::settings::MIN_HEIGHT);
+            let (asks, close) = dialog_resizable(
+                ctx,
+                "settings",
+                t(s::SettingsWindow_WindowTitle),
+                size,
+                builder_min,
+                main,
+                |ui| crate::settings::ui(ui, state),
+            );
+            crate::settings::handle(state, asks);
+            if close {
+                state.close_settings();
+            }
+        }
+
+        if let Some(window) = state.windows.prompt.as_mut() {
+            let title = window.heading.clone();
+            let (outcome, close) = dialog(
+                ctx,
+                "prompt",
+                &title,
+                vec2(prompt::WIDTH, window.content_height),
+                main,
+                true,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(outcome) = outcome {
+                state.prompt_finished(outcome);
+            } else if close {
+                state.prompt_finished(prompt::PromptOutcome::Cancelled);
+            }
+        }
+
+        if let Some(window) = state.windows.folder_delete.as_mut() {
+            let now = state.time;
+            let (choice, close) = dialog(
+                ctx,
+                "folder-delete",
+                t(s::MySpace_DeleteFolderTitle),
+                vec2(folder_delete::WIDTH, window.content_height),
+                main,
+                true,
+                |ui| window.ui(ui, &colors, now),
+            );
+            if let Some(choice) = choice {
+                state.folder_delete_finished(choice);
+            } else if close {
+                state.folder_delete_finished(folder_delete::FolderDeleteChoice::Cancel);
+            }
+        }
+
+        if let Some(window) = state.windows.link_settings.as_mut() {
+            let now = state.env.now();
+            let (outcome, close) = dialog(
+                ctx,
+                "link-settings",
+                t(s::MySpace_LinkSettings),
+                vec2(link_settings::WIDTH, window.content_height),
+                main,
+                true,
+                |ui| window.ui(ui, &colors, now),
+            );
+            if let Some(outcome) = outcome {
+                state.link_settings_finished(outcome);
+            } else if close {
+                state.link_settings_finished(link_settings::LinkSettingsOutcome::Cancel);
+            }
+        }
+
+        if let Some(window) = state.windows.duplicates.as_mut() {
+            let now = state.env.now();
+            let (action, close) = dialog_resizable(
+                ctx,
+                "duplicates",
+                t(s::MySpace_DuplicatesTitle),
+                vec2(duplicates::WIDTH, duplicates::HEIGHT),
+                vec2(560.0, 420.0),
+                main,
+                |ui| window.ui(ui, &colors, now),
+            );
+            if let Some(action) = action {
+                state.duplicates_action(action);
+            } else if close {
+                state.duplicates_action(duplicates::DuplicatesAction::Close);
+            }
+        }
+
+        if let Some(window) = state.windows.confirm.as_mut() {
+            let title = window.title.clone();
+            let (outcome, close) = dialog(
+                ctx,
+                "confirm",
+                &title,
+                vec2(confirm::WIDTH, window.content_height),
+                main,
+                true,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(outcome) = outcome {
+                state.confirm_finished(outcome);
+            } else if close {
+                state.confirm_finished(confirm::ConfirmOutcome::No);
+            }
+        }
+
+        if state.windows.notification.is_some() {
+            self.notification(ctx);
+        }
+    }
+
+    fn notification(&mut self, ctx: &egui::Context) {
+        let state = &mut self.state;
+        let Some(notice) = state.windows.notification.as_mut() else {
+            return;
+        };
+        let (opacity, done) = notice.tick(state.time);
+        if done {
+            state.windows.notification = None;
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        let area = modlight_macos::system::visible_frame()
+            .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h)))
+            .unwrap_or_else(|| Rect::from_min_size(pos2(0.0, 25.0), vec2(1440.0, 850.0)));
+        let size = notice.window_size();
+        let position = notice.position(area);
+        let builder = ViewportBuilder::default()
+            .with_title("Modlight")
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_resizable(false)
+            .with_always_on_top()
+            .with_taskbar(false)
+            .with_active(false)
+            .with_inner_size(size)
+            .with_position(position);
+        let colors = state.colors.clone();
+        let outcome = ctx.show_viewport_immediate(
+            ViewportId::from_hash_of("notification"),
+            builder,
+            |ui, _| {
+                let rect = ui.max_rect();
+                ui.painter()
+                    .rect_filled(rect.expand(2.0), 0.0, egui::Color32::TRANSPARENT);
+                let outcome = notice.ui(ui, &colors, opacity);
+                let wanted = notice.window_size();
+                if (ui
+                    .ctx()
+                    .input(|i| i.viewport().inner_rect.map(|r| r.size()))
+                    .unwrap_or(wanted)
+                    - wanted)
+                    .length()
+                    > 0.5
+                {
+                    ui.ctx()
+                        .send_viewport_cmd(ViewportCommand::InnerSize(wanted));
+                }
+                outcome
+            },
+        );
+        match outcome {
+            Some(NotificationOutcome::Close) => state.windows.notification = None,
+            Some(NotificationOutcome::Run(action)) => {
+                if action == crate::notification::ToastAction::CopyUrl {
+                    let url = state
+                        .windows
+                        .notification
+                        .as_ref()
+                        .map(|n| n.url.clone())
+                        .unwrap_or_default();
+                    state.copy_text(&url);
+                } else if action == crate::notification::ToastAction::OpenUrl {
+                    let url = state
+                        .windows
+                        .notification
+                        .as_ref()
+                        .map(|n| n.url.clone())
+                        .unwrap_or_default();
+                    state.open_url(&url);
+                }
+                state.windows.notification = None;
+            }
+            None => {}
+        }
+    }
+
+    /// One frame of the whole app, drawn into `ui` (the main window).
+    pub fn frame(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        self.before(&ctx);
+        self.handle_close(&ctx);
+        crate::shell::ui(ui, &mut self.state, self.logo.as_ref());
+        self.state.update_drag(&ctx);
+        self.state.paint_drag_ghost(&ctx);
+        if self.state.windows.modal_open() {
+            crate::shell::block_input(&ctx, ui.max_rect());
+        }
+        if self.mode != Mode::Shot {
+            self.viewports(&ctx);
+        }
+        self.after(&ctx);
+    }
+}
+
+impl eframe::App for ModlightApp {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        self.frame(ui);
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
+    fn on_exit(&mut self) {
+        self.state.save_config();
+    }
+}
+
+impl AppState {
+    /// `TaskHelpers.ShowNotificationTip`.
+    pub fn show_notification_tip(&mut self, text: &str, title: &str, duration_ms: Option<f64>) {
+        let settings = self.config.toast();
+        self.windows.notification = Some(crate::notification::Notification::tip(
+            text,
+            title,
+            duration_ms,
+            &settings,
+            self.time,
+        ));
+    }
+}
+
+/// The builder of a dialog window centred on the main window.
+fn builder(title: &str, size: Vec2, main: Option<Rect>, resizable: bool) -> ViewportBuilder {
+    let mut builder = ViewportBuilder::default()
+        .with_title(title)
+        .with_inner_size(size)
+        .with_resizable(resizable)
+        .with_minimize_button(false)
+        .with_maximize_button(resizable);
+    if let Some(main) = main {
+        builder = builder.with_position(pos2(
+            main.center().x - size.x / 2.0,
+            (main.center().y - size.y / 2.0).max(main.top()),
+        ));
+    }
+    builder
+}
+
+/// A fixed-size dialog whose height follows its content. Returns what `add` returned
+/// and whether its window was closed.
+fn dialog<R>(
+    ctx: &egui::Context,
+    id: &str,
+    title: &str,
+    size: Vec2,
+    main: Option<Rect>,
+    _modal: bool,
+    mut add: impl FnMut(&mut Ui) -> Option<R>,
+) -> (Option<R>, bool) {
+    let size = vec2(size.x, size.y.max(80.0).round());
+    let viewport = ViewportId::from_hash_of(("dialog", id));
+    ctx.show_viewport_immediate(viewport, builder(title, size, main, false), |ui, _| {
+        let close = ui.ctx().input(|i| i.viewport().close_requested());
+        let current = ui
+            .ctx()
+            .input(|i| i.viewport().inner_rect.map(|r| r.size()));
+        if let Some(current) = current
+            && (current.y - size.y).abs() > 0.5
+        {
+            ui.ctx().send_viewport_cmd(ViewportCommand::InnerSize(size));
+        }
+        let result = add(ui);
+        (result, close)
+    })
+}
+
+/// A resizable window (settings, duplicates).
+fn dialog_resizable<R>(
+    ctx: &egui::Context,
+    id: &str,
+    title: &str,
+    size: Vec2,
+    min: Vec2,
+    main: Option<Rect>,
+    mut add: impl FnMut(&mut Ui) -> R,
+) -> (R, bool) {
+    let viewport = ViewportId::from_hash_of(("dialog", id));
+    let builder = builder(title, size, main, true).with_min_inner_size(min);
+    ctx.show_viewport_immediate(viewport, builder, |ui, _| {
+        let close = ui.ctx().input(|i| i.viewport().close_requested());
+        (add(ui), close)
+    })
+}
