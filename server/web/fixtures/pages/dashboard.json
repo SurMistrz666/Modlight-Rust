@@ -1,0 +1,141 @@
+{
+  "url": "/dashboard?all=1",
+  "payload": {
+    "route": "/(app)/dashboard",
+    "params": {},
+    "layouts": "$app",
+    "props": {
+      "sort": "newest",
+      "view": "grid",
+      "includeSubfolders": false,
+      "filtering": false,
+      "counts": {
+        "image": 25,
+        "video": 4,
+        "audio": 1,
+        "document": 6,
+        "archive": 2,
+        "paste": 3,
+        "other": 1
+      },
+      "result": {
+        "total": 42,
+        "page": 1,
+        "perPage": 30
+      },
+      "items": [
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000001",
+          "code": "brisk-otter-1",
+          "filename": "screenshot-1.png",
+          "ext": "png",
+          "mimeType": "image/png",
+          "size": 123456,
+          "width": 1920,
+          "height": 1080,
+          "frames": null,
+          "blurhash": null,
+          "published": true,
+          "views": 3,
+          "downloads": 1,
+          "createdAt": "2026-10-11T12:00:00.000Z",
+          "kind": "image",
+          "folderId": null,
+          "folderName": null,
+          "expiresAt": null,
+          "maxViews": null,
+          "hasPassword": false
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000002",
+          "code": "brisk-otter-2",
+          "filename": "clip.mp4",
+          "ext": "mp4",
+          "mimeType": "video/mp4",
+          "size": 246912,
+          "width": 1280,
+          "height": 720,
+          "frames": 900,
+          "blurhash": null,
+          "published": true,
+          "views": 6,
+          "downloads": 2,
+          "createdAt": "2026-10-12T12:00:00.000Z",
+          "kind": "video",
+          "folderId": null,
+          "folderName": null,
+          "expiresAt": null,
+          "maxViews": null,
+          "hasPassword": false
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000003",
+          "code": "brisk-otter-3",
+          "filename": "notes.txt",
+          "ext": "txt",
+          "mimeType": "text/plain",
+          "size": 370368,
+          "width": null,
+          "height": null,
+          "frames": null,
+          "blurhash": null,
+          "published": true,
+          "views": 9,
+          "downloads": 3,
+          "createdAt": "2026-10-13T12:00:00.000Z",
+          "kind": "document",
+          "folderId": "11111111-1111-4111-8111-111111111111",
+          "folderName": "Screenshots",
+          "expiresAt": null,
+          "maxViews": null,
+          "hasPassword": true
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000004",
+          "code": "brisk-otter-4",
+          "filename": "archive.zip",
+          "ext": "zip",
+          "mimeType": "application/zip",
+          "size": 493824,
+          "width": null,
+          "height": null,
+          "frames": null,
+          "blurhash": null,
+          "published": false,
+          "views": 12,
+          "downloads": 4,
+          "createdAt": "2026-10-14T12:00:00.000Z",
+          "kind": "archive",
+          "folderId": null,
+          "folderName": null,
+          "expiresAt": "2026-12-01T00:00:00.000Z",
+          "maxViews": 1,
+          "hasPassword": false
+        }
+      ],
+      "breadcrumb": [],
+      "linkBase": "https://files.example.com",
+      "userCode": "alicja",
+      "copyRaw": false
+    },
+    "meta": {
+      "title": "Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

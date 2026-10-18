@@ -26,16 +26,16 @@ export function getRouter(): DataRouter | null {
   return router;
 }
 
-/** Route ids that only exist to catch what no page matches. */
-const CATCH_ALL = "catch-all";
+/** Route id of the catch-all, and the id prefix of server-only paths (routes/tree.tsx). */
+export const CATCH_ALL = "catch-all";
+export const SERVER_PATH = "server:";
 
 export function isSpaPath(pathname: string): boolean {
   const matches = matchRoutes(routeTable, pathname);
   if (!matches || matches.length === 0) return false;
-  return matches[matches.length - 1].route.id !== CATCH_ALL;
+  const id = matches[matches.length - 1].route.id ?? "";
+  return id !== CATCH_ALL && !id.startsWith(SERVER_PATH);
 }
-
-export { CATCH_ALL };
 
 export interface NavigateOptions {
   scroll?: boolean;

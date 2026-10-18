@@ -22,7 +22,7 @@ import { ROUTES, type RouteId } from "../contract/routes";
 import { rootLoader } from "./loader";
 import { RootRoute, HydrateFallback } from "./root";
 import { AppLayoutRoute, AuthLayoutRoute, DashboardSegment, PageRoute, CatchAllRoute } from "./segments";
-import { CATCH_ALL } from "../runtime/navigation";
+import { CATCH_ALL, SERVER_PATH } from "../runtime/navigation";
 
 function leaf(id: RouteId, path: string | null): RouteObject {
   const element = <PageRoute id={id} />;
@@ -69,6 +69,32 @@ const topPages: RouteId[] = [
   "/u/[userCode]",
 ];
 
+/**
+ * URLs the Rust server answers itself, not pages: upstream route handlers (the
+ * route.ts files under app/), the raw upload paths of server.ts and public/ files.
+ * They are in the table only so matching follows Next's precedence: /s/promo
+ * is the short-link handler, not a [userCode]/[mediaCode] page. Navigating to
+ * one is a document load (src/runtime/navigation.ts).
+ */
+export const SERVER_PATHS = [
+  "/:userCode/:mediaCode/:action", // app/[userCode]/[mediaCode]/[action]/route.ts
+  "/:userCode/:mediaCode/delete/:token", // app/[userCode]/[mediaCode]/delete/[token]/route.ts
+  "/a/:userCode/:slug/zip", // app/a/[userCode]/[slug]/zip/route.ts
+  "/api/*", // the route.ts files under app/api, plus /api/upload and /api/files (server.ts)
+  "/avatar/:userCode", // app/avatar/[userCode]/route.ts
+  "/bg/:userCode", // app/bg/[userCode]/route.ts
+  "/download/app", // app/download/app/route.ts
+  "/embed/:version/:card", // app/embed/[version]/[card]/route.ts
+  "/oembed", // app/oembed/route.ts
+  "/s/:code", // app/s/[code]/route.ts
+  "/s/:code/:name", // app/s/[code]/[name]/route.ts
+  "/upload", // server.ts (ShareX)
+  "/icon.svg", // app/icon.svg
+  "/apple-icon.png", // app/apple-icon.png
+  "/brand/*", // public/brand
+  "/fonts/*", // public/fonts
+];
+
 export const routes: RouteObject[] = [
   {
     id: "root",
@@ -101,6 +127,7 @@ export const routes: RouteObject[] = [
         element: <AuthLayoutRoute />,
         children: authPages.map((id) => leaf(id, rel(id, ""))),
       },
+      ...SERVER_PATHS.map((path) => ({ id: `${SERVER_PATH}${path}`, path: path.slice(1), element: <CatchAllRoute /> })),
       { id: CATCH_ALL, path: "*", element: <CatchAllRoute /> },
     ],
   },

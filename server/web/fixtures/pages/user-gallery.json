@@ -1,0 +1,59 @@
+{
+  "url": "/u/alicja",
+  "payload": {
+    "route": "/u/[userCode]",
+    "params": {
+      "userCode": "alicja"
+    },
+    "layouts": "$root",
+    "props": {
+      "owner": {
+        "name": "Alicja",
+        "userCode": "alicja",
+        "theme": "glass"
+      },
+      "items": [
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000001",
+          "code": "brisk-otter-1",
+          "ext": "png",
+          "filename": "screenshot-1.png",
+          "mimeType": "image/png",
+          "size": 123456,
+          "blurhash": null
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000002",
+          "code": "brisk-otter-2",
+          "ext": "mp4",
+          "filename": "clip.mp4",
+          "mimeType": "video/mp4",
+          "size": 246912,
+          "blurhash": null
+        }
+      ],
+      "ownerBase": "https://files.example.com",
+      "ownerAvatar": "/avatar/alicja?v=abc",
+      "background": null
+    },
+    "meta": {
+      "title": "Alicja's files - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "url": "/invite/tok123",
+  "payload": {
+    "route": "/(auth)/invite/[token]",
+    "params": {
+      "token": "tok123"
+    },
+    "layouts": "$auth",
+    "props": {
+      "token": "tok123",
+      "preview": {
+        "email": "bob@example.com",
+        "name": "Bob"
+      }
+    },
+    "meta": {
+      "title": "Accept invitation - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

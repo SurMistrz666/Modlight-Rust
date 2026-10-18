@@ -1,0 +1,28 @@
+{
+  "url": "/dashboard/upload",
+  "payload": {
+    "route": "/(app)/dashboard/upload",
+    "params": {},
+    "layouts": "$app",
+    "props": {},
+    "meta": {
+      "title": "Upload - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

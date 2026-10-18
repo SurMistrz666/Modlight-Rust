@@ -1,0 +1,62 @@
+{
+  "url": "/alicja/notes.txt",
+  "payload": {
+    "route": "/[userCode]/[mediaCode]",
+    "params": {
+      "userCode": "alicja",
+      "mediaCode": "notes.txt"
+    },
+    "layouts": "$root",
+    "props": {
+      "ownerTheme": "synthwave",
+      "ownerBackground": null,
+      "view": "media",
+      "viewer": {
+        "filename": "notes.txt",
+        "mimeType": "text/plain",
+        "ext": "txt",
+        "size": 123456,
+        "views": 7,
+        "downloads": 1,
+        "createdAt": {
+          "$date": "2026-10-11T12:00:00.000Z"
+        },
+        "width": null,
+        "height": null,
+        "frames": null,
+        "publicUrl": "https://files.example.com/alicja/notes.txt",
+        "rawUrl": "https://files.example.com/alicja/notes/raw.txt",
+        "downloadUrl": "https://files.example.com/alicja/notes/download",
+        "copyRaw": false,
+        "canEncode": false,
+        "signInUrl": null,
+        "textContent": "hello\nworld\n",
+        "textUnavailable": null,
+        "renderPath": null,
+        "timelineTrack": null,
+        "posterUrl": null,
+        "playback": null,
+        "playbackRepair": null
+      }
+    },
+    "meta": {
+      "title": "notes.txt - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

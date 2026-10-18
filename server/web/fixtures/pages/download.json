@@ -1,0 +1,39 @@
+{
+  "url": "/download",
+  "payload": {
+    "route": "/download",
+    "params": {},
+    "layouts": "$root",
+    "props": {
+      "release": {
+        "name": "Modlight App",
+        "version": "1.4.2",
+        "url": "https://files.example.com/alicja/modlight-app-1.4.2/raw.dmg",
+        "filename": "Modlight-App-1.4.2.dmg",
+        "size": 48234567,
+        "sha256": "3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a",
+        "notes": "Faster uploads.\nNew hotkeys.",
+        "publishedAt": "2026-10-01T09:30:00.000Z"
+      }
+    },
+    "meta": {
+      "title": "Modlight App - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

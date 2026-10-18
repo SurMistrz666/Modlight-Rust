@@ -1,0 +1,98 @@
+{
+  "url": "/dashboard/profile",
+  "payload": {
+    "route": "/(app)/dashboard/profile",
+    "params": {},
+    "layouts": "$app",
+    "props": {
+      "u": {
+        "name": "Alicja",
+        "email": "alicja@example.com",
+        "userCode": "alicja",
+        "hideUploads": false,
+        "copyRaw": false,
+        "usedQuota": 734003200,
+        "maxQuota": -1,
+        "role": "admin",
+        "theme": "discord",
+        "locale": null,
+        "twoFactorEnabled": false,
+        "emailVerified": true
+      },
+      "stats": {
+        "count": 42,
+        "totalSize": 734003200,
+        "totalViews": 321
+      },
+      "prefs": {
+        "userCode": "alicja",
+        "skipTagInUrl": false,
+        "defaultFolderId": null,
+        "backgroundDim": 70
+      },
+      "urlPrefs": {
+        "scheme": "words",
+        "pattern": null,
+        "wordCount": 2,
+        "randomLength": 6,
+        "preferredDomain": null,
+        "baseUrl": "https://files.example.com"
+      },
+      "sessions": [
+        {
+          "id": "s1",
+          "current": true,
+          "createdAt": "2026-10-17T08:00:00.000Z",
+          "renewedAt": "2026-10-18T08:00:00.000Z",
+          "expiresAt": "2026-10-25T08:00:00.000Z",
+          "ip": "127.0.0.1",
+          "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36",
+          "device": {
+            "browser": "Chrome",
+            "os": "macOS",
+            "kind": "desktop"
+          },
+          "impersonated": false
+        }
+      ],
+      "folders": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "name": "Screenshots",
+          "depth": 0
+        },
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "name": "2026",
+          "depth": 1
+        },
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "name": "Docs",
+          "depth": 0
+        }
+      ],
+      "avatarUrl": null,
+      "backgroundUrl": null
+    },
+    "meta": {
+      "title": "Profile - Modlight",
+      "tags": [
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "description",
+            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "application-name",
+            "content": "Modlight"
+          }
+        }
+      ]
+    }
+  }
+}

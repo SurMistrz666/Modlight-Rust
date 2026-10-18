@@ -36,7 +36,7 @@ interface Envelope {
 
 export type ActionTransport = (module: string, name: string, args: unknown[]) => Promise<Envelope>;
 
-const httpTransport: ActionTransport = async (module, name, args) => {
+export const httpTransport: ActionTransport = async (module, name, args) => {
   const single = args.length === 1 ? args[0] : undefined;
   const init: RequestInit =
     single instanceof FormData
