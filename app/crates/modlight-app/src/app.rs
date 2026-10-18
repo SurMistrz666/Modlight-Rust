@@ -19,6 +19,9 @@ pub enum Mode {
     Normal,
     /// `--qa-profile` with a window a person drives: no tray, no Keychain.
     Qa,
+    /// Automated end-to-end runs: talks to a server like `Qa`, but opens no window,
+    /// touches no clipboard and opens no browser; tests drive the dialogs' state.
+    Headless,
     /// A headless render: nothing is started, nothing talks to a server.
     Shot,
 }
@@ -178,7 +181,7 @@ impl ModlightApp {
                 }
                 Effect::CopyText(text) => {
                     self.copied.push(text.clone());
-                    if self.mode != Mode::Shot {
+                    if matches!(self.mode, Mode::Normal | Mode::Qa) {
                         let clipboard = self.clipboard.get_or_insert_with(|| {
                             arboard::Clipboard::new().expect("the clipboard opens")
                         });
@@ -431,7 +434,7 @@ impl ModlightApp {
         if self.state.windows.modal_open() {
             crate::shell::block_input(&ctx, ui.max_rect());
         }
-        if self.mode != Mode::Shot {
+        if matches!(self.mode, Mode::Normal | Mode::Qa) {
             self.viewports(&ctx);
         }
         self.after(&ctx);
