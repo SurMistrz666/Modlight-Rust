@@ -6,11 +6,12 @@ import { useEffect } from "react";
 import { Outlet, useLocation, useNavigation, useRouteLoaderData } from "react-router";
 import DashboardError from "@/app/(app)/dashboard/error";
 import DashboardLoading from "../pages/(app)/dashboard/loading";
-import { isFailure, isOk, type Layouts, type PagePayload } from "../runtime/payload";
+import { isFailure, isNotImplemented, isOk, type Layouts, type PagePayload } from "../runtime/payload";
 import { makeServerError } from "../runtime/errors";
 import type { RouteId } from "../contract/routes";
 import { SegmentErrorBoundary, Throw } from "./boundary";
 import { getAppLayout, getAuthLayout, getPage } from "./modules";
+import { NotImplemented } from "./not-implemented";
 
 function useRootPayload(): PagePayload {
   return useRouteLoaderData("root") as PagePayload;
@@ -30,7 +31,9 @@ export function AppLayoutRoute() {
   const data = layoutsOf(payload)["(app)"];
   const Layout = getAppLayout();
   if (!data || !Layout) {
-    // The layout itself failed: upstream that is the root error boundary's job.
+    // The layout itself did not load: a gap in the server (501), or a failure,
+    // which upstream is the root error boundary's job.
+    if (isNotImplemented(payload)) return <NotImplemented payload={payload} />;
     const error = failureError(payload);
     return error ? <Throw error={error} /> : null;
   }
@@ -47,6 +50,7 @@ export function AuthLayoutRoute() {
   const data = layoutsOf(payload)["(auth)"];
   const Layout = getAuthLayout();
   if (!data || !Layout) {
+    if (isNotImplemented(payload)) return <NotImplemented payload={payload} />;
     const error = failureError(payload);
     return error ? <Throw error={error} /> : null;
   }
@@ -107,6 +111,7 @@ export function PageRoute({ id }: { id: RouteId | null }) {
 
   const error = failureError(payload);
   if (error) return <Throw error={error} />;
+  if (isNotImplemented(payload)) return <NotImplemented payload={payload} />;
   if (!isOk(payload)) return null;
   const Page = getPage(payload.route);
   if (!Page) return null;

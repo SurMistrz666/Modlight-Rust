@@ -9,17 +9,17 @@ import GlobalRouteError from "@/app/error";
 import RootLayout from "../pages/layout";
 import NotFound from "../pages/not-found";
 import type { RootLayoutData } from "../contract/layouts";
-import { isFailure, isNotFound, isOk, type HeadMeta, type PagePayload } from "../runtime/payload";
+import { isNotFound, isNotImplemented, type HeadMeta, type PagePayload } from "../runtime/payload";
 import { messagesFor } from "../runtime/messages";
-import { makeServerError } from "../runtime/errors";
-import { SegmentErrorBoundary, Throw } from "./boundary";
+import { SegmentErrorBoundary } from "./boundary";
+import { NotImplemented } from "./not-implemented";
 
 export function usePayload(): PagePayload {
   return useLoaderData() as PagePayload;
 }
 
-export function rootDataOf(payload: PagePayload): RootLayoutData {
-  return (payload as { layouts: { root: RootLayoutData } }).layouts.root;
+export function rootDataOf(payload: PagePayload): RootLayoutData | undefined {
+  return (payload as { layouts?: { root?: RootLayoutData } }).layouts?.root;
 }
 
 /**
@@ -28,31 +28,61 @@ export function rootDataOf(payload: PagePayload): RootLayoutData {
  * attributes whose layout value changed (a language or skin switch followed by
  * router.refresh(), for instance).
  */
-function useHtmlAttributes(root: RootLayoutData): void {
+function useHtmlAttributes(root: RootLayoutData | undefined): void {
   const previous = useRef<RootLayoutData | null>(null);
   useEffect(() => {
+    if (!root) return;
     const before = previous.current;
     previous.current = root;
     if (!before) return;
     const html = document.documentElement;
     if (before.locale !== root.locale) html.setAttribute("lang", root.locale);
     if (before.mode !== root.mode) html.setAttribute("data-mode", root.mode);
-    if (before.skin !== root.skin) html.setAttribute("data-theme", root.skin);
+    if (before.theme !== root.theme) html.setAttribute("data-theme", root.theme);
   }, [root]);
 }
 
-/** Next replaces the page's <title> and metadata tags on every navigation. */
+/** The metadata tags a page navigation removes (they describe the first page only). */
+const STALE_ON_NAVIGATION = [
+  'meta[property^="og:"]',
+  'meta[name^="twitter:"]',
+  'link[rel="canonical"]',
+  'link[rel="alternate"]',
+].join(",");
+
+function setNamedMeta(name: string, content: string | null | undefined): void {
+  let el = document.head.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
+  if (content === null || content === undefined || content === "") {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("meta");
+    el.setAttribute("name", name);
+    document.head.appendChild(el);
+  }
+  if (el.getAttribute("content") !== content) el.setAttribute("content", content);
+}
+
+/**
+ * Next swaps the page's <title> and metadata on every navigation. The payload
+ * carries the resolved title, description, application name and robots; the
+ * Open Graph / Twitter / alternate tags of the first document describe that
+ * first page only, so they go when another page shows.
+ */
 function useHead(meta: HeadMeta | undefined): void {
+  const first = useRef(true);
   useEffect(() => {
     if (!meta) return;
     if (document.title !== meta.title) document.title = meta.title;
-    for (const node of Array.from(document.head.querySelectorAll("[data-ml-head]"))) node.remove();
-    for (const tag of meta.tags) {
-      const el = document.createElement(tag.tag);
-      for (const [name, value] of Object.entries(tag.attrs)) el.setAttribute(name, value);
-      el.setAttribute("data-ml-head", "");
-      document.head.appendChild(el);
+    setNamedMeta("description", meta.description);
+    setNamedMeta("application-name", meta.applicationName);
+    setNamedMeta("robots", meta.robots);
+    if (first.current) {
+      first.current = false;
+      return;
     }
+    for (const node of Array.from(document.head.querySelectorAll(STALE_ON_NAVIGATION))) node.remove();
   }, [meta]);
 }
 
@@ -70,19 +100,34 @@ export function RootRoute() {
     }
   }, [payload]);
 
-  let content: React.ReactNode;
-  if (isNotFound(payload)) content = <NotFound />;
-  else if (isFailure(payload) && !payload.route) {
-    content = <Throw error={makeServerError(payload.error.message, payload.error.digest)} />;
-  } else if (isOk(payload) || isFailure(payload)) content = <Outlet />;
+  if (!root) return isNotImplemented(payload) ? <NotImplemented payload={payload} /> : <NoRootLayout />;
 
   return (
-    <RootLayout data={root} messages={messagesFor(root.locale)}>
+    <RootLayout data={root} messages={messagesFor(root)}>
       <SegmentErrorBoundary root errorComponent={GlobalRouteError} notFound={<NotFound />} resetKey={payload}>
-        {content}
+        {isNotFound(payload) ? <NotFound /> : <Outlet />}
       </SegmentErrorBoundary>
       <ScrollRestoration />
     </RootLayout>
+  );
+}
+
+/**
+ * Not even the root layout's data arrived (the very first /_page request
+ * failed, e.g. the vite dev server without a backend): nothing can be
+ * translated or themed, so say so plainly.
+ */
+function NoRootLayout() {
+  return (
+    <main className="grid min-h-dvh place-items-center p-6 text-center text-sm">
+      <div className="space-y-3">
+        <p className="font-semibold">This page could not be loaded.</p>
+        <p className="text-muted-foreground">The server did not answer the page data request.</p>
+        <button type="button" className="underline underline-offset-4" onClick={() => window.location.reload()}>
+          Try again
+        </button>
+      </div>
+    </main>
   );
 }
 

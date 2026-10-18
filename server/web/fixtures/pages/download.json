@@ -18,22 +18,8 @@
     },
     "meta": {
       "title": "Modlight App - Modlight",
-      "tags": [
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "description",
-            "content": "Download Modlight App 1.4.2 for Modlight."
-          }
-        },
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "application-name",
-            "content": "Modlight"
-          }
-        }
-      ]
+      "description": "Download Modlight App 1.4.2 for Modlight.",
+      "applicationName": "Modlight"
     }
   }
 }

@@ -18,7 +18,7 @@
  * so /login is never read as a [userCode].
  */
 import type { RouteObject } from "react-router";
-import { ROUTES, type RouteId } from "../contract/routes";
+import { ROUTES, SERVER_PATHS, type RouteId } from "../contract/routes";
 import { rootLoader } from "./loader";
 import { RootRoute, HydrateFallback, RouterError } from "./root";
 import { AppLayoutRoute, AuthLayoutRoute, DashboardSegment, PageRoute, CatchAllRoute } from "./segments";
@@ -36,26 +36,26 @@ function rel(id: RouteId, base: string): string {
 }
 
 const dashboardPages: RouteId[] = [
-  "/(app)/dashboard/admin",
-  "/(app)/dashboard/admin/users/[id]/files",
-  "/(app)/dashboard/duplicates",
-  "/(app)/dashboard/folders",
-  "/(app)/dashboard/links",
-  "/(app)/dashboard/paste",
-  "/(app)/dashboard/profile",
-  "/(app)/dashboard/tokens",
-  "/(app)/dashboard/trash",
-  "/(app)/dashboard/upload",
+  "/dashboard/admin",
+  "/dashboard/admin/users/[id]/files",
+  "/dashboard/duplicates",
+  "/dashboard/folders",
+  "/dashboard/links",
+  "/dashboard/paste",
+  "/dashboard/profile",
+  "/dashboard/tokens",
+  "/dashboard/trash",
+  "/dashboard/upload",
 ];
 
 const authPages: RouteId[] = [
-  "/(auth)/2fa",
-  "/(auth)/authorize",
-  "/(auth)/forgot",
-  "/(auth)/invite/[token]",
-  "/(auth)/login",
-  "/(auth)/register",
-  "/(auth)/reset",
+  "/2fa",
+  "/authorize",
+  "/forgot",
+  "/invite/[token]",
+  "/login",
+  "/register",
+  "/reset",
 ];
 
 const topPages: RouteId[] = [
@@ -69,31 +69,6 @@ const topPages: RouteId[] = [
   "/u/[userCode]",
 ];
 
-/**
- * URLs the Rust server answers itself, not pages: upstream route handlers (the
- * route.ts files under app/), the raw upload paths of server.ts and public/ files.
- * They are in the table only so matching follows Next's precedence: /s/promo
- * is the short-link handler, not a [userCode]/[mediaCode] page. Navigating to
- * one is a document load (src/runtime/navigation.ts).
- */
-export const SERVER_PATHS = [
-  "/:userCode/:mediaCode/:action", // app/[userCode]/[mediaCode]/[action]/route.ts
-  "/:userCode/:mediaCode/delete/:token", // app/[userCode]/[mediaCode]/delete/[token]/route.ts
-  "/a/:userCode/:slug/zip", // app/a/[userCode]/[slug]/zip/route.ts
-  "/api/*", // the route.ts files under app/api, plus /api/upload and /api/files (server.ts)
-  "/avatar/:userCode", // app/avatar/[userCode]/route.ts
-  "/bg/:userCode", // app/bg/[userCode]/route.ts
-  "/download/app", // app/download/app/route.ts
-  "/embed/:version/:card", // app/embed/[version]/[card]/route.ts
-  "/oembed", // app/oembed/route.ts
-  "/s/:code", // app/s/[code]/route.ts
-  "/s/:code/:name", // app/s/[code]/[name]/route.ts
-  "/upload", // server.ts (ShareX)
-  "/icon.svg", // app/icon.svg
-  "/apple-icon.png", // app/apple-icon.png
-  "/brand/*", // public/brand
-  "/fonts/*", // public/fonts
-];
 
 /** Next matches paths case-sensitively (/Dashboard is a [userCode]); react-router does not by default. */
 function caseSensitive(list: RouteObject[]): RouteObject[] {
@@ -125,7 +100,7 @@ export const routes: RouteObject[] = caseSensitive([
             path: "dashboard",
             element: <DashboardSegment />,
             children: [
-              leaf("/(app)/dashboard", null),
+              leaf("/dashboard", null),
               ...dashboardPages.map((id) => leaf(id, rel(id, "/dashboard"))),
             ],
           },

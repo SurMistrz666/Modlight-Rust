@@ -25,10 +25,21 @@ export interface PublicConfig {
   shortUrl: string;
 }
 
-/** app/layout.tsx */
+/**
+ * app/layout.tsx, as the Rust server's root layout loader sends it
+ * (server/src/pages/root_layout.rs).
+ */
 export interface RootLayoutData {
   /** i18n/request.ts: cookie `ml_locale`, else Accept-Language (pl if it names pl, else en). */
   locale: "en" | "pl";
+  /**
+   * The 17 client namespaces of `messages/<locale>/` (what upstream's
+   * NextIntlClientProvider received), or null when the request's
+   * `X-Modlight-Messages: <locale>:<messagesHash>` says the SPA already holds them.
+   */
+  messages: Record<string, unknown> | null;
+  /** A short fingerprint of `messages` for that header. */
+  messagesHash: string;
   /**
    * The server process's IANA time zone. next-intl hands it to the client
    * provider (NextIntlClientProvider inherits `timeZone` from the request config,
@@ -39,8 +50,13 @@ export interface RootLayoutData {
   /** resolveMode(cookie ml_mode): the ThemeProvider's defaultTheme and <html data-mode>. */
   mode: Mode;
   /** resolveTheme(session?.user.theme ?? cookie ml_skin): <html data-theme>. */
-  skin: ThemeId;
-  config: PublicConfig;
+  theme: ThemeId;
+  /**
+   * The public configuration the pages render (app name in titles, link bases).
+   * An SPA addition: upstream read `config` on the server. Until the server sends
+   * it, the SPA falls back to "Modlight" and the page's own origin.
+   */
+  config?: PublicConfig;
 }
 
 /** app/(app)/layout.tsx */

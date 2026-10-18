@@ -17,7 +17,7 @@ export async function installFixtures(): Promise<void> {
     const file = fixtureFor(routes, url);
     if (!file) {
       const { layouts } = expandFixture({ url: "", payload: { layouts: "$root" } }) as PageNotFound;
-      return { notFound: true, layouts, meta: { title: "Not found", tags: [] } } satisfies PageNotFound;
+      return { notFound: true, layouts, meta: { title: "Modlight", robots: "noindex" } } satisfies PageNotFound;
     }
     return expandFixture(file);
   });

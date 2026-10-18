@@ -1,15 +1,13 @@
 <!doctype html>
-<html data-ml-html class="geist-sans geist-mono h-full antialiased">
+<html class="geist-sans geist-mono h-full antialiased">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!--ml-head-->
-    <link rel="icon" href="/icon.svg" sizes="any" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-icon.png" sizes="180x180" type="image/png" />
+    <title>Modlight</title>
     <script type="module" src="/src/main.tsx"></script>
   </head>
   <body class="bg-background text-foreground min-h-full">
-    <!--ml-body-->
+    <script>((a,b,c,d,e,f,g,h)=>{let i=document.documentElement,j=["light","dark"];function k(b){var c;(Array.isArray(a)?a:[a]).forEach(a=>{let c="class"===a,d=c&&f?e.map(a=>f[a]||a):e;c?(i.classList.remove(...d),i.classList.add(f&&f[b]?f[b]:b)):i.setAttribute(a,b)}),c=b,h&&j.includes(c)&&(i.style.colorScheme=c)}if(d)k(d);else try{let a=localStorage.getItem(b)||c,d=g&&"system"===a?window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light":a;k(d)}catch(a){}})("data-mode","theme",document.documentElement.getAttribute("data-mode")||"system",null,["light","dark"],null,true,true)</script>
     <div id="root"></div>
   </body>
 </html>

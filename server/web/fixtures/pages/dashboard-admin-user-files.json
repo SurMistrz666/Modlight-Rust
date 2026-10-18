@@ -1,7 +1,7 @@
 {
   "url": "/dashboard/admin/users/u2/files",
   "payload": {
-    "route": "/(app)/dashboard/admin/users/[id]/files",
+    "route": "/dashboard/admin/users/[id]/files",
     "params": {
       "id": "u2"
     },
@@ -79,22 +79,8 @@
     },
     "meta": {
       "title": "Files - Modlight",
-      "tags": [
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "description",
-            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
-          }
-        },
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "application-name",
-            "content": "Modlight"
-          }
-        }
-      ]
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
     }
   }
 }

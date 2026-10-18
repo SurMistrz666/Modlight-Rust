@@ -5,9 +5,11 @@
 //
 // For each page, "first load" is every script and stylesheet a browser fetches
 // to render it on a fresh visit (no cache): for the SPA, the entry chunk with
-// its static imports, the page's own chunk and layout chunk with theirs, and the
-// translations of the page's locale (en); for upstream, every /_next/static
-// script and stylesheet the server-rendered HTML references. Sizes are raw and
+// its static imports and the page's own chunk and layout chunk with theirs; for
+// upstream, every /_next/static script and stylesheet the server-rendered HTML
+// references. Translations are not code on either side: upstream inlines them in
+// the RSC payload of the document, the SPA in its inlined page payload
+// (layouts.root.messages), so they are left out of both columns. Sizes are raw and
 // gzip -9 (what a compressing proxy roughly sends). Authenticated upstream pages
 // are measured only when --cookie carries a session (the cookie is never printed).
 import fs from "node:fs";
@@ -96,7 +98,7 @@ async function measureUpstream(url) {
 
 const rows = [];
 for (const p of PAGES) {
-  const keys = [entryKey, pageKey(p.page), p.layout && pageKey(p.layout), pageKey("src/messages/en.ts")].filter(Boolean);
+  const keys = [entryKey, pageKey(p.page), p.layout && pageKey(p.layout)].filter(Boolean);
   const mine = measureLocal(closure(keys));
   let theirs = null;
   if (!p.auth || COOKIE) {
@@ -113,7 +115,7 @@ const allJs = fs.readdirSync(path.join(DIST, "assets")).filter((f) => f.endsWith
 const allCss = fs.readdirSync(path.join(DIST, "assets")).filter((f) => f.endsWith(".css"));
 const total = measureLocal(new Set([...allJs, ...allCss].map((f) => `assets/${f}`)));
 
-console.log(`SPA build: ${allJs.length} JS + ${allCss.length} CSS files, ${kb(total.raw)} raw, ${kb(total.gzip)} gzip (all routes, both locales)`);
+console.log(`SPA build: ${allJs.length} JS + ${allCss.length} CSS files, ${kb(total.raw)} raw, ${kb(total.gzip)} gzip (all routes)`);
 console.log("");
 console.log("first load per page (JS + CSS, no cache)            SPA raw / gzip           upstream raw / gzip   upstream inline RSC");
 for (const { p, mine, theirs } of rows) {
