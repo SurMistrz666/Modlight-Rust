@@ -21,7 +21,7 @@
       }
     },
     "meta": {
-      "title": "Connect an app - Modlight",
+      "title": "Connect a desktop app - Modlight",
       "tags": [
         {
           "tag": "meta",
@@ -35,6 +35,13 @@
           "attrs": {
             "name": "application-name",
             "content": "Modlight"
+          }
+        },
+        {
+          "tag": "meta",
+          "attrs": {
+            "name": "robots",
+            "content": "noindex, nofollow"
           }
         }
       ]

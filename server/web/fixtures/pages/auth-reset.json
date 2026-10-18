@@ -6,7 +6,7 @@
     "layouts": "$auth",
     "props": {},
     "meta": {
-      "title": "Reset password - Modlight",
+      "title": "Set a new password - Modlight",
       "tags": [
         {
           "tag": "meta",
