@@ -7,7 +7,7 @@
 const CPU_MAX: &str = "/sys/fs/cgroup/cpu.max";
 const MEMORY_MAX: &str = "/sys/fs/cgroup/memory.max";
 
-/// Parse `cpu.max`: "<quota> <period>", or "max <period>" when uncapped.
+/// Parse `cpu.max`: `"<quota> <period>"`, or `"max <period>"` when uncapped.
 /// Returns cores as a float (200000/100000 -> 2), or `None` with no cap.
 pub fn parse_cpu_max(raw: Option<&str>) -> Option<f64> {
     let raw = raw?;

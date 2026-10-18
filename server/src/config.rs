@@ -248,9 +248,11 @@ fn url_password(url: &str) -> String {
 /// hostname of one deployment has to unfurl under the SAME name - otherwise the
 /// same file reads as "host.example.com" or "h.example.com" depending on who
 /// shared it.
-///   https://host.example.com    -> "example"
-///   https://h.example.com       -> "example"
-///   https://files.example.co.uk -> "example"
+///
+/// - `https://host.example.com` -> "example"
+/// - `https://h.example.com` -> "example"
+/// - `https://files.example.co.uk` -> "example"
+///
 /// An IP literal or a single-label host has nothing to strip and is returned whole.
 pub fn brand_from_url(url: &str) -> String {
     let mut host = Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
