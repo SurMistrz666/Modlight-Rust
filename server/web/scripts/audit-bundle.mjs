@@ -8,7 +8,8 @@
 //    construction holds only the modules sync-upstream.mjs found browser-safe),
 //    an SPA file (src/), or a package on the allowlist below.
 // 2. No chunk may import a Node built-in, reference a server-only package, or
-//    contain eval / new Function (the production CSP has no 'unsafe-eval').
+//    contain eval / new Function (the production CSP has no 'unsafe-eval'), and
+//    fixture mode (src/fixtures) must not be in a production build.
 //
 // (The only environment values the build inlines are NEXT_PUBLIC_*, see
 // vite.config.ts publicEnv(); better-auth's client carries an env accessor that
@@ -103,6 +104,9 @@ for (const file of jsFiles) {
   const nodeImport = code.match(/(?:from\s*|import\s*\(\s*|require\s*\(\s*)["'](node:[a-z_/]+|fs|path|crypto|child_process|os|stream|net|tls|http|https|zlib|worker_threads)["']/);
   if (nodeImport) findings.push(`${file}: imports Node built-in "${nodeImport[1]}"`);
   if (/\beval\s*\(/.test(code)) findings.push(`${file}: calls eval()`);
+  if (code.includes("__fixture") && !process.argv.includes("--allow-fixtures")) {
+    findings.push(`${file}: fixture mode code in a production build`);
+  }
   if (/\bnew\s+Function\s*\(/.test(code)) findings.push(`${file}: uses new Function()`);
 }
 
