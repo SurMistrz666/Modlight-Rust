@@ -78,6 +78,7 @@ function paramText(sf, p, i) {
 }
 
 const written = [];
+const manifest = [];
 let total = 0;
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -124,6 +125,17 @@ for (const file of fs.readdirSync(ACTIONS).filter((f) => f.endsWith(".ts")).sort
       .map((n) => n.getText(sf))
       .join("\n");
     functions.push({ name, params, returnType, note, jsDoc });
+    manifest.push({
+      module,
+      name,
+      path: `/_rpc/${module}/${name}`,
+      params: st.parameters.map((p, i) => {
+        const text = paramText(sf, p, i);
+        return { text, optional: Boolean(p.questionToken || p.initializer), rest: Boolean(p.dotDotDotToken) };
+      }),
+      returns: returnType,
+      upstream: `${rel}:${sf.getLineAndCharacterOfPosition(st.getStart(sf)).line + 1}`,
+    });
   }
 
   // Only names that are declared or imported in this module are emitted.
@@ -186,5 +198,9 @@ for (const file of fs.readdirSync(ACTIONS).filter((f) => f.endsWith(".ts")).sort
   written.push(`${module} (${functions.length})`);
   total += functions.length;
 }
+
+// A machine-readable list for the server side: every RPC path, its parameters
+// and return type as TypeScript text, and the upstream line it stubs.
+fs.writeFileSync(path.join(OUT, "..", "actions.manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
 
 console.log(`wrote ${written.length} modules, ${total} actions: ${written.join(", ")}`);

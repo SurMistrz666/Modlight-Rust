@@ -17,7 +17,7 @@ type DataRouter = ReturnType<typeof createBrowserRouter>;
 let router: DataRouter | null = null;
 let routeTable: RouteObject[] = [];
 
-export function installRouter(r: DataRouter, routes: RouteObject[]): void {
+export function installRouter(r: DataRouter | null, routes: RouteObject[]): void {
   router = r;
   routeTable = routes;
 }

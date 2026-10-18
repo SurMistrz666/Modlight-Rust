@@ -12,8 +12,8 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router";
 import { routes } from "./routes/tree";
 import { setLoaderRoutes, settle } from "./routes/loader";
-import { installRouter } from "./runtime/navigation";
-import { readInlinePayload, type PagePayload } from "./runtime/payload";
+import { installRouter, isSpaPath } from "./runtime/navigation";
+import { isRedirect, readInlinePayload, type PagePayload } from "./runtime/payload";
 import { installGlobalHandlers } from "./runtime/global-handlers";
 import { applyShellDefaults } from "./runtime/shell";
 
@@ -24,14 +24,25 @@ async function boot(): Promise<void> {
   }
 
   setLoaderRoutes(routes);
+  installRouter(null, routes);
   let hydrationData: { loaderData: Record<string, PagePayload> } | undefined;
   const inline = readInlinePayload();
-  if (inline) {
+  if (inline && isRedirect(inline)) {
+    // Upstream streams some redirects inside a 200 document (a page under
+    // /dashboard, behind loading.tsx) and the browser then replaces the URL.
+    // Same here: replace, then let the router load the target itself.
+    const target = new URL(inline.redirect, window.location.href);
+    if (target.origin !== window.location.origin || !isSpaPath(target.pathname)) {
+      window.location.replace(target.href);
+      return;
+    }
+    window.history.replaceState(null, "", target.pathname + target.search + target.hash);
+  } else if (inline) {
     try {
       const page = await settle(inline, new URL(window.location.href));
       hydrationData = { loaderData: { root: page } };
     } catch {
-      // A redirect payload inline: let the router's own first load follow it.
+      // Unusable payload: let the router's own first load ask /_page.
     }
   }
 

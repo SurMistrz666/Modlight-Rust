@@ -129,9 +129,26 @@ after the same request processing upstream applies to a page:
 Unknown paths that are neither a page nor a route handler get the not-found
 document with status `404` (PORT.md section 6).
 
-Status codes: `200` page, `404` not found, `307` redirect (Next's `redirect()`;
-`308` only for `permanentRedirect()`, which upstream pages never call), `500`
-when computing the page failed (the error document, section 4.4).
+Status codes, as the reference build answers them:
+
+- `200` for a page;
+- `307` with `Location` for a redirect from the proxy gate, from a layout, or
+  from a page outside `/dashboard` (Next's `redirect()`; `308` would be
+  `permanentRedirect()`, which upstream never calls);
+- `404` for `notFound()` outside `/dashboard` and for unknown paths;
+- **under `/dashboard`, a page's own `redirect()` or `notFound()` answers `200`**:
+  `app/(app)/dashboard/loading.tsx` makes Next flush the shell before the page
+  runs, so the status is already sent. For a redirect the reference sends the
+  document with `<meta id="__next-page-redirect" http-equiv="refresh"
+  content="1;url=<target>"/>` and the client replaces the URL (seen: a non-admin
+  on `/dashboard/admin` gets `200` and lands on `/dashboard`); for `notFound` the
+  head keeps the page's own title and adds `<meta name="robots"
+  content="noindex"/>` (seen: `/dashboard/admin/users/<unknown>/files`). To
+  match, answer `200` with the inlined payload being the redirect (or not-found)
+  payload of section 4.2, plus that meta tag for a redirect: the SPA replaces the
+  URL and loads the target, as upstream's client does. A plain `307` works with
+  the SPA too; it only differs in the status line;
+- `500` when computing the page failed (the error document, section 4.4).
 
 Headers on documents: the `next.config.ts` rules for the path (security
 headers, `appCsp`; `/authorize` gets `authorizeCsp` instead), plus
@@ -362,7 +379,2147 @@ Their "Try again" button fetches the page again.
 
 ## 7. Server actions: `POST /_rpc`
 
-(section filled from the action work order below)
+Every exported function of upstream `app/actions/*.ts` (18 modules, 94
+actions) is a stub in `server/web/src/rpc/actions/<module>.ts` with the same
+name, parameters and return type. `server/web/src/rpc/actions.manifest.json`
+lists all 94 as data (RPC path, parameter and return types as TypeScript text,
+upstream line), for checking the server's router against it.
+
+### 7.1 Protocol
+
+Request (`server/web/src/runtime/rpc.ts`):
+
+```
+POST /_rpc/<module>/<export>          module = file name without .ts ("uploads", "shortlink-unlock")
+Content-Type: application/json
+X-Modlight-Rpc: 1
+Origin: <the page's origin>            (sent by the browser on every POST)
+
+["first argument", {"second": {"$date": "2026-10-18T12:00:00.000Z"}}]
+```
+
+- The body is the tagged JSON array of the arguments **the caller passed**
+  (`arguments`, not the declared parameters): an omitted optional argument is
+  absent, and the server applies upstream's default parameter value (listed per
+  action below). `uploads.emptyTrash()` sends `[]`, `emptyTrash("bobby")` sends
+  `["bobby"]`.
+- A call whose single argument is a `FormData` goes as `multipart/form-data`
+  with `X-Modlight-Rpc: form` (no upstream action takes one today).
+
+Before the action runs, as Next's action handler does:
+
+- `Origin` must equal the request's own origin, otherwise `403` (PORT.md section 7);
+- an unknown module or export: `404`;
+- a body over **1 MiB**, more than 1000 arguments, or a body that is not a JSON
+  array: the error envelope (masked);
+- the session is resolved, and refreshed or expired, exactly as Better Auth does
+  for any server-side call (7.2.3).
+
+Response: HTTP `200`, `Content-Type: application/json`,
+`Cache-Control: no-store`, one tagged JSON envelope, plus any `Set-Cookie`:
+
+| Upstream action | Envelope |
+|---|---|
+| returned a value | `{"ok": <value>}`; a void action: `{"ok": {"$undefined": 1}}` |
+| `redirect(url)` (only via `requireUser`/`requireAdmin`) | `{"redirect": "<url>"}` (type `push`; `"redirectType": "replace"` would make it a replace) |
+| `notFound()` (no action calls it) | `{"notFound": true}` |
+| threw | `{"error": {"message": "<masked text, section 4.4>", "digest": "<id>"}}` |
+
+and `"revalidate": true` added to any of them when either
+
+- a `revalidatePath`/`revalidateTag` call ran, even if the action then threw or
+  redirected (Next sets the header in a `finally`), or
+- the response sets or deletes **any** cookie: Next 16 counts modified cookies
+  as a revalidation (`addRevalidationHeader` in `action-handler.js`) and its
+  client refreshes the page. That includes the unlock and sign-in cookies and
+  Better Auth's session-cookie refresh or expiry (7.2.3).
+
+What the browser does with it (matching Next 16's
+`router-reducer/reducers/server-action-reducer.js`):
+
+- `ok`: resolves with the value, after refetching the current page when
+  `revalidate` is set;
+- `redirect`: navigates (client-side to an SPA page, a document load otherwise)
+  and rejects the call with Next's redirect error (digest
+  `NEXT_REDIRECT;push;<url>;307;`, marked `handled`, so it never navigates twice);
+- `error`: rejects with `Error(message)` carrying `.digest`;
+- `notFound`: rejects with Next's not-found error;
+- a response that is not JSON (`403`, `404`, a proxy error): rejects with
+  `Error("An unexpected response was received from the server.")`, a network
+  failure with `TypeError("Failed to fetch")`, as Next does.
+
+The rest of this section is the per-action work order: conventions (7.2), a
+summary table (7.3), every action (7.4) and the quirks to confirm (7.5).
+
+### 7.2 Conventions (apply to every action below)
+
+#### 7.2.1 Wire
+
+- Request: `POST /_rpc/<module>/<export>`. The body is a tagged JSON array holding the arguments that were actually passed. An argument that was left out is absent from the array, and the server applies the upstream default (each default is listed in its action). No action takes a single `FormData`, so none of the 94 uses the multipart (`X-Modlight-Rpc: form`) variant.
+- Response: always HTTP 200 with a JSON envelope.
+
+| Upstream outcome | Envelope |
+|---|---|
+| returned a value | `{"ok": <tagged JSON>}` |
+| `redirect(url)` | `{"redirect": url}` |
+| `notFound()` | `{"notFound": true}` |
+| threw | `{"error": {"message": <masked>, "digest": "..."}}` |
+| `revalidatePath`/`revalidateTag` ran, **or the response sets or deletes any cookie** (section 7.1) | `"revalidate": true` is added to whichever of the above |
+
+- Masked errors: Next masks the message of an error thrown from a production action. In the blocks below, `Error("X") [masked]` means upstream throws message X, the message is logged on the server, and the client receives Next's generic text (`MASKED_SERVER_ERROR` in `server/web/src/runtime/errors.ts`, section 4.4) plus a digest.
+- `notFound()` is called by **no** action, so nothing produces `{"notFound": true}`.
+- `redirect()` is reached **only** through `requireUser`/`requireAdmin` (no action redirects on its own). Inside an action, Next's default redirect type is `push`, so `redirectType` may be omitted. The URLs are exactly `/login` and `/dashboard`, with no query string.
+- Void actions resolve with `undefined`: answer `{"ok":{"$undefined":1}}` (decided in 7.1; the stub returns `envelope.ok`, so `{}` would also work, but differential tests compare the former).
+- Dates in results: only three actions return real `Date` objects, which must be tagged as `{"$date": iso}`:
+  - `folders.createFolder`: `createdAt`
+  - `shortlinks.listShortLinks`: `lastUsedAt`, `expiresAt`, `createdAt`
+  - `tokens.myTokens`: `lastUsedAt`, `revokedAt`, `createdAt`
+
+  Every other timestamp in a result is already an ISO **string** upstream.
+- `undefined`-valued properties: React Flight keeps the key, so they must travel as `{"$undefined":1}`. In arguments this matters for `account.updatePreferences`, which tests `"locale" in input`. In results it occurs in:
+  - `unlock.verifyMediaPassword`: `remembered`
+  - `convert.*`: `note`
+  - `admin.createAccount`: `detail`
+  - `mail.sendTestMail`: `smtpCode`, `serverSays`
+- `bigint` columns are `mode: "number"` in drizzle, so they are plain JSON numbers.
+
+#### 7.2.2 Auth labels
+
+| Label | Upstream | No session | Wrong role |
+|---|---|---|---|
+| `requireUser` | `lib/auth-helpers.ts:requireUser` | `{"redirect":"/login"}` | - |
+| `requireAdmin` | `requireUser`, then `session.user.role !== "admin"` | `{"redirect":"/login"}` | `{"redirect":"/dashboard"}` |
+| `session-or-throw` | `getSession()`, then `if (!session) throw new Error("Unauthorized")` | error envelope (masked), **not** a redirect | - |
+| `session-or-data` | `getSession()`, then returns a refusal value | the value given in the block | - |
+| `public` | no session lookup | - | - |
+
+How the session is resolved:
+
+- Sessions come from better-auth `auth.api.getSession({ headers })`, which reads the signed cookie `better-auth.session_token` (or `__Secure-better-auth.session_token` when APP_URL is https).
+- No cookie cache is configured, so `session.user` is read from the DB on every call. It carries `id`, `email`, `name`, `role`, `banned`, `emailVerified`, `twoFactorEnabled` and the additionalFields `userCode`, `usedQuota`, `maxQuota`, `hideUploads`, `copyRaw`, `theme` and `locale`.
+- Several actions use these values directly, for example `createPaste`, which checks the quota.
+
+#### 7.2.3 Session-cookie side effects of every non-public action
+
+`lib/auth.ts` installs `nextCookies()`, which copies every `Set-Cookie` produced by a server-side better-auth call onto the action's response. `getSession` (better-auth `api/routes/session.mjs`) behaves as follows:
+
+- No session cookie, or a cookie with a bad signature: returns null and writes no cookie.
+- A validly signed token whose row is missing or expired: expires the `session_token`, `session_data` and `dont_remember` cookies and deletes an expired row.
+- A valid session whose expiry was last set at least `updateAge` (1 day) ago, i.e. `expires_at - 7d + 1d <= now`, which means 6 days or less remain: `UPDATE session SET expires_at = now+7d, updated_at` and re-issues the `session_token` cookie (Max-Age = seconds until the new `expires_at`, about 604800). Note that the upstream comment in lib/data/sessions.ts ("last `updateAge` of its life") describes this differently; the better-auth code is what runs.
+
+The same applies to every other better-auth call made with the request headers (`listSessions`, `revokeSession`, `setRole`, `banUser`, `createUser`, `removeUser`, ...), because they resolve the session the same way.
+
+The "Cookies" lines below list only what an action does **on top of** this.
+
+Next 16 detail: an action that sets or deletes **any** cookie makes Next send `x-action-revalidated` (`addRevalidationHeader` in `next/dist/server/app-render/action-handler.js` counts modified cookies), and the Next client then refreshes the current route even when no `revalidatePath` ran. The envelope mirrors that: `"revalidate": true` whenever the response carries a `Set-Cookie`, the session-cookie maintenance above included (7.1).
+
+#### 7.2.4 Cookie serialization (Next `ResponseCookies`)
+
+- `cookies().set(name, value, {path, maxAge, sameSite, httpOnly, secure})` emits:
+  `name=<encodeURIComponent(value)>; Path=/; Expires=<now+maxAge, UTC>; Max-Age=<n>[; Secure][; HttpOnly]; SameSite=lax`
+- `cookies().delete(name)` emits:
+  `name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT`
+
+#### 7.2.5 Revalidation
+
+- `"revalidate": true` must be set whenever a `revalidatePath` call **ran**, including when the action later threw or redirected (Next sets the header in a `finally`), and whenever the response sets or deletes a cookie (7.2.3).
+- A `revalidatePath` written after a call that threw did **not** run.
+- Paths are listed for traceability. `(L)` marks `revalidatePath(path, "layout")`. No action uses `revalidateTag`.
+
+#### 7.2.6 Common failure modes (not repeated per action)
+
+- **No runtime type checks** unless a block says so. A wrong JSON type typically ends in a `TypeError` (for example `tag.trim()` on a number) or a Postgres error, and both become the error envelope.
+- **uuid columns**: `uploads.id`, `uploads.folder_id`, `folders.id`, `api_tokens.id`, `short_links.id` and `user.default_folder_id` are uuid. Where an action passes a caller string to them unchecked, a non-uuid makes Postgres raise `22P02` and the action ends in the error envelope. Each block says whether its ids are guarded. `user.id` is `text` and never errors.
+- Any uncaught DB or storage exception becomes the error envelope.
+- Next refuses, before the action runs, request bodies over **1 MiB** (`serverActions.bodySizeLimit` is not configured upstream, so the default applies) and calls with more than 1000 arguments. Both become the error envelope (masked; Next's own messages are "Body exceeded 1mb limit..." and "Server Action arguments list is too long (n)...").
+
+#### 7.2.7 Shared mechanics
+
+**Audit** (`lib/audit.ts:recordAudit(actorId, action, detail)`)
+
+- Writes `INSERT INTO audit_log (user_id, action, detail, ip)`.
+  - `id`: uuid default.
+  - `created_at`: default now().
+  - `detail`: jsonb, where `undefined`-valued keys are dropped.
+  - `ip`: `clientIp(headers)`.
+- Runs after the change it records. An exception inside it is swallowed (`console.error`) and never fails the action.
+
+**Client IP** (`lib/password.ts:clientIp`)
+
+- `X-Real-IP`, trimmed, else `"unknown"`.
+- PORT.md 12.7: in the port, honour it only when `TRUST_PROXY` is on.
+
+**Rate limiter** (`lib/password.ts:checkRateLimit(key, max = 5, windowMs = 15 min)`)
+
+- Per process, in memory, with a fixed window per key.
+- The first hit creates `{count: 1, resetAt: now+window}`. Every later hit increments `count`, refused hits included, and the call is refused while `count > max`.
+- `resetRateLimit(key)` deletes the bucket.
+- Above 5,000 buckets, expired ones are swept at most every 30 s. Above 20,000, the oldest entries are evicted.
+- Nothing is persisted.
+
+**Password formats**
+
+- **(F)** file, short-link and default-file passwords (`lib/password.ts:hashPassword`):
+  - Format: `scrypt$<base64url 16-byte salt>$<base64url 32-byte key>`.
+  - Node `crypto.scrypt` defaults: N=16384, r=8, p=1.
+  - Verified in constant time.
+- **(BA)** account passwords (better-auth `hashPassword`, `@better-auth/utils/password`):
+  - Format: `<32 hex chars salt>:<128 hex chars key>`.
+  - `scrypt(password.normalize("NFKC"), <the salt hex STRING as bytes>, 64, N=16384, r=16, p=1)`.
+  - Legacy bcrypt `$2a/$2b/$2y` is verify-only (`lib/auth.ts`).
+
+**Secret box** (`lib/secret-box.ts`; SMTP password and registration key)
+
+- Envelope: `v1.<iv b64url, 12 bytes>.<tag b64url, 16 bytes>.<ciphertext b64url>`, AES-256-GCM.
+- Key: HKDF-SHA256 with:
+  - IKM: `SETTINGS_ENCRYPTION_KEY` (base64 of exactly 32 bytes) or else the AUTH secret as UTF-8.
+  - salt: `"modlight/secret-box/2026"`.
+  - info: `"modlight:<purpose>:v1"`, 32 bytes.
+- Purposes: `smtp` and `registration-key`.
+
+**Mail**
+
+- `lib/mail.ts:sendMail` sends through nodemailer with:
+  - From: `"<fromName>" <from>`.
+  - The logo attachment.
+  - Timeouts: connect 10 s, greeting 10 s, socket 20 s.
+- It throws `MailNotConfiguredError` in production when mail is not ready. In development it logs the message and returns.
+- Errors are redacted before they are rethrown.
+- `mailReady()` reads a per-process settings snapshot that is refreshed every 30 s (`lib/mail-settings.ts`).
+- `pickMailLocale(pref, acceptLanguage)`: `pref` `"pl"` or `"en"` wins. Otherwise `/(?:^|[,\s])pl\b/i` on Accept-Language gives `"pl"`, else `"en"`.
+
+**Unlock tokens** (`lib/password.ts`)
+
+- Value: `<exp unix seconds>.<base64url HMAC-SHA256(AUTH secret, parts...|exp, each part encodeURIComponent'd, joined by "|")>`.
+- Parts:
+  - `["media", uploadId]`, TTL 86400
+  - `["shortlink", linkId]`, TTL 3600
+  - `["owner", ownerId, "v<version>"]`, TTL 2592000
+- Cookie names: `ml_unlock_<uploadId>`, `ml_sl_<linkId>`, `ml_dpw_<ownerId>`.
+- Cookie attributes: `HttpOnly; Path=/; SameSite=lax; Secure` (Secure only when `NODE_ENV=production`).
+
+**Clock and updated_at**
+
+- Timestamps written as `new Date()` use the app clock.
+- drizzle `$onUpdate` sets `updated_at = new Date()` on **every** UPDATE of `user`, `session`, `account` and `verification`, even when the code does not name the column.
+- `uploads.updated_at` changes only where a block says so.
+
+#### 7.2.8 Request-header dependencies
+
+**X-Real-IP**
+
+- Feeds `audit_log.ip` for every action that writes an audit row.
+- Used in rate-limit keys:
+  - `authorize.approveDesktopClient`
+  - `invite.acceptInvitation`
+  - `invite.resendVerification`
+  - `login-identifier.signInWithIdentifier`
+  - `shortlink-unlock.verifyShortlinkPassword`
+  - `unlock.verifyMediaPassword`
+- Becomes `session.ip_address` on sign-in (`acceptInvitation`, `signInWithIdentifier`). better-auth is configured with `ipAddressHeaders: ["x-real-ip"]`.
+
+**User-Agent**
+
+- Becomes `session.user_agent` on sign-in (`acceptInvitation`, `signInWithIdentifier`).
+
+**Accept-Language** (mail locale fallback)
+
+- `admin.updateUserAccount`: notification mails, when the target's own `locale` is not pl/en.
+- `admin.createAccount`: invitation mail, which always uses the admin's Accept-Language.
+- `admin.resendInvite`: fallback after the target's locale.
+- `mail.sendTestMail`: fallback after the admin's locale.
+- better-auth verification mails sent through `auth.api.*` get no `Request`, so they use only `user.locale` (pl/en) and otherwise `"en"`. This affects `sendVerificationLink`, `resendVerification`, and `signInWithIdentifier` / `acceptInvitation` on an unverified account.
+
+**Cookie**
+
+- Read by every session-based action (7.2.2).
+- `signInWithIdentifier` and `acceptInvitation` also read `better-auth.trust_device`.
+- `admin.sendVerificationLink` and `invite.resendVerification` strip `Cookie` and `Authorization` before calling better-auth (`headersWithoutSession`).
+
+**Origin / Host**
+
+- Not read by any action. Only the transport-level CSRF rule applies (PORT.md 7: Origin must equal the request's own origin, else 403).
+- better-auth's own origin checks are skipped for server-side calls because no `Request` is passed.
+
+---
+
+### 7.3 Summary table (94 actions)
+
+Legend:
+
+- **auth**: `user` = requireUser, `admin` = requireAdmin, `sess!` = session-or-throw, `sess?` = session-or-data, `public`.
+- **revalidates**: a bracket gives the condition under which the call runs.
+- **cookies**: `-` means nothing besides the session-cookie maintenance in 7.2.3.
+
+| # | module | export | auth | revalidates | redirects | cookies |
+|---|---|---|---|---|---|---|
+| 1 | account | updatePreferences | user | `/` (L) [only if a column was written] | /login | `ml_skin` set [theme in patch]; `ml_locale` set or deleted [`locale` key present] |
+| 2 | account | checkTagAvailability | user | - | /login | - |
+| 3 | account | updateTag | user | /dashboard/profile, /dashboard [after a write] | /login | - |
+| 4 | account | updateSkipTagInUrl | admin | /dashboard/profile, /dashboard | /login, /dashboard | - |
+| 5 | account | setAllowRootShortLinks | admin | /dashboard/admin | /login, /dashboard | - |
+| 6 | account | updateDefaultFolder | user | /dashboard/profile [ok] | /login | - |
+| 7 | account | myUrlPrefs | user | - | /login | - |
+| 8 | account | updateNaming | user | /dashboard/profile, /dashboard [after the write] | /login | - |
+| 9 | account | updatePreferredDomain | user | `/` (L) [ok] | /login | - |
+| 10 | account | myDefaultFilePassword | user | - | /login | - |
+| 11 | account | updateDefaultFilePassword | user | /dashboard/profile, /dashboard [ok] | /login | - |
+| 12 | account | myBackground | user | - | /login | - |
+| 13 | account | updateBackgroundDim | user | `/` (L) | /login | - |
+| 14 | account | updatePublicProfile | user | /dashboard/profile | /login | - |
+| 15 | account | listAdminUsers | admin | - | /login, /dashboard | - |
+| 16 | account | setUserQuota | admin | /dashboard/admin [ok] | /login, /dashboard | - |
+| 17 | account | setUserTag | admin | /dashboard/admin, /dashboard [after a write] | /login, /dashboard | - |
+| 18 | account | recalculateUserQuota | admin | /dashboard/admin | /login, /dashboard | - |
+| 19 | account | revokeMySession | user | /dashboard/profile [outcome ok] | /login | - |
+| 20 | account | revokeMyOtherSessions | user | /dashboard/profile [revoked > 0] | /login | - |
+| 21 | admin | loadOrphans | admin | - | /login, /dashboard | - |
+| 22 | admin | deleteOrphan | admin | /dashboard/admin [ok] | /login, /dashboard | - |
+| 23 | admin | purgeAllOrphans | admin | /dashboard/admin [ok] | /login, /dashboard | - |
+| 24 | admin | loadUserDetail | admin | - | /login, /dashboard | - |
+| 25 | admin | updateUserAccount | admin | /dashboard/admin, `/` (L) [ok]; /dashboard/admin, /dashboard [tag changed] | /login, /dashboard | - |
+| 26 | admin | setUserRole | admin | as #25 | /login, /dashboard | - |
+| 27 | admin | setUserBanned | admin | as #25 | /login, /dashboard | - |
+| 28 | admin | createAccount | admin | /dashboard/admin [ok] | /login, /dashboard | - |
+| 29 | admin | resendInvite | admin | /dashboard/admin [ok] | /login, /dashboard | - |
+| 30 | admin | setUserEmailVerified | admin | /dashboard/admin [ok] | /login, /dashboard | - |
+| 31 | admin | sendVerificationLink | admin | - | /login, /dashboard | - |
+| 32 | admin | loadDeletionImpact | admin | - | /login, /dashboard | - |
+| 33 | admin | deleteUserAccount | admin | /dashboard/admin, /dashboard [ok] | /login, /dashboard | - |
+| 34 | admin | recalculateEveryQuota | admin | /dashboard/admin | /login, /dashboard | - |
+| 35 | admin | runStorageScan | admin | - | /login, /dashboard | - |
+| 36 | authorize | approveDesktopClient | sess? | /dashboard/tokens [ok] | - | - |
+| 37 | avatar | listAvatarPicks | user | - | /login | - |
+| 38 | avatar | setAvatarFromUpload | user | `/` (L) [ok] | /login | - |
+| 39 | avatar | myAvatar | user | - | /login | - |
+| 40 | convert | convertTargetsForUpload | sess! | - | - | - |
+| 41 | convert | convertTargetsForSelection | sess! | - | - | - |
+| 42 | convert | convertUpload | sess! | /dashboard [status converted or created] | - | - |
+| 43 | convert | convertUploads | sess! | /dashboard [at least one converted or created] | - | - |
+| 44 | duplicates | scanMyDuplicates | sess? | - | - | - |
+| 45 | duplicates | trashDuplicates | sess? | /dashboard, /dashboard/trash, /dashboard/profile, /dashboard/duplicates, /dashboard (L) [ok] | - | - |
+| 46 | duplicates | keepDuplicateSets | sess? | /dashboard/duplicates, /dashboard (L) [ok] | - | - |
+| 47 | duplicates | countDuplicateSetsAgain | sess? | /dashboard/duplicates, /dashboard (L) [ok] | - | - |
+| 48 | folders | createFolder | user | /dashboard [no throw] | /login | - |
+| 49 | folders | renameFolder | user | /dashboard [no throw] | /login | - |
+| 50 | folders | deleteFolder | user | /dashboard [no throw] | /login | - |
+| 51 | folders | moveFolder | user | /dashboard [no throw] | /login | - |
+| 52 | folders | setFolderVisibility | user | /dashboard [no throw] | /login | - |
+| 53 | folders | moveUploadsToFolder | user | /dashboard [no throw, also when 0 moved] | /login | - |
+| 54 | folders | countUnfiledUploads | user | - | /login | - |
+| 55 | folders | moveUnfiledToFolder | user | /dashboard | /login | - |
+| 56 | folders | listFolders | user | - | /login | - |
+| 57 | invite | previewInvite | public | - | - | - |
+| 58 | invite | acceptInvitation | public | - | - | better-auth sign-in cookies (see block) |
+| 59 | invite | resendVerification | public | - | - | - |
+| 60 | login-identifier | signInWithIdentifier | public | - | - | better-auth `session_token`, or `two_factor` (+ `trust_device`) |
+| 61 | mail | loadMailStatus | admin | - | /login, /dashboard | - |
+| 62 | mail | saveSmtpSettings | admin | /dashboard/admin [ok] | /login, /dashboard | - |
+| 63 | mail | clearSmtpSettings | admin | /dashboard/admin | /login, /dashboard | - |
+| 64 | mail | clearSmtpPassword | admin | /dashboard/admin | /login, /dashboard | - |
+| 65 | mail | setVerificationRequired | admin | /dashboard/admin | /login, /dashboard | - |
+| 66 | mail | sendTestMail | admin | - | /login, /dashboard | - |
+| 67 | pastes | createPaste | user | /dashboard [no throw] | /login | - |
+| 68 | registration | loadRegistrationSettings | admin | - | /login, /dashboard | - |
+| 69 | registration | setRegistrationEnabled | admin | /dashboard/admin, `/` (L) | /login, /dashboard | - |
+| 70 | registration | saveRegistrationKey | admin | /dashboard/admin, `/` (L) [ok] | /login, /dashboard | - |
+| 71 | registration | revealRegistrationKey | admin | - | /login, /dashboard | - |
+| 72 | releases | loadRelease | admin | - | /login, /dashboard | - |
+| 73 | releases | publishAppRelease | admin | /dashboard/admin, /dashboard/tokens, /download [ok] | /login, /dashboard | - |
+| 74 | releases | unpublishAppRelease | admin | /dashboard/admin, /dashboard/tokens, /download | /login, /dashboard | - |
+| 75 | shortlink-unlock | verifyShortlinkPassword | public | - | - | `ml_sl_<linkId>` [ok] |
+| 76 | shortlinks | createShortLink | user | /dashboard/links [ok] | /login | - |
+| 77 | shortlinks | retargetShortLink | user | /dashboard/links [ok] | /login | - |
+| 78 | shortlinks | deleteShortLink | user | /dashboard/links | /login | - |
+| 79 | shortlinks | listShortLinks | user | - | /login | - |
+| 80 | tokens | createUploadToken | user | /dashboard/tokens | /login | - |
+| 81 | tokens | revokeUploadToken | user | /dashboard/tokens | /login | - |
+| 82 | tokens | narrowTokenScope | user | /dashboard/tokens [ok] | /login | - |
+| 83 | tokens | myTokens | user | - | /login | - |
+| 84 | unlock | verifyMediaPassword | public | - | - | `ml_unlock_<uploadId>` [ok]; `ml_dpw_<ownerId>` [remember and file on the current default] |
+| 85 | uploads | togglePublish | sess! | /dashboard | - | - |
+| 86 | uploads | trashUpload | sess! | /dashboard | - | - |
+| 87 | uploads | restoreUpload | sess! | /dashboard, /dashboard/trash | - | - |
+| 88 | uploads | deleteUploadForever | sess! | /dashboard, /dashboard/trash | - | - |
+| 89 | uploads | trashSummary | sess! | - | - | - |
+| 90 | uploads | emptyTrash | sess! | /dashboard, /dashboard/trash | - | - |
+| 91 | uploads | setVanity | sess! | /dashboard | - | - |
+| 92 | uploads | setUploadExpiry | sess! | /dashboard | - | - |
+| 93 | uploads | setUploadMaxViews | sess! | /dashboard | - | - |
+| 94 | uploads | setUploadPassword | sess! | /dashboard | - | - |
+
+---
+
+### 7.4 Per-action contract
+
+#### Module `account` (app/actions/account.ts)
+
+Shared types (from the stub):
+
+```ts
+type TagIssue = "too-short" | "too-long" | "charset" | "reserved" | "taken" | "retired" | "error";
+type TagCheckResult = { status: "ok" } | { status: "current" } | { status: "unavailable"; reason: TagIssue };
+```
+
+`checkTag(tag)` (lib/naming.ts), used by #2, #3, #17:
+
+- length below 2 gives `too-short`; above 32 gives `too-long` (UTF-16 code units).
+- Not matching `/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/` gives `charset`.
+- In `RESERVED_TAGS` (lib/naming.ts, compared case-insensitively) gives `reserved`.
+- Tag ownership comparisons in SQL are case-sensitive equality on `user.user_code` and `user_code_aliases.code`.
+
+##### account.updatePreferences
+- Signature: `updatePreferences(input: { name?: string; hideUploads?: boolean; copyRaw?: boolean; theme?: string; locale?: string | null }): Promise<PreferencesResult>`, with `PreferencesResult = { theme: string; locale: string | null }`.
+- Auth: requireUser.
+- Does: builds a patch for the caller's `user` row from these keys:
+  - `name`: when a string with a non-blank trim, the trimmed value cut to its first 120 chars.
+  - `hideUploads` / `copyRaw`: only when booleans.
+  - `theme`: only when one of the 14 ids in `lib/themes.ts` THEMES (`default, glass, synthwave, terminal, paper, win98, nebula, grimoire, cartoon, mono, deco, riso, discord, spotify`).
+  - `locale`: whenever the key is **present** (`"locale" in input`, so `{locale: undefined}` counts). The value is `"pl"`/`"en"` as given, anything else becomes `null`.
+
+  An empty patch returns `{theme: resolveTheme(session.user.theme), locale: session.user.locale ?? null}` with no write, no cookie and no revalidate. Otherwise it runs `UPDATE "user" SET <patch>, updated_at WHERE id = me RETURNING theme, locale`.
+- Returns: `{ theme: resolveTheme(row.theme), locale: row.locale ?? null }`. `resolveTheme` keeps a valid id, maps `"modern"` to `"default"`, and maps anything else to `"discord"`.
+- Errors: no row returned gives `Error("Preferences could not be saved")` [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `revalidatePath("/", "layout")` after a write.
+- Cookies:
+  - When `theme` was in the patch: `ml_skin=<resolved theme>; Path=/; Max-Age=31536000; SameSite=lax`. Not HttpOnly, not Secure.
+  - When the `locale` key was present and the value is pl/en: `ml_locale=<v>; Path=/; Max-Age=31536000; SameSite=lax`. Otherwise `ml_locale` is deleted.
+- Upstream: app/actions/account.ts:45 -> lib/themes.ts:isThemeId/resolveTheme, lib/theme-cookies.ts (SKIN_COOKIE, THEME_COOKIE_MAX_AGE).
+
+##### account.checkTagAvailability
+- Signature: `checkTagAvailability(tag: string): Promise<TagCheckResult>`
+- Auth: requireUser.
+- Does: read-only. `clean = tag.trim()`, then:
+  - `checkTag(clean)`.
+  - If `clean` equals `session.user.userCode` (case-sensitive): `current`.
+  - `SELECT id FROM "user" WHERE user_code = clean LIMIT 1` owned by another account: `taken`.
+  - `SELECT user_id FROM user_code_aliases WHERE code = clean LIMIT 1` owned by another account: `retired`.
+- Returns: `{status:"ok"}` | `{status:"current"}` | `{status:"unavailable", reason}`, where reason is a checkTag reason, `taken` or `retired`.
+- Errors: a non-string `tag` gives a TypeError [masked]; otherwise none of its own.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none. Cookies: none.
+- Upstream: account.ts:126 -> lib/naming.ts:checkTag, account.ts:tagConflict (private).
+
+##### account.updateTag
+- Signature: `updateTag(tag: string): Promise<{ ok: true; tag: string } | { ok: false; reason: TagIssue }>`
+- Auth: requireUser.
+- Does: `clean = tag.trim()`. A checkTag failure returns `{ok:false, reason}`. A `clean` equal to the current tag returns `{ok:true, tag}` without writing. Otherwise one transaction:
+  1. If another user has `user_code = clean`: roll back, `taken`.
+  2. If an alias `code = clean` belongs to another user: roll back, `retired`.
+  3. If the caller has a current tag: `INSERT INTO user_code_aliases (code, user_id) VALUES (current, me) ON CONFLICT DO NOTHING` (`created_at` defaults to now()).
+  4. `UPDATE "user" SET user_code = clean`.
+
+  Any other exception, for example a unique-index race on `user_user_code_idx`, returns `{ok:false, reason:"error"}`.
+- Returns: `{ok:true, tag: clean}` | `{ok:false, reason}`.
+- Errors: a non-string `tag` gives a TypeError [masked]. Exceptions inside the transaction are returned as `reason:"error"`, not thrown.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/profile` and `/dashboard`, only after the transaction committed.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:166 -> lib/naming.ts:checkTag.
+
+##### account.updateSkipTagInUrl
+- Signature: `updateSkipTagInUrl(enabled: boolean): Promise<void>`
+- Auth: requireAdmin. It writes the **caller's own** row.
+- Does: `UPDATE "user" SET skip_tag_in_url = enabled WHERE id = me`.
+- Returns: undefined.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/profile`, `/dashboard` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:231.
+
+##### account.setAllowRootShortLinks
+- Signature: `setAllowRootShortLinks(userId: string, allowed: boolean): Promise<void>`
+- Auth: requireAdmin.
+- Does: `UPDATE "user" SET allow_root_short_links = allowed WHERE id = userId`. There is no existence check, so an unknown id is a silent no-op.
+- Returns: undefined.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:242.
+
+##### account.updateDefaultFolder
+- Signature: `updateDefaultFolder(folderId: string | null): Promise<{ ok: boolean }>`
+- Auth: requireUser.
+- Does: for a truthy `folderId`, runs `SELECT id FROM folders WHERE id = folderId AND owner_id = me`. No row returns `{ok:false}` with no write. Then `UPDATE "user" SET default_folder_id = folderId` (null clears).
+- Returns: `{ok:true}` | `{ok:false}`.
+- Errors:
+  - A non-uuid `folderId` gives a Postgres error [masked].
+  - `""` skips the ownership check and then fails the same way in the UPDATE.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/profile` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:255.
+
+##### account.myUrlPrefs
+- Signature: `myUrlPrefs(): Promise<UrlPrefs>`, with `UrlPrefs = { scheme: NamingScheme; pattern: string | null; wordCount: number; randomLength: number; preferredDomain: string | null; baseUrl: string }`.
+- Auth: requireUser.
+- Does: reads the caller's `naming_scheme, naming_pattern, naming_word_count, naming_random_length, preferred_domain`. Normalisation:
+  - `scheme`: the stored value when it is in `NAMING_SCHEMES` (`random, words, random-chars, filename, filename-random, date-filename, custom`), else `"random"`.
+  - `wordCount`: rounded and clamped to 2..4; null or non-finite gives 2.
+  - `randomLength`: clamped to 5..32; null gives 6.
+  - `preferredDomain`: the raw column.
+  - `baseUrl = userBaseUrl(preferredDomain)`: the matching entry of `config.appDomains` (compared case-insensitively, trailing `/` ignored) in the config's spelling, else `config.appUrl`.
+- Returns: `UrlPrefs`, normalised as above.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:294 -> lib/naming.ts:clampWordCount/clampRandomLength, lib/media/urls.ts:userBaseUrl.
+
+##### account.updateNaming
+- Signature: `updateNaming(input: UpdateNamingInput): Promise<void>`, with `UpdateNamingInput = { scheme: string; pattern?: string | null; wordCount?: number | null; randomLength?: number | null }`.
+- Auth: requireUser.
+- Does: `scheme` must be in `NAMING_SCHEMES`. `clean = (pattern ?? "").trim().slice(0,120) || null`. Then:
+  `UPDATE "user" SET naming_scheme = scheme, naming_pattern = (scheme == "custom" ? clean : null), naming_word_count = clampWordCount(wordCount), naming_random_length = clampRandomLength(randomLength)`.
+  Both numbers are always written; absent or null becomes 2 / 6.
+- Returns: undefined.
+- Errors (all masked):
+  - `Error("Unknown naming scheme")`.
+  - `Error("A custom pattern is required for the custom scheme")` when the scheme is custom and `clean` is null.
+  - `Error("That pattern does not produce a usable name")`. This is unreachable in practice: `buildCodeBase` falls back to `humanCode(10)` when the expansion is empty.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/profile`, `/dashboard` after the write.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:338 -> lib/naming.ts:isNamingScheme/buildCodeBase/clampWordCount/clampRandomLength.
+
+##### account.updatePreferredDomain
+- Signature: `updatePreferredDomain(domain: string | null): Promise<{ ok: boolean; baseUrl: string }>`
+- Auth: requireUser.
+- Does: `clean = domain?.trim().replace(/\/+$/, "") || null`. A non-null value that is not in `config.appDomains` (case-insensitive) returns `{ok:false, baseUrl: config.appUrl}` with no write. Otherwise `UPDATE "user" SET preferred_domain = clean`, stored exactly as typed after trim and slash strip, with case preserved.
+- Returns: `{ok:true, baseUrl: userBaseUrl(clean)}`, which is the config's spelling, or `config.appUrl` for null.
+- Errors: a `domain` that is neither a string nor null/undefined gives a TypeError [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `revalidatePath("/", "layout")` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:379 -> lib/media/urls.ts:isKnownDomain/userBaseUrl.
+
+##### account.myDefaultFilePassword
+- Signature: `myDefaultFilePassword(): Promise<DefaultPasswordState>`, with `DefaultPasswordState = { enabled: boolean; affected: number }`.
+- Auth: requireUser.
+- Does:
+  - `enabled = user.default_password_hash IS NOT NULL`.
+  - `affected = count(*) FROM uploads WHERE owner_id = me AND password_version IS NOT NULL`, trashed rows included.
+  - Never returns the hash.
+- Returns: `{enabled, affected}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:421 -> lib/data/user-prefs.ts:getDefaultPasswordPrefs/countFilesOnDefaultPassword.
+
+##### account.updateDefaultFilePassword
+- Signature: `updateDefaultFilePassword(password: string | null, applyToExisting?: boolean): Promise<DefaultPasswordResult>`. The default is `applyToExisting = false`. `DefaultPasswordResult = { ok: true; enabled: boolean; updated: number } | { ok: false; reason: "too-short" }`.
+- Auth: requireUser.
+- Does: a non-string password becomes `""`. A length of 1..3 (UTF-16 units) returns `{ok:false, reason:"too-short"}`. A non-empty password is hashed in format (F); empty means null. Then one transaction:
+  1. `UPDATE "user" SET default_password_hash = <hash|null>, default_password_version = coalesce(default_password_version,0)+1 WHERE id = me RETURNING default_password_version`. The version is bumped on set, replace **and** clear.
+  2. Only if `applyToExisting` is truthy: `UPDATE uploads SET password_hash = <hash|null>, password_version = (hash null ? NULL : new version) WHERE owner_id = me AND password_version IS NOT NULL RETURNING id`. Trashed rows are included and `uploads.updated_at` is untouched. `updated` is the row count.
+- Returns: `{ok:true, enabled: hash !== null, updated}` (`updated` is 0 without applyToExisting).
+- Errors: no user row gives `Error("Account not found")` [masked] and the transaction is rolled back.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/profile`, `/dashboard` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:464 -> lib/password.ts:hashPassword.
+
+##### account.myBackground
+- Signature: `myBackground(): Promise<BackgroundState>`, with `BackgroundState = { url: string | null; dim: number }`.
+- Auth: requireUser.
+- Does: reads `user_code, background_key, background_dim`.
+  - `url = backgroundUrl(userCode, key)`: null when either is missing. Otherwise `/bg/<encodeURIComponent(userCode)>`, plus `?v=<token>` when the key's file name (minus `.webp`) contains a `-` (token = text after the last `-`).
+  - `dim = clampDim(dim ?? 70)`.
+- Returns: `{url, dim}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:524 -> lib/background.ts:backgroundUrl/clampDim.
+
+##### account.updateBackgroundDim
+- Signature: `updateBackgroundDim(dim: number): Promise<{ dim: number }>`
+- Auth: requireUser.
+- Does: `value = clampDim(dim)`:
+  - null, undefined or `""` give 70.
+  - Other values go through `Number()`; non-finite gives 70.
+  - Otherwise the value is rounded and clamped to 0..95.
+
+  Then `UPDATE "user" SET background_dim = value`.
+- Returns: `{dim: value}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `revalidatePath("/", "layout")` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:550 -> lib/background.ts:clampDim.
+
+##### account.updatePublicProfile
+- Signature: `updatePublicProfile(enabled: boolean): Promise<void>`
+- Auth: requireUser.
+- Does: `UPDATE "user" SET public_profile = enabled WHERE id = me`.
+- Returns: undefined.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/profile` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:561.
+
+##### account.listAdminUsers
+- Signature: `listAdminUsers(): Promise<AdminUserRow[]>`
+- Auth: requireAdmin.
+- Does: three reads.
+  1. All users, `ORDER BY created_at ASC`.
+  2. `SELECT owner_id, count(*)::int FROM uploads WHERE deleted_at IS NULL GROUP BY owner_id`.
+  3. `SELECT value FROM verification WHERE identifier LIKE 'invite:%' AND expires_at > now`, which gives the pending-invite set.
+- Returns: one `AdminUserRow` per user:
+  - `id`, `name`, `email`
+  - `role` (null stays null), `banned` (null becomes false)
+  - `createdAt`: ISO string or null
+  - `tag`: `user_code` or null
+  - `avatar`: `avatarUrl(tag, image)`. A null image gives null. A value starting with `http(s)://` or `/` is passed through. An `avatars/` key with a tag gives `/avatar/<enc tag>[?v=<token>]`. Anything else gives null.
+  - `usedQuota` (null becomes 0), `maxQuota` (null becomes -1)
+  - `files`: live uploads
+  - `allowRootShortLinks`, `emailVerified` (null becomes false)
+  - `invitePending`
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:593 -> lib/invites.ts:pendingInviteUserIds, lib/avatar.ts:avatarUrl, lib/admin-users.ts (type).
+
+##### account.setUserQuota
+- Signature: `setUserQuota(userId: string, bytes: number): Promise<{ ok: boolean }>`
+- Auth: requireAdmin.
+- Does: returns `{ok:false}` when `!Number.isFinite(bytes)` (any non-number, numeric strings included) or when `Math.round(bytes)` is not a safe integer. Otherwise `value = bytes < 0 ? -1 : round(bytes)` and `UPDATE "user" SET max_quota = value WHERE id = userId`, with no existence check.
+- Returns: `{ok:true}` | `{ok:false}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:651.
+
+##### account.setUserTag
+- Signature: `setUserTag(userId: string, tag: string): Promise<{ ok: true; tag: string } | { ok: false; reason: TagIssue }>`
+- Auth: requireAdmin.
+- Does: like `updateTag`, for `userId`.
+  - Checks run in this order: `checkTag(clean)`; target user missing gives `{ok:false, reason:"error"}`; a `clean` equal to the target's current tag returns `{ok:true}` without writing.
+  - The transaction runs the taken/retired checks against users other than `userId`, then parks the target's old tag in `user_code_aliases` (on conflict do nothing) and updates `user_code`.
+  - Any non-conflict exception gives `error`.
+- Returns: as updateTag.
+- Errors: a non-string `tag` gives a TypeError [masked]. Exceptions inside the transaction are returned as `reason:"error"`.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin`, `/dashboard` after a committed write.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:671. Also called internally by `admin.updateUserAccount`.
+
+##### account.recalculateUserQuota
+- Signature: `recalculateUserQuota(userId: string): Promise<{ used: number }>`
+- Auth: requireAdmin.
+- Does: `used = coalesce(sum(size),0) FROM uploads WHERE owner_id = userId` (trashed rows included), then `UPDATE "user" SET used_quota = used WHERE id = userId`, with no existence check.
+- Returns: `{used}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:734.
+
+##### account.revokeMySession
+- Signature: `revokeMySession(id: string): Promise<{ outcome: RevokeSessionOutcome }>`, with `RevokeSessionOutcome = "ok" | "current" | "gone" | "error"`.
+- Auth: requireUser.
+- Does:
+  1. A non-string or blank `id` gives `gone`.
+  2. `id ===` the current `session.id` gives `current`.
+  3. `mySessionToken(id)`: better-auth `listSessions` for the caller returns the caller's non-expired sessions. The admin plugin's after-hook drops sessions that have `impersonated_by`. No session with that row id gives `gone`.
+  4. better-auth `revokeSession({token})` deletes the `session` row only when it belongs to the caller. Any throw gives `error`.
+- Returns: `{outcome}`.
+- Errors: better-auth `revokeSession` failures become `outcome:"error"`. A failure of the `listSessions` lookup (step 3) is not caught and gives the error envelope [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/profile` only for `ok`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:770 -> lib/data/sessions.ts:mySessionToken; better-auth api/routes/session.mjs (listSessions, revokeSession).
+
+##### account.revokeMyOtherSessions
+- Signature: `revokeMyOtherSessions(): Promise<{ ok: boolean; revoked: number }>`
+- Auth: requireUser.
+- Does:
+  1. `others` = number of non-current entries of `listMySessions()` (getSession plus listSessions; non-expired; impersonated sessions filtered out).
+  2. `others = 0` returns `{ok:true, revoked:0}` with no call and no revalidate.
+  3. Otherwise better-auth `revokeOtherSessions` deletes every non-expired session of the user except the current token. Impersonated sessions are deleted too, although they were not counted. A throw returns `{ok:false, revoked:0}`.
+- Returns: `{ok:true, revoked: others}` on success.
+- Errors: better-auth `revokeOtherSessions` failures become `{ok:false, revoked:0}`. A failure while listing sessions (step 1) is not caught and gives the error envelope [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/profile` on success with `others > 0`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: account.ts:796 -> lib/data/sessions.ts:listMySessions; better-auth revokeOtherSessions.
+
+#### Module `admin` (app/actions/admin.ts)
+
+No action in this module writes an audit row unless its block says so.
+
+`deleteMediaBulk(rows)` (lib/media/actions.ts), used by #23, #33 and uploads #90:
+
+1. Works in slices of 16 rows, run concurrently.
+2. For each row it calls `storage.delete(storage_key)`. A failure other than "already gone" (`ENOENT`, `NoSuchKey`, `NotFound`) marks the row **failed** and keeps it.
+3. It then deletes `thumb_key` (best effort) and runs `purgeDerived(id)` = `storage.deletePrefix("derived/<id>/")` (errors ignored).
+4. Cleared rows are deleted with `DELETE FROM uploads WHERE id IN (...)`, 500 ids per statement.
+5. Quota is refunded per owner with `UPDATE "user" SET used_quota = GREATEST(0, used_quota - <sum>)`. Orphans are skipped.
+6. Returns `{deleted, bytes, failed}`.
+
+`deleteMediaHard(row)`:
+
+- Deletes the storage object (errors ignored), the thumb (best effort), and `derived/<id>/`.
+- Then `DELETE FROM uploads WHERE id`, and the same GREATEST(0, ...) refund when the row has an owner.
+
+##### admin.loadOrphans
+- Signature: `loadOrphans(): Promise<OrphanOverview>`, with `OrphanOverview = { summary: OrphanSummary; items: OrphanRow[] }`.
+- Auth: requireAdmin.
+- Does: read-only, over `uploads WHERE owner_id IS NULL` (trashed rows included).
+  - `summary = {files, bytes, trashed (deleted_at not null), oldest, newest}`. `oldest`/`newest` are min/max `created_at` as ISO strings or null.
+  - `items` = up to 200 rows `ORDER BY created_at ASC`, each `{id, code, filename, ext, mimeType, size, storageKey, createdAt: ISO|null, deletedAt: ISO|null}`.
+- Returns: `{summary, items}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:67 -> lib/data/admin.ts:orphanSummary/listOrphans.
+
+##### admin.deleteOrphan
+- Signature: `deleteOrphan(id: string): Promise<{ ok: boolean }>`
+- Auth: requireAdmin.
+- Does:
+  1. A falsy `id` returns `{ok:false}`.
+  2. `SELECT id, owner_id, size, storage_key, thumb_key FROM uploads WHERE id = $id AND owner_id IS NULL`. No row returns `{ok:false}`; the ownerless predicate is part of the WHERE.
+  3. `deleteMediaHard`. There is no quota refund because the row has no owner.
+- Returns: `{ok:true}` | `{ok:false}`.
+- Errors: a non-uuid `id` gives a Postgres error [masked].
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:78 -> lib/media/actions.ts:deleteMediaHard.
+
+##### admin.purgeAllOrphans
+- Signature: `purgeAllOrphans(confirmation: string): Promise<PurgeResult>`, with `PurgeResult = { ok: boolean; reason?: "confirmation" | "empty"; deleted: number; bytes: number; failed: number }`.
+- Auth: requireAdmin.
+- Does:
+  1. Reads **all** orphan rows (`owner_id IS NULL`, trashed included, no limit).
+  2. None: `{ok:false, reason:"empty", deleted:0, bytes:0, failed:0}`.
+  3. `confirmationMatches(confirmation, count)` (components/admin/confirm.ts) strips `/[\s,._']/g`; the rest must match `/^\d+$/` and equal the count (a count of 0 or less never matches). Mismatch: `{ok:false, reason:"confirmation", deleted:0, bytes:0, failed:0}`.
+  4. Otherwise `deleteMediaBulk(rows)`.
+- Returns: `{ok:true, deleted, bytes, failed}`, with no `reason` key.
+- Errors: a non-string `confirmation` gives a TypeError [masked].
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:121 -> components/admin/confirm.ts:confirmationMatches, lib/media/actions.ts:deleteMediaBulk.
+
+##### admin.loadUserDetail
+- Signature: `loadUserDetail(userId: string): Promise<AdminUserDetail | null>`
+- Auth: requireAdmin.
+- Does: a falsy or unknown `userId` returns null. Otherwise it returns the `AdminUserRow` fields exactly as in `listAdminUsers` (`files` = this user's live uploads), plus:
+  - `username`: string or null
+  - `twoFactorEnabled`: null becomes false
+  - `publicProfile`, `skipTagInUrl`
+  - `hasPassword`: a credential `account` row exists with a non-null `password`
+  - `invitePending`: the first `verification` row with `identifier LIKE 'invite:%' AND value = userId` has `expires_at > now`
+- Returns: `AdminUserDetail` or null.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:185 -> lib/invites.ts:hasPendingInvite, lib/avatar.ts:avatarUrl.
+
+##### admin.updateUserAccount
+- Signature: `updateUserAccount(userId: string, patch: UpdateUserPatch): Promise<UpdateUserResult>`. Types:
+  - `UpdateUserPatch = { name?: string; username?: string | null; email?: string; tag?: string; newPassword?: string; maxQuota?: number; role?: "admin" | "user"; banned?: boolean; allowRootShortLinks?: boolean; publicProfile?: boolean; skipTagInUrl?: boolean }`
+  - `UpdateUserResult = { ok: true; changed: UserChange[]; sessionsRevoked: boolean; name: string; email: string } | { ok: false; reason: "not-found" } | { ok: false; reason: "invalid"; issues: UserFieldIssue[] }`
+  - `UserChange = "name"|"username"|"email"|"tag"|"password"|"quota"|"role"|"banned"|"permissions"`
+  - `UserFieldIssue` is one of:
+    - `{field:"name";reason:"empty"}`
+    - `{field:"username";reason:"charset"|"taken"}`
+    - `{field:"email";reason:"invalid"|"taken"}`
+    - `{field:"tag";reason:TagIssue}`
+    - `{field:"password";reason:"too-short"|"too-long"}`
+    - `{field:"quota";reason:"invalid"}`
+    - `{field:"role";reason:"self"}`
+    - `{field:"banned";reason:"self"}`
+- Auth: requireAdmin.
+- Does, phase 1 (validation only; a field counts only when its key is `!== undefined`):
+  - A falsy `userId` or unknown user returns `{ok:false, reason:"not-found"}`.
+  - `name`: trimmed, first 120 chars. Empty gives an issue. Changed when it differs from the stored name.
+  - `username`: `(v ?? "").trim() || null`. When it differs from the stored value (null-normalised):
+    - It must match `/^[a-zA-Z0-9][a-zA-Z0-9._-]{1,31}$/` (`charset`).
+    - It must not be used by another user with `lower(username) = lower(v)` (`taken`).
+    - null clears the username.
+  - `email`: trimmed and lowercased. It must match `/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/` and be at most 254 chars (`invalid`). When it differs case-insensitively from the stored address:
+    - Another user with `lower(email)` equal gives `taken`.
+    - Otherwise both the new email and `email_verified = true` are written.
+  - `newPassword`: checked only when non-empty. Below 8 chars gives `too-short`; above 128 gives `too-long`.
+  - `maxQuota`: not finite, or its rounding not a safe integer, gives `quota/invalid`. Otherwise `value = <0 ? -1 : round`; changed when it differs from the stored value (null treated as -1).
+  - `role`: changed when it differs from `stored ?? "user"`. Changing your own role gives `role/self`. **The value is not validated.**
+  - `banned`: changed when it differs from `stored ?? false`. Changing your own ban gives `banned/self`.
+  - `allowRootShortLinks` / `publicProfile` / `skipTagInUrl`: written when they differ from the stored value (null treated as false). Any of them changing adds `"permissions"`.
+  - Any issue returns `{ok:false, reason:"invalid", issues}` (all issues collected) and nothing is written.
+- Does, phase 2 (apply). Steps run in this order and are **not** one transaction:
+  1. If `patch.tag?.trim()` is defined and differs from `stored ?? ""`, call `account.setUserTag(userId, tag)` (its own transaction and revalidations). On failure return `{ok:false, reason:"invalid", issues:[{field:"tag", reason}]}`; nothing else has been written.
+  2. One `UPDATE "user" SET <changed columns>` (name, username, email + email_verified, max_quota, permission flags).
+  3. Role changed: better-auth admin `setRole` writes `UPDATE "user" SET role`.
+  4. Ban changed:
+     - Ban: `banUser` sets `banned=true, ban_reason='No reason'`, leaves `ban_expires` unchanged, and deletes all of the user's sessions.
+     - Unban: `unbanUser` sets `banned=false, ban_reason=NULL, ban_expires=NULL`.
+  5. `newPassword`:
+     - `writeCredentialPassword` updates the credential `account.password` with a BA hash. If no credential row exists it inserts `{id: randomUUID(), account_id: userId, provider_id:'credential', user_id, password, created_at, updated_at}`.
+     - Then better-auth `revokeUserSessions` deletes **all** of the user's sessions, the caller's own when editing yourself. `sessionsRevoked = true`.
+  6. Email changed: `revokeInvites(userId)` runs `DELETE FROM verification WHERE identifier LIKE 'invite:%' AND value = userId`.
+  7. Audit (only for these two changes):
+     - email: `admin.user.email_changed {by, byEmail, targetUserId, targetName, from: oldEmail, to: newEmail}`
+     - password: `admin.user.password_reset {by, byEmail, targetUserId, targetName, targetEmail, sessionsRevoked: true}`
+
+     `targetName`/`targetEmail` are the new values if changed, else the stored ones. Role, ban, name, quota and permission changes are **not** audited.
+  8. Mail, only when `mailReady()`. Send errors are logged and ignored. `locale = pickMailLocale(target.locale, Accept-Language)`.
+     - Email changed: `renderEmailChanged({locale, oldEmail, newEmail})` to the **old** address.
+     - Password: `renderPasswordChanged({locale, email})` to the current (new) address.
+- Returns: `{ok:true, changed, sessionsRevoked, name, email}` with the values after the write. `changed` contains a subset of `name, username, email, quota, permissions, tag, role, banned, password`, in that order. An empty patch is still `ok:true` and still revalidates.
+- Errors (all masked):
+  - A non-string `name` or `email` gives a TypeError.
+  - Exceptions from better-auth `setRole` / `banUser` / `unbanUser` / `revokeUserSessions` propagate after the earlier steps were committed (no rollback).
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` and `revalidatePath("/", "layout")` at the end of a successful run. `setUserTag` also revalidates `/dashboard/admin`, `/dashboard` when the tag changed, so a failure after step 1 still carries `revalidate`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:331 -> account.ts:setUserTag, lib/credentials.ts:writeCredentialPassword, lib/invites.ts:revokeInvites, lib/audit.ts, lib/mail-templates.ts:renderEmailChanged/renderPasswordChanged, better-auth plugins/admin/routes.mjs (setRole, banUser, unbanUser, revokeUserSessions).
+- Security: `role` reaches `setRole` unvalidated. The admin plugin is configured without `roles`, so there is no allow-list and an admin can store any string.
+
+##### admin.setUserRole
+- Signature: `setUserRole(userId: string, role: "admin" | "user"): Promise<UpdateUserResult>`
+- Auth: requireAdmin, through updateUserAccount.
+- Does: exactly `updateUserAccount(userId, { role })`. Changing your own role gives `{ok:false, reason:"invalid", issues:[{field:"role", reason:"self"}]}`. The value is not validated. There is no audit and no mail.
+- Returns / Errors: as updateUserAccount.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` and `/` (layout) on ok. The tag never changes here.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:560.
+
+##### admin.setUserBanned
+- Signature: `setUserBanned(userId: string, banned: boolean): Promise<UpdateUserResult>`
+- Auth: requireAdmin, through updateUserAccount.
+- Does: exactly `updateUserAccount(userId, { banned })`. A ban also deletes all of the target's sessions (better-auth `banUser`). Banning yourself gives `banned/self`. There is no audit.
+- Returns / Errors: as updateUserAccount.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` and `/` (layout) on ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:571.
+
+##### admin.createAccount
+- Signature: `createAccount(input: CreateAccountInput): Promise<CreateAccountResult>`. Types:
+  - `CreateAccountInput = { email: string; name?: string; role?: "admin" | "user"; mode: "password" | "invite"; password?: string }`
+  - `CreateAccountResult = { ok: true; userId: string; email: string; invited: boolean; mailSent: boolean } | { ok: false; reason: "invalid-email" | "weak-password" | "taken" | "mail-unavailable" | "failed"; detail?: string }`
+- Auth: requireAdmin. `register_enabled` and the registration key do **not** apply.
+- Does:
+  1. `email = input.email.trim().toLowerCase()`. It must match `/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/` and be at most 254 chars, else `invalid-email`.
+  2. `invite = (mode === "invite")`; any other mode value means password mode. In password mode, a missing password or one below 8 chars gives `weak-password` (there is no max).
+  3. Invite mode with `!mailReady()` gives `mail-unavailable`.
+  4. An existing user with `lower(email) = email` gives `taken`.
+  5. better-auth admin `createUser` is called with the request headers and `{email, name: name?.trim() || email, password: invite ? <randomBytes(24) base64url> : password, role: role ?? "user"}`. It inserts:
+     - A `user` row: `id` = 32 random `[a-zA-Z0-9]`; email lowercased; `email_verified=false`; created/updated now. Database hooks in lib/auth.ts set `role` (`"admin"` when the table was empty, else the supplied `"admin"`/`"user"`, anything else `"user"`), `user_code` (unique 6-char consonant/vowel code) and `max_quota = DEFAULT_USER_QUOTA` (default -1).
+     - A credential `account` row: `account_id = user id`, `password` = BA hash.
+
+     Any throw returns `{ok:false, reason:"failed", detail: err.message}`. better-auth validates the address with zod `email()`, which is stricter than the regex above. Possible messages include "User already exists. Use another email.", "Invalid email" and "Could not allocate a unique user code".
+  6. Invite mode:
+     - `UPDATE account SET password = NULL WHERE user_id AND provider_id = 'credential'`.
+     - `createInvite(userId)` deletes earlier `invite:` rows for the user and inserts `verification {id: randomUUID(), identifier: "invite:" + sha256hex(token), value: userId, expires_at: now + 7 days, created_at, updated_at}`, where `token` = 32 random bytes as base64url.
+     - Mail: `renderAccountInvited({locale: pickMailLocale(null, Accept-Language), email, url: APP_URL + "/invite/" + token})` through `sendMail`. A failure is logged and gives `mailSent = false`.
+  7. Password mode: `UPDATE "user" SET email_verified = true`.
+  8. Audit `admin.user.created {by, byEmail, targetUserId, targetEmail, mode: input.mode (raw), role: input.role ?? "user" (raw), mailSent}`.
+- Returns: `{ok:true, userId, email, invited, mailSent}`. `mailSent` is always false in password mode.
+- Errors: a non-string `email` gives a TypeError [masked].
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:622 -> lib/invites.ts:createInvite, lib/mail-templates.ts:renderAccountInvited, lib/mail.ts:sendMail, better-auth plugins/admin/routes.mjs:createUser, lib/auth.ts:databaseHooks.
+- Security:
+  - `detail` is returned as data, so it is **not** masked: raw better-auth or DB messages reach the admin.
+  - When the thrown value is not an Error, `detail` is present with value undefined.
+
+##### admin.resendInvite
+- Signature: `resendInvite(userId: string): Promise<InviteActionResult>`, with `InviteActionResult = { ok: true } | { ok: false; reason: "not-found" | "mail-unavailable" | "send-failed" }`.
+- Auth: requireAdmin.
+- Does:
+  1. A falsy `userId` gives `not-found`.
+  2. `!mailReady()` gives `mail-unavailable`.
+  3. An unknown user gives `not-found`.
+  4. `createInvite(userId)` replaces any earlier invitation. The old link dies even if this send fails, and the new row stays.
+  5. Mail: `renderAccountInvited({locale: pickMailLocale(target.locale, Accept-Language), email: target.email, url: APP_URL + "/invite/" + token})`. A send failure returns `{ok:false, reason:"send-failed"}`.
+  6. On success, audit `admin.user.invited {by, byEmail, targetUserId, targetEmail}`.
+- Returns: `{ok:true}` or a refusal.
+- Errors: send failures are returned as `send-failed`; DB failures in `createInvite` throw [masked].
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:716 -> lib/invites.ts:createInvite.
+- Security: works for **any** account, not only pending invitations. Accepting the link sets that account's password and confirms its address.
+
+##### admin.setUserEmailVerified
+- Signature: `setUserEmailVerified(userId: string, verified: boolean): Promise<{ ok: boolean }>`
+- Auth: requireAdmin.
+- Does:
+  1. A falsy or unknown `userId` returns `{ok:false}`.
+  2. `UPDATE "user" SET email_verified = verified`.
+  3. Audit `admin.user.email_verified {by, byEmail, targetUserId, targetEmail, verified}`.
+- Returns: `{ok:true}` | `{ok:false}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:763.
+
+##### admin.sendVerificationLink
+- Signature: `sendVerificationLink(userId: string): Promise<InviteActionResult>`
+- Auth: requireAdmin.
+- Does:
+  1. A falsy `userId` gives `not-found`; `!mailReady()` gives `mail-unavailable`; an unknown user gives `not-found`.
+  2. better-auth `sendVerificationEmail({email: target.email, callbackURL: "/dashboard"})` is called with the request headers **minus `Cookie` and `Authorization`** (`headersWithoutSession`), so the session-less branch runs:
+     - An address that is already verified, or not found, sends nothing and still succeeds.
+     - Otherwise better-auth signs an email-verification JWT (default 1 h) and calls `lib/auth.ts` `sendVerificationEmail`. That callback checks `mailReady()` again and sends `renderVerifyEmail({locale: user.locale pl/en else "en", email, url: APP_URL + "/api/auth/verify-email?token=<jwt>&callbackURL=%2Fdashboard"})`.
+  3. Any throw returns `{ok:false, reason:"send-failed"}`.
+- Returns: `{ok:true}` or a refusal.
+- Errors: none thrown; every better-auth or mail failure is returned as `send-failed`.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none. Audit: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:791 -> lib/auth-helpers.ts:headersWithoutSession, better-auth api/routes/email-verification.mjs.
+
+##### admin.loadDeletionImpact
+- Signature: `loadDeletionImpact(userId: string): Promise<UserDeletionImpact | null>`, with `UserDeletionImpact = { id: string; email: string; name: string; tag: string | null; files: number; bytes: number; trashed: number; folders: number; shortLinks: number; tokens: number }`.
+- Auth: requireAdmin.
+- Does: a falsy or unknown `userId` returns null. Otherwise:
+  - The user's `{id, email, name, user_code}`.
+  - Over the user's uploads (trashed included): `count`, `coalesce(sum(size),0)` and the trashed count.
+  - Row counts in `folders`, `short_links` and `api_tokens` owned by the user.
+- Returns: `UserDeletionImpact` or null.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:826 -> lib/data/admin.ts:userDeletionImpact.
+
+##### admin.deleteUserAccount
+- Signature: `deleteUserAccount(userId: string, disposition: FileDisposition): Promise<DeleteAccountResult>`. Types:
+  - `FileDisposition = "delete" | "keep"`
+  - `DeleteAccountResult = { ok: true; deleted: number; bytes: number; orphaned: number; failed: number } | { ok: false; reason: "self" | "not-found" | "forbidden" | "files-removed" }`
+- Auth: requireAdmin.
+- Does:
+  1. A falsy `userId` gives `not-found`. `userId` equal to the caller gives `self`. `userDeletionImpact` null gives `not-found`.
+  2. `disposition === "delete"`: loop over `SELECT id, owner_id, size, storage_key, thumb_key FROM uploads WHERE owner_id = userId [AND id NOT IN stuck] LIMIT 500` (trashed rows included) and run `deleteMediaBulk` on each batch. Rows that storage refused are re-read and parked in `stuck`, which is excluded from later batches; `failed = stuck.length`. Any other value means "keep": nothing is done, and the FK `uploads.owner_id ON DELETE SET NULL` orphans the rows.
+  3. `revokeInvites(userId)`.
+  4. better-auth admin `removeUser` (request headers) deletes the user's sessions, then `account` rows, then the `user` row. FK cascades remove folders, api_tokens, short_links, user_code_aliases, duplicate_dismissals, client_settings and two_factor; `uploads.owner_id` and `audit_log.user_id` become NULL. A throw returns `{ok:false, reason: deleted > 0 ? "files-removed" : "forbidden"}`.
+- Returns: `{ok:true, deleted, bytes, failed, orphaned: disposition === "keep" ? impact.files : failed}`.
+- Errors: `removeUser` failures are returned as `files-removed`/`forbidden`. Storage refusals inside the delete loop are counted in `failed`, not thrown. DB exceptions inside the loop propagate [masked], after earlier batches were already committed.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin`, `/dashboard` when ok. Audit: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:863 -> lib/data/admin.ts:userDeletionImpact, lib/media/actions.ts:deleteMediaBulk, lib/invites.ts:revokeInvites, better-auth removeUser.
+
+##### admin.recalculateEveryQuota
+- Signature: `recalculateEveryQuota(): Promise<QuotaRecalcResult>`, with `QuotaRecalcResult = { accounts: number; corrected: number; drift: number; changes: { id: string; email: string; before: number; after: number }[] }`.
+- Auth: requireAdmin.
+- Does:
+  1. Reads all users `(id, email, used_quota)`.
+  2. Reads `coalesce(sum(size),0)` per `owner_id` over uploads with a non-null owner (trashed included).
+  3. For every user whose `used_quota` (null treated as 0) differs from the actual sum (missing treated as 0), runs `UPDATE "user" SET used_quota = actual`, one statement per user.
+  4. `drift` = sum of (after − before). `changes` holds at most 50 entries.
+- Returns: `{accounts: number of users read, corrected, drift, changes}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:948 -> lib/data/admin.ts:recalculateAllQuotas.
+
+##### admin.runStorageScan
+- Signature: `runStorageScan(): Promise<StorageScanResult>`, with `StorageScanResult = { supported: boolean; driver: string; scanned: number; orphans: number; orphanBytes: number; sample: { key: string; size: number; modifiedAt: string | null }[]; truncated: boolean; skippedRecent: number }`.
+- Auth: requireAdmin.
+- Does: read-only.
+  - A storage driver other than `"local"` returns `{supported:false, driver, scanned:0, orphans:0, orphanBytes:0, sample:[], truncated:false, skippedRecent:0}`.
+  - Local driver:
+    1. `known` = every `uploads.storage_key` and `thumb_key`, normalised to `/` separators.
+    2. The scan walks `resolve(STORAGE_LOCAL_PATH)` depth-first (LIFO stack) and skips the top-level directories `derived`, `backgrounds` and `avatars`. Only regular files count, and the walk stops after 250,000 files (`truncated: true`). Unreadable directories are skipped.
+    3. For each file whose relative key is not in `known`:
+       - mtime younger than 1 h: `skippedRecent++`.
+       - Otherwise `orphans++` and `orphanBytes += size`. The first 100 go into `sample` as `{key, size, modifiedAt: ISO}`.
+- Returns: `StorageScanResult` as above.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: admin.ts:956 -> lib/data/admin.ts:scanStorageOrphans.
+
+#### Module `authorize` (app/actions/authorize.ts)
+
+##### authorize.approveDesktopClient
+- Signature: `approveDesktopClient(input: { port: string; state: string; name: string }): Promise<ApproveDesktopResult>`. Types:
+  - `ApproveDesktopResult = { ok: true; token: string; callback: string; state: string } | { ok: false; reason: AuthorizeRefusal }`
+  - `AuthorizeRefusal = "signed-out" | "invalid-request" | "rate-limited" | "error"`
+- Auth: session-or-data. No session returns `{ok:false, reason:"signed-out"}`. It does not redirect.
+- Does:
+  1. `parseAuthorizeRequest` validates the input (lib/authorize/loopback.ts). Each value must be a **string**; arrays and numbers are refused. A null `input` is tolerated (`input?.x`). Any failure returns `invalid-request`.
+     - `port`: trimmed; matches `/^[1-9][0-9]{3,4}$/`; numeric value 1024..65535.
+     - `state`: trimmed; matches `/^[A-Za-z0-9._~-]{8,128}$/`.
+     - `name`: optional. `\p{C}` characters become spaces, whitespace runs collapse, the result is trimmed, cut to 64 chars and trimmed again.
+  2. Rate limit: key `<clientIp>|authorize:<userId>`, at most 10 per 15 min. Calls that pass validation count, successful ones included, and the bucket is never reset. Over the limit returns `rate-limited`.
+  3. Inside a try:
+     - `createApiToken(userId, tokenNameFor(clientName), "write")`. The name is `"Desktop client"`, or `"Desktop: " + name` cut to 120 chars. The token is `randomBytes(24)` base64url (32 chars). It inserts `api_tokens {user_id, name, scope:'write', token_hash: sha256 hex(token), preview: last 6 chars}`.
+     - Audit `api_token.authorized {client: clientName || null, port: <number>, preview: last 6 chars}`.
+     - `revalidatePath`.
+
+     Any throw inside the try returns `{ok:false, reason:"error"}`.
+- Returns: `{ok:true, token, callback: "http://127.0.0.1:<port>/", state}`, with the callback built from the parsed number.
+- Errors: failures while minting the token or revalidating are returned as `reason:"error"` (the audit write never throws). A failure of the session lookup itself gives the error envelope [masked].
+- Redirect / notFound: none (no session is a result value). Never notFound.
+- Revalidate: `/dashboard/tokens` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Headers: X-Real-IP (rate-limit key, audit ip).
+- Upstream: authorize.ts:45 -> lib/authorize/loopback.ts:parseAuthorizeRequest/tokenNameFor, lib/api-token.ts:createApiToken, lib/password.ts:checkRateLimit/clientIp, lib/audit.ts.
+- Security: returns the plaintext token (shown once, by design).
+
+#### Module `avatar` (app/actions/avatar.ts)
+
+"Pickable image" (`isPickableImage`): `effectiveType(mime, ext)` (lib/media/mime.ts) starts with `image/` and is not `image/svg+xml`. The stored MIME is used unless it is empty or useless (for example `application/octet-stream`); in that case the MIME is derived from the extension.
+
+##### avatar.listAvatarPicks
+- Signature: `listAvatarPicks(params?: { page?: number; search?: string }): Promise<AvatarPickPage>`. The default is `params = {}`. Types:
+  - `AvatarPickPage = { items: AvatarPick[]; total: number; page: number; perPage: number }`
+  - `AvatarPick = { id: string; filename: string; thumbUrl: string; blurhash: string | null; size: number; published: boolean; tooLarge: boolean }`
+- Auth: requireUser.
+- Does: `listUploads` over the caller's **live** uploads with `mime_type LIKE 'image/%'`, `ORDER BY created_at DESC`, 24 per page, `OFFSET (page-1)*24`.
+  - `page`: a non-number or non-finite value gives 1; otherwise floored and clamped to 1..1,000,000.
+  - `search`: trimmed. When non-empty, `filename ILIKE '%s%' OR code ILIKE '%s%'`; `%` and `_` in the input are **not** escaped.
+  - The page rows are then filtered by `isPickableImage`, which removes SVGs. A page can therefore hold fewer than 24 items, and `total` is the SQL count before filtering.
+  - `tag` = the caller's `user_code`, or `""`.
+- Returns: one item per row:
+  - `id`, `filename`, `blurhash`, `published`
+  - `thumbUrl`: `/<tag>/<code>/raw[.<ext>]?w=200&h=200`, relative
+  - `size`: Number
+  - `tooLarge`: size above 8 MiB
+- Errors: a non-string `search`, or a null `params`, gives a TypeError [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: avatar.ts:71 -> lib/data/uploads.ts:listUploads.
+
+##### avatar.setAvatarFromUpload
+- Signature: `setAvatarFromUpload(uploadId: string): Promise<AvatarActionResult>`. Types:
+  - `AvatarActionResult = { ok: true; url: string | null; animated: boolean; degraded: AvatarDegradation | null } | { ok: false; error: AvatarSaveError | "not-found" | "too-large" | "unsupported" }`
+  - `AvatarDegradation = "frames" | "pixels" | "output-size"`
+  - `AvatarSaveError = "decode" | "too-many-pixels" | "busy" | "aborted"`
+- Auth: requireUser.
+- Does:
+  1. A non-uuid id (case-insensitive check) gives `not-found`. The ids are guarded and never reach SQL.
+  2. `SELECT storage_key, mime_type, ext, size FROM uploads WHERE id AND owner_id = me AND deleted_at IS NULL`. No row gives `not-found`.
+  3. Not a pickable image gives `unsupported`. Size above 8 MiB gives `too-large`.
+  4. `storage.readBuffer` throws: `not-found`.
+  5. `saveAvatar(userId, bytes)` runs `encodeAvatar` inside the shared image limiter (weight 1, timeout 10 s). A busy or timed-out limiter gives `busy`; an abort gives `aborted`; any other throw, or an unreadable probe, gives `decode`. The encoder (lib/media/avatar.ts):
+     - A single frame over 64 Mpx is refused with `too-many-pixels`.
+     - More than 120 frames gives a still with `degraded "frames"`. Width × frame height × frames above 40 Mpx gives a still with `degraded "pixels"`.
+     - Output: a square WebP, edge = min(256, w, h), cover crop. Stills use `attention` positioning, quality 82 and EXIF rotation. Animations use `centre` positioning and quality 60. effort 4.
+     - An animated result above 512 KiB is re-encoded as a still with `degraded "output-size"`.
+  6. Storage write `avatars/<userId>-<16 hex>.webp`.
+  7. `UPDATE "user" SET image = <key> RETURNING (old image, user_code)`.
+  8. The previous object is deleted when it was an `avatars/` key different from the new one. Errors are ignored.
+- Returns: `{ok:true, url: "/avatar/<enc user_code>?v=<16 hex>" (null without a tag), animated, degraded}`.
+- Errors: storage write or DB failures throw [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `revalidatePath("/", "layout")` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: avatar.ts:123 -> lib/avatar-store.ts:saveAvatar, lib/media/avatar.ts:encodeAvatar, lib/avatar.ts:planAvatar/avatarKey/avatarUrl.
+
+##### avatar.myAvatar
+- Signature: `myAvatar(): Promise<{ url: string | null }>`
+- Auth: requireUser.
+- Does: reads `user_code, image` and returns `avatarUrl(user_code, image)` (rules under account.listAdminUsers).
+- Returns: `{url}` (string or null).
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: avatar.ts:175 -> lib/avatar.ts:avatarUrl.
+
+#### Module `convert` (app/actions/convert.ts)
+
+`loadOwned(ids)` is used by #40 and #41:
+
+1. Runs `getSession()`; no session throws `Error("Unauthorized")` [masked].
+2. `unique = dedupe(ids).filter(Boolean).slice(0, 500)`. Empty returns `[]`.
+3. `SELECT id, owner_id, ext, mime_type, frames, width, height, size, kind, deleted_at, expires_at FROM uploads WHERE id IN (unique)`. A **non-uuid id gives a Postgres error [masked]**. Trashed rows are included.
+4. Non-admins keep only rows whose `owner_id` is the caller.
+
+##### convert.convertTargetsForUpload
+- Signature: `convertTargetsForUpload(id: string): Promise<DownloadOption[]>`, with `DownloadOption = { to: string; engine: "image" | "av"; section: DownloadSection; motion?: Motion; yields?: AvYield; cost?: AvCost }`.
+- Auth: session-or-throw, through loadOwned.
+- Does: `loadOwned([id])`. The first row goes through `convertTargetsForRow(row)` = `downloadOptionsFor(mime, ext, frames, {canEncode: true, width, height})` (lib/media/download-menu.ts, the same list as the "Download as..." menu). No row returns `[]`.
+- Returns: `DownloadOption[]`, possibly empty.
+- Errors: `Error("Unauthorized")` and the non-uuid Postgres error from loadOwned [masked].
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: convert.ts:48 -> lib/media/convert-plan.ts:convertTargetsForRow, lib/media/download-menu.ts:downloadOptionsFor.
+
+##### convert.convertTargetsForSelection
+- Signature: `convertTargetsForSelection(ids: string[], mode?: ConvertMode): Promise<TargetSummary[]>`. The default is `mode = "replace"`. Types:
+  - `ConvertMode = "replace" | "copy"`
+  - `TargetSummary = { to: string; engine: "image" | "av"; eligible: number; alreadyInFormat: number; unsupported: number }`
+- Auth: session-or-throw.
+- Does: `bulkTargetSummary(loadOwned(ids), mode)`.
+  - The targets are the union of every row's targets, in first-seen order.
+  - Each row is classified per target with `planConversion(row, to, mode)` (rules under #42): eligible, `already-in-format`, or unsupported (which also covers trashed, paste-in-replace and expired rows).
+  - Targets with 0 eligible are dropped.
+  - The rest are sorted by eligible descending, then first-seen order.
+- Returns: `TargetSummary[]`, possibly empty.
+- Errors: `Error("Unauthorized")` and the non-uuid Postgres error from loadOwned [masked].
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: convert.ts:63 -> lib/media/convert-plan.ts:bulkTargetSummary/planConversion.
+
+##### convert.convertUpload
+- Signature: `convertUpload(id: string, to: string, mode: ConvertMode): Promise<ConvertOutcome>`. Types:
+  - `ConvertOutcome` is one of:
+    - `{status:"converted"; uploadId; code; ext; mimeType; size; previousSize; previousExt; note?}`
+    - `{status:"created"; uploadId; sourceId; code; ext; mimeType; size; note?}`
+    - `{status:"skipped"; uploadId; reason: "already-in-format"|"unsupported-target"|"paste"|"trashed"|"expired"}`
+    - `{status:"failed"; uploadId; reason: "not-found"|"forbidden"|"unsupported-target"|"too-large"|"quota"|"no-space"|"busy"|"timeout"|"aborted"|"conflict"|"storage"|"encoder"}`
+  - `note` is always present in converted/created, possibly with value undefined.
+- Auth: session-or-throw (`Error("Unauthorized")` [masked]).
+- Does: `convertUploadInPlace({uploadId: id, to, mode, actor: {id, role}})` (lib/media/convert-in-place.ts).
+  1. `SELECT * FROM uploads WHERE id`. A non-uuid id gives a Postgres error [masked]. No row gives `failed not-found`.
+  2. Not an admin, and the row is ownerless or owned by someone else: `failed forbidden`.
+  3. `planConversion` (lib/media/convert-plan.ts), checked in this order:
+     - `deleted_at` set: `skipped trashed`.
+     - `kind = 'paste'` and `mode === "replace"`: `skipped paste`.
+     - `expires_at <= now`: `skipped expired`.
+     - Already that format (MIME/extension table, aliases jpeg/jpe→jpg, apng→png): `skipped already-in-format`.
+     - No engine for `to` (AV checked before image), or an unknown target: `skipped unsupported-target`.
+  4. `mode === "copy"` on an ownerless row: `failed forbidden`.
+  5. Size above the limit gives `failed too-large`. The limit is 512 MiB for the AV engine and 32 MiB for images.
+  6. Not enough disk headroom for the source size gives `failed no-space`. This applies only to the local driver with `MIN_FREE_DISK_BYTES > 0` (default 10 GiB), and requires `free - size >= floor`.
+  7. AV engine without an `avOptionFor`, or an image target that is not one of `pdf, png, jpg, webp, avif`: `failed unsupported-target`.
+  8. Encode inside the shared limiter (weight 2; image timeout 15 s, AV timeout from `avTimeoutFor`). Busy gives `busy`, a timeout `timeout`, an abort `aborted`, and other throws `encoder`. Encoder-level refusals map to `encoder`, `too-large` or `storage` (see `produceImage`/`produceAv`).
+  9. `mode === "copy"` gives `commitCopy`; **any other value** gives `commitReplace`.
+     - **Replace**:
+       - Store under `swapKeyExt(storage_key, newExt)` with `-<12 hex>` inserted before the extension. Headroom is re-checked with the real size (`no-space`), and a stat size mismatch or write error gives `storage`.
+       - Then one transaction:
+         1. `SELECT storage_key, size, owner_id ... FOR UPDATE`. A changed storage key gives `conflict`.
+         2. Quota `delta = newSize - oldSize`. A negative delta runs `used_quota = greatest(0, coalesce(used_quota,0)+delta)`. A positive one runs a conditional UPDATE that requires `max_quota IS NULL OR max_quota < 0 OR used+delta <= max_quota`, else `quota`.
+         3. `UPDATE uploads SET ext, mime_type, size, storage_key, checksum, width, height, frames, duration_seconds, fps, blurhash, thumb_key = NULL, filename = <ext swapped>, converted_at = now, original_ext = coalesce(original_ext, old ext), updated_at = now WHERE id AND storage_key = old`. Zero rows gives `conflict`.
+       - `code`, `delete_token`, counters, folder, `published` and the password/expiry/view settings stay unchanged.
+       - On failure the new object is deleted and the outcome is `failed` with the abort reason, else `storage`.
+       - After commit: `purgeDerived(id)`, delete the old object (if the key differs) and the old thumb.
+     - **Copy**:
+       - Load the owner row. `allocateCodeFor(owner, newFilename)` picks a code under the owner's naming scheme, and the key is `storageKeyFor(user_code ?? "u", code, ext)` + `-<12 hex>`.
+       - Store, then one transaction: charge the full size (conditional as above, else `quota`) and `INSERT uploads` with:
+         - Copied from the source: `owner_id`, `folder_id`, `published`, `password_hash`, `password_version`, `expires_at`, `max_views`.
+         - Set fresh: `kind='file'`, `language=NULL`, new `code`/`filename`/`ext`/`mime_type`/`size`/`storage_key`/`checksum`/`width`/`height`/`frames`/`blurhash`, `delete_token = randomBytes(16) base64url`, `converted_at = now`, `original_ext = source ext`.
+         - **Not** set: `duration_seconds` and `fps`.
+       - On failure the object is deleted and the outcome is `failed` with the abort reason, else `conflict`.
+  10. `afterConversion`, when the status is converted or created:
+      - `revalidatePath("/dashboard")`.
+      - When the affected row is owned by someone other than the actor (ownerless rows included), insert `audit_log {user_id: actor, action: mode === "replace" ? "convert.replace" : "convert.copy", detail: {to, uploadIds: [...]}, ip: clientIp}`. Errors are swallowed. The affected row is `uploadId` for converted and `sourceId` for created.
+- Returns: the outcome.
+- Errors: `Error("Unauthorized")` [masked]; a non-uuid `id` gives a Postgres error [masked]. Exceptions outside the guarded steps also propagate [masked], for example `allocateCodeFor` finding no free code in copy mode.
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard` only when status is converted or created.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Headers: X-Real-IP (audit ip, foreign rows only).
+- Upstream: convert.ts:76 -> lib/media/convert-in-place.ts:convertUploadInPlace (produceImage, produceAv, commitReplace, commitCopy, chargeQuota, storeProduced), lib/media/convert-plan.ts:planConversion/conversionRowPatch, lib/upload/finalize.ts:allocateCodeFor.
+- Note: an unknown `mode` behaves as replace but is audited as `convert.copy`.
+
+##### convert.convertUploads
+- Signature: `convertUploads(ids: string[], to: string, mode: ConvertMode): Promise<ConvertReport>`, with `ConvertReport = { to: string; mode: ConvertMode; converted: number; skipped: number; failed: number; results: ConvertOutcome[] }`.
+- Auth: session-or-throw.
+- Does: `unique = dedupe(ids).slice(0, 25)`. Falsy ids are not removed. Each id runs `convertUploadInPlace` **sequentially** (same rules as #42), then one `afterConversion` covers all results: one revalidate, and one audit row listing every foreign id.
+- Returns: `{to, mode, converted: count(converted|created), skipped, failed, results}`.
+- Errors: a non-uuid id throws a Postgres error [masked] in the middle of the batch. Earlier conversions stay committed, and `afterConversion` does **not** run for them (no revalidate, no audit).
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard` when at least one result is converted or created.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: convert.ts:109 -> as #42.
+
+#### Module `duplicates` (app/actions/duplicates.ts)
+
+Every action here is session-or-data: no session returns `{ok:false, error:"unauthorized"}`.
+
+##### duplicates.scanMyDuplicates
+- Signature: `scanMyDuplicates(): Promise<ScanResult>`. Types:
+  - `ScanResult = { ok: true; scan: DuplicateScan } | { ok: false; error: "unauthorized" | "failed" }`
+  - `DuplicateScan = { groups: DuplicateGroup[]; totalGroups; totalFiles; reclaimable; dismissedGroups; active: {groups, redundant, reclaimable}; truncated: boolean; unchecksummed: number; scannedAt: string }`
+  - `DuplicateGroup = { checksum; copies; size; bytes; reclaimable; dismissed: boolean; files: DuplicateFile[] }`
+  - `DuplicateFile = { id; code; filename; ext; mimeType; size; createdAt: ISO; folderId; folderName; views; downloads; url; blurhash }`
+- Auth: session-or-data.
+- Does: read-only, in three queries (lib/data/duplicates.ts:scanDuplicates).
+  1. The grouped aggregate over the caller's **live** uploads with a non-null, non-empty checksum, `GROUP BY checksum HAVING count(*) > 1`:
+     - Each group carries `copies`, `bytes = sum(size)` and `keep = max(size)`.
+     - A LEFT JOIN on `duplicate_dismissals` gives `dismissed`.
+     - Window totals: `total_groups`, `total_files`, `total_reclaimable = sum(bytes-keep)`, and the same with dismissed sets excluded (`active_*`; `redundant = sum(copies-1)`).
+     - `ORDER BY dismissed, bytes-keep DESC, checksum`, `LIMIT 100`.
+  2. The rows of those checksums (live, own), with a LEFT JOIN on folders for `folderName`, `ORDER BY checksum, created_at, id`, `LIMIT 2000`.
+  3. The count of live own uploads whose checksum is NULL or `''` (`unchecksummed`).
+
+  Groups are built oldest-first inside each group. Single-row groups are dropped. Each group lists at most 50 files. `reclaimable = max(0, bytes - first file size)`. Groups are ordered with dismissed ones last, then by reclaimable descending, then by checksum. Each `url = mediaUrls(owner, code, ext).url`, an absolute URL on the preferred domain, tagless when `skip_tag_in_url`. `dismissedGroups = totalGroups - active.groups`. `truncated = totalGroups > groups.length`. No duplicates returns an empty scan with `unchecksummed` set.
+- Returns: `{ok:true, scan}`; any exception gives `{ok:false, error:"failed"}`.
+- Errors: none thrown; every exception in the scan is returned as `failed`.
+- Redirect / notFound: none (no session is a result value). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: duplicates.ts:42 -> lib/data/duplicates.ts:scanDuplicates/duplicateAggregateQuery/bucketByChecksum, lib/upload/duplicate-lookup.ts:countUnchecksummed, lib/media/urls.ts:mediaUrls.
+
+##### duplicates.trashDuplicates
+- Signature: `trashDuplicates(ids: string[]): Promise<TrashResult>`, with `TrashResult = { ok: true; trashed: number; bytes: number; skipped: number } | { ok: false; error: "unauthorized" | "empty" | "malformed" | "too-many" | "failed" }`.
+- Auth: session-or-data.
+- Does:
+  1. `parseUploadIds`:
+     - Not an array, or empty: `empty`.
+     - More than 2000 entries: `too-many`.
+     - Any entry that is not a string, or not a uuid after trim: `malformed`. The ids are guarded.
+     - The ids are lowercased and deduplicated.
+  2. `UPDATE uploads SET deleted_at = now WHERE id IN (ids) AND owner_id = me AND deleted_at IS NULL RETURNING id, size, code`. `updated_at` is untouched. A DB exception gives `failed`.
+  3. `purgeDerived` for each returned id, 16 at a time.
+  4. Only when at least one row changed: audit `uploads.duplicates_trashed {count, bytes, requested: ids.length, codes: first 50 codes}`.
+- Returns: `{ok:true, trashed, bytes (sum of returned sizes), skipped: requested - trashed}`.
+- Errors: none thrown; a DB exception in the UPDATE is returned as `failed`, and derived-cache and audit failures are swallowed.
+- Redirect / notFound: none (no session is a result value). Never notFound.
+- Revalidate: `/dashboard`, `/dashboard/trash`, `/dashboard/profile`, `/dashboard/duplicates` and `revalidatePath("/dashboard", "layout")` on every ok result, 0 trashed included.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: duplicates.ts:86 -> lib/data/duplicates.ts:parseUploadIds, lib/media/derived-cache.ts:purgeDerived.
+
+##### duplicates.keepDuplicateSets
+- Signature: `keepDuplicateSets(sets: DismissalInput[]): Promise<KeepResult>`. Types:
+  - `DismissalInput = { checksum: string; copies: number; bytes: number }`
+  - `KeepResult = { ok: true; kept: number; checksums: string[] } | { ok: false; error: "unauthorized" | "empty" | "malformed" | "too-many" | "failed" }`
+- Auth: session-or-data.
+- Does:
+  1. A non-array input is treated as `[]`.
+  2. `parseChecksums(sets.map(s => s?.checksum))`:
+     - Empty: `empty`.
+     - More than 500 entries: `too-many`.
+     - Any entry that is not a string, or not 64 lowercase hex after trim and lowercase: `malformed`.
+     - Checksums are deduplicated.
+  3. Each checksum is matched back to its input entry through the normalised checksum, to read `copies`/`bytes`; an entry without a match uses 0/0.
+  4. `INSERT INTO duplicate_dismissals (owner_id, checksum, copies, bytes) VALUES ... ON CONFLICT (owner_id, checksum) DO UPDATE SET copies = excluded.copies, bytes = excluded.bytes RETURNING checksum`. `copies`/`bytes` go through `whole()` = `trunc(Number(v))`, positive finite values only, else 0. `created_at` is kept on conflict. A DB exception gives `failed`.
+  5. Audit `uploads.duplicates_kept {count: kept, requested, checksums: first 20}`, written even when 0 rows were kept.
+- Returns: `{ok:true, kept, checksums}`, the normalised list.
+- Errors: none thrown; a DB exception is returned as `failed`, and audit failures are swallowed.
+- Redirect / notFound: none (no session is a result value). Never notFound.
+- Revalidate: `/dashboard/duplicates` and `revalidatePath("/dashboard", "layout")` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: duplicates.ts:182 -> lib/upload/duplicate-check.ts:parseChecksums, lib/data/duplicates.ts:dismissChecksums.
+
+##### duplicates.countDuplicateSetsAgain
+- Signature: `countDuplicateSetsAgain(checksums: string[]): Promise<CountAgainResult>`, with `CountAgainResult = { ok: true; restored: number } | { ok: false; error: "unauthorized" | "empty" | "malformed" | "too-many" | "failed" }`.
+- Auth: session-or-data.
+- Does:
+  1. `parseChecksums(checksums)`, rules as #46.
+  2. `DELETE FROM duplicate_dismissals WHERE owner_id = me AND checksum IN (...) RETURNING checksum`. A DB exception gives `failed`.
+  3. Audit `uploads.duplicates_counted_again {count: restored, requested, checksums: first 20}` on every ok result.
+- Returns: `{ok:true, restored}`.
+- Errors: none thrown; a DB exception is returned as `failed`, and audit failures are swallowed.
+- Redirect / notFound: none (no session is a result value). Never notFound.
+- Revalidate: `/dashboard/duplicates` and `revalidatePath("/dashboard", "layout")` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: duplicates.ts:238 -> lib/data/duplicates.ts:restoreChecksums.
+
+#### Module `folders` (app/actions/folders.ts)
+
+The rules live in `lib/folders.ts`, which `app/api/folders/route.ts` shares.
+
+Ownership is checked by `getOwnedFolder(userId, id)`: a non-string or non-uuid id, an unknown id, or a folder owned by someone else all throw `FolderOpError("not-found", "Folder not found")` [masked]. Folder ids are therefore guarded.
+
+`freeSlug(owner, parent, name)`:
+
+- `base = slugifyName(name) || "folder"`. `slugifyName` transliterates ł→l and similar, strips accents (NFD), lowercases, turns runs of non `[a-z0-9]` into `-`, trims dashes and keeps 80 chars.
+- It tries `base`, `base-2`, `base-3`, ... until no folder of the same owner **and** the same parent (NULL parent = root) has that slug. After `-500` it uses `base-<Date.now()>`.
+- It does **not** exclude the folder itself (consequence under #49 and #51).
+
+`MAX_FOLDER_DEPTH = 8`. `depthOf(id)` counts the levels from the root (a root folder is depth 1).
+
+##### folders.createFolder
+- Signature: `createFolder(name: string, parentId?: string | null): Promise<FolderRecord>`. The default is `parentId = null`. `FolderRecord = { id: string; ownerId: string; parentId: string | null; name: string; slug: string; description: string | null; isPublic: boolean; coverUploadId: string | null; sortOrder: number; createdAt: Date }`.
+- Auth: requireUser.
+- Does:
+  1. For a truthy `parentId`: `getOwnedFolder(parentId)`, and a parent depth of 8 or more throws.
+  2. `cleanName(name, "Folder")`: a non-string or blank name becomes `"Folder"`; otherwise the trimmed name, cut to 120 chars.
+  3. `freeSlug`.
+  4. `INSERT INTO folders (owner_id, parent_id, name, slug) RETURNING *`.
+- Returns: the inserted row. `createdAt` is a Date, sent as `{"$date"}`. Defaults: `description: null`, `isPublic: false`, `coverUploadId: null`, `sortOrder: 0`.
+- Errors (masked):
+  - `"Folder not found"`.
+  - `"Folders can be nested at most 8 levels deep"`.
+  - A `parentId` of `""` is not normalised to null and ends in a Postgres uuid error.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard` when nothing threw.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: folders.ts:44 -> lib/folders.ts:createFolderFor/getOwnedFolder/freeSlug/depthOf.
+
+##### folders.renameFolder
+- Signature: `renameFolder(id: string, name: string): Promise<void>`
+- Auth: requireUser.
+- Does:
+  1. `getOwnedFolder(id)`.
+  2. `cleanName(name, null)`: a blank or non-string name throws.
+  3. `slug = freeSlug(owner, folder.parent, clean)`. Because the folder's own slug counts as a clash, renaming to an unchanged name moves the slug to `<base>-2` and so on.
+  4. `UPDATE folders SET name, slug WHERE id AND owner_id`.
+- Returns: undefined.
+- Errors (masked): `"Folder not found"`, `"Folder name cannot be empty"`.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard` when nothing threw.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: folders.ts:51 -> lib/folders.ts:renameFolderFor.
+
+##### folders.deleteFolder
+- Signature: `deleteFolder(id: string, opts?: { withContents?: boolean }): Promise<DeleteFolderResult>`. The default is `opts = {}`. `DeleteFolderResult = { folders: number; trashed: number }`.
+- Auth: requireUser.
+- Does: `getOwnedFolder(id)`, then one of two modes.
+  - Default (`withContents` falsy), one transaction, returns `{folders:1, trashed:0}`:
+    1. Children are re-parented: `UPDATE folders SET parent_id = <deleted folder's parent> WHERE parent_id = id AND owner_id = me`.
+    2. `UPDATE uploads SET folder_id = NULL WHERE folder_id = id AND owner_id = me`. Trashed rows are included and `updated_at` is untouched.
+    3. `DELETE FROM folders WHERE id AND owner_id`.
+  - `withContents` truthy:
+    1. The subtree = the folder plus all descendants among the owner's folders.
+    2. In one transaction: select the ids of live uploads in the subtree; `UPDATE uploads SET deleted_at = now, updated_at = now` for them; `DELETE FROM folders WHERE owner_id AND id IN subtree`. The `folder_id` of every upload in those folders becomes NULL through the FK.
+    3. After the commit, `purgeDerived` runs for each trashed id.
+    4. Returns `{folders: subtree.length, trashed}`.
+- Returns: `{folders, trashed}` as described per mode.
+- Errors (masked): `"Folder not found"`.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard` when nothing threw.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: folders.ts:57 -> lib/folders.ts:deleteFolderFor, lib/data/folders.ts:descendantFolderIds.
+
+##### folders.moveFolder
+- Signature: `moveFolder(id: string, newParentId: string | null): Promise<void>`
+- Auth: requireUser.
+- Does:
+  1. `getOwnedFolder(id)`. A truthy `newParentId` must also be owned.
+  2. A cycle (the target is the folder itself or one of its descendants) throws.
+  3. `depthOf(newParentId) >= 8` throws. Only the new parent's depth is checked, not the height of the moved subtree, so the result can be deeper than 8.
+  4. `slug = freeSlug(owner, newParentId, folder.name)`. Moving within the same parent renames the slug to `-2`.
+  5. `UPDATE folders SET parent_id, slug`.
+- Returns: undefined.
+- Errors (masked): `"Folder not found"`, `"A folder cannot be moved inside itself"`, `"Folders can be nested at most 8 levels deep"`.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard` when nothing threw.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: folders.ts:67 -> lib/folders.ts:moveFolderFor, lib/data/folders.ts:wouldCreateCycle.
+
+##### folders.setFolderVisibility
+- Signature: `setFolderVisibility(id: string, isPublic: boolean): Promise<void>`
+- Auth: requireUser.
+- Does: `getOwnedFolder(id)`, then `UPDATE folders SET is_public = isPublic WHERE id AND owner_id`.
+- Returns: undefined.
+- Errors (masked): `"Folder not found"`.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard` when nothing threw.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: folders.ts:73 -> lib/folders.ts:setFolderVisibilityFor.
+
+##### folders.moveUploadsToFolder
+- Signature: `moveUploadsToFolder(uploadIds: string[], folderId: string | null): Promise<{ moved: number }>`
+- Auth: requireUser.
+- Does:
+  1. `ids = uploadIds.filter(uuid strings).slice(0, 1000)`. There is no dedup, and non-uuids are dropped, so the ids are guarded. Empty returns `{moved:0}`.
+  2. A truthy `folderId` goes through `getOwnedFolder`.
+  3. `UPDATE uploads SET folder_id = folderId, updated_at = now WHERE id IN ids AND owner_id = me RETURNING id`. Trashed rows can be moved too. null moves the files out of every folder.
+- Returns: `{moved}`.
+- Errors: `"Folder not found"` [masked]; a non-array `uploadIds` gives a TypeError [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard` whenever the helper returned, including `moved: 0`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: folders.ts:79 -> lib/folders.ts:moveUploadsToFolderFor.
+
+##### folders.countUnfiledUploads
+- Signature: `countUnfiledUploads(): Promise<number>`
+- Auth: requireUser.
+- Does: `count(*)::int FROM uploads WHERE owner_id = me AND folder_id IS NULL AND deleted_at IS NULL`.
+- Returns: the count as a number.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: folders.ts:90 -> lib/folders.ts:countUnfiledUploadsFor.
+
+##### folders.moveUnfiledToFolder
+- Signature: `moveUnfiledToFolder(folderName?: string): Promise<{ moved: number; folderId: string; folderName: string }>`. The default is `folderName = "Wszystko"`.
+- Auth: requireUser.
+- Does:
+  1. `clean = cleanName(folderName, "Wszystko")` and `slug = slugifyName(clean) || "folder"`.
+  2. Reuse the caller's **root** folder with that slug, or `INSERT` it (no `freeSlug`).
+  3. Count the unfiled live uploads (scope as #54). When the count is above 0: `UPDATE uploads SET folder_id = target, updated_at = now` over the same scope.
+- Returns: `{moved, folderId, folderName: target.name}`. When an existing folder is reused, this is its stored name.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: folders.ts:95 -> lib/folders.ts:moveUnfiledToFolderFor.
+
+##### folders.listFolders
+- Signature: `listFolders(): Promise<{ id: string; parentId: string | null; name: string; slug: string; isPublic: boolean; count: number }[]>`
+- Auth: requireUser.
+- Does: `SELECT id, parent_id, name, slug, is_public, (SELECT count(*)::int FROM uploads WHERE folder_id = folders.id AND deleted_at IS NULL) AS count FROM folders WHERE owner_id = me`. There is **no ORDER BY**, and the port must not add one.
+- Returns: an array of `{id, parentId, name, slug, isPublic, count}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: folders.ts:104.
+
+#### Module `invite` (app/actions/invite.ts)
+
+All three are **public**. Invitation token handling (lib/invites.ts):
+
+- The DB holds `verification.identifier = "invite:" + sha256hex(token)`, `value = userId`, and a 7-day expiry.
+- `readInvite(token)`:
+  1. An empty token returns null.
+  2. The row is looked up by identifier.
+  3. An expired row is **deleted** and null returned.
+  4. A user that no longer exists also gets the row **deleted** and null returned.
+
+##### invite.previewInvite
+- Signature: `previewInvite(token: string): Promise<InvitePreview | null>`, with `InvitePreview = { email: string; name: string }`.
+- Auth: public. No rate limit.
+- Does: `readInvite(token)`, with the deletions above. A valid invite returns the invitee's email and name.
+- Returns: `{email, name}` or null.
+- Errors: a non-string `token` gives a TypeError [masked].
+- Redirect / notFound: none. Never notFound.
+- Revalidate: none.
+- Cookies: none.
+- Upstream: invite.ts:25 -> lib/invites.ts:readInvite.
+
+##### invite.acceptInvitation
+- Signature: `acceptInvitation(token: string, password: string): Promise<AcceptInvitationResult>`, with `AcceptInvitationResult = { ok: true } | { ok: false; reason: "invalid" | "weak-password" | "rate-limited" | "sign-in-failed" }`.
+- Auth: public.
+- Does:
+  1. Rate limit: key `invite:<clientIp>`, at most 10 per 15 min. It is counted before any validation and never reset. Over the limit returns `rate-limited`.
+  2. `password.length < 8` returns `weak-password`.
+  3. `acceptInvite`:
+     - `readInvite` returns null: `invalid`.
+     - `writeCredentialPassword(userId, password)` writes a BA hash, updating the credential `account` row or inserting one.
+     - `UPDATE "user" SET email_verified = true`.
+     - `revokeInvites(userId)` deletes every `invite:` row of the user.
+  4. better-auth `signInEmail({email, password}, headers = request, asResponse:false)`. Any throw (for example a banned user) returns `{ok:false, reason:"sign-in-failed"}`; the password stays set. `rememberMe` defaults to true. On success it:
+     - Creates a `session` row: `id`/`token` random 32 chars, `expires_at = now+7d`, `ip_address` from X-Real-IP, `user_agent` from User-Agent.
+     - Sets the session cookie.
+     - If the account has 2FA enabled, the twoFactor hook intercepts as described for #60. It returns `{twoFactorRedirect:true}` without throwing, so the action still reports `{ok:true}` with no session.
+- Returns: `{ok:true}` or a refusal.
+- Errors: a non-string `password` gives a TypeError [masked].
+- Redirect / notFound: none. Never notFound.
+- Cookies: whatever better-auth sign-in sets, through nextCookies: `better-auth.session_token` (signed, HttpOnly, SameSite=Lax, Path=/, Max-Age 604800, `__Secure-` prefix and Secure on https), or the 2FA cookies of #60.
+- Revalidate: none. Audit: none.
+- Headers: X-Real-IP (rate limit, `session.ip_address`), User-Agent (`session.user_agent`), Cookie (`trust_device`).
+- Upstream: invite.ts:42 -> lib/invites.ts:acceptInvite/readInvite/revokeInvites, lib/credentials.ts:writeCredentialPassword, better-auth api/routes/sign-in.mjs.
+
+##### invite.resendVerification
+- Signature: `resendVerification(email: string): Promise<ResendVerificationResult>`, with `ResendVerificationResult = { ok: true } | { ok: false; reason: "rate-limited" | "mail-unavailable" }`.
+- Auth: public.
+- Does:
+  1. `address = email.trim().toLowerCase()`.
+  2. Two rate limits, both counted on every call: `verify-resend-ip:<clientIp>` at most 5 per 15 min, and `verify-resend:<address>` at most 3 per 15 min. Either over the limit returns `rate-limited`.
+  3. `!mailReady()` returns `mail-unavailable`.
+  4. better-auth `sendVerificationEmail({email: address, callbackURL: "/dashboard"})` with headers minus Cookie and Authorization, behaving as #31. **Every** exception is swallowed.
+- Returns: `{ok:true}` whenever it got past the gates, whether or not the account exists.
+- Errors: a non-string `email` gives a TypeError [masked].
+- Redirect / notFound: none. Never notFound.
+- Revalidate: none.
+- Cookies: none (better-auth is called without the session cookie, so it writes none).
+- Headers: X-Real-IP (rate limit).
+- Upstream: invite.ts:84 -> lib/password.ts:checkRateLimit, lib/auth-helpers.ts:headersWithoutSession.
+
+#### Module `login-identifier` (app/actions/login-identifier.ts)
+
+##### login-identifier.signInWithIdentifier
+- Signature: `signInWithIdentifier(identifier: string, password: string): Promise<SignInResult>`, with `SignInResult = { status: "ok" } | { status: "two-factor" } | { status: "invalid" } | { status: "unverified" } | { status: "rate-limited" } | { status: "error" }`.
+- Auth: public.
+- Does:
+  1. `raw = identifier.trim()`. An empty `raw` or a falsy `password` returns `invalid`, before any rate limiting.
+  2. Rate limit: key `<clientIp>|signin`, at most 10 per 15 min. Every call that reaches it counts, successful ones too, and it is never reset. Over the limit returns `rate-limited`.
+  3. `resolveEmail(raw)`:
+     - A value containing `@` is used as-is.
+     - Otherwise `SELECT email FROM "user" WHERE lower(username) = lower(raw) LIMIT 1`.
+     - Otherwise `SELECT email ... WHERE lower(name) = lower(raw) LIMIT 2`, used only when exactly 1 row matches.
+     - Otherwise `raw` unchanged. The email never leaves the server.
+  4. better-auth `signInEmail({email, password}, headers = request, asResponse:true)`:
+     - Response not ok with body code `EMAIL_NOT_VERIFIED` gives `unverified`. In this branch better-auth has already re-sent the verification mail (sendOnSignIn), through the callback with `mailReady()` and `user.locale`, `callbackURL=/`.
+     - Any other non-ok response gives `invalid`. This covers bad credentials (401), an invalid email format (400) and a banned user (403).
+     - An ok response whose JSON has `twoFactorRedirect: true` gives `two-factor`; otherwise `ok`.
+     - A thrown `APIError` maps by code to `unverified` or `invalid`; any other throw gives `error`.
+  5. Effects of a successful sign-in, as better-auth 1.6.13 `/sign-in/email`:
+     - A `session` row: `expires_at = now+7d`, `ip_address` from X-Real-IP, `user_agent` from User-Agent.
+     - The `session_token` cookie (Max-Age 604800).
+  6. When the user has `two_factor_enabled` and no valid `trust_device` cookie:
+     - The new session is deleted again and the session cookie expired.
+     - A `verification` row `identifier "2fa-<20 random>"`, `value = userId`, 10 min is created.
+     - The signed cookie `better-auth.two_factor` (Max-Age 600) is set.
+  7. With a valid `trust_device` cookie, the trust row is rotated (new `trust-device-<32>` verification row, 30 days, cookie re-signed) and the session is kept.
+- Returns: `{status}`.
+- Errors: a non-string `identifier` gives a TypeError [masked].
+- Redirect / notFound: none. Never notFound.
+- Cookies: `better-auth.session_token` (ok); `better-auth.two_factor` and the expired `session_token` / `trust_device` (two-factor); the rotated `better-auth.trust_device`.
+- Revalidate: none.
+- Headers: X-Real-IP, User-Agent, Cookie.
+- Upstream: login-identifier.ts:101 -> login-identifier.ts:resolveEmail, lib/password.ts:checkRateLimit, better-auth api/routes/sign-in.mjs, plugins/two-factor/index.mjs (after hook).
+
+#### Module `mail` (app/actions/mail.ts)
+
+`MailStatus = { source: "panel" | "env" | "none"; host: string; port: number; security: "none" | "starttls" | "tls"; user: string; from: string; fromName: string; ready: boolean; passwordState: "unset" | "set" | "undecryptable"; verificationRequired: boolean; envAvailable: boolean }`. It never contains the password.
+
+How the status is resolved (`lib/mail-settings.ts:resolveMailSettings`, block precedence):
+
+- **Panel** (`settings.smtp_host` non-empty after trim): `port = smtp_port` (1..65535, else 587); `security = smtp_security` (anything unknown gives `starttls`); `user` trimmed; `from = mail_from || MAIL_FROM env`; `fromName = mail_from_name || APP_NAME`.
+  - `passwordState`: no box gives `unset`; a box that fails to decrypt gives `undecryptable`; else `set`.
+  - `ready = state != undecryptable && (no user || state == set)`.
+  - `verificationRequired = isOn(email_verification_required) && ready`.
+- **Env** (`SMTP_HOST`): `ready = true`; `security = SMTP_SECURITY || (SMTP_SECURE ? "tls" : "none")`.
+- **None**: `ready = false`, `verificationRequired = false`.
+- `envAvailable = SMTP_HOST` is non-empty.
+- `isOn(v)` means `v` is `"on"`, `"true"` or `"1"`.
+
+The settings rows are written by `setSetting(key, value)` = `INSERT INTO settings (key, value) ... ON CONFLICT (key) DO UPDATE SET value`. A value of null leaves the row in place with `value = NULL`.
+
+##### mail.loadMailStatus
+- Signature: `loadMailStatus(): Promise<MailStatus>`
+- Auth: requireAdmin.
+- Does: `loadMailSettings(true)` forces a fresh read of the 8 keys and refreshes the process snapshot, then `toMailStatus`.
+- Returns: `MailStatus`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: mail.ts:41 -> lib/mail-settings.ts:loadMailSettings/toMailStatus.
+
+##### mail.saveSmtpSettings
+- Signature: `saveSmtpSettings(input: SaveMailInput): Promise<SaveMailResult>`. Types:
+  - `SaveMailInput = { host: string; port: number; security: SmtpSecurity; user: string; password?: string; from: string; fromName: string }`
+  - `SaveMailResult = { ok: true; status: MailStatus; changed: string[] } | { ok: false; reason: "invalid-host" | "invalid-from" | "invalid-port" | "password-required" }`
+- Auth: requireAdmin.
+- Does:
+  1. Validation:
+     - `host` is trimmed; empty or not matching `/^[a-z0-9._:-]+$/i` gives `invalid-host`.
+     - `from` is trimmed; empty or not matching `/^[^\s@]+@[^\s@]+\.[^\s@]+$/` gives `invalid-from`.
+     - `port` not a finite number in 1..65535 gives `invalid-port`.
+  2. `current = loadMailSettings(true)`. A non-empty trimmed `user` without a password returns `password-required`. A password is there when the input has one, or when the current source is `panel` with the same host and user and `passwordState == "set"`.
+  3. `saveMailSettings`:
+     - Upserts `smtp_host` (trim), `smtp_port` (`trunc(port)`), `smtp_security` (unknown gives `starttls`), `smtp_user` (trim), `mail_from` (trim) and `mail_from_name` (trim). All six are always written.
+     - `changed` lists the keys whose value differs from what was stored before.
+     - A non-empty password sets `smtp_password_enc = encryptSecret(password, "smtp")` and `passwordChanged = true`. That key is **not** added to `changed`.
+     - Otherwise, when the stored host or user differs from the new trimmed one, `smtp_password_enc = NULL` and `"smtp_password_enc"` is added to `changed`.
+     - The snapshot is invalidated.
+  4. Audit `mail.settings_changed {by, byEmail, changed, passwordChanged}`.
+- Returns: `{ok:true, status: toMailStatus(loadMailSettings(true)), changed}`.
+- Errors: non-string `host`, `from` or `user` gives a TypeError [masked].
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: mail.ts:68 -> lib/mail-settings.ts:saveMailSettings, lib/secret-box.ts:encryptSecret.
+
+##### mail.clearSmtpSettings
+- Signature: `clearSmtpSettings(): Promise<MailStatus>`
+- Auth: requireAdmin.
+- Does:
+  1. `setSetting(k, NULL)` for `smtp_host, smtp_port, smtp_security, smtp_user, smtp_password_enc, mail_from, mail_from_name`. `email_verification_required` is kept.
+  2. Invalidate the snapshot.
+  3. Audit `mail.settings_cleared {by, byEmail}`.
+- Returns: the fresh status.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: mail.ts:124 -> lib/mail-settings.ts:clearMailSettings.
+
+##### mail.clearSmtpPassword
+- Signature: `clearSmtpPassword(): Promise<MailStatus>`
+- Auth: requireAdmin.
+- Does: `setSetting("smtp_password_enc", NULL)`, invalidate, audit `mail.password_cleared {by, byEmail}`.
+- Returns: the fresh status.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: mail.ts:136 -> lib/mail-settings.ts:clearMailPassword.
+
+##### mail.setVerificationRequired
+- Signature: `setVerificationRequired(required: boolean): Promise<MailStatus>`
+- Auth: requireAdmin.
+- Does: `setSetting("email_verification_required", required ? "on" : "off")` (truthiness), invalidate, audit `mail.verification_toggled {by, byEmail, required}`. This also changes whether better-auth sign-in requires a verified address (`lib/auth.ts` getter `requireEmailVerification` reads the snapshot). The change applies at once in this process, because the return value reloads the snapshot, and within 30 s in other processes. The effective value is still `required && ready`.
+- Returns: the fresh status.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: mail.ts:148 -> lib/mail-settings.ts:setEmailVerificationRequired.
+
+##### mail.sendTestMail
+- Signature: `sendTestMail(to?: string): Promise<MailTestResult>`. Types:
+  - `MailTestResult = { ok: true; accepted: string[]; tookMs: number } | { ok: false; kind: MailTestFailure; smtpCode?: number; serverSays?: string; tookMs: number }`
+  - `MailTestFailure = "not-configured" | "rate-limited" | "auth" | "connection" | "tls" | "recipient" | "unknown"`
+- Auth: requireAdmin.
+- Does:
+  1. Rate limit: key `mail-test:<adminUserId>`, at most 5 per 15 min. Over the limit returns `{ok:false, kind:"rate-limited", tookMs:0}` (no `smtpCode`/`serverSays` keys).
+  2. Invalidate the snapshot. `getTransport()` returning null (not ready) gives `{ok:false, kind:"not-configured", tookMs}`.
+  3. `recipient = (to ?? "").trim() || session.user.email`. It is **not validated**.
+  4. Mail `renderSmtpTest({locale: pickMailLocale(session.user.locale, Accept-Language), host, port, from})`, sent through the transport directly (From = envelopeFrom, logo attachment).
+  5. Success: audit `mail.test_sent {by, byEmail, to, ok:true}` and return `{ok:true, accepted: info.accepted.map(String), tookMs}`.
+  6. Failure: classify the error.
+     - `EAUTH` or SMTP 535/534: `auth`.
+     - `EENVELOPE` or 550/553/554: `recipient`.
+     - `ETLS` or `ESOCKET`: `tls`.
+     - `ECONNECTION`, `ETIMEDOUT` or `EDNS`: `connection`.
+     - Anything else: `unknown`.
+
+     `smtpCode = err.responseCode` when it is a number. `serverSays` = `err.response` (else `err.message`) with the password and the base64 AUTH PLAIN form redacted to `***`, cut to 400 chars. Audit `mail.test_sent {by, byEmail, to, ok:false, kind, smtpCode}`. Return `{ok:false, kind, smtpCode, serverSays, tookMs}`; `smtpCode` may be present with value undefined.
+- Returns: `MailTestResult`; the variants are listed under Does.
+- Errors: none of its own; SMTP failures are returned as data.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Headers: Accept-Language (locale fallback), X-Real-IP (audit ip).
+- Upstream: mail.ts:203 -> lib/mail.ts:getTransport/envelopeFrom, lib/mail-templates.ts:renderSmtpTest/pickMailLocale, lib/secret-box.ts:redactSecrets/smtpSecretForms.
+- Security: an admin-only outbound SMTP connection to the configured host, rate-limited per admin, and the recipient can be anyone.
+
+#### Module `pastes` (app/actions/pastes.ts)
+
+##### pastes.createPaste
+- Signature: `createPaste(input: CreatePasteInput): Promise<PasteResult>`. Types:
+  - `CreatePasteInput = { content: string; language?: string; title?: string; expiresInDays?: number | null; expiresInMinutes?: number | null; password?: string | null; maxViews?: number | null }`
+  - `PasteResult = { code: string; url: string; rawUrl: string; expiresAt: string | null; maxViews: number | null; hasPassword: boolean }`
+- Auth: requireUser.
+- Does:
+  1. `content = input.content ?? ""`.
+     - Blank after trim: throws `Error("Paste is empty")` [masked].
+     - `content.length > 5_000_000` (UTF-16 units): throws `Error("Paste is too large (max ~5MB)")` [masked]. This is unreachable over RPC, because the 1 MiB body limit trips first.
+  2. `lang = (language || "text").toLowerCase()`. `ext = LANG_EXT[lang] ?? "txt"` (lib/paste-languages.ts, 28 languages). `language` is stored as `lang` even when unknown; it is varchar(32), so a longer value gives a DB error.
+  3. Quota check uses the session's `maxQuota`/`usedQuota`: when `maxQuota` is non-null and not -1 and `used + bytes > maxQuota`, throws `Error("Quota exceeded")` [masked]. Other negative limits count as real limits.
+  4. Code: `humanCode(10)` (8 alternating consonant/vowel letters + 2 digits), unique among `uploads.code`. After 50 failed tries it throws `Error("Could not allocate a unique code")` [masked].
+  5. Storage write at `<user_code ?? "u">/<code>.<ext>`.
+  6. Filename: `(title?.trim() || "paste")`, with every run of characters outside `[a-zA-Z0-9._-]` replaced by `-`, cut to 80, empty falls back to `"paste"`, then `.<ext>`.
+  7. Expiry:
+     - `expiresInMinutes` finite and above 0: `floor` minutes.
+     - Else, when `expiresInDays` is truthy: `floor(days) * 1440` minutes. A negative value gives an expiry **in the past**.
+     - Else no expiry.
+  8. Password:
+     - A truthy `input.password` gives an (F) hash and `password_version = NULL`.
+     - Otherwise the account default is stamped: `default_password_hash` with `password_version = default_password_version`, or both null.
+  9. `maxViews`: null or non-finite gives null; otherwise `floor`, values below 1 give null, and the cap is 1,000,000.
+  10. `INSERT uploads {owner_id, code, filename, ext, kind:'paste', language: lang, mime_type: pasteMimeType(lang) ?? "text/plain; charset=utf-8", size: byte length, checksum: sha256 hex, storage_key, published: !session.user.hideUploads, delete_token: randomBytes(16) base64url, expires_at, password_hash, password_version, max_views}`. There is no `folder_id`; the default folder is **not** applied.
+  11. `UPDATE "user" SET used_quota = used_quota + bytes`.
+- Returns:
+  - `code`
+  - `url = publicUrl(user_code ?? "u", code, ext, userBaseUrl(preferred_domain))`, which is `/<tag>/<code>.<ext>` and ignores `skip_tag_in_url`
+  - `rawUrl = .../<tag>/<code>/raw.<ext>`
+  - `expiresAt`: ISO or null
+  - `maxViews`
+  - `hasPassword`
+- Errors (masked): `"Paste is empty"`, `"Paste is too large (max ~5MB)"`, `"Quota exceeded"`, `"Could not allocate a unique code"`. A `language` longer than 32 chars gives a DB error.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard` (after the insert).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: pastes.ts:75 -> lib/paste-languages.ts:LANG_EXT, lib/media/paste-type.ts:pasteMimeType, lib/data/user-prefs.ts:defaultPasswordStamp/getUserPrefs, lib/media/urls.ts:storageKeyFor/publicUrl/rawUrl/userBaseUrl, lib/media/derived-cache.ts:contentHash.
+
+#### Module `registration` (app/actions/registration.ts)
+
+`RegistrationKeyState = "unset" | "set" | "undecryptable"`:
+
+- `settings.registration_key_enc` NULL or missing gives `unset`.
+- A value that fails to decrypt (secret box, purpose `registration-key`) gives `undecryptable`.
+- Otherwise `set`.
+
+`isRegistrationEnabled()`: the `register_enabled` row through `isOn`; when the row is missing, the env `REGISTRATION_ENABLED` value is used.
+
+##### registration.loadRegistrationSettings
+- Signature: `loadRegistrationSettings(): Promise<RegistrationSettings>`, with `RegistrationSettings = { enabled: boolean; keyState: RegistrationKeyState }`.
+- Auth: requireAdmin.
+- Does: read-only, `{enabled: isRegistrationEnabled(), keyState: registrationKeyState()}`.
+- Returns: `{enabled, keyState}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: registration.ts:33 -> lib/settings.ts:isRegistrationEnabled, lib/registration.ts:registrationKeyState.
+
+##### registration.setRegistrationEnabled
+- Signature: `setRegistrationEnabled(enabled: boolean): Promise<RegistrationSettings>`
+- Auth: requireAdmin.
+- Does: upsert `settings register_enabled = enabled ? "on" : "off"` (truthiness), then audit `admin.registration_toggled {by, byEmail, enabled}`.
+- Returns: `loadRegistrationSettings()`, which runs requireAdmin again and then the fresh read.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` and `revalidatePath("/", "layout")` (always).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: registration.ts:39 -> lib/settings.ts:setSetting.
+
+##### registration.saveRegistrationKey
+- Signature: `saveRegistrationKey(key: string | null): Promise<SaveRegistrationKeyResult>`, with `SaveRegistrationKeyResult = { ok: true; keyState: RegistrationKeyState } | { ok: false; reason: "too-long" }`.
+- Auth: requireAdmin.
+- Does:
+  1. `value = key?.trim() ?? ""`. Longer than 200 chars returns `{ok:false, reason:"too-long"}` with no write.
+  2. Upsert `settings registration_key_enc = encryptSecret(value, "registration-key")`, or NULL for an empty value (clear). The row stays, with value NULL.
+  3. Audit `admin.registration_key_changed {by, byEmail, cleared: value === ""}`. The key itself is never logged.
+- Returns: `{ok:true, keyState}`.
+- Errors: a `key` that is neither a string nor null/undefined gives a TypeError [masked].
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin` and `/` (layout) when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: registration.ts:58 -> lib/registration.ts:setRegistrationKey/registrationKeyState, lib/secret-box.ts.
+
+##### registration.revealRegistrationKey
+- Signature: `revealRegistrationKey(): Promise<{ key: string | null }>`
+- Auth: requireAdmin.
+- Does: decrypts `registration_key_enc`; unset or undecryptable gives null. Audit `admin.registration_key_revealed {by, byEmail}` is written on every call, including when the result is null.
+- Returns: `{key}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: registration.ts:85 -> lib/registration.ts:readRegistrationKey.
+- Security: returns the **plaintext** registration key. This is deliberate, and every reveal is audited.
+
+#### Module `releases` (app/actions/releases.ts)
+
+The release lives in the `settings` row `release_app`. Its value is JSON `{version, code, notes?, publishedAt}` (`publishedAt` = ISO at publish time).
+
+`currentRelease()` returns a manifest or null:
+
+1. The JSON must parse and have a non-empty string `version` and `code`.
+2. It needs a non-trashed upload with that `code` and a non-null owner, with `published = true`, no `password_hash` and no `expires_at`.
+3. The owner must exist.
+4. `url`: `taglessRawUrl(code, ext, base)` when the owner has `skip_tag_in_url`, else `rawUrl(user_code ?? "u", code, ext, base)`, where `base = userBaseUrl(owner.preferred_domain)`.
+5. The manifest is `{name: "Modlight App", version, url, filename, size, sha256: checksum or null, notes: notes or null, publishedAt}`.
+
+`ReleaseManifest = { name: string; version: string; url: string; filename: string; size: number; sha256: string | null; notes: string | null; publishedAt: string }`.
+
+##### releases.loadRelease
+- Signature: `loadRelease(): Promise<ReleaseState>`, with `ReleaseState = { manifest: ReleaseManifest | null; appName: string }`.
+- Auth: requireAdmin.
+- Does: read-only, `{manifest: currentRelease(), appName: "Modlight App"}`.
+- Returns: `{manifest: ReleaseManifest | null, appName: "Modlight App"}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: releases.ts:33 -> lib/releases-core.ts:currentRelease.
+
+##### releases.publishAppRelease
+- Signature: `publishAppRelease(input: { version: string; code: string; notes?: string; allowVersionMismatch?: boolean }): Promise<PublishOutcome>`, with `PublishOutcome = { ok: true; manifest: ReleaseManifest } | { ok: false; reason: "no-version" | "bad-version" | "not-found" | "not-public" } | { ok: false; reason: "version-mismatch"; fileVersion: string; filename: string }`.
+- Auth: requireAdmin.
+- Does:
+  1. `code = lastPathSegment(input.code)`:
+     - trim; drop everything after the first `?` or `#`;
+     - take the last non-empty `/` segment;
+     - cut that segment at its first `.` when the dot is at position above 0.
+
+     So `https://h/tag/abc.png` becomes `abc`, and `.../abc/raw.png` becomes `raw`.
+  2. `publishRelease`:
+     - `version.trim()` or `code` empty: `no-version`.
+     - The version, with an optional leading v/V stripped, must match `/^\d+(\.\d+){1,3}$/` with each part an Int32 of 0 or more, else `bad-version`. The normalised version keeps its spelling without the `v`.
+     - A non-trashed upload with `code` (any owner) is required, else `not-found`. Unpublished or password-protected gives `not-public`.
+     - `fileVersion` = the first token of the filename (extension stripped, split on `[-_\s]+`) that parses as a version. When it exists, `allowVersionMismatch !== true` and the versions differ after padding to 4 parts: `{ok:false, reason:"version-mismatch", fileVersion, filename}`.
+     - Upsert `settings release_app = JSON {version, code, notes: notes?.trim() || undefined, publishedAt: now ISO}`.
+     - Re-read with `currentRelease()`. A null result gives `not-public`, and the setting **stays written**. This happens for an upload with `expires_at` or without an owner.
+- Returns: `{ok:true, manifest}` or a refusal.
+- Errors: non-string `version`, `code` or `notes` gives a TypeError [masked].
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin`, `/dashboard/tokens`, `/download` only when ok. Audit: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: releases.ts:50 -> lib/releases-core.ts:publishRelease/normalizeReleaseVersion/versionFromFileName/sameReleaseVersion/currentRelease.
+
+##### releases.unpublishAppRelease
+- Signature: `unpublishAppRelease(): Promise<{ ok: true }>`
+- Auth: requireAdmin.
+- Does: upsert `settings release_app = NULL`.
+- Returns: `{ok:true}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` without a session, `{"redirect":"/dashboard"}` for a non-admin (requireAdmin). Never notFound.
+- Revalidate: `/dashboard/admin`, `/dashboard/tokens`, `/download` (always). Audit: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: releases.ts:78 -> lib/releases-core.ts:unpublishRelease.
+
+#### Module `shortlink-unlock` (app/actions/shortlink-unlock.ts)
+
+##### shortlink-unlock.verifyShortlinkPassword
+- Signature: `verifyShortlinkPassword(code: string, password: string): Promise<UnlockResult>`, with `UnlockResult = { ok: boolean; error?: "rate-limited"; remembered?: "owner" | "file" }`.
+- Auth: public.
+- Does:
+  1. A falsy `code`, or a `password` that is not a non-empty string, returns `{ok:false}` without counting.
+  2. Rate limit: key `<clientIp>|shortlink:<code>` with the defaults (5 per 15 min). It counts attempts for unknown codes too. Over the limit returns `{ok:false, error:"rate-limited"}`.
+  3. `SELECT id, password_hash FROM short_links WHERE code = $code`. `code` is the stored code, possibly scoped as `tag/leaf`. No row, or no hash, returns `{ok:false}`.
+  4. `verifyPassword` (format F) with the password **untrimmed**. A mismatch returns `{ok:false}`.
+  5. Success: reset the bucket and set the cookie.
+- Returns: `{ok:true}` (no `remembered` key) or `{ok:false[, error]}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: none. Never notFound.
+- Cookies on ok: `ml_sl_<linkId>=<exp>.<sig>` with TTL 3600 (parts `["shortlink", id]`), `HttpOnly; Path=/; SameSite=lax; Max-Age=3600; Secure` (Secure only in production).
+- Revalidate: none.
+- Headers: X-Real-IP.
+- Upstream: shortlink-unlock.ts:23 -> lib/password.ts:checkRateLimit/verifyPassword/mintUnlockToken/unlockCookieName/unlockCookieOptions/resetRateLimit.
+
+#### Module `shortlinks` (app/actions/shortlinks.ts)
+
+##### shortlinks.createShortLink
+- Signature: `createShortLink(input: CreateShortLinkInput): Promise<CreateShortLinkResult>`. Types:
+  - `CreateShortLinkInput = { target: string; customCode?: string; expiresInDays?: number | null; password?: string; useUserCode?: boolean }`
+  - `CreateShortLinkResult = { ok: true; code: string; url: string } | { ok: false; reason: "invalid-url" | "invalid-code" | "code-taken" | "code-too-long" | "root-not-allowed" | "no-tag" | "error" }`
+- Auth: requireUser.
+- Does:
+  1. `normalizeTarget(target)`:
+     - More than 4096 chars (checked before trim) is refused.
+     - Trimmed; empty is refused.
+     - Any scheme other than http/https is refused (`/^([a-zA-Z][a-zA-Z0-9+.-]*):/`). A value without a scheme gets `https://` prepended.
+     - It must parse as a URL with protocol http or https, and its hostname must contain a `.` or be `localhost`.
+     - The result is the WHATWG `URL.toString()` serialisation.
+
+     A failure returns `invalid-url`.
+  2. The owner's prefs are missing: `error`.
+  3. Scope: `useUserCode !== false` means the link is prefixed with the user's tag (no `user_code` gives `no-tag`). Otherwise the link sits at the root, which is allowed only for `role === "admin"` or `allow_root_short_links`; else `root-not-allowed`.
+  4. Code:
+     - `customCode?.trim()`, when given: more than 256 chars gives `code-too-long`; then `slugify` (lowercase, runs of non `[a-z0-9]` become `-`, dashes trimmed), and an empty result gives `invalid-code`.
+     - Otherwise `humanCode(7)` (6 letters + 1 digit), unique among stored codes. After 50 failed tries it throws `"Could not allocate a unique code"` [masked].
+  5. `stored = tag ? "<tag>/<code>" : code`. Longer than 64 gives `code-too-long`. A custom code that is already stored gives `code-taken`.
+  6. `password?.trim()`, when non-empty, is hashed in format (F). It is **trimmed here, but not when verified** (#75).
+  7. `expires_at`: when `expiresInDays` is a finite number above 0, `now + min(days, 3650) days`; else NULL.
+  8. `INSERT short_links {owner_id, code: stored, target, expires_at, password_hash}`. Unique violation `23505` gives `code-taken`; any other error gives `error`.
+- Returns: `{ok:true, code: stored, url}`. `url = SHORTLINK_URL + "/" + stored` when `SHORTLINK_URL` differs from APP_URL, else `APP_URL + "/s/" + stored`.
+- Errors: `"Could not allocate a unique code"` [masked] when 50 random codes collide; a non-string `target` gives a TypeError [masked]. Insert failures are returned as `code-taken`/`error`.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/links` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: shortlinks.ts:25 -> lib/shortlinks.ts:createShortLinkFor/normalizeTarget/expiryFromDays/shortLinkUrl, lib/naming.ts:scopedShortCode, lib/data/user-prefs.ts:mayCreateRootShortLink.
+
+##### shortlinks.retargetShortLink
+- Signature: `retargetShortLink(id: string, target: string): Promise<RetargetShortLinkResult>`, with `RetargetShortLinkResult = { ok: true; target: string } | { ok: false; reason: "invalid-url" | "not-found" }`.
+- Auth: requireUser.
+- Does:
+  1. `normalizeTarget(target)` (as #76). Null gives `invalid-url`.
+  2. `UPDATE short_links SET target = normalized WHERE id = $id AND owner_id = me RETURNING target`. No row gives `not-found`.
+- Returns: `{ok:true, target}`.
+- Errors: a non-uuid `id` gives a Postgres error [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/links` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: shortlinks.ts:55 -> lib/shortlinks.ts:normalizeTarget.
+
+##### shortlinks.deleteShortLink
+- Signature: `deleteShortLink(id: string): Promise<void>`
+- Auth: requireUser.
+- Does: `DELETE FROM short_links WHERE id = $id AND owner_id = me`. Zero rows is silent.
+- Returns: undefined.
+- Errors: a non-uuid `id` gives a Postgres error [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/links` (when the delete did not throw).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: shortlinks.ts:75.
+
+##### shortlinks.listShortLinks
+- Signature: `listShortLinks(): Promise<ShortLinksRow[]>`, with `ShortLinksRow = { id: string; ownerId: string; code: string; target: string; passwordHash: string | null; clicks: number; lastUsedAt: Date | null; expiresAt: Date | null; createdAt: Date }`.
+- Auth: requireUser.
+- Does: `SELECT * FROM short_links WHERE owner_id = me ORDER BY created_at DESC`. Expired links are included.
+- Returns: full rows. The three dates go out as `{"$date"}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: shortlinks.ts:81.
+- Security: returns each link's `passwordHash` (format F) to its owner.
+
+#### Module `tokens` (app/actions/tokens.ts)
+
+`TokenScope = "upload" | "read" | "write" | "full"`. The grants per scope:
+
+- `upload`: identify, upload
+- `read`: identify, read
+- `write`: identify, upload, read, write
+- `full`: everything above plus admin
+
+`isNarrowing(cur, next)` is true when `next !== cur` and every grant of `next` is also a grant of `cur`.
+
+##### tokens.createUploadToken
+- Signature: `createUploadToken(name: string, scope?: string): Promise<{ token: string; scope: TokenScope }>`
+- Auth: requireUser.
+- Does:
+  1. `chosen = isTokenScope(scope) ? scope : "upload"`. Absent or unknown values fall back to `upload`.
+  2. `name?.trim() || "ShareX"`. It is **not cut**: above 120 chars the varchar column raises a DB error.
+  3. `createApiToken`: `token = randomBytes(24)` base64url (32 chars); `INSERT api_tokens {user_id, name, scope, token_hash: sha256 hex, preview: last 6 chars}`.
+- Returns: `{token, scope: chosen}` with the plaintext token, shown once.
+- Errors: a DB error (for example a name that is too long) [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/tokens`. Audit: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: tokens.ts:33 -> lib/api-token.ts:createApiToken, lib/api-scopes.ts:isTokenScope.
+
+##### tokens.revokeUploadToken
+- Signature: `revokeUploadToken(id: string): Promise<void>`
+- Auth: requireUser.
+- Does: `UPDATE api_tokens SET revoked_at = now WHERE id = $id AND user_id = me`. An already-revoked token is re-stamped; zero rows is silent.
+- Returns: undefined.
+- Errors: a non-uuid `id` gives a Postgres error [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/tokens`. Audit: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: tokens.ts:44 -> lib/api-token.ts:revokeApiToken.
+
+##### tokens.narrowTokenScope
+- Signature: `narrowTokenScope(id: string, scope: string): Promise<{ ok: true; scope: TokenScope } | { ok: false; reason: string }>`
+- Auth: requireUser.
+- Does:
+  1. An unknown `scope` returns `{ok:false, reason:"not-narrower"}`.
+  2. `narrowApiTokenScope`:
+     - `SELECT scope, revoked_at` for `(id, user_id = me)`; no row gives `not-found`.
+     - A revoked token gives `revoked`.
+     - An unknown stored scope, or a change that is not a narrowing, gives `not-narrower`.
+     - `UPDATE api_tokens SET scope = next WHERE id AND user_id AND scope = <old> AND revoked_at IS NULL RETURNING scope`. No row (a race) gives `not-narrower`.
+  3. On success, audit `api_token.narrowed {token: <api_tokens.id>, scope}`.
+- Returns: `{ok:true, scope}` | `{ok:false, reason: "not-found" | "revoked" | "not-narrower"}`.
+- Errors: a non-uuid `id` gives a Postgres error [masked].
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: `/dashboard/tokens` when ok.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: tokens.ts:63 -> lib/api-token.ts:narrowApiTokenScope, lib/api-scopes.ts:isNarrowing.
+
+##### tokens.myTokens
+- Signature: `myTokens(): Promise<ApiTokensRow[]>`, with `ApiTokensRow = { id: string; userId: string; name: string; scope: string; tokenHash: string; preview: string; lastUsedAt: Date | null; revokedAt: Date | null; createdAt: Date }`.
+- Auth: requireUser.
+- Does: `SELECT * FROM api_tokens WHERE user_id = me`. Revoked tokens are included, and there is **no ORDER BY**.
+- Returns: full rows. The dates go out as `{"$date"}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: tokens.ts:86 -> lib/api-token.ts:listApiTokens.
+- Security: returns `tokenHash` (sha256 hex of each token) to the owner.
+
+#### Module `unlock` (app/actions/unlock.ts)
+
+##### unlock.verifyMediaPassword
+- Signature: `verifyMediaPassword(mediaId: string, password: string, remember?: boolean): Promise<UnlockResult>`. The default is `remember = false`.
+- Auth: public.
+- Does:
+  1. A falsy or non-uuid `mediaId` (case-insensitive check), or a `password` that is not a non-empty string, returns `{ok:false}` without counting. The ids are guarded.
+  2. Rate limit: key `<clientIp>|media:<mediaId>` with the defaults (5 per 15 min). Over the limit returns `{ok:false, error:"rate-limited"}`.
+  3. `SELECT uploads.id, uploads.password_hash, uploads.owner_id, uploads.password_version, user.default_password_version, user.default_password_hash FROM uploads LEFT JOIN "user" ON user.id = uploads.owner_id WHERE uploads.id = $id`. Expiry, trash and publish state are **not** consulted. No row, or no hash, returns `{ok:false}`.
+  4. `verifyPassword` (format F). A mismatch returns `{ok:false}`.
+  5. Success: reset the bucket. `onCurrentDefault = owner_id set AND owner default hash set AND upload.password_version != null AND password_version === owner default_password_version`.
+- Returns:
+  - `remember && onCurrentDefault`: `{ok:true, remembered:"owner"}`.
+  - Otherwise `{ok:true, remembered: remember ? "file" : undefined}`. The key is present with value undefined when `remember` is false.
+  - Failures: `{ok:false}` or `{ok:false, error:"rate-limited"}`.
+- Errors: none of its own; the common failure modes in 7.2.6 apply.
+- Redirect / notFound: none. Never notFound.
+- Cookies on ok:
+  - Always: `ml_unlock_<uploadId>=<exp>.<sig>` (parts `["media", id]`). The token TTL is **always 86400**. The cookie `Max-Age` is 2592000 when `remember`, else 86400. Attributes: `HttpOnly; Path=/; SameSite=lax`, plus `Secure` in production. As a result the "remember this file" cookie outlives its token, which stops verifying after 24 h.
+  - When `remember && onCurrentDefault`: also `ml_dpw_<ownerId>=<exp>.<sig>` (parts `["owner", ownerId, "v<password_version>"]`), with TTL and `Max-Age` both 2592000 and the same attributes.
+- Revalidate: none.
+- Headers: X-Real-IP.
+- Upstream: unlock.ts:41 -> lib/password.ts:checkRateLimit/verifyPassword/mintUnlockToken/mintOwnerUnlockToken/unlockCookieName/ownerUnlockCookieName/unlockCookieOptions/resetRateLimit (REMEMBER_TTL).
+
+#### Module `uploads` (app/actions/uploads.ts)
+
+Every action here is **session-or-throw**: no session throws `Error("Unauthorized")` [masked]. The actor is `{userId, email, isAdmin: role === "admin"}`. Admins reach every account's rows; everyone else only their own (lib/uploads.ts).
+
+`getActionableUpload(actor, id)`:
+
+- A non-string or non-uuid id, an unknown id, or a row the actor may not reach all throw `UploadOpError("not-found", "Not found")` [masked].
+- Otherwise it returns the full row. Trashed rows are **included**.
+
+`applyToUploads(actor, ids, patch)` (used by #85 and #92 to #94):
+
+1. Re-reads the actionable rows; ids are deduplicated, and non-uuids dropped, up to 500.
+2. `UPDATE uploads SET <patch>, updated_at = now WHERE id IN (rows) [AND owner_id = me for non-admins]`.
+3. For each row **not** owned by the actor, ownerless rows included: audit `<action> {by, byEmail, uploadId, code, filename, ownerId, ...detail}`.
+
+Unknown or foreign ids give a silent no-op.
+
+`auditForeignUpload` writes nothing when `row.owner_id === actor`.
+
+##### uploads.togglePublish
+- Signature: `togglePublish(id: string): Promise<{ published: boolean }>`
+- Auth: session-or-throw.
+- Does:
+  1. `getActionableUpload(id)`.
+  2. `published = !row.published`.
+  3. `applyToUploads(..., {published})`.
+  4. Foreign rows get audit `admin.upload.published {..., published}`.
+- Returns: `{published}`.
+- Errors: `"Unauthorized"`, `"Not found"` [masked].
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard` (when nothing threw).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:85 -> lib/uploads.ts:getActionableUpload/setPublishedFor.
+
+##### uploads.trashUpload
+- Signature: `trashUpload(id: string): Promise<void>`
+- Auth: session-or-throw.
+- Does:
+  1. `getActionableUpload(id)`.
+  2. `softDeleteMedia(id)` = `UPDATE uploads SET deleted_at = now WHERE id AND deleted_at IS NULL`. `updated_at` is untouched. An already-trashed row is not re-stamped.
+  3. `purgeDerived(id)`, which runs even when the row was already trashed.
+  4. Foreign rows get audit `admin.upload.trashed`.
+- Returns: undefined.
+- Errors: `"Unauthorized"`, `"Not found"` [masked].
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:95 -> lib/media/actions.ts:softDeleteMedia, lib/uploads.ts:auditForeignUpload.
+
+##### uploads.restoreUpload
+- Signature: `restoreUpload(id: string): Promise<void>`
+- Auth: session-or-throw.
+- Does:
+  1. `getActionableUpload(id)`.
+  2. `UPDATE uploads SET deleted_at = NULL WHERE id`. There is no state check, so a live row gets a no-op write.
+  3. Foreign rows get audit `admin.upload.restored`.
+- Returns: undefined.
+- Errors: `"Unauthorized"`, `"Not found"` [masked].
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard`, `/dashboard/trash`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:103 -> lib/media/actions.ts:restoreMedia.
+
+##### uploads.deleteUploadForever
+- Signature: `deleteUploadForever(id: string): Promise<void>`
+- Auth: session-or-throw.
+- Does:
+  1. `getActionableUpload(id)`. A row that is **not trashed** throws `Error("Not found")`.
+  2. `deleteMediaHard(row)`: the storage object (errors ignored), the thumb, `derived/<id>/`, `DELETE FROM uploads WHERE id`, and `used_quota = GREATEST(0, used_quota - size)` for the owner.
+  3. Foreign rows get audit `admin.upload.deleted {..., size}`.
+- Returns: undefined.
+- Errors: `"Unauthorized"`, `"Not found"` [masked].
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard`, `/dashboard/trash`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:112 -> lib/media/actions.ts:deleteMediaHard.
+
+##### uploads.trashSummary
+- Signature: `trashSummary(ownerTag?: string): Promise<{ files: number; bytes: number }>`. The default is the caller's own tag.
+- Auth: session-or-throw.
+- Does:
+  1. Target tag: the trimmed `ownerTag` when it is a non-empty string, else `session.user.userCode ?? ""`.
+  2. `trashOwnerId`. An empty tag, no user with exactly `user_code = tag` (aliases are **not** consulted), or another account's tag for a non-admin all throw `"Not found"`.
+  3. `count(*)` and `coalesce(sum(size),0)` over `uploads WHERE owner_id = target AND deleted_at IS NOT NULL`.
+- Returns: `{files, bytes}`.
+- Errors: `"Unauthorized"`, `"Not found"` [masked].
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: none.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:136 -> lib/uploads.ts:trashTotalsFor/trashOwnerId.
+
+##### uploads.emptyTrash
+- Signature: `emptyTrash(ownerTag?: string): Promise<{ deleted: number; bytes: number; failed: number }>`
+- Auth: session-or-throw.
+- Does:
+  1. The target is resolved as in #89.
+  2. At most 500 rounds:
+     - `SELECT id, owner_id, size, storage_key, thumb_key FROM uploads WHERE owner_id = target AND deleted_at IS NOT NULL [AND id NOT IN stuck] ORDER BY deleted_at ASC LIMIT 200`.
+     - `deleteMediaBulk` (see the admin module). The quota is refunded.
+     - Rows that storage refused are re-read into `stuck`.
+  3. When the target is not the caller: audit `admin.trash.emptied {by, byEmail, ownerId, ownerTag, files, bytes, failed}`, once per call.
+- Returns: `{deleted: files removed, bytes, failed: stuck.length}`.
+- Errors: `"Unauthorized"`, `"Not found"` [masked].
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard`, `/dashboard/trash`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:158 -> lib/uploads.ts:emptyTrashFor, lib/media/actions.ts:deleteMediaBulk.
+
+##### uploads.setVanity
+- Signature: `setVanity(id: string, vanity: string): Promise<{ code: string }>`
+- Auth: session-or-throw.
+- Does:
+  1. `getActionableUpload(id)`.
+  2. `code = slugify(vanity)` (a non-string becomes `""`; lowercase; runs of non `[a-z0-9]` become `-`; dashes trimmed). Empty throws.
+  3. `isReservedTag(code)` (case-insensitive, list in lib/naming.ts) throws.
+  4. Length above 64 throws.
+  5. A `code` equal to the current code returns it unchanged, with no write and no audit.
+  6. `SELECT id FROM uploads WHERE code = $code` over every account, trashed rows included. Another row with that code throws.
+  7. `UPDATE uploads SET code, updated_at = now WHERE id [AND owner for non-admins]`. A `23505` violation throws `"That URL is already taken"`.
+  8. Foreign rows get audit `admin.upload.link_changed {..., from: oldCode, to: code}`.
+- Returns: `{code}`.
+- Errors (masked):
+  - `"Unauthorized"`, `"Not found"`
+  - `"Invalid vanity"`
+  - `"\"<code>\" is reserved by the app"`
+  - `"Custom URL must be at most 64 characters"`
+  - `"That URL is already taken"`
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard` (when nothing threw).
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:171 -> lib/uploads.ts:setVanityFor, lib/ids.ts:slugify, lib/naming.ts:isReservedTag.
+
+##### uploads.setUploadExpiry
+- Signature: `setUploadExpiry(id: string, iso: string | null): Promise<void>`
+- Auth: session-or-throw.
+- Does:
+  1. `parseExpiry(iso)`: null, undefined or `""` give NULL. A Date is used as-is. Any other value goes through `new Date(value)`, with JavaScript parsing rules (the panel sends ISO 8601). An invalid date throws. Past dates are accepted.
+  2. `applyToUploads(..., {expires_at})`.
+  3. Foreign rows get audit `admin.upload.link_changed {..., expiresAt: ISO|null}`.
+- Returns: undefined.
+- Errors: `"Unauthorized"`, `"Invalid date"` [masked]. An unknown, foreign or non-uuid id is a **silent no-op**, not "Not found".
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:187 -> lib/uploads.ts:setExpiryFor.
+
+##### uploads.setUploadMaxViews
+- Signature: `setUploadMaxViews(id: string, maxViews: number | null): Promise<void>`
+- Auth: session-or-throw.
+- Does:
+  1. null or undefined gives NULL. A non-number or non-finite value throws. Otherwise `max(1, floor(n))`. There is no upper cap: values above the int4 maximum give a DB error.
+  2. `applyToUploads(..., {max_views})`.
+  3. Foreign rows get audit `admin.upload.link_changed {..., maxViews}`.
+- Returns: undefined.
+- Errors: `"Unauthorized"`, `"View limit must be a number"` [masked]. An unknown or foreign id is a silent no-op.
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:194 -> lib/uploads.ts:setMaxViewsFor.
+
+##### uploads.setUploadPassword
+- Signature: `setUploadPassword(id: string, password: string | null): Promise<void>`
+- Auth: session-or-throw.
+- Does:
+  1. A string longer than 1024 chars throws.
+  2. A non-empty string is hashed once in format (F). Anything else gives NULL, which clears the password.
+  3. `applyToUploads(..., {password_hash, password_version: NULL})`. `password_version` is always cleared.
+  4. Foreign rows get audit `admin.upload.link_changed {..., passwordSet: boolean}`.
+- Returns: undefined.
+- Errors: `"Unauthorized"`, `"Password must be at most 1024 characters"` [masked]. An unknown or foreign id is a silent no-op.
+- Redirect / notFound: none (no session is an error, not a redirect). Never notFound.
+- Revalidate: `/dashboard`.
+- Cookies: none beyond the session maintenance in 7.2.3.
+- Upstream: uploads.ts:201 -> lib/uploads.ts:setPasswordFor, lib/password.ts:hashPassword.
+
+---
+
+### 7.5 Open questions and upstream quirks to confirm
+
+1. **Decided (7.1): yes.** **Cookie writes make Next refresh the page.** In Next 16 an action that sets or deletes any cookie triggers `x-action-revalidated`, and the client refreshes the current route even without `revalidatePath`. Should the envelope then carry `"revalidate": true`? The protocol as given only covers `revalidatePath`/`revalidateTag`. The question applies to:
+   - #1 `updatePreferences` (theme or locale changed)
+   - #58 `acceptInvitation`
+   - #60 `signInWithIdentifier`
+   - #75 `verifyShortlinkPassword`
+   - #84 `verifyMediaPassword`
+   - any action during which better-auth refreshed or expired the session cookie (7.2.3)
+2. **Decided (7.1): `{"ok":{"$undefined":1}}`.** **Void results.** The proposal is `{"ok":{"$undefined":1}}`. The stub also works when `ok` is omitted. Pick one so differential tests are stable.
+3. **Session maintenance on RPC.** Every non-public action can extend the session row and re-issue the session cookie, or expire a stale cookie (7.2.3). This belongs to the PORT.md 9 auth layer, but it must run on `/_rpc/*` exactly as it does on `/api/auth/get-session`.
+4. **Decided (7.1): yes, 1 MiB, error envelope.** **Body limit.** Next refuses action bodies over 1 MiB before the action runs. The Rust `/_rpc` endpoint needs the same limit, answered with the error envelope. Without it, `createPaste` would accept up to 5,000,000 chars where upstream cannot.
+5. **Non-uuid ids in SQL.** These upstream paths answer with the masked error envelope instead of a typed refusal: #6, #22, #40 to #43, #77, #78, #81, #82, and `createFolder` with `parentId: ""`. Keep this as is for 1:1?
+6. **Upstream quirks a strict 1:1 port keeps.** None of them is in the PORT.md 12 fix list. Please confirm each:
+   - a. #84: the "remember this file" cookie lives 30 days but carries a 24 h token.
+   - b. #76 trims the short-link password; #75 verifies it untrimmed.
+   - c. #73 writes `release_app` even when it then answers `not-public` (upload with an expiry, or without an owner).
+   - d. #49 and #51: renaming to the same name, or moving within the same parent, changes the slug to `-2`.
+   - e. #51 checks only the new parent's depth, so a subtree can end up deeper than 8 levels.
+   - f. #67: a negative `expiresInDays` creates an already-expired paste; the returned URL ignores `skip_tag_in_url`; the default folder is not applied.
+   - g. #42: an unknown `mode` replaces the file but is audited as `convert.copy`. #43: a non-uuid id aborts the batch after earlier commits, with no revalidate and no audit. A copy does not carry `duration_seconds`/`fps`.
+   - h. #25 and #26: any role string reaches better-auth `setRole`, because no `roles` allow-list is configured.
+   - i. #29 issues a password-setting link for any account, not only for pending invitations.
+   - j. #8: the error "That pattern does not produce a usable name" can never fire.
+   - k. #20 counts sessions after the admin plugin has filtered out impersonated ones, but deletes those too.
+7. **Unordered queries.** #56 `listFolders` and #83 `myTokens` have no ORDER BY. Parity tests should compare their results as sets.
+8. **In-memory rate limits.** They are per process (`lib/password.ts`). A multi-instance port behaves like several upstream processes. Note this only if the port will ever run more than one instance.
+9. **Decided (4.4, 7.1): `digest` is part of the envelope.** **Error envelope shape.** PORT.md 7 shows the error envelope without `digest`, while this work order includes one. The SPA runtime accepts an optional `digest`.
+
+Nothing else was left unclear from the code.
 
 ## 8. Better Auth endpoints the browser calls
 
@@ -553,3 +2710,13 @@ browser: `/2fa` and `/login` (`next`, through upstream's `safeNext`) and
    only a real navigation triggers them.
 8. **Dev server port.** `npm run dev` uses `127.0.0.1:5173` (PORT.md section 3
    has no row for it).
+9. **Server-action quirks** (7.5, items 5 to 8): non-uuid ids answered with a
+   masked database error instead of a typed refusal, eleven behaviours a strict
+   1:1 port keeps (a 30-day cookie carrying a 24 h token, the short-link password
+   trimmed on save but not on check, `publishAppRelease` saving before refusing,
+   any role string accepted by `setRole`, `resendInvite` for any account, ...),
+   two unordered queries, and per-process rate limits. Each needs a keep-or-fix
+   decision; none is on PORT.md's security-fix list.
+10. **`revealRegistrationKey` and `createAccount`** return the plaintext
+    registration key and raw (unmasked) mail error text to administrators, as
+    upstream does (7.4). 1:1 keeps both.
