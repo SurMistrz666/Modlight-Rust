@@ -19,11 +19,14 @@ import {
 import { isSpaPath } from "../runtime/navigation";
 import { acceptMessages } from "../runtime/messages";
 import { setRootData } from "../runtime/root-data";
+import { MASKED_SERVER_ERROR } from "../runtime/errors";
 import { ensureLayout, ensurePage, isRouteId } from "./modules";
 
 let source: PageSource = fetchPagePayload;
 let lastLayouts: Partial<Layouts> = {};
 let routeTable: RouteObject[] = [];
+/** Has a page payload been rendered in this document yet? */
+let settledOnce = false;
 
 export function setPageSource(next: PageSource): void {
   source = next;
@@ -31,6 +34,12 @@ export function setPageSource(next: PageSource): void {
 
 export function setLoaderRoutes(routes: RouteObject[]): void {
   routeTable = routes;
+}
+
+/** Tests: start over as a freshly loaded document. */
+export function resetLoader(): void {
+  lastLayouts = {};
+  settledOnce = false;
 }
 
 const never = () => new Promise<never>(() => {});
@@ -55,11 +64,9 @@ export async function rootLoader({ request }: LoaderFunctionArgs): Promise<PageP
  * handlers to the browser, take the translations, load the code. Also used
  * for the payload the server inlined into the first document.
  */
-export async function settle(payload: PagePayload, url: URL, signal?: AbortSignal): Promise<PagePayload> {
-  if (isReload(payload)) {
-    window.location.assign(url.href);
-    return never();
-  }
+export async function settle(payload: PagePayload, url: URL, signal?: AbortSignal, retried = false): Promise<PagePayload> {
+  if (isReload(payload)) return documentLoad(url);
+  settledOnce = true;
   if (isRedirect(payload)) {
     const target = new URL(payload.redirect, url);
     if (target.origin === window.location.origin && isSpaPath(target.pathname)) {
@@ -81,9 +88,11 @@ export async function settle(payload: PagePayload, url: URL, signal?: AbortSigna
     return payload;
   }
   if (!acceptMessages(root)) {
-    // The server thinks this tab holds a dictionary it does not: ask again in full.
+    // The server thinks this tab holds a dictionary it does not: ask again in
+    // full, once; then a document load (its inlined payload always has one).
+    if (retried) return documentLoad(url);
     const again = await source(url, signal, { withoutMessages: true });
-    return settle(again, url, signal);
+    return settle(again, url, signal, true);
   }
   setRootData(root);
 
@@ -95,4 +104,18 @@ export async function settle(payload: PagePayload, url: URL, signal?: AbortSigna
 
   lastLayouts = { ...layouts };
   return payload;
+}
+
+/**
+ * Load `url` as a document. Not when it is this very document before anything
+ * rendered: the SPA already is what that URL serves (the vite dev server's
+ * index.html), so it would come straight back here; that shows as an error.
+ */
+function documentLoad(url: URL): Promise<PagePayload> {
+  const here = window.location.pathname + window.location.search;
+  if (!settledOnce && url.pathname + url.search === here) {
+    return Promise.resolve({ error: { message: MASKED_SERVER_ERROR }, layouts: {} });
+  }
+  window.location.assign(url.href);
+  return never();
 }

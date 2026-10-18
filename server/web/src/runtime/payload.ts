@@ -12,7 +12,6 @@
 import type { RootLayoutData, AppLayoutData, AuthLayoutData } from "../contract/layouts";
 import type { RouteId } from "../contract/routes";
 import { decodeTagged } from "./tagged-json";
-import { MASKED_SERVER_ERROR } from "./errors";
 import { messagesHeader } from "./messages";
 
 /**
@@ -59,7 +58,12 @@ export interface PageFailure {
   layouts: Partial<Layouts>;
 }
 
-/** The URL is a route handler or a static file: load it as a document. */
+/**
+ * The URL is a route handler or a static file: load it as a document. The SPA
+ * also turns every answer that is not a page payload into this (a failed
+ * request, a non-JSON or unknown answer such as the 400 for a malformed path),
+ * as Next falls back to a browser navigation when its RSC request fails.
+ */
 export interface PageReload {
   reload: true;
 }
@@ -90,7 +94,22 @@ export function pageDataUrl(url: URL): string {
 
 export type PageSource = (url: URL, signal?: AbortSignal, opts?: { withoutMessages?: boolean }) => Promise<PagePayload>;
 
-/** The real source: the Rust server. */
+const ENVELOPE_KEYS = ["route", "redirect", "notFound", "error", "reload", "notImplemented"];
+
+function isEnvelope(body: unknown): body is PagePayload {
+  return typeof body === "object" && body !== null && ENVELOPE_KEYS.some((k) => k in body);
+}
+
+const RELOAD: PageReload = { reload: true };
+
+/**
+ * The real source: the Rust server. Anything but a page payload becomes
+ * `{"reload": true}`: Next answers a failed RSC fetch, a non-RSC answer and a
+ * non-200 one (an unmatched URL's 404) with a browser navigation to the URL
+ * (client/components/router-reducer/fetch-server-response.js). A 500 page
+ * payload is not such a case: upstream's RSC answer for a page that threw is a
+ * 200 carrying the error, which the error boundary renders.
+ */
 export const fetchPagePayload: PageSource = async (url, signal, opts) => {
   const headers: Record<string, string> = { Accept: "application/json" };
   const held = opts?.withoutMessages ? null : messagesHeader();
@@ -100,21 +119,18 @@ export const fetchPagePayload: PageSource = async (url, signal, opts) => {
     res = await fetch(pageDataUrl(url), { method: "GET", headers, credentials: "same-origin", signal });
   } catch (err) {
     if (signal?.aborted) throw err;
-    return networkFailure();
+    console.error(`Failed to fetch the page data for ${url.href}. Falling back to browser navigation.`, err);
+    return RELOAD;
   }
   const type = res.headers.get("content-type") ?? "";
-  if (!type.includes("application/json")) return networkFailure();
+  if (!type.includes("application/json")) return RELOAD;
   try {
-    return decodeTagged<PagePayload>(await res.json());
+    const body: unknown = decodeTagged(await res.json());
+    return isEnvelope(body) ? body : RELOAD;
   } catch {
-    return networkFailure();
+    return RELOAD;
   }
 };
-
-function networkFailure(): PageFailure {
-  // Rendered by the nearest error boundary, like a failed RSC fetch upstream.
-  return { error: { message: MASKED_SERVER_ERROR }, layouts: {} };
-}
 
 /** The payload the server inlined into the HTML, if any (read once). */
 export function readInlinePayload(): PagePayload | null {
