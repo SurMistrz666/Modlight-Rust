@@ -1066,9 +1066,14 @@ impl AppState {
             Box::new(
                 move |state: &mut AppState, _ctx: &egui::Context| match answer {
                     Ok(result) => {
-                        state.refresh_folders();
+                        // Leave the folder first when it was the open one: a new listing
+                        // drops the work of the old one, and the folder refresh must not be
+                        // part of what is dropped (upstream refreshes first and loses it).
                         if state.space.current_folder.as_deref() == Some(id.as_str()) {
                             state.space_navigate_to(None);
+                            state.space_reload();
+                        } else {
+                            state.refresh_folders();
                         }
                         state.refresh_account_strip();
                         let text = if result.trashed > 0 {
