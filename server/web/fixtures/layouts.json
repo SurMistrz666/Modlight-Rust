@@ -1,0 +1,74 @@
+{
+  "root": {
+    "locale": "en",
+    "timeZone": "UTC",
+    "mode": "system",
+    "skin": "discord",
+    "config": {
+      "appName": "Modlight",
+      "embedBrand": "example",
+      "appUrl": "https://files.example.com",
+      "appDomains": ["https://files.example.com", "https://f.example.com"],
+      "shortUrl": "https://s.example.com"
+    }
+  },
+  "(app)": {
+    "theme": "discord",
+    "background": null,
+    "transferFolders": [
+      { "id": "11111111-1111-4111-8111-111111111111", "name": "Screenshots" },
+      { "id": "22222222-2222-4222-8222-222222222222", "name": "2026" },
+      { "id": "33333333-3333-4333-8333-333333333333", "name": "Docs" }
+    ],
+    "defaultFolderId": null,
+    "user": {
+      "name": "Alicja",
+      "email": "alicja@example.com",
+      "image": null,
+      "role": "admin",
+      "userCode": "alicja"
+    },
+    "sidebar": {
+      "folders": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "parentId": null,
+          "name": "Screenshots",
+          "slug": "screenshots",
+          "isPublic": true,
+          "count": 12,
+          "totalCount": 20,
+          "children": [
+            {
+              "id": "22222222-2222-4222-8222-222222222222",
+              "parentId": "11111111-1111-4111-8111-111111111111",
+              "name": "2026",
+              "slug": "2026",
+              "isPublic": false,
+              "count": 8,
+              "totalCount": 8,
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "parentId": null,
+          "name": "Docs",
+          "slug": "docs",
+          "isPublic": false,
+          "count": 3,
+          "totalCount": 3,
+          "children": []
+        }
+      ],
+      "counts": { "image": 25, "video": 4, "audio": 1, "document": 6, "archive": 2, "paste": 3, "other": 1 },
+      "totalFiles": 42,
+      "unsortedCount": 19,
+      "storage": { "used": 734003200, "max": 10737418240 }
+    },
+    "defaultCollapsed": false,
+    "duplicateReminder": { "redundant": 12, "reclaimable": 1610612736 }
+  },
+  "(auth)": {}
+}

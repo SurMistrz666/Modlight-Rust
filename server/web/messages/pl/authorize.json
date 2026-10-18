@@ -1,0 +1,51 @@
+{
+  "title": "Podłącz aplikację na komputerze",
+  "description": "Aplikacja na tym komputerze prosi o dostęp do Twojego konta {appName}. Nic nie zostanie wydane, dopóki tego nie zatwierdzisz.",
+  "unknownClient": "Aplikacja na tym komputerze",
+  "permissions": {
+    "heading": "Po zatwierdzeniu aplikacja będzie mogła:",
+    "upload": "Wysyłać pliki do Twojej biblioteki. Będą widoczne jako Twoje.",
+    "read": "Widzieć dane konta, limit miejsca i foldery.",
+    "delete": "Usuwać pliki z Twojej biblioteki.",
+    "links": "Tworzyć krótkie linki pod Twoim tagiem i zapisywać własne ustawienia na Twoim koncie.",
+    "notIncluded": "Nigdy nie zobaczy Twojego hasła ani kodów dwuskładnikowych, nie zmieni danych logowania i nie wyłączy logowania dwuskładnikowego. Dostęp możesz cofnąć w każdej chwili w sekcji Integracje."
+  },
+  "account": "Zalogowano jako {email}.",
+  "local": "Klucz trafia prosto pod {host} na tym komputerze i nigdzie indziej.",
+  "approve": "Zatwierdź i połącz",
+  "approving": "Łączenie…",
+  "deny": "Nie teraz",
+  "unexpected": "Jeśli to nie Ty przed chwilą uruchomiłeś tę aplikację, zamknij tę stronę. Nic jeszcze nie zostało wydane.",
+  "done": {
+    "title": "Połączono z: {client}",
+    "body": "Aplikacja ma teraz własny klucz do Twojego konta {appName}.",
+    "close": "Możesz zamknąć to okno."
+  },
+  "denied": {
+    "title": "Nic nie zostało wydane",
+    "body": "Żaden klucz nie powstał, a aplikacja dostała informację o odmowie."
+  },
+  "refused": {
+    "title": "Nie udało się połączyć aplikacji",
+    "back": "Wróć do prośby",
+    "signed-out": "Twoja sesja wygasła. Zaloguj się ponownie i otwórz link z aplikacji jeszcze raz.",
+    "invalid-request": "Ta prośba jest niekompletna lub uszkodzona. Rozpocznij logowanie ponownie z poziomu aplikacji.",
+    "rate-limited": "Zbyt wiele kluczy wydano stąd w krótkim czasie. Odczekaj kilka minut i spróbuj ponownie.",
+    "error": "Coś poszło nie tak przy tworzeniu klucza. Spróbuj za chwilę."
+  },
+  "manual": {
+    "title": "Aplikacja nie odpowiedziała pod {host}",
+    "body": "Klucz powstał, ale nie udało się dosięgnąć aplikacji {client}. Mogła już przestać czekać. Skopiuj klucz poniżej i wklej go w aplikacji albo upewnij się, że nadal jest otwarta, i wyślij ponownie.",
+    "hint": "Traktuj ten klucz jak hasło. Kto go ma, może wysyłać i usuwać pliki na Twoim koncie.",
+    "retry": "Wyślij do aplikacji jeszcze raz",
+    "copied": "Skopiowano klucz do schowka",
+    "copyFailed": "Nie udało się uzyskać dostępu do schowka",
+    "stillUnreachable": "Nadal nic nie nasłuchuje pod {host}"
+  },
+  "invalid": {
+    "title": "Ten link nie jest prawidłową prośbą",
+    "description": "Brakuje w nim czegoś, co aplikacja musi przysłać, albo został po drodze zmieniony.",
+    "body": "Rozpocznij logowanie z wnętrza aplikacji, żeby sama podała swój port i jednorazowy kod. Jeśli nie spodziewałeś się tej strony, po prostu ją zamknij.",
+    "integrations": "Przejdź do Integracji"
+  }
+}

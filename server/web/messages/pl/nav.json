@@ -1,0 +1,46 @@
+{
+  "library": "Biblioteka",
+  "create": "Twórz",
+  "account": "Konto",
+  "files": "Wszystko",
+  "folders": "Foldery",
+  "trash": "Kosz",
+  "duplicates": "Duplikaty",
+  "foldersSection": "Twoje foldery",
+  "upload": "Wyślij plik",
+  "newPaste": "Nowa wklejka",
+  "shortLinks": "Nowy krótki link",
+  "sharexApi": "Integracje",
+  "profile": "Profil",
+  "admin": "Administracja",
+  "signOut": "Wyloguj",
+  "mediaPanel": "Panel mediów",
+  "menu": "Menu",
+  "navigation": "Nawigacja",
+  "collapseSidebar": "Zwiń panel boczny",
+  "expandSidebar": "Rozwiń panel boczny",
+  "collapseSection": "Zwiń sekcję {name}",
+  "expandSection": "Rozwiń sekcję {name}",
+  "rowMenu": {
+    "open": "Otwórz",
+    "openNewTab": "Otwórz w nowej karcie",
+    "copyLink": "Kopiuj link",
+    "linkCopied": "Skopiowano link",
+    "copyFailed": "Nie udało się skopiować do schowka"
+  },
+  "kind": {
+    "image": "Obrazy",
+    "video": "Wideo",
+    "audio": "Audio",
+    "document": "Dokumenty",
+    "archive": "Archiwa",
+    "paste": "Wklejki",
+    "other": "Inne"
+  },
+  "storage": {
+    "label": "Miejsce",
+    "used": "zajęte {used}",
+    "ofQuota": "{used} z {total}",
+    "unlimited": "Bez limitu"
+  }
+}
