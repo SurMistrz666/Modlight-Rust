@@ -1,7 +1,7 @@
 {
   "url": "/authorize?port=53682&state=abcdefghijklmnop&name=Modlight%20App",
   "payload": {
-    "route": "/(auth)/authorize",
+    "route": "/authorize",
     "params": {},
     "layouts": "$auth",
     "props": {
@@ -22,29 +22,9 @@
     },
     "meta": {
       "title": "Connect a desktop app - Modlight",
-      "tags": [
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "description",
-            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
-          }
-        },
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "application-name",
-            "content": "Modlight"
-          }
-        },
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "robots",
-            "content": "noindex, nofollow"
-          }
-        }
-      ]
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight",
+      "robots": "noindex, nofollow"
     }
   }
 }

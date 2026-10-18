@@ -7,11 +7,12 @@ import { act, fireEvent, render } from "@testing-library/react";
 import { createMemoryRouter, matchRoutes, RouterProvider } from "react-router";
 import { decodeTagged, encodeTagged } from "../src/runtime/tagged-json";
 import { callAction, httpTransport, setActionTransport } from "../src/runtime/rpc";
-import { pageDataUrl } from "../src/runtime/payload";
+import { fetchPagePayload, pageDataUrl, type PageOk } from "../src/runtime/payload";
+import { resetMessages } from "../src/runtime/messages";
 import { isRedirectError, MASKED_SERVER_ERROR } from "../src/runtime/errors";
 import { installRouter, isSpaPath } from "../src/runtime/navigation";
 import { routes } from "../src/routes/tree";
-import { setLoaderRoutes, setPageSource } from "../src/routes/loader";
+import { setLoaderRoutes, setPageSource, settle } from "../src/routes/loader";
 import { expandFixture, FIXTURES } from "../src/fixtures/source";
 import * as uploads from "../src/rpc/actions/uploads";
 import * as account from "../src/rpc/actions/account";
@@ -109,6 +110,45 @@ describe("page data URL", () => {
     const url = new URL("https://x.test/dashboard?folder=a&path=b&page=2");
     expect(pageDataUrl(url)).toBe("/_page?path=%2Fdashboard&folder=a&path=b&page=2");
   });
+
+  it("encodes the (already percent-encoded) pathname with encodeURIComponent", () => {
+    const url = new URL("https://x.test/a%20b/c.png?w=64&x=1%2B2");
+    expect(pageDataUrl(url)).toBe("/_page?path=%2Fa%2520b%2Fc.png&w=64&x=1%2B2");
+  });
+});
+
+describe("translations from the root layout", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends X-Modlight-Messages once a dictionary is held, and asks again in full when needed", async () => {
+    resetMessages();
+    setPageSource(fetchPagePayload);
+    const seen: (string | null)[] = [];
+    const login = expandFixture(FIXTURES["auth-login"]) as PageOk;
+    const dictionary = login.layouts.root.messages;
+    let reply = 0;
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      const header = (init.headers as Record<string, string>)["X-Modlight-Messages"] ?? null;
+      seen.push(header);
+      reply++;
+      // 1st: full dictionary; 2nd: "you have it" (null); 3rd: null for a hash this
+      // tab never got, so the SPA asks a 4th time without the header.
+      const root = {
+        ...login.layouts.root,
+        messagesHash: reply >= 3 ? "other" : "h1",
+        messages: reply === 1 ? dictionary : header === null ? dictionary : null,
+      };
+      return new Response(JSON.stringify({ ...login, layouts: { ...login.layouts, root } }), {
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const url = new URL("https://x.test/login");
+    await settle(await fetchPagePayload(url), url);
+    await settle(await fetchPagePayload(url), url);
+    const third = await settle(await fetchPagePayload(url), url);
+    expect(seen).toEqual([null, "en:h1", "en:h1", null]);
+    expect((third as PageOk).layouts.root.messagesHash).toBe("other");
+  });
 });
 
 describe("navigation", () => {
@@ -116,10 +156,15 @@ describe("navigation", () => {
     setLoaderRoutes(routes);
     const router = createMemoryRouter(routes, { initialEntries: ["/welcome"] });
     installRouter(router, routes);
-    for (const p of ["/", "/login", "/dashboard", "/dashboard/admin/users/u1/files", "/alicja/x.png", "/x.png", "/a/t/s", "/u/t", "/s/c/unlock", "/s/t/n/unlock", "/invite/abc"]) {
+    const pages = ["/", "/login", "/dashboard", "/dashboard/admin/users/u1/files", "/alicja/x.png", "/x.png", "/a/t/s", "/u/t", "/s/c/unlock", "/s/t/n/unlock", "/invite/abc"];
+    // No route: rendered by the SPA too (the server answers notFound or reload).
+    const unmatched = ["/dashboard/admin/users/x", "/x/y/z/w"];
+    // GET /upload and /api/upload are pages: upstream server.ts takes only their POSTs.
+    const getPages = ["/upload", "/api/upload", "/api/foo"];
+    for (const p of [...pages, ...unmatched, ...getPages]) {
       expect([p, isSpaPath(p)]).toEqual([p, true]);
     }
-    for (const p of ["/s/promo", "/alicja/x/raw.png", "/a/t/s/zip", "/download/app", "/alicja/x/delete/tok", "/dashboard/admin/x", "/dashboard/admin/users/x"]) {
+    for (const p of ["/s/promo", "/alicja/x/raw.png", "/a/t/s/zip", "/download/app", "/alicja/x/delete/tok", "/dashboard/admin/x", "/api/files/abc", "/api/auth/get-session", "/assets/index.js"]) {
       expect([p, isSpaPath(p)]).toEqual([p, false]);
     }
   });
@@ -157,6 +202,24 @@ describe("navigation", () => {
     }
     expect(router.state.location.pathname).toBe("/dashboard/folders");
     expect(requested).toEqual(["/dashboard?all=1", "/dashboard/folders"]);
+    view.unmount();
+  });
+});
+
+describe("501 from an unported loader", () => {
+  it("shows which upstream file has no loader yet", async () => {
+    const root = (expandFixture(FIXTURES["auth-login"]) as PageOk).layouts.root;
+    setPageSource(async () => ({ notImplemented: true, route: "/login", file: "app/(auth)/layout.tsx", layouts: { root } }));
+    setLoaderRoutes(routes);
+    const router = createMemoryRouter(routes, { initialEntries: ["/login"] });
+    installRouter(router, routes);
+    const view = render(<RouterProvider router={router} />);
+    for (let i = 0; i < 200 && (!router.state.initialized || router.state.navigation.state !== "idle"); i++) {
+      await act(() => new Promise((r) => setTimeout(r, 10)));
+    }
+    await act(() => new Promise((r) => setTimeout(r, 30)));
+    const box = view.container.querySelector("[data-ml-not-implemented]");
+    expect(box?.textContent).toContain("app/(auth)/layout.tsx");
     view.unmount();
   });
 });

@@ -15,7 +15,9 @@
 //   - every lib/ module those files, or the SPA's own src/ files, import -
 //     followed transitively. Imports of @/app/actions/* stop at the generated RPC
 //     stubs; imports that hit a file under src/overrides/ stop there.
-//   - messages/{en,pl}/<namespace>.json for the namespaces the root layout ships.
+//
+// Translations are not copied: the server sends them with the root layout
+// (server/messages is the server's verbatim copy of upstream messages/).
 //
 // A module that is server-only (node:*, drizzle, "server-only", next/headers...)
 // is never copied. Reaching one without an override is an error: either the
@@ -45,14 +47,6 @@ const ACCEPT = process.argv.includes("--accept");
 const MANIFEST = path.join(WEB_ROOT, "upstream.lock.json");
 const OVERRIDES = path.join(WEB_ROOT, "src", "overrides");
 const SRC = path.join(WEB_ROOT, "src");
-
-/** The namespaces i18n/request.ts loads for the root layout (mail.json is server-only). */
-const NAMESPACES = [
-  "common", "nav", "auth", "dashboard", "profile",
-  "paste", "links", "albums", "tokens", "admin",
-  "public", "landing", "viewer", "files", "upload",
-  "download", "authorize",
-];
 
 /** Client files that live under app/ upstream. */
 const APP_CLIENT_FILES = [
@@ -153,9 +147,6 @@ while (queue.length) {
   }
 }
 
-for (const lang of ["en", "pl"]) {
-  for (const ns of NAMESPACES) copy.add(`messages/${lang}/${ns}.json`);
-}
 
 // ---------------------------------------------------------------------------
 // 2. Ports: every `@upstream <path>` tag under src/

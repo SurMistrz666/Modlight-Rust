@@ -1,8 +1,10 @@
 /// <reference types="vitest/config" />
 import fs from "node:fs";
 import path from "node:path";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, searchForWorkspaceRoot, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { matchRoutes } from "react-router";
+import { ROUTES, SERVER_PATHS } from "./src/contract/routes";
 
 const ROOT = path.dirname(new URL(import.meta.url).pathname);
 const OVERRIDES = path.join(ROOT, "src", "overrides");
@@ -67,26 +69,27 @@ function modlightResolve(): Plugin {
 }
 
 /**
- * Same-origin document requests the SPA renders itself; everything else goes to
- * the Rust server in dev. Mirrors the page / route-handler split of
- * src/routes/tree.tsx (ROUTES vs SERVER_PATHS).
+ * Document requests the SPA renders itself, decided by the route table the
+ * browser uses (src/contract/routes.ts): a page, or no route at all (the SPA
+ * asks /_page and renders the not-found page), but not a route handler or a
+ * public file, which the Rust server answers.
  */
+const DOCUMENT_ROUTES = [
+  ...Object.values(ROUTES).map((r) => ({ id: `spa:${r.pattern}`, path: r.pattern, caseSensitive: true })),
+  ...SERVER_PATHS.map((p) => ({ id: `server:${p}`, path: p, caseSensitive: true })),
+  { id: "spa:*", path: "*" },
+];
+
 function isSpaDocument(url: string, accept: string): boolean {
   if (!accept.includes("text/html")) return false;
   const pathname = url.split("?")[0];
-  const s = pathname.split("/").filter(Boolean);
-  const SERVER_FIRST = ["_rpc", "_page", "api", "avatar", "bg", "embed", "oembed", "upload", "brand", "fonts", "icon.svg", "apple-icon.png"];
-  if (s.length > 0 && SERVER_FIRST.includes(s[0])) return false;
-  if (s[0] === "dashboard") return true;
-  if (s[0] === "s") return s[s.length - 1] === "unlock" && (s.length === 3 || s.length === 4);
-  if (s[0] === "a") return s.length === 3;
-  if (s[0] === "u") return s.length === 2;
-  if (s[0] === "download") return s.length === 1;
-  if (s[0] === "invite") return s.length === 2;
-  return s.length <= 2;
+  if (/^\/(_rpc|_page)(\/|$)/.test(pathname)) return false;
+  const hit = matchRoutes(DOCUMENT_ROUTES, pathname);
+  return hit !== null && hit[hit.length - 1].route.id.startsWith("spa:");
 }
 
-const VITE_OWN = /^\/(@vite|@id|@fs|@react-refresh|src\/|node_modules\/|components\/|lib\/|hooks\/|app\/|messages\/|types\/|__vitest|index\.html)/;
+/** Module requests of the vite dev server itself (never `Accept: text/html`). */
+const VITE_OWN = /^\/(@vite|@id|@fs|@react-refresh|src\/|node_modules\/|components\/|lib\/|hooks\/|app\/|types\/|__vitest|index\.html)/;
 
 /** `process.env.NEXT_PUBLIC_*` replacements, exactly what Next would inline. */
 function publicEnv(): Record<string, string> {
@@ -113,6 +116,17 @@ export default defineConfig(({ mode }) => {
       host: "127.0.0.1",
       port: 5173,
       strictPort: true,
+      fs: {
+        // Besides this package: the dictionaries the fixtures render with
+        // (server/messages, what the Rust server sends) and the directory of the
+        // Rust route table tests/route-table.test.ts compares against (a `?raw`
+        // import is only allowed by directory). Nothing else of server/.
+        allow: [
+          searchForWorkspaceRoot(ROOT),
+          path.resolve(ROOT, "../messages"),
+          path.resolve(ROOT, "../src/pages"),
+        ],
+      },
       proxy: fixtures
         ? undefined
         : {
@@ -124,8 +138,8 @@ export default defineConfig(({ mode }) => {
               changeOrigin: false,
               bypass(req) {
                 const url = req.url ?? "/";
-                if (VITE_OWN.test(url)) return url;
                 if (isSpaDocument(url, String(req.headers.accept ?? ""))) return "/index.html";
+                if (VITE_OWN.test(url)) return url;
                 return undefined;
               },
             },

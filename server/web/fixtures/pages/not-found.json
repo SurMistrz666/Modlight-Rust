@@ -5,29 +5,9 @@
     "layouts": "$root",
     "meta": {
       "title": "Modlight",
-      "tags": [
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "robots",
-            "content": "noindex"
-          }
-        },
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "description",
-            "content": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support."
-          }
-        },
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "application-name",
-            "content": "Modlight"
-          }
-        }
-      ]
+      "robots": "noindex",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
     }
   }
 }

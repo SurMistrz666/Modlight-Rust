@@ -9,22 +9,8 @@
     },
     "meta": {
       "title": "Modlight App - Modlight",
-      "tags": [
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "description",
-            "content": "Modlight App for Modlight."
-          }
-        },
-        {
-          "tag": "meta",
-          "attrs": {
-            "name": "application-name",
-            "content": "Modlight"
-          }
-        }
-      ]
+      "description": "Modlight App for Modlight.",
+      "applicationName": "Modlight"
     }
   }
 }
