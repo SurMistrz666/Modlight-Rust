@@ -1,0 +1,36 @@
+{
+  "album": {
+    "notFoundTitle": "Nie znaleziono albumu",
+    "metaDescription": "{count, plural, one {# element} few {# elementy} many {# elementów} other {# elementu}} · album użytkownika {owner}",
+    "anonymous": "Anonim",
+    "byOwner": "Album użytkownika",
+    "itemCount": "{count, plural, one {# element} few {# elementy} many {# elementów} other {# elementu}}",
+    "empty": "Ten album jest na razie pusty.",
+    "downloadAllZip": "Pobierz wszystko jako ZIP"
+  },
+  "gallery": {
+    "open": "Otwórz {filename}",
+    "folderLabel": "Pliki w folderze {name}",
+    "profileLabel": "Publiczne pliki użytkownika {name}"
+  },
+  "profile": {
+    "notFoundTitle": "Nie znaleziono",
+    "metaTitle": "{name}",
+    "metaDescription": "Publiczna galeria · @{tag}",
+    "uploadCount": "{count, plural, one {# publiczny plik} few {# publiczne pliki} many {# publicznych plików} other {# publicznego pliku}}",
+    "showingLatest": "(pokazujemy najnowsze)",
+    "emptyTitle": "Jeszcze nic tu nie ma",
+    "emptyBody": "{name} nie udostępnił jeszcze żadnych publicznych plików."
+  },
+  "shortlink": {
+    "metaTitle": "Link chroniony",
+    "cardTitle": "Ten link jest chroniony",
+    "cardDescription": "Wpisz hasło, aby przejść do miejsca docelowego.",
+    "passwordLabel": "Hasło",
+    "enterPassword": "Wpisz hasło.",
+    "incorrect": "Nieprawidłowe hasło. Spróbuj ponownie.",
+    "error": "Coś poszło nie tak. Spróbuj ponownie.",
+    "unlocking": "Odblokowywanie…",
+    "unlockLink": "Odblokuj link"
+  }
+}
