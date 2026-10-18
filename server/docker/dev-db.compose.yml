@@ -1,0 +1,28 @@
+# Development PostgreSQL for the Rust server (PORT.md section 3).
+# Only on this Mac: published on 127.0.0.1:55421, never on 0.0.0.0.
+#
+#   docker compose -f server/docker/dev-db.compose.yml --env-file server/docker/.env.devdb up -d
+#
+# server/scripts/dev.sh generates .env.devdb (gitignored) and runs this for you.
+name: modlight-devdb
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: modlight
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?generate server/docker/.env.devdb first (scripts/dev.sh does)}
+      POSTGRES_DB: modlight
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:55421:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U modlight -d modlight"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pgdata:

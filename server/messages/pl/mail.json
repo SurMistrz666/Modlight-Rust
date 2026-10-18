@@ -1,0 +1,59 @@
+{
+  "common": {
+    "linkFallback": "Jeśli przycisk nie działa, skopiuj ten adres do przeglądarki:",
+    "footer": "{appName}, własny hosting plików.",
+    "automated": "To wiadomość automatyczna, prosimy na nią nie odpowiadać.",
+    "logoAlt": "Znak {appName}"
+  },
+  "verifyEmail": {
+    "subject": "Potwierdź swój adres w {appName}",
+    "preheader": "Jedno kliknięcie i konto jest aktywne.",
+    "title": "Potwierdź adres e-mail",
+    "intro": "Witamy w {appName}. Potwierdź, że adres {email} należy do Ciebie, a konto będzie gotowe do użycia.",
+    "button": "Potwierdź adres",
+    "expiry": "Link jest ważny przez ograniczony czas. Jeśli wygasł, poproś o nowy na stronie logowania.",
+    "ignore": "Jeśli to nie Ty zakładasz konto, zignoruj tę wiadomość, nic się nie wydarzy."
+  },
+  "resetPassword": {
+    "subject": "Zresetuj hasło w {appName}",
+    "preheader": "Link do ustawienia nowego hasła.",
+    "title": "Zresetuj hasło",
+    "intro": "Ktoś poprosił o zresetowanie hasła dla adresu {email}. Ustaw nowe hasło przyciskiem poniżej.",
+    "button": "Ustaw nowe hasło",
+    "expiry": "Link jest ważny przez ograniczony czas i można go użyć tylko raz.",
+    "ignore": "Jeśli to nie Ty, zignoruj tę wiadomość. Hasło pozostanie bez zmian."
+  },
+  "accountInvited": {
+    "subject": "Twoje konto w {appName} jest gotowe",
+    "preheader": "Ustaw hasło i możesz zaczynać.",
+    "title": "Utworzono dla Ciebie konto",
+    "intro": "Administrator utworzył konto w {appName} dla adresu {email}. Ustaw hasło, żeby dokończyć i się zalogować.",
+    "button": "Ustaw hasło",
+    "expiry": "Zaproszenie jest ważne przez 7 dni. Później poproś administratora o nowe.",
+    "ignore": "Jeśli się tego nie spodziewasz, skontaktuj się z osobą prowadzącą ten serwis, zanim użyjesz linku."
+  },
+  "smtpTest": {
+    "subject": "Wiadomość testowa {appName}",
+    "preheader": "Poczta wychodząca działa.",
+    "title": "Poczta wychodząca działa",
+    "intro": "Ta wiadomość została wysłana z panelu administratora {appName}, żeby sprawdzić konfigurację poczty.",
+    "detail": "Wysłano przez {host} na porcie {port} jako {from}.",
+    "closing": "Nic więcej nie zostało zmienione. Możesz usunąć tę wiadomość."
+  },
+  "passwordChanged": {
+    "subject": "Hasło do konta {appName} zostało zmienione",
+    "preheader": "Jeśli to nie Ty, zareaguj teraz.",
+    "title": "Hasło zostało zmienione",
+    "intro": "Hasło do konta {email} właśnie zostało zmienione, a pozostałe sesje na tym koncie zostały wylogowane.",
+    "closing": "Jeśli to Twoja zmiana, nie musisz nic robić.",
+    "warning": "Jeśli nie, skontaktuj się natychmiast z administratorem serwisu: ktoś inny ma dostęp do konta."
+  },
+  "emailChanged": {
+    "subject": "Adres e-mail konta {appName} został zmieniony",
+    "preheader": "Twoje konto używa teraz innego adresu.",
+    "title": "Adres e-mail został zmieniony",
+    "intro": "Adres konta w {appName} został zmieniony z {oldEmail} na {newEmail}.",
+    "closing": "Ta wiadomość trafiła na poprzedni adres, który nie będzie już otrzymywał poczty z konta.",
+    "warning": "Jeśli o to nie prosiłeś, skontaktuj się natychmiast z administratorem serwisu."
+  }
+}

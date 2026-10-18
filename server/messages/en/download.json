@@ -1,0 +1,22 @@
+{
+  "tagline": "Download from YouTube, TikTok and hundreds of other sites, and drop the file straight into {appName}. The link lands on your clipboard the moment the upload finishes.",
+  "downloadFor": "Download {version}",
+  "size": "Size",
+  "published": "Published",
+  "none": "No build has been published yet. Check back shortly.",
+  "getConfig": "Get your config file in the panel",
+  "features": {
+    "clipboard": {
+      "title": "Link on the clipboard",
+      "desc": "Exactly like ShareX: the upload finishes and the link is already copied."
+    },
+    "folders": {
+      "title": "Straight into a folder",
+      "desc": "Pick where files land, or let each queue item choose its own."
+    },
+    "resumable": {
+      "title": "Survives a dropped line",
+      "desc": "Large files resume from where they stopped instead of starting over."
+    }
+  }
+}

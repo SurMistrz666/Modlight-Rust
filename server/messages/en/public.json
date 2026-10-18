@@ -1,0 +1,36 @@
+{
+  "album": {
+    "notFoundTitle": "Album not found",
+    "metaDescription": "{count, plural, one {# item} other {# items}} · an album by {owner}",
+    "anonymous": "Anonymous",
+    "byOwner": "An album by",
+    "itemCount": "{count, plural, one {# item} other {# items}}",
+    "empty": "This album is empty for now.",
+    "downloadAllZip": "Download all as ZIP"
+  },
+  "gallery": {
+    "open": "Open {filename}",
+    "folderLabel": "Files in {name}",
+    "profileLabel": "Public uploads by {name}"
+  },
+  "profile": {
+    "notFoundTitle": "Not found",
+    "metaTitle": "{name}",
+    "metaDescription": "Public gallery · @{tag}",
+    "uploadCount": "{count, plural, one {# public upload} other {# public uploads}}",
+    "showingLatest": "(showing the latest)",
+    "emptyTitle": "Nothing here yet",
+    "emptyBody": "{name} has not shared any public uploads."
+  },
+  "shortlink": {
+    "metaTitle": "Protected link",
+    "cardTitle": "This link is protected",
+    "cardDescription": "Enter the password to continue to the destination.",
+    "passwordLabel": "Password",
+    "enterPassword": "Enter the password.",
+    "incorrect": "Incorrect password. Try again.",
+    "error": "Something went wrong. Try again.",
+    "unlocking": "Unlocking…",
+    "unlockLink": "Unlock link"
+  }
+}
