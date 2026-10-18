@@ -28,6 +28,17 @@ static CULTURE: AtomicU8 = AtomicU8::new(0);
 
 thread_local! {
     static THREAD_CULTURE: Cell<Option<Culture>> = const { Cell::new(None) };
+    static THREAD_UTC: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Show times in UTC instead of the local zone on this thread (QA renders, which must
+/// not depend on where the machine is).
+pub fn set_thread_utc(utc: bool) {
+    THREAD_UTC.with(|cell| cell.set(utc));
+}
+
+fn thread_utc() -> bool {
+    THREAD_UTC.with(Cell::get)
 }
 
 /// Set the process culture.
@@ -233,11 +244,17 @@ fn english_time(hour: u32, minute: u32) -> String {
 
 /// A UTC timestamp in local time, "g" pattern of the current culture.
 pub fn local_short<Tz: TimeZone>(at: &DateTime<Tz>) -> String {
+    if thread_utc() {
+        return Culture::current().short_date_time(&at.with_timezone(&chrono::Utc));
+    }
     Culture::current().short_date_time(&at.with_timezone(&Local))
 }
 
 /// A UTC timestamp in local time, "f" pattern of the current culture.
 pub fn local_full<Tz: TimeZone>(at: &DateTime<Tz>) -> String {
+    if thread_utc() {
+        return Culture::current().full_date_time(&at.with_timezone(&chrono::Utc));
+    }
     Culture::current().full_date_time(&at.with_timezone(&Local))
 }
 
