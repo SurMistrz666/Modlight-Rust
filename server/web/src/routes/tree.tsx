@@ -20,7 +20,7 @@
 import type { RouteObject } from "react-router";
 import { ROUTES, type RouteId } from "../contract/routes";
 import { rootLoader } from "./loader";
-import { RootRoute, HydrateFallback } from "./root";
+import { RootRoute, HydrateFallback, RouterError } from "./root";
 import { AppLayoutRoute, AuthLayoutRoute, DashboardSegment, PageRoute, CatchAllRoute } from "./segments";
 import { CATCH_ALL, SERVER_PATH } from "../runtime/navigation";
 
@@ -103,6 +103,7 @@ export const routes: RouteObject[] = [
     // Every navigation asks for the whole page; layouts are part of the answer.
     shouldRevalidate: () => true,
     element: <RootRoute />,
+    errorElement: <RouterError />,
     HydrateFallback,
     children: [
       leaf("/", null),

@@ -4,7 +4,7 @@
  * <html> attributes, <head> metadata, scroll restoration.
  */
 import { useEffect, useRef } from "react";
-import { Outlet, ScrollRestoration, useLoaderData } from "react-router";
+import { Outlet, ScrollRestoration, useLoaderData, useRouteError } from "react-router";
 import GlobalRouteError from "@/app/error";
 import RootLayout from "../pages/layout";
 import NotFound from "../pages/not-found";
@@ -61,6 +61,14 @@ export function RootRoute() {
   const root = rootDataOf(payload);
   useHtmlAttributes(root);
   useHead("meta" in payload ? payload.meta : undefined);
+  useEffect(() => {
+    // A page rendered: RouterError may reload this URL again next time.
+    try {
+      window.sessionStorage.removeItem(`ml-reload:${window.location.pathname}${window.location.search}`);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [payload]);
 
   let content: React.ReactNode;
   if (isNotFound(payload)) content = <NotFound />;
@@ -80,5 +88,28 @@ export function RootRoute() {
 
 /** Shown only when the page was not inlined (vite dev server) while /_page loads. */
 export function HydrateFallback() {
+  return null;
+}
+
+/**
+ * The router's own error element: only reached when the loader itself threw
+ * (a page chunk that no longer exists after a deploy, a network failure while
+ * loading code). Next falls back to a document navigation in that situation;
+ * so does this, once per URL, before showing anything.
+ */
+export function RouterError() {
+  const error = useRouteError();
+  useEffect(() => {
+    const key = `ml-reload:${window.location.pathname}${window.location.search}`;
+    let reloaded = false;
+    try {
+      reloaded = window.sessionStorage.getItem(key) === "1";
+      window.sessionStorage.setItem(key, "1");
+    } catch {
+      /* storage unavailable: reload anyway, at most once per mount */
+    }
+    if (!reloaded) window.location.reload();
+    else console.error(error);
+  }, [error]);
   return null;
 }
