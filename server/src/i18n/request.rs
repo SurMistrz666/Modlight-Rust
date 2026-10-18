@@ -38,7 +38,7 @@ pub const LOCALES: [Locale; 2] = [Locale::En, Locale::Pl];
 /// The cookie a user's explicit language choice lives in.
 pub const LOCALE_COOKIE: &str = "ml_locale";
 
-/// One file per UI area under messages/<locale>/. Each feature owns its own
+/// One file per UI area under `messages/<locale>/`. Each feature owns its own
 /// namespace file so translations never collide. (`mail` is server-only.)
 pub const NAMESPACES: &[&str] = &[
     "common",

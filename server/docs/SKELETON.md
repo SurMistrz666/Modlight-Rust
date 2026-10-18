@@ -114,7 +114,7 @@ drizzle-orm 0.45.2 (integrity checked against `pnpm-lock.yaml`).
    in axum syntax with the **upstream folder names as parameter names**:
    `/{userCode}/{mediaCode}/{action}`, `/api/auth/{*all}` (axum keeps one
    name per position, and the page table already uses these names).
-3. Add one line to `routes::all()` in `src/routes/mod.rs`.
+3. Add one line to `http::router()` in `src/http.rs` (the central list).
 
 Until step 3, the URL answers 501 naming the upstream file (the placeholder in
 `pages::fallback`), so unported handlers are visible. What the edge already

@@ -62,9 +62,10 @@ pub struct App {
 /// Every route of the application (except the raw upload paths).
 pub fn router(state: &AppState) -> Router {
     Router::new()
-        // Feature modules: route handlers (src/routes/mod.rs lists them).
-        .merge(crate::routes::all())
-        // Frameworks.
+        // ── Route handlers (app/**/route.ts): ONE LINE PER MODULE ──
+        .merge(crate::routes::api::health::routes()) // app/api/health/route.ts
+        .merge(crate::auth::api::routes()) // app/api/auth/[...all]/route.ts
+        // ── Frameworks ──
         .merge(crate::rpc::routes())
         .merge(crate::pages::routes())
         .merge(static_files::routes(&state.statics))

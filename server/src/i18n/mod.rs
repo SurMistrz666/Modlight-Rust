@@ -6,7 +6,7 @@
 //!
 //! - [`request`] is the port of `i18n/request.ts` (locale resolution and the
 //!   namespaces the root layout hands to the client).
-//! - [`format`] formats ICU messages the way next-intl (intl-messageformat)
+//! - [`mod@format`] formats ICU messages the way next-intl (intl-messageformat)
 //!   does for the syntax the dictionaries use.
 
 pub mod format;
