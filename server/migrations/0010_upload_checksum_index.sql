@@ -1,0 +1,1 @@
+CREATE INDEX "uploads_owner_checksum_idx" ON "uploads" USING btree ("owner_id","checksum");

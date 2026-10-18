@@ -1,0 +1,51 @@
+{
+  "title": "Connect a desktop app",
+  "description": "An app on this computer is asking for access to your {appName} account. Nothing is issued until you approve it here.",
+  "unknownClient": "An app on this computer",
+  "permissions": {
+    "heading": "If you approve, this app will be able to:",
+    "upload": "Upload files to your library. They appear as yours.",
+    "read": "See your account details, storage limit and folders.",
+    "delete": "Delete files from your library.",
+    "links": "Create short links under your tag, and save its own settings to your account.",
+    "notIncluded": "It never sees your password or your two-factor codes, and it cannot change your sign-in details or turn two-factor off. You can revoke its access at any time under Integrations."
+  },
+  "account": "Signed in as {email}.",
+  "local": "The key goes straight to {host} on this computer and nowhere else.",
+  "approve": "Approve and connect",
+  "approving": "Connecting…",
+  "deny": "Not now",
+  "unexpected": "If you did not just start this app yourself, close this page. Nothing has been issued yet.",
+  "done": {
+    "title": "{client} is connected",
+    "body": "The app now has its own key to your {appName} account.",
+    "close": "You can close this window."
+  },
+  "denied": {
+    "title": "Nothing was issued",
+    "body": "No key was created, and the app was told you declined."
+  },
+  "refused": {
+    "title": "Could not connect the app",
+    "back": "Back to the request",
+    "signed-out": "Your session ended. Sign in again, then reopen the link from the app.",
+    "invalid-request": "This request is incomplete or malformed. Start the sign-in from the app again.",
+    "rate-limited": "Too many keys were issued from here in a short time. Wait a few minutes and try again.",
+    "error": "Something went wrong while creating the key. Try again in a moment."
+  },
+  "manual": {
+    "title": "The app did not answer on {host}",
+    "body": "The key was created, but {client} could not be reached. It may have stopped waiting. Copy the key below and paste it into the app, or make sure the app is still open and send it again.",
+    "hint": "Treat this key like a password. Anyone holding it can upload and delete files on your account.",
+    "retry": "Send it to the app again",
+    "copied": "Key copied to clipboard",
+    "copyFailed": "Couldn't access the clipboard",
+    "stillUnreachable": "Still nothing listening on {host}"
+  },
+  "invalid": {
+    "title": "This link is not a valid request",
+    "description": "It is missing something an app has to send, or it was altered on the way here.",
+    "body": "Start the sign-in from inside the desktop app, so it can supply its own port and one-time code. If you were not expecting this page, you can simply close it.",
+    "integrations": "Go to Integrations"
+  }
+}

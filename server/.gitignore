@@ -1,0 +1,5 @@
+# Generated development secrets and runtime data (never committed)
+/docker/.env.devdb
+/.env
+/data/
+/target/
