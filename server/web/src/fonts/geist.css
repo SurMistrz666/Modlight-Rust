@@ -1,0 +1,48 @@
+/*
+ * Geist and Geist Mono, self-hosted: the CSS next/font/local generates for
+ * `geist/font/sans` and `geist/font/mono` (geist@1.7.2, dist/sans.js and
+ * dist/mono.js), reproduced rule for rule from the stylesheet the upstream
+ * build serves. The woff2 files are byte-identical copies from that package
+ * (SIL OFL 1.1, see LICENSE.txt).
+ *
+ * The class names are stable (Next's are hashed): <html> carries
+ * `geist-sans geist-mono h-full antialiased`, see index.html.
+ */
+@font-face {
+  font-family: GeistSans;
+  src: url("./Geist-Variable.woff2") format("woff2");
+  font-display: swap;
+  font-weight: 100 900;
+}
+
+@font-face {
+  font-family: GeistSans Fallback;
+  src: local(Arial);
+  ascent-override: 94.56%;
+  descent-override: 27.76%;
+  line-gap-override: 0%;
+  size-adjust: 106.28%;
+}
+
+.geist-sans-class {
+  font-family: GeistSans, GeistSans Fallback;
+}
+
+.geist-sans {
+  --font-geist-sans: "GeistSans", "GeistSans Fallback";
+}
+
+@font-face {
+  font-family: GeistMono;
+  src: url("./GeistMono-Variable.woff2") format("woff2");
+  font-display: swap;
+  font-weight: 100 900;
+}
+
+.geist-mono-class {
+  font-family: GeistMono, ui-monospace, SFMono-Regular, Roboto Mono, Menlo, Monaco, Liberation Mono, DejaVu Sans Mono, Courier New, monospace;
+}
+
+.geist-mono {
+  --font-geist-mono: "GeistMono", ui-monospace, SFMono-Regular, Roboto Mono, Menlo, Monaco, Liberation Mono, DejaVu Sans Mono, Courier New, monospace;
+}
