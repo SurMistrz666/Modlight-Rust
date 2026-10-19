@@ -63,7 +63,10 @@ Phase 2 (uploads) is finished:
   uploading through the task flow; eleven files through the many-files question, a
   paste, the history read back). Everything uploaded is deleted afterwards.
 - A review of the upload paths against upstream (WorkerTask, TaskManager,
-  UploadManager, notice) was done and its findings fixed (commit `cc585f0`).
+  UploadManager, notice) was done and its findings fixed (commit `cc585f0`); a
+  review of the windows against their axaml likewise (commit `95cf821`: global
+  TextBlock style = SemiBold Text.Secondary; string-content buttons in Text, which
+  also changed the phase-1 dialog footers, matching the Windows sign-in screenshot).
 
 ## Not done / for phase 3
 
@@ -81,6 +84,9 @@ Phase 2 (uploads) is finished:
 5. A Finder drop onto a folder tile uploads into the open folder (winit gives no
    pointer position during an OS drag).
 6. Proxy settings are not applied to uploads (upstream reads them from its proxy page).
+7. Unverified without the Fluent theme source or a Windows render: the default
+   TextBox font size (the port uses 13; Fluent may use 14) and the before-upload
+   radio rows' exact spacing.
 
 ## Decisions and known differences (for MACOS.md / STATUS.md)
 
