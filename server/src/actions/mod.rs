@@ -6,7 +6,7 @@
 //! function under the upstream module and export names:
 //! `reg.register("shortlink-unlock", "unlockShortlink", unlock_shortlink)`.
 
-pub mod admin_storage;
+pub mod admin_library;
 pub mod duplicates;
 pub mod folders;
 pub mod pastes;
@@ -26,5 +26,5 @@ pub fn register_all(reg: &mut RpcRegistry) {
     shortlinks::register(reg); // app/actions/shortlinks.ts
     shortlink_unlock::register(reg); // app/actions/shortlink-unlock.ts
     pastes::register(reg); // app/actions/pastes.ts
-    admin_storage::register(reg); // app/actions/admin.ts (orphans, account deletion, maintenance)
+    admin_library::register(reg); // app/actions/admin.ts (orphans, account deletion, maintenance)
 }

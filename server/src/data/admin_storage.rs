@@ -2,10 +2,14 @@
 //! account-deletion impact, the quota recalculation and the scan for storage
 //! objects no row points at.
 //!
-//! Split from `src/data/admin.rs`, which the accounts port (srv-auth) owns
-//! and which carries the rest of `lib/data/admin.ts` (server disk usage). The
-//! two were ported side by side; when the branches meet, keep one copy of
-//! each function (they are faithful ports of the same code).
+//! A stand-in for `src/data/admin.rs` of the accounts port (srv-auth), which
+//! ports the whole of `lib/data/admin.ts` and was not on this branch yet.
+//! Every item here has the same name and signature as there (orphan_summary,
+//! list_orphans, ORPHAN_PAGE_SIZE, user_deletion_impact,
+//! recalculate_all_quotas, scan_storage_orphans, STORAGE_SCAN_GRACE_MS,
+//! MAX_STORAGE_ORPHAN_SAMPLE, normalize_key, to_storage_key and the result
+//! structs), and the same SQL up to spelling: when the branches meet, delete
+//! this module and import `crate::data::admin` instead.
 //!
 //! Like upstream, nothing here decides who may see it: the admin actions,
 //! behind `requireAdmin`, do the guarding.

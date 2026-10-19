@@ -4,8 +4,15 @@
 //!
 //! Registered under the upstream module name `admin`. The rest of that file
 //! (account editing, invitations, verification mails) belongs to the accounts
-//! port, whose `src/actions/admin.rs` registers its own exports; the split
-//! keeps the two branches from colliding.
+//! port, whose `src/actions/admin.rs` registers its own exports under the same
+//! module name; the split keeps the two branches from colliding.
+//!
+//! On the accounts port's branch the helpers used here already exist: the
+//! `lib/data/admin.ts` functions as `crate::data::admin` (same names and
+//! signatures as `crate::data::admin_storage`, which is to be deleted at the
+//! merge), `crate::invites::revoke_invites` (same signature as the private
+//! copy below) and `crate::auth::server::remove_user` (the whole better-auth
+//! endpoint, replacing the private `remove_user` below).
 //!
 //! Every action re-checks the admin role (`requireAdmin`): the panel hides
 //! these controls from everyone else, but a server action is a public POST
