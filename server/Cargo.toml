@@ -77,6 +77,10 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
+# Album ZIPs (app/a/[userCode]/[slug]/zip, archiver 8): raw deflate and CRC-32.
+flate2 = "1"
+crc32fast = "1"
+
 # Misc
 dotenvy = "0.15"
 # statfs(2) for lib/upload/disk.ts (`fs.statfs` upstream); already in the lock graph.

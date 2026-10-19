@@ -70,6 +70,12 @@ impl RequestSession {
         self.policy
     }
 
+    /// Where cookies set while serving this request go (`cookies().set()`),
+    /// written as `Set-Cookie` by the edge.
+    pub fn response_cookies(&self) -> &ResponseCookies {
+        &self.cookies
+    }
+
     /// `getSession()`: the session or `None`; cookies Better Auth set while
     /// answering go to the response (when the policy allows it).
     pub async fn get(&self) -> Result<Option<AuthSession>, FailedToGetSession> {
