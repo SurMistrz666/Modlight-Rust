@@ -11,6 +11,7 @@ pub mod menus;
 pub mod myspace;
 pub mod notification;
 pub mod qa;
+pub mod qa_uploads;
 pub mod runtime;
 pub mod settings;
 pub mod shell;

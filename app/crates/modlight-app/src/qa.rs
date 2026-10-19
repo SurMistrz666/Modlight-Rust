@@ -46,6 +46,21 @@ pub const SCREENS: &[&str] = &[
     "settings-profile",
     "settings-theme",
     "settings-general",
+    "tab-upload-busy",
+    "paste",
+    "text-upload",
+    "url-upload",
+    "shorten-url",
+    "clipboard-upload",
+    "clipboard-upload-text",
+    "drop-window",
+    "before-upload",
+    "after-upload",
+    "large-file",
+    "multi-upload",
+    "file-exists",
+    "message-box",
+    "notification-upload",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.
@@ -502,6 +517,9 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
     if signed {
         fill_strip(state);
     }
+    if let Some(size) = crate::qa_uploads::prepare(screen, state, picture("8")) {
+        return size;
+    }
     match screen {
         "my-space" | "toasts" => {
             load_library(state, ctx, files(), 9);
@@ -722,20 +740,21 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
 
 /// Whether the screen is a whole main window (as opposed to one dialog).
 pub fn is_main_window(screen: &str) -> bool {
-    !matches!(
-        screen,
-        "sign-in"
-            | "sign-in-signed"
-            | "prompt"
-            | "confirm"
-            | "folder-delete"
-            | "link-settings"
-            | "duplicates"
-            | "notification"
-            | "settings-profile"
-            | "settings-theme"
-            | "settings-general"
-    )
+    !crate::qa_uploads::is_dialog(screen)
+        && !matches!(
+            screen,
+            "sign-in"
+                | "sign-in-signed"
+                | "prompt"
+                | "confirm"
+                | "folder-delete"
+                | "link-settings"
+                | "duplicates"
+                | "notification"
+                | "settings-profile"
+                | "settings-theme"
+                | "settings-general"
+        )
 }
 
 /// The app of one QA screen: the main window, or a dialog drawn alone.
@@ -767,6 +786,10 @@ impl eframe::App for ShotApp {
         }
         let state = &mut self.app.state;
         state.time = ctx.input(|i| i.time);
+        if let Some(wanted) = crate::qa_uploads::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
         let colors = state.colors.clone();
         let wanted = match self.screen.as_str() {
             "sign-in" | "sign-in-signed" => {

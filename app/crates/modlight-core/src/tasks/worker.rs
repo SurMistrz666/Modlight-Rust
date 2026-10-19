@@ -131,7 +131,8 @@ impl WorkerTask {
         self.shared.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn with<R>(&self, f: impl FnOnce(&mut TaskState) -> R) -> R {
+    /// Read or change the task's state (the worker, and fixtures that draw a task).
+    pub fn with<R>(&self, f: impl FnOnce(&mut TaskState) -> R) -> R {
         f(&mut self.lock())
     }
 

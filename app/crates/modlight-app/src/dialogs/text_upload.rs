@@ -76,8 +76,7 @@ impl TextUpload {
             .show(&mut child, |ui| {
                 let output = egui::TextEdit::multiline(&mut self.content)
                     .id(id)
-                    .frame(egui::Frame::NONE)
-                    .margin(egui::Margin::same(12))
+                    .frame(egui::Frame::NONE.inner_margin(12))
                     .font(egui::FontId::proportional(13.0))
                     .text_color(colors.text())
                     .desired_width(f32::INFINITY)
