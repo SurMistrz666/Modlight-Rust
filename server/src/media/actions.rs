@@ -143,6 +143,20 @@ pub async fn delete_media_hard(db: &PgPool, storage: &dyn StorageDriver, media: 
 /// something already in the trash does not re-stamp it (the stamp is what the
 /// thirty-day sweeper counts from). The cached conversions go now.
 pub async fn soft_delete_media(db: &PgPool, storage: &dyn StorageDriver, id: Uuid) -> anyhow::Result<()> {
+    stamp_deleted(db, id).await?;
+    purge_derived(storage, &id.to_string()).await;
+    Ok(())
+}
+
+/// [`soft_delete_media`] with upstream's lazy `getStorage()`: the purge
+/// swallows a storage driver that cannot be built, the stamp still lands.
+pub async fn soft_delete_media_lazy(db: &PgPool, storage: &crate::storage::Storage, id: Uuid) -> anyhow::Result<()> {
+    stamp_deleted(db, id).await?;
+    crate::media::derived_cache::purge_derived_lazy(storage, &id.to_string()).await;
+    Ok(())
+}
+
+async fn stamp_deleted(db: &PgPool, id: Uuid) -> sqlx::Result<()> {
     sqlx::query(
         r#"update "uploads" set "deleted_at" = $1 where ("uploads"."id" = $2 and "uploads"."deleted_at" is null)"#,
     )
@@ -150,7 +164,6 @@ pub async fn soft_delete_media(db: &PgPool, storage: &dyn StorageDriver, id: Uui
     .bind(id)
     .execute(db)
     .await?;
-    purge_derived(storage, &id.to_string()).await;
     Ok(())
 }
 
