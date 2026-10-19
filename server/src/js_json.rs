@@ -228,6 +228,14 @@ pub fn utf8_decode(bytes: &[u8]) -> String {
     }
 }
 
+/// `await request.text()` in Node 24 (undici): its `utf8DecodeBytes` skips a
+/// leading byte-order mark itself and then decodes with a `TextDecoder` that
+/// skips another, so up to TWO leading marks disappear (checked on the
+/// reference: three marks leave one).
+pub fn request_text(bytes: &[u8]) -> String {
+    utf8_decode(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes))
+}
+
 // ── JSON.parse ──────────────────────────────────────────────────────────────
 
 /// A container being filled while parsing.
@@ -780,6 +788,18 @@ mod tests {
         ] {
             assert_eq!(number_to_string(n), s, "{n}");
         }
+    }
+
+    #[test]
+    fn decodes_bodies_like_node() {
+        let bom = "\u{FEFF}";
+        let three = format!("{bom}{bom}{bom}{{}}");
+        // new TextDecoder().decode(): one mark dropped.
+        assert_eq!(utf8_decode(three.as_bytes()), format!("{bom}{bom}{{}}"));
+        // Request.text(): two.
+        assert_eq!(request_text(three.as_bytes()), format!("{bom}{{}}"));
+        assert_eq!(request_text(b"a\xffb"), "a\u{FFFD}b");
+        assert_eq!(utf8_decode(b"\xf0\x9f\x98"), "\u{FFFD}");
     }
 
     #[test]

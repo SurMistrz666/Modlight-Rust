@@ -243,9 +243,9 @@ pub async fn put_theme_with<C: CallerDeps, S: ThemeStore>(
 ///
 /// Upstream buffers the whole body before measuring it; this stops reading
 /// once the answer is certain (a UTF-16 unit takes at most three bytes, plus
-/// a byte-order mark the decoder drops), which answers the same without
-/// holding an unbounded body. A body that fails to arrive reads as empty, as
-/// upstream's `catch` around `req.text()` does.
+/// the two byte-order marks `req.text()` drops), which answers the same
+/// without holding an unbounded body. A body that fails to arrive reads as
+/// empty, as upstream's `catch` around `req.text()` does.
 async fn read_capped_body(headers: &HeaderMap, body: Body) -> Option<String> {
     let declared = headers
         .get(header::CONTENT_LENGTH)
@@ -255,7 +255,7 @@ async fn read_capped_body(headers: &HeaderMap, body: Body) -> Option<String> {
         return None;
     }
 
-    let certainly_too_large = THEME_BODY_MAX_BYTES * 3 + 3;
+    let certainly_too_large = THEME_BODY_MAX_BYTES * 3 + 6;
     let mut buf: Vec<u8> = Vec::new();
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
@@ -267,7 +267,7 @@ async fn read_capped_body(headers: &HeaderMap, body: Body) -> Option<String> {
             return None;
         }
     }
-    let text = crate::js_json::utf8_decode(&buf);
+    let text = crate::js_json::request_text(&buf);
     if text.encode_utf16().count() > THEME_BODY_MAX_BYTES {
         return None;
     }
@@ -440,6 +440,20 @@ mod tests {
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(json["message"], "Body must be at most 4096 bytes.");
         assert!(store.written.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reads_the_body_the_way_request_text_does() {
+        // undici drops up to two leading byte-order marks; a third is left in
+        // the text, where JSON.parse refuses it.
+        for (marks, status) in
+            [(0, StatusCode::OK), (1, StatusCode::OK), (2, StatusCode::OK), (3, StatusCode::BAD_REQUEST)]
+        {
+            let store = FakeStore { update: Mutex::new(Some(Some("mono".into()))), ..Default::default() };
+            let mut body = "\u{FEFF}".repeat(marks);
+            body.push_str(r#"{"theme":"mono"}"#);
+            assert_eq!(put(&FakeCallers::token_ok(TokenScope::Full), &store, &body).await.0, status, "{marks} marks");
+        }
     }
 
     #[tokio::test]
