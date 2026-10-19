@@ -355,11 +355,12 @@ def scenario_schema():
 
 
 def copied_sessions():
-    """The newest live session per account, from rows written before this run."""
+    """The newest live session per account, from rows written before this run
+    (accounts this script creates, @cross.test, are left out)."""
     out = DB.sql(
         'SELECT DISTINCT ON (s.user_id) s.id, s.token, u.email, u.role FROM "session" s JOIN "user" u ON u.id = s.user_id '
         "WHERE s.expires_at > now() AND s.impersonated_by IS NULL AND s.created_at < to_timestamp(%d) "
-        "ORDER BY s.user_id, s.created_at DESC" % int(RUN_STARTED))
+        "AND u.email NOT LIKE '%%@cross.test' ORDER BY s.user_id, s.created_at DESC" % int(RUN_STARTED))
     rows = []
     for line in out.splitlines():
         sid, token, email_, role = line.split("\t")
@@ -796,9 +797,10 @@ def scenario_mail_links():
                 res = f.get(reader, follow_on(url, reader))
                 loc = res.header("location") or ""
                 token = urllib.parse.parse_qs(urllib.parse.urlsplit(loc).query).get("token", [None])[0]
-                check("reader's reset link callback redirects to /reset with the token",
-                      res.status == 302 and loc.startswith("/reset?") and bool(token), "%s -> /reset%s" % (
-                          describe(res), "?token=<token>" if token else " (no token)"))
+                # better-auth resolves the callback against its own base URL.
+                check("reader's reset link callback redirects to its /reset with the token",
+                      res.status == 302 and loc.startswith(SERVERS[reader] + "/reset?") and bool(token),
+                      "%s -> %s" % (describe(res), parity.normalize_text(re.sub(r"token=[^&]+", "token=<token>", loc))))
                 new_pw = new_password()
                 res = f.post(reader, "/api/auth/reset-password", {"newPassword": new_pw, "token": token})
                 check("reader resets the password with the writer's token",
