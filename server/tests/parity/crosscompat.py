@@ -29,7 +29,8 @@ server with its own Origin header):
    by the writer followed on the reader. Mail goes to smtp_sink.mjs, which
    runs on the host for the Rust server and inside the app container for the
    TS server, both on 127.0.0.1:<--sink-port>;
-7. admin: set-role, ban (and an expired ban), unban, impersonate and stop.
+7. admin: set-role, ban (and an expired ban), unban, impersonate and stop,
+   set-user-password, create-user, remove-user.
 
 Before the scenarios: the schema is what it was before the Rust server's
 `serve` ran its migrator (crosscompat-rust.sh saved it).
@@ -445,6 +446,13 @@ def scenario_sign_up_in_out():
         check("writer stored a Better Auth scrypt hash (salt:key, hex)", fmt == "t", "format %s" % (
             "ok" if fmt == "t" else "other"))
         expect_session("reader accepts the sign-up session cookie", c1, reader, em)
+        # The row the writer created (user code, quota, theme defaults) as the reader's page shows it.
+        code, role = user_row(em, "user_code, role")
+        page = profile_page(c1, reader)
+        check("reader /dashboard/profile renders the account the writer created",
+              page.get("status") == 200 and page.get("email") == em and page.get("role") == role == "user"
+              and page.get("twoFactorEnabled") is False and len(code) == 6,
+              "page %s, %s" % (page.get("status"), "fields match" if page.get("email") == em else "user missing"))
         _, res = sign_in(reader, em, "wrong-" + pw)
         check("reader refuses a wrong password", res.status == 401, describe(res))
         c2, res = sign_in(reader, em, pw)
@@ -886,6 +894,28 @@ def scenario_admin():
         row = user_row(em, "banned")
         check("reader lets the user in after the ban ran out (and lifts it)", res.status == 200 and row == ["f"],
               "%s, banned %s" % (describe(res), row[0] if row else None))
+
+        # Passwords an admin sets, accounts an admin creates and removes.
+        new_pw = new_password()
+        res = admin.post(writer, "/api/auth/admin/set-user-password", {"userId": uid, "newPassword": new_pw})
+        check("writer set-user-password", res.status == 200, describe(res))
+        _, res = sign_in(reader, em, acc["password"])
+        check("reader refuses the password the admin replaced", res.status == 401, describe(res))
+        t, res = sign_in(reader, em, new_pw)
+        check("reader signs in with the password the admin set", res.status == 200, describe(res))
+        made = fresh_email("created-" + writer)
+        made_pw = new_password()
+        res = admin.post(writer, "/api/auth/admin/create-user",
+                         {"email": made, "name": "Created by %s" % LABEL[writer], "password": made_pw, "role": "user"})
+        check("writer admin create-user", res.status == 200, describe(res))
+        m, res = sign_in(reader, made, made_pw)
+        check("reader signs in to the account the admin created", res.status == 200, describe(res))
+        expect_page("reader /dashboard/profile for the created account", m, reader, made, role="user")
+        res = admin.post(writer, "/api/auth/admin/remove-user", {"userId": user_id(made)})
+        check("writer remove-user", res.status == 200, describe(res))
+        expect_no_session("reader: the removed account's session is gone", m, reader)
+        _, res = sign_in(reader, made, made_pw)
+        check("reader refuses the removed account", res.status == 401, describe(res))
 
 
 SCENARIOS = [scenario_schema, scenario_existing, scenario_sign_up_in_out, scenario_sessions, scenario_change_password,
