@@ -81,6 +81,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 dotenvy = "0.15"
 # statfs(2) for lib/upload/disk.ts (`fs.statfs` upstream); already in the lock graph.
 libc = "0.2"
+# Raw inflate for lib/media/zip-guard.ts (node:zlib) and the .docx reader
+# (JSZip's pako): zlib-rs is a port of zlib's own inflate, so streams are
+# accepted, refused and expanded exactly as zlib (Node) and pako (zlib 1.2.8
+# ported) do; miniz_oxide differs on malformed Huffman tables.
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 
 [dev-dependencies]
 tempfile = "3"
