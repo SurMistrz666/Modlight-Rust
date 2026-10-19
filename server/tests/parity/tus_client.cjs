@@ -75,6 +75,9 @@ function run(base, token, data, name, { interruptAfter } = {}) {
 
 (async () => {
   const args = process.argv.slice(2);
+  // One prefix per run, the same on every server: codes are global, so names
+  // reused from earlier runs would get history-dependent codes.
+  const prefix = Date.now().toString(36) + "-";
   // 3.5 MiB of deterministic bytes.
   const data = Buffer.alloc(3.5 * 1024 * 1024);
   for (let i = 0; i < data.length; i++) data[i] = (i * 31 + 7) & 0xff;
@@ -82,8 +85,8 @@ function run(base, token, data, name, { interruptAfter } = {}) {
     const base = args[i];
     const token = fs.readFileSync(args[i + 1], "utf8").trim();
     try {
-      const plain = await run(base, token, data, "tus-client.bin");
-      const resumed = await run(base, token, data.subarray(0, 2.5 * 1024 * 1024), "resumed.bin", {
+      const plain = await run(base, token, data, prefix + "tus-client.bin");
+      const resumed = await run(base, token, data.subarray(0, 2.5 * 1024 * 1024), prefix + "resumed.bin", {
         interruptAfter: 1024 * 1024,
       });
       console.log(JSON.stringify({ plain, resumed }));

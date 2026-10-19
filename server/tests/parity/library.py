@@ -100,6 +100,9 @@ def norm_upload_body(res):
 def sharex(run, lib):
     pair = run.pair()
     owner, tag = lib.seed_user("sx", naming_scheme="filename")
+    # Codes are global: a per-run prefix keeps earlier runs' files (which the
+    # two databases do not hold in equal numbers) from shaping these codes.
+    S = lib.suffix + "-"
     token = lib.seed_token(owner, "upload")
     reader = lib.seed_token(owner, "read")
 
@@ -112,7 +115,7 @@ def sharex(run, lib):
         run.compare("sharex: " + name, shape(a), shape(b))
         return a, b
 
-    ctype, body = multipart(files=[("sharex", "notes.txt", "text/plain", b"hello parity\n")])
+    ctype, body = multipart(files=[("sharex", S + "notes.txt", "text/plain", b"hello parity\n")])
     post("no content type", raw=body)
     post("unknown token", headers={"x-api-key": "nope"}, ctype=ctype, raw=body)
     post("read-scoped token", headers={"x-api-key": reader}, ctype=ctype, raw=body)
@@ -127,26 +130,26 @@ def sharex(run, lib):
     post("header token, txt file", headers={"x-api-key": token}, ctype=ctype, raw=body)
     post("same bytes again (duplicate_of)", headers={"x-api-key": token}, ctype=ctype, raw=body)
     post("/api/upload path", path="/api/upload", headers={"x-api-key": token}, ctype=ctype, raw=body)
-    ct3, legacy = multipart(fields=[("token", token)], files=[("file", "legacy.txt", None, b"legacy field token\n")])
+    ct3, legacy = multipart(fields=[("token", token)], files=[("file", S + "legacy.txt", None, b"legacy field token\n")])
     post("legacy token field before the file", ctype=ct3, raw=legacy)
-    ct4, late = multipart(files=[("file", "late.txt", "text/plain", b"token after the file\n")], fields=())
+    ct4, late = multipart(files=[("file", S + "late.txt", "text/plain", b"token after the file\n")], fields=())
     late = late.replace(b"--\r\n", b"\r\n")[:-2]  # reopen to append a field after the file
     ct4 = ct4
-    ct5, utf = multipart(files=[("file", "Chłopak żółw.md", "text/markdown", b"# utf\n")])
+    ct5, utf = multipart(files=[("file", S + "Chłopak żółw.md", "text/markdown", b"# utf\n")])
     post("utf-8 filename", headers={"x-api-key": token}, ctype=ct5, raw=utf)
-    ct6, custom = multipart(fields=[("code", "My Custom Code")], files=[("file", "c.txt", "text/plain", b"custom\n")])
+    ct6, custom = multipart(fields=[("code", "My Custom Code " + lib.suffix)], files=[("file", S + "c.txt", "text/plain", b"custom\n")])
     post("custom code", headers={"x-api-key": token}, ctype=ct6, raw=custom)
     post("custom code taken", headers={"x-api-key": token}, ctype=ct6, raw=custom)
-    ct7, reserved = multipart(fields=[("code", "login")], files=[("file", "r.txt", "text/plain", b"reserved\n")])
+    ct7, reserved = multipart(fields=[("code", "login")], files=[("file", S + "r.txt", "text/plain", b"reserved\n")])
     post("reserved custom code", headers={"x-api-key": token}, ctype=ct7, raw=reserved)
-    ct8, root = multipart(fields=[("folderId", "root")], files=[("file", "root.txt", "text/plain", b"root\n")])
+    ct8, root = multipart(fields=[("folderId", "root")], files=[("file", S + "root.txt", "text/plain", b"root\n")])
     post("folder root", headers={"x-api-key": token}, ctype=ct8, raw=root)
     ct9, unknown_folder = multipart(fields=[("folderId", str(uuid.uuid4()))],
-                                    files=[("file", "uf.txt", "text/plain", b"unknown folder\n")])
+                                    files=[("file", S + "uf.txt", "text/plain", b"unknown folder\n")])
     post("unknown folder", headers={"x-api-key": token}, ctype=ct9, raw=unknown_folder)
     ct10, octet = multipart(files=[("file", "", "application/octet-stream", b"\x89PNG\r\n\x1a\nnot really")])
     post("octet-stream part without filename", headers={"x-api-key": token}, ctype=ct10, raw=octet)
-    ct11, noname = multipart(files=[("file", "noext", None, b"plain text body\n")])
+    ct11, noname = multipart(files=[("file", S + "noext", None, b"plain text body\n")])
     post("file part without content-type", headers={"x-api-key": token}, ctype=ct11, raw=noname)
 
     lib.compare_rows(
@@ -158,7 +161,7 @@ def sharex(run, lib):
 
     # Quota: a 10-byte ceiling refuses the next upload with 507.
     lib.both_sql('UPDATE "user" SET max_quota = used_quota + 5 WHERE id = %s' % parity.sql_quote(owner))
-    ct12, big = multipart(files=[("file", "q.txt", "text/plain", b"x" * 64)])
+    ct12, big = multipart(files=[("file", S + "q.txt", "text/plain", b"x" * 64)])
     post("over quota", headers={"x-api-key": token}, ctype=ct12, raw=big)
     lib.compare_rows("sharex: quota after refusal", 'SELECT used_quota FROM "user" WHERE id = %s' % parity.sql_quote(owner))
 
@@ -194,6 +197,7 @@ def b64(s):
 
 def tus(run, lib):
     owner, tag = lib.seed_user("tus", naming_scheme="filename")
+    S = lib.suffix + "-"  # codes are global; see sharex()
     token = lib.seed_token(owner, "upload")
     reader = lib.seed_token(owner, "read")
     small, small_tag = lib.seed_user("tq", naming_scheme="filename", max_quota=10)
@@ -240,7 +244,7 @@ def tus(run, lib):
 
     # A complete upload: create, resume, finish.
     locs = {}
-    meta = "filename %s,filetype %s,folderId %s" % (b64("tus notes.txt"), b64("text/plain"), b64("root"))
+    meta = "filename %s,filetype %s,folderId %s" % (b64(S + "tus notes.txt"), b64("text/plain"), b64("root"))
     created = step("POST create", "POST", "/api/files", headers=h(Upload_Length="11", x_api_key=token, Upload_Metadata=meta))
     for br, res in zip((pair.ref, pair.rust), created):
         locs[br.base] = urllib_path(res.header("location"))
@@ -264,7 +268,7 @@ def tus(run, lib):
 
     # Termination of an unfinished upload.
     created = step("POST create (to delete)", "POST", "/api/files",
-                   headers=h(Upload_Length="3", x_api_key=token, Upload_Metadata="filename " + b64("gone.bin")))
+                   headers=h(Upload_Length="3", x_api_key=token, Upload_Metadata="filename " + b64(S + "gone.bin")))
     for br, res in zip((pair.ref, pair.rust), created):
         locs[br.base] = urllib_path(res.header("location"))
     step("DELETE unfinished", "DELETE", loc, headers=h())
@@ -272,7 +276,7 @@ def tus(run, lib):
 
     # creation-with-upload, partial body.
     created = step("POST with data (partial)", "POST", "/api/files",
-                   headers=h(Upload_Length="6", x_api_key=token, Upload_Metadata="filename " + b64("cwu.txt"),
+                   headers=h(Upload_Length="6", x_api_key=token, Upload_Metadata="filename " + b64(S + "cwu.txt"),
                              Content_Type="application/offset+octet-stream"), raw=b"abc")
     for br, res in zip((pair.ref, pair.rust), created):
         locs[br.base] = urllib_path(res.header("location"))
@@ -281,12 +285,12 @@ def tus(run, lib):
 
     # Zero-byte upload: finalized at creation (the reference then 404s).
     step("POST zero length", "POST", "/api/files",
-         headers=h(Upload_Length="0", x_api_key=token, Upload_Metadata="filename " + b64("empty.txt")))
+         headers=h(Upload_Length="0", x_api_key=token, Upload_Metadata="filename " + b64(S + "empty.txt")))
 
     # A browser session instead of a token.
     parity.signed_in(pair, lib.ref_db, lib.rust_db, owner)
     created = step("POST with a session", "POST", "/api/files",
-                   headers=h(Upload_Length="4", Upload_Metadata="filename %s,name %s" % (b64(""), b64("named.txt"))))
+                   headers=h(Upload_Length="4", Upload_Metadata="filename %s,name %s" % (b64(""), b64(S + "named.txt"))))
     for br, res in zip((pair.ref, pair.rust), created):
         locs[br.base] = urllib_path(res.header("location"))
     step("PATCH session upload", "PATCH", loc,
@@ -320,7 +324,7 @@ def media_meta(run, lib):
         path = os.path.join(SCRATCH, rel)
         with open(path, "rb") as f:
             data = f.read()
-        ct, body = multipart(files=[("file", os.path.basename(rel), ctype, data)])
+        ct, body = multipart(files=[("file", lib.suffix + "-" + os.path.basename(rel), ctype, data)])
         a, b = pair.both("POST", "/upload", headers={"x-api-key": token, "Content-Type": ct}, raw=body, origin=False)
         shape = lambda r: {"status": r.status, "body": norm_upload_body(r)}
         run.compare("media meta: upload " + os.path.basename(rel), shape(a), shape(b))
@@ -329,7 +333,7 @@ def media_meta(run, lib):
         data = f.read()
     statuses = []
     for br in (pair.ref, pair.rust):
-        meta = "filename %s,filetype %s" % (b64("eagle-tus.webp"), b64("image/webp"))
+        meta = "filename %s,filetype %s" % (b64(lib.suffix + "-eagle-tus.webp"), b64("image/webp"))
         res = br.request("POST", "/api/files", headers={"Tus-Resumable": "1.0.0", "x-api-key": token,
                                                          "Upload-Length": str(len(data)), "Upload-Metadata": meta,
                                                          "Content-Type": "application/offset+octet-stream"},
