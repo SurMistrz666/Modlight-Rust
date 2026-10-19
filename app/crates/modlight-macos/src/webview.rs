@@ -380,8 +380,7 @@ mod mac {
             // WebKit's bare user agent names no browser, and Google's sign-in refuses
             // what it cannot recognise; this appends Safari's product token, as Safari's
             // own user agent ends.
-            configuration
-                .setApplicationNameForUserAgent(Some(&NSString::from_str(SAFARI_PRODUCT)));
+            configuration.setApplicationNameForUserAgent(Some(&NSString::from_str(SAFARI_PRODUCT)));
             WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &configuration)
         };
         let delegate = Delegate::new(mtm);
