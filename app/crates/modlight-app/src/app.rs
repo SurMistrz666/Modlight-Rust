@@ -100,6 +100,7 @@ impl ModlightApp {
         state.space_refresh_account();
         state.sync_skin();
         state.start_uploads();
+        crate::media_windows::on_start(state);
     }
 
     /// Everything that is not drawing, before the frame.
@@ -455,6 +456,7 @@ impl ModlightApp {
         }
 
         self.upload_viewports(ctx, main);
+        crate::media_windows::viewports(ctx, &mut self.state);
 
         if self.state.windows.notification.is_some() {
             self.notification(ctx);
@@ -823,6 +825,7 @@ impl eframe::App for ModlightApp {
     }
 
     fn on_exit(&mut self) {
+        self.state.downloads_shutdown();
         self.state.save_config();
     }
 }
