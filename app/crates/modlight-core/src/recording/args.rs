@@ -210,6 +210,18 @@ impl ScreenRecordingOptions {
 
     /// `GetFFmpegArgs`.
     pub fn ffmpeg_args(&self) -> Option<Vec<String>> {
+        self.build_args(false)
+    }
+
+    /// `GetFFmpegArgs()` as the text the options window shows, and `GetFFmpegArgs(true)`,
+    /// the template "Use custom commands" starts from: `$fps$`, `$duration$` and
+    /// `$output$` in place of the values. The screen's pipe input is not part of a
+    /// template (a custom command always gets it first), so the template starts after it.
+    pub fn ffmpeg_args_text(&self, custom: bool) -> Option<String> {
+        self.build_args(custom).map(|args| join_command_line(&args))
+    }
+
+    fn build_args(&self, custom: bool) -> Option<Vec<String>> {
         let ffmpeg = &self.ffmpeg;
         if self.is_recording
             && !ffmpeg.is_video_source_selected()
@@ -218,12 +230,18 @@ impl ScreenRecordingOptions {
             return None;
         }
         let mut args = Vec::new();
-        let framerate = self.fps.to_string();
+        let framerate = if custom {
+            "$fps$".to_string()
+        } else {
+            self.fps.to_string()
+        };
 
         if self.is_recording {
             if ffmpeg.is_video_source_selected() {
                 if capture_device::is_screen(&ffmpeg.VideoSource) {
-                    self.pipe_input(&mut args, &framerate);
+                    if !custom {
+                        self.pipe_input(&mut args, &framerate);
+                    }
                     if ffmpeg.is_audio_source_selected() {
                         Self::device_input(&mut args, true);
                         args.push("-i".into());
@@ -377,7 +395,11 @@ impl ScreenRecordingOptions {
 
         if self.duration > 0.0 {
             args.push("-t".into());
-            args.push(duration_text(self.duration));
+            args.push(if custom {
+                "$duration$".into()
+            } else {
+                duration_text(self.duration)
+            });
         }
 
         args.push("-y".into());
@@ -386,13 +408,48 @@ impl ScreenRecordingOptions {
         } else {
             ffmpeg.extension()
         };
-        args.push(
+        args.push(if custom {
+            "$output$".into()
+        } else {
             change_extension(&self.output_path, extension)
                 .to_string_lossy()
-                .into_owned(),
-        );
+                .into_owned()
+        });
         Some(args)
     }
+}
+
+/// An argument vector as one line that [`split_command_line`] reads back: arguments
+/// with spaces, quotes or nothing in them are quoted (`Helpers.EscapeCLIText`).
+pub fn join_command_line(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| {
+            if !arg.is_empty() && !arg.chars().any(|c| c.is_whitespace() || c == '"') {
+                return arg.clone();
+            }
+            let mut quoted = String::from("\"");
+            let mut backslashes = 0;
+            for c in arg.chars() {
+                match c {
+                    '\\' => backslashes += 1,
+                    '"' => {
+                        quoted.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
+                        quoted.push('"');
+                        backslashes = 0;
+                    }
+                    c => {
+                        quoted.extend(std::iter::repeat_n('\\', backslashes));
+                        quoted.push(c);
+                        backslashes = 0;
+                    }
+                }
+            }
+            quoted.extend(std::iter::repeat_n('\\', backslashes * 2));
+            quoted.push('"');
+            quoted
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// `ScreenRecorder.FFmpegEncodeAsGIF`: the two-filter palette pass.
@@ -567,6 +624,41 @@ mod tests {
             ]
         );
         assert_eq!(recording().input(), RecordingInput::Pipe);
+    }
+
+    #[test]
+    fn the_custom_template_has_placeholders_and_no_pipe() {
+        let mut options = recording();
+        options.duration = 5.0;
+        let template = options.ffmpeg_args_text(true).unwrap();
+        assert_eq!(
+            template,
+            "-c:v libx264 -r $fps$ -preset ultrafast -tune zerolatency -crf 28 -pix_fmt yuv420p -movflags +faststart -t $duration$ -y $output$"
+        );
+        // Used as custom commands, the template records the same as the defaults.
+        options.ffmpeg.UseCustomCommands = true;
+        options.ffmpeg.CustomCommands = template;
+        let custom = options.ffmpeg_commands().unwrap();
+        options.ffmpeg.UseCustomCommands = false;
+        assert_eq!(custom, options.ffmpeg_args().unwrap());
+    }
+
+    #[test]
+    fn a_joined_command_line_splits_back() {
+        let args: Vec<String> = [
+            "-i",
+            ":MacBook Pro Microphone",
+            "",
+            "a\\\"b",
+            "C:\\x\\",
+            "plain",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let text = join_command_line(&args);
+        assert!(text.starts_with("-i \":MacBook Pro Microphone\" \"\""));
+        assert_eq!(split_command_line(&text), args);
     }
 
     #[test]

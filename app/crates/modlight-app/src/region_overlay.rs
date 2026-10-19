@@ -36,6 +36,8 @@ pub enum OverlayPurpose {
     AutoCaptureRegion,
     /// The scrolling capture's area.
     ScrollingRegion,
+    /// The task settings' preconfigured region (`Select region...`).
+    CustomRegion(crate::task_pages::TaskTarget),
 }
 
 /// The overlay and what it will do with its answer.

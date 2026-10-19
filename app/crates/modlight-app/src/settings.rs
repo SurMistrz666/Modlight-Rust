@@ -358,6 +358,10 @@ pub struct SettingsWindow {
     pub account: AccountPage,
     /// The skin when the window opened: pushed to the server on close if it changed.
     pub opened_skin: String,
+    /// The task pages' selections and open editor.
+    pub task_pages: crate::task_pages::TaskPagesState,
+    /// Where the page is drawn (the editors' veil covers it).
+    pub page_area: Rect,
 }
 
 impl SettingsWindow {
@@ -368,6 +372,8 @@ impl SettingsWindow {
             expanded: vec![false; GROUPS.len()],
             account: AccountPage::default(),
             opened_skin: skin.to_string(),
+            task_pages: Default::default(),
+            page_area: Rect::NOTHING,
         };
         window.reveal(section);
         window
@@ -479,6 +485,8 @@ pub enum SettingsAsk {
     Refresh,
     OpenOnServer(&'static str),
     SignOut,
+    /// What a task page asked of the app.
+    TaskPage(crate::task_pages::TaskPageAsk),
 }
 
 pub fn ui(ui: &mut Ui, state: &mut AppState) -> Vec<SettingsAsk> {
@@ -501,6 +509,10 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Vec<SettingsAsk> {
     if !any_match {
         no_results(ui, state, &colors, right);
         return asks;
+    }
+    let editor_open = window.task_pages.editor.is_some();
+    if let Some(window) = state.windows.settings.as_mut() {
+        window.page_area = right;
     }
     let header_h = header(ui, &colors, right, &section_id);
     let body = Rect::from_min_max(pos2(right.left(), right.top() + header_h), right.max);
@@ -525,7 +537,7 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Vec<SettingsAsk> {
             });
             ui.add_space(36.0);
         });
-    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if !editor_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         asks.push(SettingsAsk::Close);
     }
     asks
@@ -975,8 +987,69 @@ fn page(
         "application.theme" => theme_page(ui, state, colors),
         "application.general" => general_page(ui, state, colors),
         "application.components" => crate::components_window::settings_page(ui, state, colors),
+        task if task.starts_with("task.") => task_page(ui, state, colors, task, asks),
         _ => {}
     }
+}
+
+/// A task page over `DefaultTaskSettings` (every card enabled, no override cards).
+fn task_page(
+    ui: &mut Ui,
+    state: &mut AppState,
+    colors: &Colors,
+    section: &str,
+    asks: &mut Vec<SettingsAsk>,
+) {
+    use crate::settings_kit::Binder;
+    use crate::task_pages::{TaskPagesCtx, editors, page};
+    let Some(window) = state.windows.settings.as_mut() else {
+        return;
+    };
+    let mut pages = std::mem::take(&mut window.task_pages);
+    let area = window.page_area;
+    let mut defaults = match state.config.get("DefaultTaskSettings") {
+        Some(serde_json::Value::Object(map)) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    let mut auto_increment = state
+        .config
+        .get("NameParserAutoIncrementNumber")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    let mut ctx = TaskPagesCtx {
+        colors,
+        is_default: true,
+        state: &mut pages,
+        asks: Vec::new(),
+        auto_increment: &mut auto_increment,
+        auto_increment_changed: false,
+        dev_mode: state.config.dev_mode(),
+        dialogs: !state.env.qa && state.mode == crate::app::Mode::Normal,
+    };
+    let mut binder = Binder::new(&mut defaults);
+    page(ui, &mut ctx, &mut binder, section);
+    editors(ui, &mut ctx, &mut binder, area);
+    let changed = binder.changed;
+    let page_asks = std::mem::take(&mut ctx.asks);
+    let auto_changed = ctx.auto_increment_changed;
+    if let Some(window) = state.windows.settings.as_mut() {
+        window.task_pages = pages;
+    }
+    if changed {
+        state
+            .config
+            .set("DefaultTaskSettings", serde_json::Value::Object(defaults));
+    }
+    if auto_changed {
+        state.config.set(
+            "NameParserAutoIncrementNumber",
+            serde_json::json!(auto_increment),
+        );
+    }
+    if changed || auto_changed {
+        state.save_config();
+    }
+    asks.extend(page_asks.into_iter().map(SettingsAsk::TaskPage));
 }
 
 fn signed_out_card(ui: &mut Ui, colors: &Colors, asks: &mut Vec<SettingsAsk>, tall: bool) {
@@ -1585,6 +1658,30 @@ pub fn handle(state: &mut AppState, asks: Vec<SettingsAsk>) {
                     window.account = AccountPage::default();
                 }
             }
+            SettingsAsk::TaskPage(ask) => {
+                task_page_ask(state, crate::task_pages::TaskTarget::Defaults, ask)
+            }
         }
+    }
+}
+
+/// What a task page asked of the app, for the settings `target` it edits.
+pub fn task_page_ask(
+    state: &mut AppState,
+    target: crate::task_pages::TaskTarget,
+    ask: crate::task_pages::TaskPageAsk,
+) {
+    use crate::task_pages::TaskPageAsk as A;
+    match ask {
+        A::SelectRegion => state.select_custom_region(target),
+        A::ScreenRecordingOptions => state.open_ffmpeg_options(target),
+        A::WatchFoldersChanged => state.update_watch_folders(),
+        A::ImageEffects => state.push(Command::NotYet),
+        // Handled by the pages themselves.
+        A::NotificationButtons
+        | A::PickSound(_)
+        | A::EditAction(_)
+        | A::EditWatchFolder(_)
+        | A::PickScreenshotsFolder => {}
     }
 }

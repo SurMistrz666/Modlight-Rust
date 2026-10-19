@@ -4,4 +4,22 @@
   <data name="HotkeyProblem" xml:space="preserve">
     <value>macOS nie oddał skrótu {0}, więc ten skrót nic nie robi. Zajmuje go już inna aplikacja na tym Macu.</value>
   </data>
+  <data name="FFmpegMultipleDevicesFound" xml:space="preserve">
+    <value>Znaleziono {0} urządzeń AVFoundation.</value>
+  </data>
+  <data name="FFmpegOneDeviceFound" xml:space="preserve">
+    <value>Znaleziono {0} urządzenie AVFoundation.</value>
+  </data>
+  <data name="FFmpegNoDevicesFound" xml:space="preserve">
+    <value>Nie znaleziono urządzeń AVFoundation. Przechwytywanie ekranu jest gotowe.</value>
+  </data>
+  <data name="FFmpegDeviceEnumerationFailed" xml:space="preserve">
+    <value>FFmpeg nie mógł wyliczyć urządzeń AVFoundation. Przechwytywanie ekranu jest nadal dostępne.</value>
+  </data>
+  <data name="FFmpegVideoToolbox" xml:space="preserve">
+    <value>Na tym Macu sprzętowo koduje VideoToolbox; działa tylko szybkość transmisji.</value>
+  </data>
+  <data name="FFmpegPathPlaceholder" xml:space="preserve">
+    <value>Ścieżka do ffmpeg</value>
+  </data>
 </root>

@@ -184,23 +184,27 @@ pub enum ScreenRecordOutput {
 
 /// `FFmpegCaptureDevice` as the Mac knows it.
 ///
-/// Upstream's screen sources are Windows devices ("GDI grab", "DDA grab",
-/// "screen-capture-recorder"); on a Mac the screen comes from ScreenCaptureKit and is
-/// piped into ffmpeg. A synced setting naming one of the Windows screen sources means
-/// "the screen" here too, so a document from Windows records the same thing.
+/// Upstream's screen sources are Windows devices (`gdigrab`, `ddagrab`,
+/// `screen-capture-recorder`); on a Mac the screen comes from ScreenCaptureKit and is
+/// piped into ffmpeg. Every one of them means "the screen" here, and choosing the screen
+/// on a Mac stores upstream's default `gdigrab`, so a document synced to Windows records
+/// the screen there too.
 pub mod capture_device {
     /// "None": no source.
     pub const NONE: &str = "";
-    /// The screen through ScreenCaptureKit (the Mac's counterpart of "GDI grab").
-    pub const SCREEN: &str = "ScreenCaptureKit";
-    /// Upstream's values that mean "the screen" on Windows.
-    pub const WINDOWS_SCREEN_SOURCES: [&str; 3] =
-        ["GDI grab", "DDA grab", "screen-capture-recorder"];
+    /// The screen: upstream's `FFmpegCaptureDevice.GDIGrab.Value`, recorded through
+    /// ScreenCaptureKit on a Mac.
+    pub const SCREEN: &str = "gdigrab";
+    /// How the screen source is shown in the list.
+    pub const SCREEN_TITLE: &str = "ScreenCaptureKit (screen)";
+    /// Other values that mean "the screen": `DDAGrab`, `ScreenCaptureRecorder`, and the
+    /// old "GDI grab" that `FixSources` still reads.
+    pub const OTHER_SCREEN_SOURCES: [&str; 3] = ["ddagrab", "screen-capture-recorder", "GDI grab"];
 
     /// Whether a `VideoSource` value means the screen.
     pub fn is_screen(value: &str) -> bool {
         value.eq_ignore_ascii_case(SCREEN)
-            || WINDOWS_SCREEN_SOURCES
+            || OTHER_SCREEN_SOURCES
                 .iter()
                 .any(|s| value.eq_ignore_ascii_case(s))
     }
@@ -398,6 +402,14 @@ mod tests {
         assert_eq!(options.VideoCodec.encoder(), "libvpx-vp9");
         assert_eq!(options.extension(), "webm");
         assert_eq!(options.x264_CRF, 23);
+        for windows in ["gdigrab", "ddagrab", "screen-capture-recorder", "GDI grab"] {
+            let mut other = FFmpegOptions {
+                VideoSource: windows.into(),
+                ..FFmpegOptions::default()
+            };
+            other.fix_sources();
+            assert_eq!(other.VideoSource, capture_device::SCREEN, "{windows}");
+        }
         assert_eq!(options.GIFDither, FFmpegPaletteUseDither::bayer);
         assert_eq!(options.AAC_Bitrate, 128);
         let written = serde_json::to_value(&options).unwrap();

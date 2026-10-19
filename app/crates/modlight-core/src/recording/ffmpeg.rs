@@ -228,6 +228,24 @@ pub fn run(
     }
 }
 
+/// `GetDirectShowDevices` on a Mac: the cameras and microphones ffmpeg's avfoundation
+/// input lists. ffmpeg exits with an error after listing (there is no input); the list
+/// is read from what it printed. Listing asks macOS for no permission.
+pub fn list_devices(ffmpeg: &Path) -> std::io::Result<super::args::Devices> {
+    let output = std::process::Command::new(ffmpeg)
+        .args(super::args::list_devices_args())
+        .stdin(std::process::Stdio::null())
+        .output()?;
+    let text = String::from_utf8_lossy(&output.stderr);
+    if !text.contains("AVFoundation video devices") && !text.contains("AVFoundation audio devices")
+    {
+        return Err(std::io::Error::other(
+            text.lines().last().unwrap_or("").to_string(),
+        ));
+    }
+    Ok(super::args::parse_devices(&text))
+}
+
 /// `ConcatenateVideos`.
 pub fn concatenate(ffmpeg: &Path, inputs: &[PathBuf], output: &Path, delete_inputs: bool) -> bool {
     let list = PathBuf::from(format!("{}.txt", output.display()));

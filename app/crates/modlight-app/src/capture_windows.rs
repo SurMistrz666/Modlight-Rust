@@ -181,7 +181,28 @@ impl ModlightApp {
                 state.captures.quick_task_editor = None;
             }
         }
-        let _ = main;
+        // The screen recording options (`FFmpegOptionsWindow`, CenterOwner).
+        if let Some(window) = state.captures.ffmpeg_window.as_mut() {
+            use crate::ffmpeg_window as f;
+            let (asks, close) = dialog_resizable(
+                ctx,
+                "ffmpeg-options",
+                t(c::FFmpegOptionsWindow_Title),
+                vec2(f::WIDTH, f::HEIGHT),
+                vec2(f::MIN_WIDTH, f::MIN_HEIGHT),
+                Placement::owner(main),
+                |ui| f::ui(ui, window, &colors),
+            );
+            for ask in asks {
+                match ask {
+                    f::FFmpegAsk::Refresh => state.refresh_ffmpeg_devices(),
+                    f::FFmpegAsk::Browse => state.browse_for_ffmpeg(),
+                }
+            }
+            if close {
+                state.ffmpeg_options_closed();
+            }
+        }
     }
 
     /// The region capture overlay: one borderless window per display it covers.
