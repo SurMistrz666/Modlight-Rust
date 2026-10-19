@@ -1,4 +1,4 @@
-# HANDOFF: app-1 (phase 1 of the macOS Rust port of Modlight App)
+# HANDOFF: app-1 (phases 1 and 2 of the macOS Rust port of Modlight App)
 
 Worktree `/Users/marcinasdfg/Desktop/modlight/_wt/app-1`, branch `app-1`, everything
 under `app/`. Never pushed. Rules: `app/docs/PORT.md`.
@@ -26,40 +26,61 @@ are finished: snapshot tests (`tests/snapshots.rs`, 4 looks per QA screen),
 `scripts/build-app.sh` (never launches the app), `app/docs/MACOS.md`,
 `app/docs/STATUS.md`. See STATUS.md for every screen.
 
-Phase 2 (uploads), on the branch since `f0f9625`:
+Phase 2 (uploads) is finished:
 
-- `modlight-core::names` (NameParser, UploadInfoParser, file and URL helpers),
-  `history` (History.db, SQLite, upstream's table), `watch` (watch folders over
-  FSEvents), `dotnet` (Newtonsoft date shapes), `upload/*` (offline queue: items,
-  Queue.json store and spool, sentences, progress, worker, tus transport),
-  `tasks/*` (TaskSettings, TaskInfo, WorkerTask, TaskManager, UploadManager, the
-  upload gate, uploader glue with upstream's error texts, paste model, recent tasks,
-  image saving). Three helper branches were merged: app-1-names, app-1-history,
-  app-1-transfer (their worktrees under `_wt/` can be removed).
-- `modlight-api`: `mime`, `upload` (streamed live `POST /upload`, ShareX's multipart),
-  `tus` (create/HEAD/PATCH/DELETE, resume, stall detection, session moved onto the
-  account's origin), `web` (Upload from URL downloads, no credential).
+- `modlight-core`: `names` (NameParser, UploadInfoParser, file and URL helpers),
+  `history` (History.db, upstream's table and value shapes), `watch` (watch folders
+  over FSEvents), `dotnet` (Newtonsoft date shapes), `upload/*` (offline queue:
+  items, Queue.json and spool, sentences, progress, worker, tus transport),
+  `tasks/*` (TaskSettings + AppUploadSettings read from the config, TaskInfo,
+  WorkerTask, TaskManager, UploadManager, upload gate, uploader glue with upstream's
+  error texts, paste model, recent tasks, image saving).
+- `modlight-api`: `mime`, `upload` (one streamed multipart `POST /upload`, ShareX's
+  bytes), `tus` (create/HEAD/PATCH/DELETE, resume, stall detection, session moved onto
+  the account's origin), `web` (Upload from URL, no credential).
 - `modlight-macos`: `network` (getifaddrs), `sound` (NSSound), `keys` (Cmd+V local
-  monitor), `system::open_path`.
-- `modlight-app`: `uploads.rs` (the window's side: asks, effects, upload windows,
-  watch folders, menus), `upload_tab.rs`, dialogs `message`, `upload_confirm`,
+  monitor), `system::{open_path, move_to_trash, active_window_fullscreen}`.
+- `modlight-app`: `uploads.rs` (the window's side: task questions one at a time,
+  effects, every upload window, many-files questions with folders, watch folders,
+  menus, notice actions), `upload_tab.rs`, dialogs `message`, `upload_confirm`,
   `file_exists`, `before_upload`, `after_upload`, `paste`, `text_upload`,
-  `url_upload`, `shorten_url`, `clipboard_upload`, `drop_window`; tray rebuilt from
-  menu entries (Upload, after-capture/after-upload toggles, screenshots folder,
-  recent items). Phase-1 direct upload removed; drops and "Upload here" go through
-  UploadManager.
-- Tests: `modlight-api/tests/uploads.rs` (14), `modlight-core/tests/task_flow.rs`
-  (6, against 8420: small upload, text + paste, shortener + refusal, signed out,
-  offline queue across a restart, 24 MiB tus cut at 8 MiB and resumed after a
-  restart), `modlight-app/tests/reference_app.rs` (upload now through the task flow).
+  `url_upload`, `shorten_url`, `clipboard_upload`, `drop_window`; tray built from
+  menu entries (Upload, after-capture/after-upload toggles, screenshots folder, recent
+  items) with the progress icon; window title with the average progress; dialogs
+  centred on the screen and Topmost where upstream's are. Phase-1 direct upload is
+  gone: drops, "Upload here", folder tiles go through UploadManager.
+- QA: `qa_uploads.rs` adds 16 screens (`tab-upload-busy`, `paste`,
+  `paste-languages`, `text-upload`, `url-upload`, `shorten-url`, `clipboard-upload`,
+  `clipboard-upload-text`, `drop-window`, `before-upload`, `after-upload`,
+  `large-file`, `multi-upload`, `file-exists`, `message-box`, `notification-upload`);
+  snapshots for all of them in 4 looks.
+- Tests against 8420: `modlight-api/tests/uploads.rs` (14: live upload bytes,
+  progress, cancel, refusals; tus small/empty, cut + closed port + restart resume,
+  stall, abandon, refusals; scripted protocol cases), `modlight-core/tests/task_flow.rs`
+  (6: small upload, text + paste, shortener + code-taken refusal, signed out, offline
+  queue across a restart, 24 MiB queued upload cut at 8 MiB and resumed after a
+  restart), `modlight-app/tests/reference_app.rs` (2: the phase-1 library run, now
+  uploading through the task flow; eleven files through the many-files question, a
+  paste, the history read back). Everything uploaded is deleted afterwards.
+- A review of the upload paths against upstream (WorkerTask, TaskManager,
+  UploadManager, notice) was done and its findings fixed (commit `cc585f0`).
 
-## In progress (phase 2)
+## Not done / for phase 3
 
-1. QA screens + snapshots for the new windows and the Upload tab with rows
-   (`tab-upload` snapshots currently differ: the tab is real now).
-2. STATUS.md / MACOS.md rows for phase 2.
-3. Not verified in a real window: every upload window, the drop target, Cmd+V,
-   the tray's new submenus, sounds.
+1. Not verified in a real window (only headless): every upload window, the drop
+   target, Cmd+V, the tray's new submenus and progress icon, sounds, Topmost dialogs,
+   the clipboard (writing and reading). Needs a run with the owner (`--qa-profile`).
+2. Settings pages for upload options (copy formats, clipboard upload, limits,
+   history, watch folders) are phase 3; the settings are read from the config and
+   honoured, only their pages are not drawn.
+3. History windows (`ShareX.HistoryLib` views), captures, hotkeys, the image editor,
+   pin to screen: phase 3+. The notice's "Annotate image" and "Pin to screen" are
+   no-ops until then.
+4. Upstream's desktop app has no duplicate check before uploading (only the web panel
+   calls `POST /api/uploads/check`), so none was ported. Ask the owner if one is wanted.
+5. A Finder drop onto a folder tile uploads into the open folder (winit gives no
+   pointer position during an OS drag).
+6. Proxy settings are not applied to uploads (upstream reads them from its proxy page).
 
 ## Decisions and known differences (for MACOS.md / STATUS.md)
 
@@ -86,6 +107,22 @@ Phase 2 (uploads), on the branch since `f0f9625`:
   not be redrawn; menu items needing UI un-hide the windows through AppKit first.
 
 ## Gotchas
+
+- Phase 3 capture tasks start through `modlight_core::tasks::upload_manager::run_image_task`
+  / `WorkerTask::image_upload`; the after-capture jobs (`do_after_capture_jobs`) and
+  `TaskQuestion`s are already wired to the window. Add capture questions as new
+  `TaskQuestion` variants and windows in `uploads.rs::open_next_ask`.
+- The task flow never touches a window: it sends `TaskMessage`s over `TaskChannel`;
+  `AppState::pump_uploads` (each frame) answers them. Tests can play the window
+  (`modlight-core/tests/task_flow.rs::Host`).
+- A restored queue item is due at once (`QueueItem::revive`); tests must wait for the
+  outcome, not for the item.
+- egui ignores `TextEdit::margin` when a frame is given: use
+  `Frame::NONE.inner_margin(n)`.
+- In hand-placed cards, draw buttons in a child `Ui` (`ui.new_child`) so
+  `allocate_rect` does not move the list's cursor back up.
+- `modlight-core::tasks::manager::set_fullscreen_probe` and
+  `modlight_macos::keys::install` are set up in `ModlightApp::new` (Normal and Qa only).
 
 - `Runtime::spawn` takes a future returning a closure `FnOnce(&mut AppState,
   &egui::Context)`; annotate the closure's parameter types.
