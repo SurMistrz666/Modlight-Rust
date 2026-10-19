@@ -16,6 +16,7 @@ pub mod models;
 pub mod signin;
 pub mod tus;
 pub mod upload;
+pub mod web;
 
 pub use client::{API_KEY_HEADER, Api, Credential, REQUEST_TIMEOUT};
 pub use error::{ApiError, ApiResult};

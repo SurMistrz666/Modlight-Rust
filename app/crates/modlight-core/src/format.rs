@@ -29,6 +29,22 @@ pub fn cloud_size(bytes: i64) -> String {
     format!("{number} {}", UNITS[i])
 }
 
+/// A local file size (`NumberExtensions.ToSizeString`): 1000 steps with decimal labels,
+/// or 1024 with binary ones when the person chose `BinaryUnits`; `decimals` places.
+/// These are the operating system's numbers, unlike [`cloud_size`], which follows the panel.
+pub fn local_size(size: i64, binary: bool, decimals: usize) -> String {
+    const DECIMAL: [&str; 7] = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
+    const BINARY: [&str; 7] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+    let base: f64 = if binary { 1024.0 } else { 1000.0 };
+    if (size as f64) < base {
+        return format!("{} B", size.max(0));
+    }
+    let place = ((size as f64).ln() / base.ln()).floor().clamp(0.0, 6.0) as usize;
+    let number = size as f64 / base.powi(place as i32);
+    let suffix = if binary { BINARY[place] } else { DECIMAL[place] };
+    format!("{} {suffix}", Culture::current().fixed(number, decimals.min(3)))
+}
+
 /// `ToString("N0")` in the current culture.
 pub fn n0(value: i64) -> String {
     Culture::current().n0(value)
@@ -96,6 +112,19 @@ mod tests {
         assert_eq!(cloud_size(5_853_000), "5.6 MB");
         set_thread_culture(Some(Culture::polish()));
         assert_eq!(cloud_size(6_082_150), "5,8 MB");
+        set_thread_culture(None);
+    }
+
+    #[test]
+    fn local_sizes_follow_the_unit_choice() {
+        set_thread_culture(Some(Culture::english()));
+        assert_eq!(local_size(999, false, 1), "999 B");
+        assert_eq!(local_size(-3, false, 1), "0 B");
+        assert_eq!(local_size(1500, false, 1), "1.5 KB");
+        assert_eq!(local_size(1536, true, 1), "1.5 KiB");
+        assert_eq!(local_size(5_000_000, false, 1), "5.0 MB");
+        set_thread_culture(Some(Culture::polish()));
+        assert_eq!(local_size(2_500_000_000, false, 1), "2,5 GB");
         set_thread_culture(None);
     }
 

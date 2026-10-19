@@ -6,6 +6,8 @@
 //! to that exact build, and every rebuild would stop at a password prompt).
 
 pub mod keychain;
+pub mod network;
+pub mod sound;
 pub mod system;
 pub mod windows;
 

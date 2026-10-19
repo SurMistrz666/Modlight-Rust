@@ -33,7 +33,7 @@ sha2 = "0.10"
 hex = "0.4"
 rand = "0.9"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "ico"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "ico", "bmp", "tiff"] }
 eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "wgpu", "accesskit"] }
 egui = "=0.36.2"
 egui_extras = { version = "=0.36.2" }
