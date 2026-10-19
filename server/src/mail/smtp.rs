@@ -268,6 +268,9 @@ struct Connection<'a> {
     allows_auth: bool,
     supported_auth: Vec<&'static str>,
     extensions: Vec<&'static str>,
+    /// A TLS upgrade did not complete: lettre has already given the socket
+    /// up, and the stream must not be touched again (not even to close it).
+    broken: bool,
 }
 
 #[allow(deprecated)]
@@ -305,6 +308,7 @@ impl<'a> Connection<'a> {
                         allows_auth: false,
                         supported_auth: Vec::new(),
                         extensions: Vec::new(),
+                        broken: false,
                     });
                 }
                 Ok(Err(e)) => last = Some(e),
@@ -505,10 +509,14 @@ impl<'a> Connection<'a> {
     /// TLS socket, silence the socket timeout.
     async fn upgrade(&mut self) -> Result<(), SmtpError> {
         let params = TlsParameters::new(self.opts.host.clone()).map_err(|e| tls_failure(&e))?;
+        // Until the handshake succeeds the plain socket is gone (a failed or
+        // abandoned upgrade leaves lettre's stream empty).
+        self.broken = true;
         match tokio::time::timeout(self.opts.socket_timeout, self.stream.upgrade_tls(params)).await {
             Err(_) => Err(format_error("Timeout", "ETIMEDOUT", None, "CONN")),
             Ok(Err(e)) => Err(tls_failure(&e)),
             Ok(Ok(())) => {
+                self.broken = false;
                 self.secure = true;
                 self.remainder.clear();
                 self.queue.clear();
@@ -684,6 +692,9 @@ impl<'a> Connection<'a> {
 
     /// `close()`: end the socket (nodemailer sends no QUIT after a message).
     async fn close(mut self) {
+        if self.broken {
+            return;
+        }
         let _ = tokio::time::timeout(Duration::from_secs(2), self.stream.close()).await;
     }
 }
@@ -873,6 +884,103 @@ mod tests {
         assert_eq!(dot_stuff(b".a\r\n.b\nc"), b"..a\r\n..b\r\nc\r\n.\r\n");
         assert_eq!(dot_stuff(b"x\r\n"), b"x\r\n.\r\n");
         assert_eq!(dot_stuff(b"x\r"), b"x\r\n.\r\n");
+    }
+
+    /// A scripted SMTP server: answers each received line with the next
+    /// reply of `script` (`None` = hang up), after its greeting.
+    async fn scripted(greeting: &'static str, script: Vec<Option<&'static str>>) -> u16 {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt as _, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let (read, mut write) = socket.into_split();
+            write.write_all(greeting.as_bytes()).await.unwrap();
+            let mut lines = BufReader::new(read).lines();
+            let mut in_data = false;
+            let mut script = script.into_iter();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if in_data && line != "." {
+                    continue;
+                }
+                match script.next().flatten() {
+                    Some(reply) => {
+                        in_data = reply.starts_with("354");
+                        write.write_all(reply.as_bytes()).await.unwrap();
+                    }
+                    None => return,
+                }
+            }
+        });
+        port
+    }
+
+    fn options(port: u16, auth: bool) -> SmtpOptions {
+        SmtpOptions {
+            host: "127.0.0.1".into(),
+            port: i64::from(port),
+            secure: false,
+            require_tls: false,
+            auth: auth.then(|| Credentials { user: "u".into(), pass: "p".into() }),
+            connection_timeout: CONNECTION_TIMEOUT,
+            greeting_timeout: GREETING_TIMEOUT,
+            socket_timeout: SOCKET_TIMEOUT,
+        }
+    }
+
+    fn envelope(to: &[&str]) -> Envelope {
+        Envelope { from: "no-reply@sink.test".into(), to: to.iter().map(|t| t.to_string()).collect() }
+    }
+
+    #[tokio::test]
+    async fn delivers_with_auth_plain_and_reports_the_accepted_recipients() {
+        let port = scripted(
+            "220 sink\r\n",
+            vec![
+                Some("250-sink\r\n250 AUTH LOGIN PLAIN\r\n"),
+                Some("235 ok\r\n"),
+                Some("250 ok\r\n"),
+                Some("250 ok\r\n"),
+                Some("550 5.1.1 no such user\r\n"),
+                Some("354 go\r\n"),
+                Some("250 queued\r\n"),
+            ],
+        )
+        .await;
+        let info = send(&options(port, true), &envelope(&["a@x.test", "b@x.test"]), b"Subject: x\r\n\r\nhi\r\n")
+            .await
+            .unwrap();
+        assert_eq!(info.accepted, vec!["a@x.test"]);
+        assert_eq!(info.rejected, vec!["b@x.test"]);
+        assert_eq!(info.response, "250 queued");
+    }
+
+    #[tokio::test]
+    async fn reports_failures_in_nodemailers_words() {
+        let port = scripted("220 sink\r\n", vec![Some("250 AUTH PLAIN\r\n"), Some("535 5.7.8 nope\r\n")]).await;
+        let e = send(&options(port, true), &envelope(&["a@x.test"]), b"x").await.unwrap_err();
+        assert_eq!((e.code, e.message.as_str()), (Some("EAUTH"), "Invalid login: 535 5.7.8 nope"));
+
+        let port = scripted("554 go away\r\n", vec![]).await;
+        let e = send(&options(port, false), &envelope(&["a@x.test"]), b"x").await.unwrap_err();
+        assert_eq!(e.message, "Invalid greeting. response=554 go away: 554 go away");
+        assert_eq!((e.code, e.response_code), (Some("EPROTOCOL"), Some(554.0)));
+
+        let port = scripted("220 sink\r\n", vec![Some("250 sink\r\n")]).await;
+        let e = send(&options(port, false), &envelope(&[]), b"x").await.unwrap_err();
+        assert_eq!((e.code, e.message.as_str()), (Some("EENVELOPE"), "No recipients defined"));
+
+        // Offered STARTTLS, accepted it, then hung up on the handshake.
+        let port = scripted("220 sink\r\n", vec![Some("250 STARTTLS\r\n"), Some("220 go ahead\r\n"), None]).await;
+        let e = send(&options(port, false), &envelope(&["a@x.test"]), b"x").await.unwrap_err();
+        assert_eq!(e.code, Some("ESOCKET"));
+        assert_eq!(e.message, "Client network socket disconnected before secure TLS connection was established");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let e = send(&options(port, false), &envelope(&["a@x.test"]), b"x").await.unwrap_err();
+        assert_eq!(e.message, format!("connect ECONNREFUSED 127.0.0.1:{port}"));
     }
 
     #[test]
