@@ -288,14 +288,35 @@ pub enum MotionResult {
     Refused(MotionRefusal),
 }
 
-/// `motionPreview(media, opts, signal)`. WAITS FOR PART A (`no-engine`).
+/// `motionPreview(media, opts, signal)`. WAITS FOR PART A: the refusals the
+/// row and a probe can settle are given (`not-animated`, `too-large`,
+/// `unreadable`); anything that would need the engine answers `no-engine`.
 pub async fn motion_preview(
-    _state: &AppState,
-    _media: &Upload,
+    state: &AppState,
+    media: &Upload,
     _opts: MotionOptions,
-    _signal: AbortSignal,
+    signal: AbortSignal,
 ) -> anyhow::Result<MotionResult> {
-    Ok(MotionResult::Refused(MotionRefusal::NoEngine))
+    let refuse = |r| Ok(MotionResult::Refused(r));
+    match media_kind(Some(&media.mime_type), Some(&media.ext)) {
+        MediaKind::Video if media.size as u64 > AV_MAX_INPUT_BYTES => refuse(MotionRefusal::TooLarge),
+        MediaKind::Image => {
+            if media.size as u64 > crate::media::transform_cost::MAX_TRANSFORM_BYTES {
+                return refuse(MotionRefusal::TooLarge);
+            }
+            let src = state.storage.get()?.read_buffer(&media.storage_key).await?;
+            if signal.aborted() {
+                return refuse(MotionRefusal::Unreadable);
+            }
+            match crate::media::probe::probe_image(src).await {
+                None => refuse(MotionRefusal::Unreadable),
+                Some(p) if !p.animated => refuse(MotionRefusal::NotAnimated),
+                Some(_) => refuse(MotionRefusal::NoEngine),
+            }
+        }
+        MediaKind::Video => refuse(MotionRefusal::NoEngine),
+        _ => refuse(MotionRefusal::NotAnimated),
+    }
 }
 
 // ── timeline.ts ─────────────────────────────────────────────────────────────
@@ -314,14 +335,25 @@ pub enum TimelineSheet {
     Refused(TimelineRefusal),
 }
 
-/// `timelineTrack(media, signal)`. WAITS FOR PART A (`no-engine`).
-pub async fn timeline_track(_state: &AppState, _media: &Upload, _signal: AbortSignal) -> anyhow::Result<TimelineTrack> {
-    Ok(TimelineTrack::Refused(TimelineRefusal::NoEngine))
+/// The refusal the ROW settles before anything is opened (`openTimelineSource`).
+fn timeline_row_refusal(media: &Upload) -> TimelineRefusal {
+    if !can_timeline_preview(&media.mime_type, &media.ext, media.size) {
+        if media.size as u64 > AV_MAX_INPUT_BYTES { TimelineRefusal::TooLarge } else { TimelineRefusal::NotVideo }
+    } else {
+        TimelineRefusal::NoEngine
+    }
 }
 
-/// `timelineSheet(media, signal)`. WAITS FOR PART A (`no-engine`).
-pub async fn timeline_sheet(_state: &AppState, _media: &Upload, _signal: AbortSignal) -> anyhow::Result<TimelineSheet> {
-    Ok(TimelineSheet::Refused(TimelineRefusal::NoEngine))
+/// `timelineTrack(media, signal)`. WAITS FOR PART A: the row's refusals, else
+/// `no-engine`.
+pub async fn timeline_track(_state: &AppState, media: &Upload, _signal: AbortSignal) -> anyhow::Result<TimelineTrack> {
+    Ok(TimelineTrack::Refused(timeline_row_refusal(media)))
+}
+
+/// `timelineSheet(media, signal)`. WAITS FOR PART A: the row's refusals, else
+/// `no-engine`.
+pub async fn timeline_sheet(_state: &AppState, media: &Upload, _signal: AbortSignal) -> anyhow::Result<TimelineSheet> {
+    Ok(TimelineSheet::Refused(timeline_row_refusal(media)))
 }
 
 // ── av-action.ts ────────────────────────────────────────────────────────────
