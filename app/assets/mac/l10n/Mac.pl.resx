@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- Texts of the macOS port where upstream's text names Windows (see app/docs/MACOS.md). -->
+  <data name="HotkeyProblem" xml:space="preserve">
+    <value>macOS nie oddał skrótu {0}, więc ten skrót nic nie robi. Zajmuje go już inna aplikacja na tym Macu.</value>
+  </data>
+</root>

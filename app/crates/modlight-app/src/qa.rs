@@ -62,6 +62,20 @@ pub const SCREENS: &[&str] = &[
     "file-exists",
     "message-box",
     "notification-upload",
+    "tab-create-problem",
+    "capture-menu",
+    "region-capture",
+    "region-capture-hover",
+    "region-capture-light",
+    "recording-toolbar",
+    "recording-toolbar-compact",
+    "after-capture",
+    "after-capture-recording",
+    "auto-capture",
+    "quick-task-menu",
+    "quick-task-editor",
+    "scrolling-capture",
+    "my-space-wide",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.
@@ -521,8 +535,11 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
     if let Some(size) = crate::qa_uploads::prepare(screen, state, picture("8")) {
         return size;
     }
+    if let Some(size) = crate::qa_capture::prepare(screen, state) {
+        return size;
+    }
     match screen {
-        "my-space" | "toasts" => {
+        "my-space" | "toasts" | "my-space-wide" => {
             load_library(state, ctx, files(), 9);
             if screen == "toasts" {
                 use modlight_core::l10n::{Arg, format, s, t, uploaders};
@@ -732,6 +749,8 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
             crate::dialogs::duplicates::HEIGHT,
         ),
         "notification" => vec2(428.0, 160.0),
+        // The size of upstream's library screenshot, where every card is whole.
+        "my-space-wide" => vec2(1486.0, 943.0),
         "settings-profile" | "settings-theme" | "settings-general" => {
             vec2(crate::settings::WIDTH, crate::settings::HEIGHT)
         }
@@ -742,6 +761,7 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
 /// Whether the screen is a whole main window (as opposed to one dialog).
 pub fn is_main_window(screen: &str) -> bool {
     !crate::qa_uploads::is_dialog(screen)
+        && !crate::qa_capture::is_dialog(screen)
         && !matches!(
             screen,
             "sign-in"
@@ -772,6 +792,7 @@ impl eframe::App for ShotApp {
         set_thread_language(Some(self.app.state.language));
         if is_main_window(&self.screen) {
             self.app.frame(ui);
+            crate::qa_capture::draw_over_main(&self.screen, &ctx, &self.app.state);
             if self.screen == "my-space-menu" {
                 // Popups do not open headlessly: the card's menu is drawn where it opens.
                 let entries = crate::myspace::menus::file(&self.app.state, "4");
@@ -788,6 +809,10 @@ impl eframe::App for ShotApp {
         let state = &mut self.app.state;
         state.time = ctx.input(|i| i.time);
         if let Some(wanted) = crate::qa_uploads::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
+        if let Some(wanted) = crate::qa_capture::draw(&self.screen, ui, state) {
             self.wanted = wanted;
             return;
         }

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- Texts of the macOS port where upstream's text names Windows (see app/docs/MACOS.md). -->
+  <data name="HotkeyProblem" xml:space="preserve">
+    <value>macOS would not give up {0}, so that shortcut does nothing. Another app on this Mac already holds it.</value>
+  </data>
+</root>
