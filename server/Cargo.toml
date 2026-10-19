@@ -72,6 +72,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Misc
 dotenvy = "0.15"
+# statvfs for the free-space guard (lib/upload/disk.ts uses statfs)
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
