@@ -85,7 +85,7 @@ pub fn is_valid_email(v: &str) -> bool {
     // `[^\s@]+\.[^\s@]{2,}` over the domain: some dot with at least one char
     // before it and two after it (backtracking picks any such dot).
     let chars: Vec<char> = domain.chars().collect();
-    chars.iter().enumerate().any(|(i, c)| *c == '.' && i >= 1 && chars.len() - i - 1 >= 2)
+    chars.iter().enumerate().any(|(i, c)| *c == '.' && i >= 1 && chars.len() - i > 2)
 }
 
 /// Better Auth's default bounds (`emailAndPassword.minPasswordLength` = 8).
