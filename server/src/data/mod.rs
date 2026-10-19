@@ -5,6 +5,8 @@
 //! duplicates): each such function names its upstream origin, so the two
 //! ports can be reconciled.
 
+pub mod admin;
+pub mod admin_disk;
 pub mod duplicates;
 pub mod folders;
 pub mod uploads;

@@ -107,8 +107,14 @@ pub fn background_url(user_code: Option<&str>, key: Option<&str>) -> Option<Stri
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct BackgroundStyle {
     pub url: String,
-    /// 0-1, ready for CSS.
+    /// 0-1, ready for CSS. Serialised as JavaScript writes the number (`0`,
+    /// not serde's `0.0`, for a veil of 0).
+    #[serde(serialize_with = "serialize_js_number")]
     pub dim: f64,
+}
+
+fn serialize_js_number<S: serde::Serializer>(n: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&crate::rpc::tagged::Num(*n), serializer)
 }
 
 /// `backgroundStyle(userCode, key, dim)`.
@@ -158,6 +164,14 @@ mod tests {
         assert_eq!(
             background_style(Some("bob"), Some("backgrounds/u-t.webp"), None),
             Some(BackgroundStyle { url: "/bg/bob?v=t".into(), dim: 0.7 })
+        );
+        assert_eq!(
+            serde_json::to_string(&background_style(Some("bob"), Some("backgrounds/u-t.webp"), Some(0))).unwrap(),
+            r#"{"url":"/bg/bob?v=t","dim":0}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&background_style(Some("bob"), Some("backgrounds/u-t.webp"), Some(7))).unwrap(),
+            r#"{"url":"/bg/bob?v=t","dim":0.07}"#
         );
         assert!(is_accepted_background_type(Some("image/PNG; q=1")));
         assert!(!is_accepted_background_type(Some("image/svg+xml")));
