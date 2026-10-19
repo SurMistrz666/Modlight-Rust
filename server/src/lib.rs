@@ -46,6 +46,7 @@ pub mod rpc;
 pub mod runtime;
 pub mod secret_box;
 pub mod settings;
+pub mod shortlinks;
 pub mod state;
 pub mod storage;
 pub mod theme_cookies;
