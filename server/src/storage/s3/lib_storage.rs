@@ -9,7 +9,8 @@
 //! `UploadPart`s fed from one shared chunker, then `CompleteMultipartUpload`
 //! with the parts sorted and their CRC32s. When any part fails the other
 //! uploaders stop taking parts, the multipart upload is aborted and the first
-//! failure is returned.
+//! failure is returned. A failed `CompleteMultipartUpload` is returned without
+//! an abort, as lib-storage does.
 //!
 //! A stream is cut into in-memory parts like `getChunkStream` (a full part is
 //! emitted only once more bytes follow it, so a body of exactly one part is a
