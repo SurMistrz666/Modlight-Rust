@@ -858,6 +858,10 @@ fn transfer_card(ui: &mut Ui, colors: &Colors, row: &TransferRow, width: f32) ->
     };
     let height = (name_h + 7.0 + 4.0 + detail_h).max(38.0);
     let card = card_frame(ui, colors, width, height);
+    // Everything inside the card is placed by hand; a child keeps the buttons'
+    // allocations from moving the list's cursor back up into the card.
+    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(card));
+    let ui = &mut inner;
     badge(ui, colors, card, row.icon, colors.text_secondary(), 1.0);
     let left = card.left() + text_left_offset;
     let top = card.center().y - height / 2.0;
@@ -927,6 +931,10 @@ fn queue_card(ui: &mut Ui, colors: &Colors, row: &QueueRow, width: f32) -> Optio
     }
     let height = height.max(38.0);
     let card = card_frame(ui, colors, width, height);
+    // Everything inside the card is placed by hand; a child keeps the buttons'
+    // allocations from moving the list's cursor back up into the card.
+    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(card));
+    let ui = &mut inner;
     let badge_color = if row.stopped {
         colors.cancel_border()
     } else {
@@ -1049,6 +1057,10 @@ fn history_card(
     }
     let height = height.max(38.0);
     let card = card_frame(ui, colors, width, height);
+    // Everything inside the card is placed by hand; a child keeps the buttons'
+    // allocations from moving the list's cursor back up into the card.
+    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(card));
+    let ui = &mut inner;
     let (glyph, color, opacity) = if row.failed {
         (icons::TRIANGLE_ALERT, colors.cancel_border(), 1.0)
     } else if row.canceled {

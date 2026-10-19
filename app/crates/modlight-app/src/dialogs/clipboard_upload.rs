@@ -147,8 +147,7 @@ impl ClipboardUpload {
                     .auto_shrink([false, false])
                     .show(&mut child, |ui| {
                         egui::TextEdit::multiline(&mut self.text_view.as_str())
-                            .frame(egui::Frame::NONE)
-                            .margin(egui::Margin::same(12))
+                            .frame(egui::Frame::NONE.inner_margin(12))
                             .font(egui::FontId::proportional(13.0))
                             .text_color(colors.text())
                             .desired_width(f32::INFINITY)
