@@ -30,9 +30,19 @@
 //! write cookies); a `/_page` fetch is a client-side navigation (`RSC: 1`
 //! upstream) and does not refresh at all.
 
+pub mod dashboard;
+pub mod dashboard_admin_user_files;
+pub mod dashboard_duplicates;
+pub mod dashboard_folders;
+pub mod dashboard_links;
+pub mod dashboard_paste;
+pub mod dashboard_trash;
+pub mod dashboard_upload;
+pub mod layout_app;
 pub mod meta;
 pub mod root_layout;
 pub mod shell;
+pub mod shortlink_unlock;
 pub mod table;
 
 use std::collections::HashMap;
@@ -298,6 +308,17 @@ impl PageRegistry {
 /// here (`reg.page("/dashboard/folders", dashboard_folders::load);`).
 pub fn register_all(reg: &mut PageRegistry) {
     reg.layout(Layout::Root, root_layout::load);
+    reg.layout(Layout::App, layout_app::load); // app/(app)/layout.tsx (srv-auth's loader, copied verbatim)
+    reg.page("/dashboard", dashboard::load); // app/(app)/dashboard/page.tsx
+    reg.page("/dashboard/folders", dashboard_folders::load); // app/(app)/dashboard/folders/page.tsx
+    reg.page("/dashboard/trash", dashboard_trash::load); // app/(app)/dashboard/trash/page.tsx
+    reg.page("/dashboard/duplicates", dashboard_duplicates::load); // app/(app)/dashboard/duplicates/page.tsx
+    reg.page("/dashboard/links", dashboard_links::load); // app/(app)/dashboard/links/page.tsx
+    reg.page("/dashboard/paste", dashboard_paste::load); // app/(app)/dashboard/paste/page.tsx
+    reg.page("/dashboard/upload", dashboard_upload::load); // app/(app)/dashboard/upload/page.tsx
+    reg.page("/dashboard/admin/users/[id]/files", dashboard_admin_user_files::load); // app/(app)/dashboard/admin/users/[id]/files/page.tsx
+    reg.page("/s/[code]/unlock", shortlink_unlock::load); // app/s/[code]/unlock/page.tsx
+    reg.page("/s/[code]/[name]/unlock", shortlink_unlock::load_scoped); // app/s/[code]/[name]/unlock/page.tsx
 }
 
 // ── Pipeline ────────────────────────────────────────────────────────────────

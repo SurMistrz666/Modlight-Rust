@@ -628,6 +628,14 @@ def link_info(run, lib):
 # ── /api/uploads (GET, PATCH, DELETE) ──────────────────────────────────────
 
 
+def days_ago(days, seconds=0):
+    """An ISO instant `days` (+ `seconds`) before now: trash rows must stay
+    inside the 30-day window, or a purge job may take them mid-run."""
+    import datetime
+    t = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days, seconds=seconds)
+    return t.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
 def seed_upload(lib, owner, code, **cols):
     """The same upload row (same id) on both servers; returns its id."""
     row = {
@@ -677,10 +685,10 @@ def uploads_api(run, lib):
                              size=40 * 1024 * 1024, created_at=t(6))
     ids["oct"] = seed_upload(lib, owner, "pg" + sfx, filename="pic.avif", ext="avif",
                              mime_type="application/octet-stream", created_at=t(7), folder_id=folder)
-    ids["trash"] = seed_upload(lib, owner, "ph" + sfx, created_at=t(8), deleted_at="2026-02-01T00:00:00.000Z")
-    ids["trash2"] = seed_upload(lib, owner, "pi" + sfx, created_at=t(9), deleted_at="2026-02-02T00:00:00.000Z")
+    ids["trash"] = seed_upload(lib, owner, "ph" + sfx, created_at=t(8), deleted_at=days_ago(5))
+    ids["trash2"] = seed_upload(lib, owner, "pi" + sfx, created_at=t(9), deleted_at=days_ago(4))
     ids["theirs"] = seed_upload(lib, other, "pj" + sfx, created_at=t(10))
-    ids["theirs_trash"] = seed_upload(lib, other, "pk" + sfx, created_at=t(11), deleted_at="2026-02-01T00:00:00.000Z")
+    ids["theirs_trash"] = seed_upload(lib, other, "pk" + sfx, created_at=t(11), deleted_at=days_ago(5))
     ids["lone"] = seed_upload(lib, owner, "pl" + sfx, created_at=t(12))
 
     names = dict((v, "<%s>" % k) for k, v in ids.items())
