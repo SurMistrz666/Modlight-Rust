@@ -64,9 +64,10 @@ pub fn is_json_content_type(value: &str) -> bool {
 ///
 /// Upstream counts the size in UTF-16 units of the decoded text (`raw.length`).
 /// A string longer than N units is always more than N bytes of UTF-8, and one
-/// unit is at most 3 bytes, so reading stops after `3 * max_bytes` bytes: past
-/// that point the decoded text is certainly over the limit, which keeps memory
-/// bounded without refusing anything upstream would accept.
+/// unit is at most 3 bytes, so reading stops after `3 * max_bytes` bytes (plus
+/// the two byte-order marks `req.text()` drops): past that point the decoded
+/// text is certainly over the limit, which keeps memory bounded without
+/// refusing anything upstream would accept.
 pub async fn read_json_object(
     headers: &HeaderMap,
     body: Body,
@@ -86,7 +87,7 @@ pub async fn read_json_object(
         return Err(too_large());
     }
 
-    let hard_cap = max_bytes.saturating_mul(3).saturating_add(1);
+    let hard_cap = max_bytes.saturating_mul(3).saturating_add(6);
     let mut buf: Vec<u8> = Vec::new();
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
@@ -97,14 +98,14 @@ pub async fn read_json_object(
         }
     }
 
-    // `req.text()`: UTF-8 decode with replacement, leading BOM stripped.
-    let decoded = String::from_utf8_lossy(&buf);
-    let raw = decoded.strip_prefix('\u{FEFF}').unwrap_or(&decoded);
+    // `req.text()`: UTF-8 decode with replacement; undici drops up to TWO
+    // leading byte-order marks (see `js_json::request_text`).
+    let raw = crate::js_json::request_text(&buf);
     if raw.encode_utf16().count() > max_bytes {
         return Err(too_large());
     }
 
-    match serde_json::from_str::<Value>(raw) {
+    match serde_json::from_str::<Value>(&raw) {
         Ok(Value::Object(map)) => Ok(map),
         _ => Err(JsonBodyError::new(StatusCode::BAD_REQUEST, "Body must be a JSON object.")),
     }
@@ -202,14 +203,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn drops_two_leading_byte_order_marks_like_request_text() {
+        // Checked on the reference (PATCH /api/folders): two marks are read
+        // through, a third reaches JSON.parse and is refused.
+        let json = [("content-type", "application/json")];
+        assert!(read(&json, "\u{FEFF}\u{FEFF}{}", JSON_BODY_MAX).await.is_ok());
+        let e = read(&json, "\u{FEFF}\u{FEFF}\u{FEFF}{}", JSON_BODY_MAX).await.unwrap_err();
+        assert_eq!(e.message, "Body must be a JSON object.");
+    }
+
+    #[tokio::test]
     async fn only_objects_are_accepted() {
         for bad in ["[]", "null", "1", "\"x\"", "{", ""] {
             let e = read(&[("content-type", "application/json")], bad, JSON_BODY_MAX).await.unwrap_err();
             assert_eq!(e.status, StatusCode::BAD_REQUEST);
             assert_eq!(e.message, "Body must be a JSON object.");
         }
-        let ok =
-            read(&[("content-type", "application/json")], "\u{FEFF}{\"parentId\":null}", JSON_BODY_MAX).await.unwrap();
+        let ok = read(&[("content-type", "application/json")], "\u{FEFF}\u{FEFF}{\"parentId\":null}", JSON_BODY_MAX)
+            .await
+            .unwrap();
         assert!(supplied(&ok, "parentId"));
         assert!(!supplied(&ok, "name"));
     }
