@@ -23,6 +23,7 @@ pub mod background;
 pub mod client_settings;
 pub mod config;
 pub mod credentials;
+pub mod crypto;
 pub mod data;
 pub mod db;
 pub mod error;
