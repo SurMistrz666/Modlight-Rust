@@ -322,7 +322,7 @@ impl ModlightApp {
                 "sign-in",
                 t(s::SignInWindow_Title),
                 vec2(crate::signin::WIDTH, height),
-                main,
+                Placement::owner(main),
                 false,
                 |ui| {
                     state.sign_in_opened();
@@ -346,7 +346,7 @@ impl ModlightApp {
                 t(s::SettingsWindow_WindowTitle),
                 size,
                 builder_min,
-                main,
+                Placement::owner(main),
                 |ui| crate::settings::ui(ui, state),
             );
             crate::settings::handle(state, asks);
@@ -362,7 +362,7 @@ impl ModlightApp {
                 "prompt",
                 &title,
                 vec2(prompt::WIDTH, window.content_height),
-                main,
+                Placement::owner(main),
                 true,
                 |ui| window.ui(ui, &colors),
             );
@@ -380,7 +380,7 @@ impl ModlightApp {
                 "folder-delete",
                 t(s::MySpace_DeleteFolderTitle),
                 vec2(folder_delete::WIDTH, window.content_height),
-                main,
+                Placement::owner(main),
                 true,
                 |ui| window.ui(ui, &colors, now),
             );
@@ -398,7 +398,7 @@ impl ModlightApp {
                 "link-settings",
                 t(s::MySpace_LinkSettings),
                 vec2(link_settings::WIDTH, window.content_height),
-                main,
+                Placement::owner(main),
                 true,
                 |ui| window.ui(ui, &colors, now),
             );
@@ -417,7 +417,7 @@ impl ModlightApp {
                 t(s::MySpace_DuplicatesTitle),
                 vec2(duplicates::WIDTH, duplicates::HEIGHT),
                 vec2(560.0, 420.0),
-                main,
+                Placement::owner(main),
                 |ui| window.ui(ui, &colors, now),
             );
             if let Some(action) = action {
@@ -434,7 +434,7 @@ impl ModlightApp {
                 "confirm",
                 &title,
                 vec2(confirm::WIDTH, window.content_height),
-                main,
+                Placement::owner(main),
                 true,
                 |ui| window.ui(ui, &colors),
             );
@@ -471,7 +471,7 @@ impl ModlightApp {
                 "message",
                 &title,
                 vec2(message::WIDTH, window.content_height),
-                main,
+                Placement::screen(false),
                 true,
                 |ui| window.ui(ui, &colors).then_some(()),
             );
@@ -487,7 +487,7 @@ impl ModlightApp {
                 "multi-upload",
                 title,
                 vec2(upload_confirm::WIDTH, window.content_height),
-                main,
+                Placement::screen(true),
                 true,
                 |ui| window.ui(ui, &colors),
             );
@@ -508,7 +508,7 @@ impl ModlightApp {
                 "large-file",
                 title,
                 vec2(upload_confirm::WIDTH, window.content_height),
-                main,
+                Placement::screen(true),
                 true,
                 |ui| window.ui(ui, &colors),
             );
@@ -528,7 +528,7 @@ impl ModlightApp {
                 "file-exists",
                 t(s::FileExistWindow_Title),
                 vec2(file_exists::WIDTH, window.content_height),
-                main,
+                Placement::screen(true),
                 true,
                 |ui| window.ui(ui, &colors),
             );
@@ -547,7 +547,7 @@ impl ModlightApp {
                 t(s::BeforeUploadWindow_Title),
                 vec2(before_upload::WIDTH, before_upload::HEIGHT),
                 vec2(before_upload::MIN_WIDTH, before_upload::MIN_HEIGHT),
-                main,
+                Placement::screen(true),
                 |ui| window.ui(ui, &colors),
             );
             if let Some(outcome) = outcome {
@@ -572,7 +572,7 @@ impl ModlightApp {
                 &title,
                 vec2(after_upload::WIDTH, after_upload::HEIGHT),
                 vec2(after_upload::MIN_WIDTH, after_upload::MIN_HEIGHT),
-                main,
+                Placement::screen(false),
                 |ui| window.ui(ui, &colors, now),
             );
             if let Some(action) = action {
@@ -595,7 +595,7 @@ impl ModlightApp {
                 t(s::Paste_WindowTitle),
                 vec2(paste::WIDTH, paste::HEIGHT),
                 vec2(paste::MIN_WIDTH, paste::MIN_HEIGHT),
-                main,
+                Placement::owner(main),
                 |ui| window.ui(ui, &colors),
             );
             if let Some(outcome) = outcome {
@@ -612,7 +612,7 @@ impl ModlightApp {
                 text_upload::TextUpload::title(),
                 vec2(text_upload::WIDTH, text_upload::HEIGHT),
                 vec2(text_upload::MIN_WIDTH, text_upload::MIN_HEIGHT),
-                main,
+                Placement::screen(false),
                 |ui| window.ui(ui, &colors),
             );
             if let Some(text) = outcome {
@@ -628,7 +628,7 @@ impl ModlightApp {
                 "shorten-url",
                 t(s::ShortenURLWindow_Title),
                 vec2(shorten_url::WIDTH, window.content_height),
-                main,
+                Placement::screen(false),
                 false,
                 |ui| window.ui(ui, &colors),
             );
@@ -645,7 +645,7 @@ impl ModlightApp {
                 "url-upload",
                 t(s::URLUploadWindow_Title),
                 vec2(url_upload::WIDTH, window.content_height),
-                main,
+                Placement::screen(false),
                 false,
                 |ui| window.ui(ui, &colors),
             );
@@ -663,7 +663,7 @@ impl ModlightApp {
                 &clipboard_upload::ClipboardUpload::title(),
                 vec2(clipboard_upload::WIDTH, clipboard_upload::HEIGHT),
                 vec2(clipboard_upload::MIN_WIDTH, clipboard_upload::MIN_HEIGHT),
-                main,
+                Placement::screen(false),
                 |ui| window.ui(ui, &colors),
             );
             if let Some(outcome) = outcome {
@@ -848,14 +848,43 @@ impl AppState {
     }
 }
 
-/// The builder of a dialog window centred on the main window.
-fn builder(title: &str, size: Vec2, main: Option<Rect>, resizable: bool) -> ViewportBuilder {
+/// Where a dialog opens: centred on an area (the main window for `CenterOwner`, the
+/// screen's visible frame for `CenterScreen`), and whether it stays on top (`Topmost`).
+#[derive(Clone, Copy, Debug)]
+struct Placement {
+    area: Option<Rect>,
+    topmost: bool,
+}
+
+impl Placement {
+    fn owner(main: Option<Rect>) -> Placement {
+        Placement {
+            area: main,
+            topmost: false,
+        }
+    }
+
+    fn screen(topmost: bool) -> Placement {
+        Placement {
+            area: modlight_macos::system::visible_frame()
+                .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h))),
+            topmost,
+        }
+    }
+}
+
+/// The builder of a dialog window centred where `place` says.
+fn builder(title: &str, size: Vec2, place: Placement, resizable: bool) -> ViewportBuilder {
+    let main = place.area;
     let mut builder = ViewportBuilder::default()
         .with_title(title)
         .with_inner_size(size)
         .with_resizable(resizable)
         .with_minimize_button(false)
         .with_maximize_button(resizable);
+    if place.topmost {
+        builder = builder.with_always_on_top();
+    }
     if let Some(main) = main {
         builder = builder.with_position(pos2(
             main.center().x - size.x / 2.0,
@@ -872,13 +901,13 @@ fn dialog<R>(
     id: &str,
     title: &str,
     size: Vec2,
-    main: Option<Rect>,
+    place: Placement,
     _modal: bool,
     mut add: impl FnMut(&mut Ui) -> Option<R>,
 ) -> (Option<R>, bool) {
     let size = vec2(size.x, size.y.max(80.0).round());
     let viewport = ViewportId::from_hash_of(("dialog", id));
-    ctx.show_viewport_immediate(viewport, builder(title, size, main, false), |ui, _| {
+    ctx.show_viewport_immediate(viewport, builder(title, size, place, false), |ui, _| {
         let close = ui.ctx().input(|i| i.viewport().close_requested());
         let current = ui
             .ctx()
@@ -900,11 +929,11 @@ fn dialog_resizable<R>(
     title: &str,
     size: Vec2,
     min: Vec2,
-    main: Option<Rect>,
+    place: Placement,
     mut add: impl FnMut(&mut Ui) -> R,
 ) -> (R, bool) {
     let viewport = ViewportId::from_hash_of(("dialog", id));
-    let builder = builder(title, size, main, true).with_min_inner_size(min);
+    let builder = builder(title, size, place, true).with_min_inner_size(min);
     ctx.show_viewport_immediate(viewport, builder, |ui, _| {
         let close = ui.ctx().input(|i| i.viewport().close_requested());
         (add(ui), close)
