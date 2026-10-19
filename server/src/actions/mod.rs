@@ -6,6 +6,7 @@
 //! function under the upstream module and export names:
 //! `reg.register("shortlink-unlock", "unlockShortlink", unlock_shortlink)`.
 
+pub mod account;
 pub mod authorize;
 pub mod mail;
 pub mod registration;
@@ -20,5 +21,6 @@ pub fn register_all(reg: &mut RpcRegistry) {
     authorize::register(reg); // app/actions/authorize.ts
     mail::register(reg); // app/actions/mail.ts
     registration::register(reg); // app/actions/registration.ts
+    account::register(reg); // app/actions/account.ts
     tokens::register(reg); // app/actions/tokens.ts
 }

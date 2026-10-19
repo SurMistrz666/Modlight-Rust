@@ -32,6 +32,7 @@
 
 pub mod authorize;
 pub mod dashboard_admin;
+pub mod dashboard_profile;
 pub mod dashboard_tokens;
 pub mod download;
 pub mod layout_app;
@@ -351,6 +352,7 @@ pub fn register_all(reg: &mut PageRegistry) {
     reg.page("/authorize", authorize::load);
     reg.layout(Layout::App, layout_app::load);
     reg.page("/dashboard/admin", dashboard_admin::load);
+    reg.page("/dashboard/profile", dashboard_profile::load);
 }
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
