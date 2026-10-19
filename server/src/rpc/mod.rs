@@ -12,8 +12,9 @@
 //! Always HTTP 200 with an envelope once the request reached an action:
 //! `{"ok": v}`, `{"redirect": url}`, `{"notFound": true}` or
 //! `{"error": {"message": ...}}`, plus `"revalidate": true` when the action
-//! called `revalidatePath`/`revalidateTag`. Cookies set by the action (and by a
-//! session refresh) travel as `Set-Cookie`.
+//! called `revalidatePath`/`revalidateTag` or the response sets or deletes any
+//! cookie (Next 16 refreshes the page for both). Cookies set by the action
+//! (and by a session refresh) travel as `Set-Cookie`.
 //!
 //! Thrown errors: Next replaces the message of an error thrown by a server
 //! action with a generic one in production (React Flight's `digest` error),
@@ -203,9 +204,13 @@ impl ActionCtx {
         self.cookies.push(cookie);
     }
 
-    /// `(await cookies()).delete(name)`
+    /// `(await cookies()).delete(name)`: Next writes an empty value that
+    /// expired at the epoch, `name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT`
+    /// (no `Max-Age`; verified on the reference).
     pub fn delete_cookie(&self, name: &str) {
-        self.cookies.push(SetCookie::new(name, "").path("/").expired());
+        let mut cookie = SetCookie::new(name, "").path("/");
+        cookie.expires = Some(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
+        self.cookies.push(cookie);
     }
 
     /// `(await cookies()).get(name)?.value` for every request cookie.
@@ -453,7 +458,11 @@ async fn handle(
             error_envelope(&state, &module, &export, err.to_string())
         }
     };
-    if revalidate.load(Ordering::Relaxed)
+    // Next 16 counts a modified cookie as a revalidation (`addRevalidationHeader`
+    // in action-handler.js) and its client refreshes the page: the envelope says
+    // so whenever the response sets or deletes ANY cookie, the session-cookie
+    // refresh or expiry included (CONTRACT 7.1).
+    if (revalidate.load(Ordering::Relaxed) || !cookies.is_empty())
         && let Value::Object(map) = &mut body
     {
         map.insert("revalidate".into(), Value::Bool(true));

@@ -72,6 +72,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Misc
 dotenvy = "0.15"
+# statfs(2) for lib/upload/disk.ts (`fs.statfs` upstream); already in the lock graph.
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

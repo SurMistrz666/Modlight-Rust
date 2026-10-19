@@ -197,6 +197,11 @@ impl ResponseCookies {
         }
     }
 
+    /// Whether anything set or deleted a cookie so far in this request.
+    pub fn is_empty(&self) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+    }
+
     pub fn take(&self) -> Vec<SetCookie> {
         std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
     }
