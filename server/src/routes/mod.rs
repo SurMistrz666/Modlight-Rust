@@ -11,8 +11,13 @@
 //! [`crate::http::router`]; until then its URLs answer the 501 placeholder
 //! naming the upstream file.
 
+pub mod album_zip;
 pub mod api;
 pub mod avatar;
 pub mod download_app;
+pub mod embed_card;
+pub mod media_action;
+pub mod media_delete;
+pub mod oembed;
 pub mod s_code;
 pub mod s_code_name;

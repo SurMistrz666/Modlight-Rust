@@ -14,7 +14,7 @@
 //! exact rule.
 
 use axum::body::Body;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -424,22 +424,7 @@ pub fn first_header(headers: &HeaderMap, name: &str) -> Option<String> {
     headers.get(name).map(|v| v.as_bytes().iter().map(|&b| b as char).collect())
 }
 
-/// `new Response(text, { status })`: the Fetch default content type.
-pub fn plain_text(status: StatusCode, body: &str) -> Response {
-    let mut res = Response::new(Body::from(body.to_string()));
-    *res.status_mut() = status;
-    res.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain;charset=UTF-8"));
-    res
-}
-
-/// Insert `(name, value)` pairs as a JavaScript headers object would.
-pub fn put_headers<'a>(res: &mut Response, pairs: impl IntoIterator<Item = (&'a str, String)>) {
-    for (name, value) in pairs {
-        if let (Ok(n), Ok(v)) = (header::HeaderName::try_from(name), HeaderValue::from_str(&value)) {
-            res.headers_mut().insert(n, v);
-        }
-    }
-}
+pub use crate::http::web_response::{plain_text, put_headers};
 
 /// `streamMedia(media, { rangeHeader, download })`: a streaming response for a
 /// media file, with HTTP Range / 206 support.
@@ -605,6 +590,7 @@ mod tests {
 
     #[test]
     fn headers_as_node_reads_them() {
+        use axum::http::HeaderValue;
         let mut h = HeaderMap::new();
         h.append("range", HeaderValue::from_static("bytes=0-1"));
         h.append("range", HeaderValue::from_static("bytes=2-3"));
