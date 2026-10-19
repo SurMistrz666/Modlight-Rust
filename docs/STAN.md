@@ -34,7 +34,7 @@ Ostatnia aktualizacja: 2026-10-18 (koniec dnia 1, praca wstrzymana na prośbę w
 |---|---|---|
 | `web-spa` | scalona do `main` | panel WWW gotowy (`npm run verify` zielone), CONTRACT.md poprawiony w całości (508eff7). Prace backendu z sekcji 12 kontraktu idą w gałęziach serwera |
 | `app-1` | `_wt/app-1` | aplikacja na Maca, etap 1 prawie gotowy (3e022b7, testy zielone, test bez okna przeciw wzorcowi). Brakuje: testów zrzutów dla wszystkich ekranów (jasne skórki, PL), skryptu budującego Modlight.app, `app/docs/MACOS.md` i `STATUS.md`. Nic nie było uruchomione w prawdziwym oknie |
-| `srv-auth` | `_wt/srv-auth` | konta i logowanie: dopiero fundament (7149927): kryptografia Better Auth (hasła scrypt i bcrypt, szyfrowanie 2FA, TOTP, linki weryfikacyjne), secret-box, ustawienia, rejestracja, poczta i szablony, 227 testów. Brakuje wszystkich endpointów `/api/auth/*`, tras, akcji, stron, testów zgodności i poprawek 3, 4, 7. Zapiski z badania zachowania oryginału w HANDOFF.md. Poza repo: pusta baza `modlight_srv_auth` na dev Postgres, zatrzymany stos `_scratch/srv-auth/ref` (porty 8424/55424) |
+| `srv-auth` | scalona do `main` (bbde0a3) | konta, logowanie zgodne z Better Auth, 2FA, admin, poczta, wydania, strony auth i układ (app); skrypty porównawcze z oryginałem zielone, zgodność kont/sesji/2FA w obie strony 227/227; poprawki 3, 4, 7 wdrożone. Szczegóły i pozostałe różnice: `docs/handoff/srv-auth.md` |
 | `srv-library` | `_wt/srv-library` | utworzona, NIE rozpoczęta: wysyłanie plików, tus, ShareX, magazyn, foldery, kosz, duplikaty, skróty |
 
 Gotowe polecenia dla kolejnych agentów: `_scratch/prompts/` (`common-server.md`,
