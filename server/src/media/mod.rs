@@ -2,7 +2,9 @@
 //! links are spelled, and the native tooling (libvips, ffmpeg) that reads it.
 
 pub mod actions;
+pub mod av_meta;
 pub mod derived_cache;
+pub mod image;
 pub mod mime;
 pub mod paste_type;
 pub mod paths;
