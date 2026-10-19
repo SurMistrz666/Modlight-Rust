@@ -34,3 +34,11 @@ pub fn content_hash(buf: &[u8]) -> String {
 pub async fn purge_derived(storage: &dyn StorageDriver, upload_id: &str) {
     let _ = storage.delete_prefix(&derived_prefix_for(upload_id)).await;
 }
+
+/// [`purge_derived`] with upstream's lazy `getStorage()` inside the `try`: a
+/// storage driver that cannot be built is swallowed like any other failure.
+pub async fn purge_derived_lazy(storage: &crate::storage::Storage, upload_id: &str) {
+    if let Ok(driver) = storage.get() {
+        purge_derived(driver.as_ref(), upload_id).await;
+    }
+}

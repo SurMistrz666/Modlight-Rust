@@ -12,8 +12,9 @@
 //! Always HTTP 200 with an envelope once the request reached an action:
 //! `{"ok": v}`, `{"redirect": url}`, `{"notFound": true}` or
 //! `{"error": {"message": ...}}`, plus `"revalidate": true` when the action
-//! called `revalidatePath`/`revalidateTag`. Cookies set by the action (and by a
-//! session refresh) travel as `Set-Cookie`.
+//! called `revalidatePath`/`revalidateTag` or the response sets or deletes any
+//! cookie (Next 16 refreshes the page for both). Cookies set by the action
+//! (and by a session refresh) travel as `Set-Cookie`.
 //!
 //! Thrown errors: Next replaces the message of an error thrown by a server
 //! action with a generic one in production (React Flight's `digest` error),
@@ -453,7 +454,11 @@ async fn handle(
             error_envelope(&state, &module, &export, err.to_string())
         }
     };
-    if revalidate.load(Ordering::Relaxed)
+    // Next 16 counts a modified cookie as a revalidation (`addRevalidationHeader`
+    // in action-handler.js) and its client refreshes the page: the envelope says
+    // so whenever the response sets or deletes ANY cookie, the session-cookie
+    // refresh or expiry included (CONTRACT 7.1).
+    if (revalidate.load(Ordering::Relaxed) || !cookies.is_empty())
         && let Value::Object(map) = &mut body
     {
         map.insert("revalidate".into(), Value::Bool(true));
