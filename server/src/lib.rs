@@ -8,6 +8,7 @@
 //! background jobs are added.
 
 pub mod actions;
+pub mod admin_users;
 pub mod api_caller;
 pub mod api_json;
 pub mod api_scopes;
@@ -18,12 +19,15 @@ pub mod auth_helpers;
 pub mod avatar;
 pub mod background;
 pub mod config;
+pub mod credentials;
+pub mod data;
 pub mod db;
 pub mod error;
 pub mod format;
 pub mod http;
 pub mod i18n;
 pub mod ids;
+pub mod invites;
 pub mod jobs;
 pub mod mail;
 pub mod mail_settings;

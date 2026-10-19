@@ -47,6 +47,7 @@ pub mod crypto;
 pub mod email;
 pub mod error;
 pub mod password;
+pub mod server;
 pub mod session;
 pub mod two_factor;
 
