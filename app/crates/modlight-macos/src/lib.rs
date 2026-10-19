@@ -5,6 +5,9 @@
 //! app becomes the owner of a Keychain item (an item created by the app binary is tied
 //! to that exact build, and every rebuild would stop at a password prompt).
 
+pub mod capture;
+pub mod hotkeys;
+pub mod integration;
 pub mod keychain;
 pub mod keys;
 pub mod network;
