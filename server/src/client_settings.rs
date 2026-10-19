@@ -396,12 +396,12 @@ mod tests {
 
     #[test]
     fn a_document_deeper_than_v8_can_stringify_is_the_thrown_range_error() {
-        let ok = format!(r#"{{"settings":{{"a":{}{}}}}}"#, "[".repeat(4346), "]".repeat(4346));
+        let ok = format!(r#"{{"settings":{{"a":{}{}}}}}"#, "[".repeat(4351), "]".repeat(4351));
         assert!(parse_client_settings_body(&ok).is_ok());
-        let deep = format!(r#"{{"settings":{{"a":{}{}}}}}"#, "[".repeat(4347), "]".repeat(4347));
+        let deep = format!(r#"{{"settings":{{"a":{}{}}}}}"#, "[".repeat(4352), "]".repeat(4352));
         assert_eq!(parse_client_settings_body(&deep).err(), Some(RangeError));
         // After the version check and before the size check, as upstream.
-        let bad_version = format!(r#"{{"settings":{{"a":{}{}}},"version":"x"}}"#, "[".repeat(4347), "]".repeat(4347));
+        let bad_version = format!(r#"{{"settings":{{"a":{}{}}},"version":"x"}}"#, "[".repeat(4352), "]".repeat(4352));
         assert!(matches!(parse_client_settings_body(&bad_version), Ok(SettingsBody::Refused { .. })));
     }
 
