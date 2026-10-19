@@ -16,6 +16,7 @@ pub mod audit;
 pub mod auth;
 pub mod auth_helpers;
 pub mod avatar;
+pub mod avatar_store;
 pub mod background;
 pub mod config;
 pub mod data;

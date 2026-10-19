@@ -29,6 +29,11 @@ pub use s3::{S3Driver, is_not_found};
 /// A stream of file bytes.
 pub type ByteStream = Pin<Box<dyn Stream<Item = std::io::Result<Bytes>> + Send>>;
 
+/// A buffer as a one-chunk stream (`storage.write(key, buffer)` upstream).
+pub fn bytes_stream(bytes: Bytes) -> ByteStream {
+    Box::pin(futures_util::stream::once(async move { Ok(bytes) }))
+}
+
 /// Inclusive byte range, as upstream's `ByteRange`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteRange {
