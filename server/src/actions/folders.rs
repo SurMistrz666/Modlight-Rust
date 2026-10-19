@@ -91,8 +91,26 @@ async fn delete_folder(ctx: ActionCtx) -> ActionResult {
 
 async fn move_folder(ctx: ActionCtx) -> ActionResult {
     let s = ctx.require_user().await?;
-    let parent = parent_arg(ctx.args.raw(1))?;
-    move_folder_for(&ctx.state.db, &s.user.id, id_arg(ctx.args.raw(0)), parent.as_deref()).await?;
+    let id = id_arg(ctx.args.raw(0));
+    if ctx.args.is_undefined(1) {
+        // Upstream with `newParentId` undefined: no ownership, cycle or depth
+        // refusal applies, `freeSlug` compares `parent_id = NULL` (no clash
+        // ever, so the bare base slug), and drizzle drops the undefined
+        // `parentId` from the SET: only the slug is written, which a sibling
+        // root folder holding it refuses through the unique index.
+        let f = get_owned_folder(&ctx.state.db, &s.user.id, id).await?;
+        let base = crate::naming::slugify_name(&f.name);
+        let slug = if base.is_empty() { "folder".to_string() } else { base };
+        sqlx::query(r#"update "folders" set "slug" = $1 where ("folders"."id" = $2 and "folders"."owner_id" = $3)"#)
+            .bind(&slug)
+            .bind(f.id)
+            .bind(&s.user.id)
+            .execute(&ctx.state.db)
+            .await?;
+    } else {
+        let parent = parent_arg(ctx.args.raw(1))?;
+        move_folder_for(&ctx.state.db, &s.user.id, id, parent.as_deref()).await?;
+    }
     ctx.revalidate_path("/dashboard");
     crate::rpc::void()
 }
@@ -143,14 +161,39 @@ async fn move_uploads_to_folder(ctx: ActionCtx) -> ActionResult {
     };
     // No usable id answers `{moved: 0}` before the folder is even looked at.
     let any_id = ids.iter().any(|v| v.as_str().is_some_and(crate::upload::folder_target::is_uuid));
-    let moved = if any_id {
+    let moved = if !any_id {
+        0
+    } else if ctx.args.is_undefined(1) {
+        // `set({ folderId: undefined, updatedAt })`: drizzle drops an
+        // undefined column, so only `updated_at` is written.
+        touch_uploads(&ctx.state.db, &s.user.id, ids).await?
+    } else {
         let folder = parent_arg(ctx.args.raw(1))?;
         move_uploads_to_folder_for(&ctx.state.db, &s.user.id, ids, folder.as_deref()).await?
-    } else {
-        0
     };
     ctx.revalidate_path("/dashboard");
     Ok(json!({ "moved": moved }))
+}
+
+/// `moveUploadsToFolderFor` with an undefined folder: the same id filter and
+/// ownership scope, and an UPDATE that only stamps `updated_at`.
+async fn touch_uploads(db: &sqlx::PgPool, user_id: &str, upload_ids: &[Value]) -> Result<i64, ActionError> {
+    let ids: Vec<uuid::Uuid> = upload_ids
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|s| crate::upload::folder_target::is_uuid(s))
+        .take(crate::folders::MOVE_UPLOADS_MAX)
+        .filter_map(|s| uuid::Uuid::parse_str(s).ok())
+        .collect();
+    let moved: Vec<uuid::Uuid> = sqlx::query_scalar(
+        r#"update "uploads" set "updated_at" = $1 where ("uploads"."id" = any($2) and "uploads"."owner_id" = $3) returning "id""#,
+    )
+    .bind(crate::db::types::JsDate::now())
+    .bind(&ids)
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    Ok(moved.len() as i64)
 }
 
 async fn count_unfiled_uploads(ctx: ActionCtx) -> ActionResult {
