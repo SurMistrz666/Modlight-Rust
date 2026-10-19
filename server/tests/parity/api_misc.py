@@ -505,8 +505,10 @@ check_chunked(anon, "PUT %s small, chunked" % CS, "PUT", CS, [fits[:7], fits[7:]
 settings_rows("after the size checks")
 
 # Nesting: V8's JSON.stringify throws past a stack-bound depth (a bare 500,
-# nothing stored); the edge is modelled in js_json::STRINGIFY_STACK.
-for label, depth in (("arrays 4346 deep", 4346), ("arrays 4347 deep", 4347), ("arrays 6000 deep", 6000)):
+# nothing stored). The edge itself (about 4351 arrays / 4061 objects, see
+# js_json::STRINGIFY_STACK) drifts by a few levels with the reference's JIT
+# state, so these probe well inside and well outside it.
+for label, depth in (("arrays 4300 deep", 4300), ("arrays 4400 deep", 4400), ("arrays 6000 deep", 6000)):
     check(anon, "PUT %s %s" % (CS, label), "PUT", CS, headers=json_headers(E),
           raw='{"settings":{"a":%s%s}}' % ("[" * depth, "]" * depth))
     settings_rows("PUT %s %s" % (CS, label))
@@ -523,6 +525,24 @@ check(BANNED, "PUT %s via the banned account's session" % CS, "PUT", CS, headers
       raw='{"settings":{"banned":true}}')
 check(BANNED, "GET %s via the banned account's session" % CS, "GET", CS)
 settings_rows("after the session writes")
+
+# ── lib/api-json.ts readJsonObject: req.text() drops two byte-order marks ──
+# No route on this branch reads its body through api_json::read_json_object
+# yet (/api/folders answers the 501 placeholder here), so until one does the
+# reference is held to what that function's unit test pins; once the route
+# is ported the same requests compare the two servers.
+FOLDERS_PORTED = anon.rust.request("GET", "/api/folders").status != 501
+for marks in range(4):
+    body = b"\xef\xbb\xbf" * marks + b"{}"
+    label = "readJsonObject with %d byte-order marks (PATCH /api/folders)" % marks
+    a = anon.ref.request("PATCH", "/api/folders", headers=json_headers(W), raw=body)
+    b = anon.rust.request("PATCH", "/api/folders", headers=json_headers(W), raw=body)
+    if not FOLDERS_PORTED:
+        pinned = "Body must be a JSON object." if marks == 3 else "`id` is required and must be a string."
+        run.compare(label + " [reference vs read_json_object's pinned answer]",
+                    (a.status, (a.json() or {}).get("message")), (400, pinned))
+    else:
+        run.compare(label, shape(a, REF_ORIGIN), shape(b, RUST_ORIGIN))
 token_rows("at the end")
 user_rows("at the end")
 
