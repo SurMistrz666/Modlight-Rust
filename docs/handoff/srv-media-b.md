@@ -19,7 +19,9 @@ $S/stop.sh                       # stops only the process listening on 8427
 ```
 
 Reference: `modlight-srvmediab-ref` (`$S/ref/docker-compose.yml`, the ORIGINAL
-image on 127.0.0.1:8447, its Postgres on 55447). Both servers share one
+image on 127.0.0.1:8447, its Postgres on 55447); its containers are down
+(`docker compose down`, volumes kept): `cd $S/ref && docker compose up -d`
+brings it back with its data. The Rust server is stopped too. Both servers share one
 AUTH_SECRET (`$S/secrets.env`, never printed), so render tickets, unlock
 cookies and view grants minted by either verify on the other. Rust database:
 `modlight_srv_media_b` on the dev Postgres 55421.
