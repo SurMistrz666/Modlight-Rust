@@ -13,6 +13,7 @@ pub mod messages;
 pub mod names;
 pub mod sync;
 pub mod theme;
+pub mod watch;
 
 /// The product's name, as upstream's `Program.AppName`.
 pub const APP_NAME: &str = "Modlight";
