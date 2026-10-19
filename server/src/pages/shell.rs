@@ -32,6 +32,10 @@ pub struct ShellParts<'a> {
     pub lang: &'a str,
     pub data_mode: &'a str,
     pub data_theme: &'a str,
+    /// What `<ThemeApplier>`'s blocking script would have set on `<html>` for
+    /// a wallpaper: the `style` value (`--ml-bg-image:url("..");--ml-bg-dim:0.7`)
+    /// and `data-bg="on"`. `None` for pages without one.
+    pub background_style: Option<&'a str>,
     /// Rendered head tags ([`crate::pages::meta::render_head`]).
     pub head: &'a str,
     /// The payload, already escaped for HTML ([`crate::rpc::tagged::json_for_html`]).
@@ -116,10 +120,12 @@ fn set_html_attrs(html: &str, attrs: &[(&str, &str)]) -> String {
 
 /// Inject everything into a template.
 pub fn inject(template: &str, parts: &ShellParts<'_>) -> String {
-    let mut html = set_html_attrs(
-        template,
-        &[("lang", parts.lang), ("data-mode", parts.data_mode), ("data-theme", parts.data_theme)],
-    );
+    let mut attrs = vec![("lang", parts.lang), ("data-mode", parts.data_mode), ("data-theme", parts.data_theme)];
+    if let Some(style) = parts.background_style {
+        attrs.push(("style", style));
+        attrs.push(("data-bg", "on"));
+    }
+    let mut html = set_html_attrs(template, &attrs);
     // Drop the template's own <title>: the metadata brings the real one.
     if let Some(t_start) = find_ci(&html, "<title", 0)
         && let Some(t_end) = find_ci(&html, "</title>", t_start)
@@ -151,6 +157,7 @@ mod tests {
                 lang: "pl",
                 data_mode: "dark",
                 data_theme: "glass",
+                background_style: None,
                 head: "<title>Sign in - Modlight</title>",
                 payload_json: "{\"route\":\"/login\"}",
             },
@@ -162,6 +169,22 @@ mod tests {
     }
 
     #[test]
+    fn wallpaper_lands_on_html_like_theme_applier_sets_it() {
+        let out = inject(
+            "<html class=\"h-full\"><head></head><body></body></html>",
+            &ShellParts {
+                lang: "en",
+                data_mode: "system",
+                data_theme: "paper",
+                background_style: Some("--ml-bg-image:url(\"/bg/bob?v=t\");--ml-bg-dim:0.7"),
+                head: "",
+                payload_json: "{}",
+            },
+        );
+        assert!(out.starts_with("<html class=\"h-full\" lang=\"en\" data-mode=\"system\" data-theme=\"paper\" style=\"--ml-bg-image:url(&quot;/bg/bob?v=t&quot;);--ml-bg-dim:0.7\" data-bg=\"on\">"));
+    }
+
+    #[test]
     fn placeholder_is_used_without_a_build() {
         let shell = SpaShell::new(PathBuf::from("/nonexistent/index.html"));
         assert!(!shell.is_built());
@@ -169,6 +192,7 @@ mod tests {
             lang: "en",
             data_mode: "system",
             data_theme: "discord",
+            background_style: None,
             head: "",
             payload_json: "{}",
         });
