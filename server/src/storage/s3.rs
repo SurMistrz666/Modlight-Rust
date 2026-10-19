@@ -36,7 +36,7 @@ pub const WRITE_QUEUE_SIZE: usize = 4;
 /// `presignGet(key, expiresInSeconds = 3600)`.
 pub const PRESIGN_DEFAULT_EXPIRES_IN: u64 = 3600;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct S3Config {
     pub endpoint: Option<String>,
     pub region: String,
@@ -46,6 +46,21 @@ pub struct S3Config {
     pub force_path_style: bool,
     /// Optional key prefix inside the bucket.
     pub prefix: Option<String>,
+}
+
+/// Debug output never shows the secret key.
+impl std::fmt::Debug for S3Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Config")
+            .field("endpoint", &self.endpoint)
+            .field("region", &self.region)
+            .field("bucket", &self.bucket)
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"<redacted>")
+            .field("force_path_style", &self.force_path_style)
+            .field("prefix", &self.prefix)
+            .finish()
+    }
 }
 
 impl S3Config {
@@ -448,6 +463,18 @@ mod tests {
         assert_eq!(c.endpoint.as_deref(), Some("http://127.0.0.1:9000"));
         assert!(c.force_path_style);
         assert_eq!(c.prefix.as_deref(), Some("/modlight/"));
+    }
+
+    #[test]
+    fn debug_output_hides_the_secret() {
+        let c = S3Config::from_env(env(&[
+            ("S3_BUCKET", "b"),
+            ("S3_ACCESS_KEY_ID", "AKID"),
+            ("S3_SECRET_ACCESS_KEY", "s3cr3t-value"),
+        ]))
+        .unwrap();
+        let shown = format!("{c:?}");
+        assert!(shown.contains("AKID") && !shown.contains("s3cr3t-value"), "{shown}");
     }
 
     #[test]
