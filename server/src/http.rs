@@ -78,7 +78,10 @@ pub fn router(state: &AppState) -> Router {
 /// routers (they receive every `/api/files*` request and `POST /upload`,
 /// `POST /api/upload`).
 pub fn raw_upload_router(state: &AppState) -> Router {
-    Router::new().fallback(raw_upload_not_ported).with_state(state.clone())
+    Router::new()
+        .merge(crate::upload::sharex::routes()) // lib/upload/sharex.ts: POST /upload, POST /api/upload
+        .fallback(raw_upload_not_ported)
+        .with_state(state.clone())
 }
 
 async fn raw_upload_not_ported(uri: Uri) -> Response {
