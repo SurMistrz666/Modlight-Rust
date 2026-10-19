@@ -590,7 +590,10 @@ impl S3Store {
             }
             match src.next().await {
                 None => {
-                    if let Err(err) = splitter.finish().await {
+                    // `_final()`, unless a failed part destroyed the splitter meanwhile.
+                    if !state.failed.load(Ordering::SeqCst)
+                        && let Err(err) = splitter.finish().await
+                    {
                         pipeline_error = Some(StoreError::Other(err));
                     }
                     break;
