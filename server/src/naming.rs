@@ -186,42 +186,45 @@ pub fn is_reserved_tag(segment: &str) -> bool {
     RESERVED_TAGS.contains(&segment.to_lowercase().as_str())
 }
 
-/// `TagCheck.reason`
+/// `TagCheck.reason` (named `TagProblem` as in the srv-auth branch).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TagIssue {
+pub enum TagProblem {
     TooShort,
     TooLong,
     Charset,
     Reserved,
 }
 
-impl TagIssue {
+/// Former name of [`TagProblem`].
+pub type TagIssue = TagProblem;
+
+impl TagProblem {
     pub fn as_str(self) -> &'static str {
         match self {
-            TagIssue::TooShort => "too-short",
-            TagIssue::TooLong => "too-long",
-            TagIssue::Charset => "charset",
-            TagIssue::Reserved => "reserved",
+            TagProblem::TooShort => "too-short",
+            TagProblem::TooLong => "too-long",
+            TagProblem::Charset => "charset",
+            TagProblem::Reserved => "reserved",
         }
     }
 }
 
 /// `checkTag(tag)`: `Ok(())` or the reason. Lengths are UTF-16 units.
-pub fn check_tag(tag: &str) -> Result<(), TagIssue> {
+pub fn check_tag(tag: &str) -> Result<(), TagProblem> {
     let len = tag.encode_utf16().count();
     if len < 2 {
-        return Err(TagIssue::TooShort);
+        return Err(TagProblem::TooShort);
     }
     if len > 32 {
-        return Err(TagIssue::TooLong);
+        return Err(TagProblem::TooLong);
     }
     let mut chars = tag.chars();
     let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphanumeric());
     if !first_ok || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-        return Err(TagIssue::Charset);
+        return Err(TagProblem::Charset);
     }
     if is_reserved_tag(tag) {
-        return Err(TagIssue::Reserved);
+        return Err(TagProblem::Reserved);
     }
     Ok(())
 }
@@ -268,29 +271,29 @@ pub const NAMING_SCHEMES: &[&str] =
     &["random", "words", "random-chars", "filename", "filename-random", "date-filename", "custom"];
 
 pub fn is_naming_scheme(v: Option<&str>) -> bool {
-    v.is_some_and(|v| NAMING_SCHEMES.contains(&v))
+    v.is_some_and(|v| !v.is_empty() && NAMING_SCHEMES.contains(&v))
 }
 
-pub const WORD_COUNT_MIN: i64 = 2;
-pub const WORD_COUNT_MAX: i64 = 4;
-pub const WORD_COUNT_DEFAULT: i64 = 2;
+pub const WORD_COUNT_MIN: f64 = 2.0;
+pub const WORD_COUNT_MAX: f64 = 4.0;
+pub const WORD_COUNT_DEFAULT: i32 = 2;
 
 /// Five characters over a 56-symbol alphabet is ~550 million codes; below that
 /// the namespace becomes small enough to walk, so it is a hard floor.
-pub const RANDOM_LENGTH_MIN: i64 = 5;
-pub const RANDOM_LENGTH_MAX: i64 = 32;
-pub const RANDOM_LENGTH_DEFAULT: i64 = 6;
+pub const RANDOM_LENGTH_MIN: f64 = 5.0;
+pub const RANDOM_LENGTH_MAX: f64 = 32.0;
+pub const RANDOM_LENGTH_DEFAULT: i32 = 6;
 
 /// `clamp(value, min, max, fallback)`: `null` falls back BEFORE the numeric
 /// coercion (`Number(null)` is 0, which would clamp to the minimum).
-fn clamp(value: Option<f64>, min: i64, max: i64, fallback: i64) -> i64 {
+fn clamp(value: Option<f64>, min: f64, max: f64, fallback: i32) -> i32 {
     let Some(n) = value else {
         return fallback;
     };
     if !n.is_finite() {
         return fallback;
     }
-    (js_round(n) as i64).clamp(min, max)
+    js_round(n).clamp(min, max) as i32
 }
 
 /// `Math.round`: half rounds towards +infinity.
@@ -298,11 +301,11 @@ pub fn js_round(n: f64) -> f64 {
     (n + 0.5).floor()
 }
 
-pub fn clamp_word_count(v: Option<f64>) -> i64 {
+pub fn clamp_word_count(v: Option<f64>) -> i32 {
     clamp(v, WORD_COUNT_MIN, WORD_COUNT_MAX, WORD_COUNT_DEFAULT)
 }
 
-pub fn clamp_random_length(v: Option<f64>) -> i64 {
+pub fn clamp_random_length(v: Option<f64>) -> i32 {
     clamp(v, RANDOM_LENGTH_MIN, RANDOM_LENGTH_MAX, RANDOM_LENGTH_DEFAULT)
 }
 
@@ -329,7 +332,7 @@ pub fn word_code(count: f64) -> String {
 
 /// Random code over `UNAMBIGUOUS_ALPHABET` - no 0/O/o and no 1/l/I. CSPRNG.
 pub fn random_char_code(length: f64) -> String {
-    let n = clamp(Some(length), 1, 128, RANDOM_LENGTH_DEFAULT) as usize;
+    let n = clamp(Some(length), 1.0, 128.0, RANDOM_LENGTH_DEFAULT) as usize;
     let alphabet = UNAMBIGUOUS_ALPHABET.as_bytes();
     (0..n).map(|_| alphabet[OsRng.gen_range(0..alphabet.len())] as char).collect()
 }
@@ -488,14 +491,19 @@ pub fn plan_code(input: &CodeBaseInput<'_>) -> CodePlan {
     if input.scheme == "random-chars" {
         let length = clamp_random_length(input.random_length);
         // One extra character per collision.
-        return CodePlan { base, regenerate: Some(Box::new(move |n| random_char_code((length + n as i64) as f64))) };
+        return CodePlan {
+            base,
+            regenerate: Some(Box::new(move |n| random_char_code(f64::from(length) + f64::from(n)))),
+        };
     }
     if input.scheme == "words" {
         let count = clamp_word_count(input.word_count);
         return CodePlan {
             base,
             // Re-roll a few times first, then add a word.
-            regenerate: Some(Box::new(move |n| word_code((count + ((n - 1) / WORD_REROLLS_PER_WIDTH) as i64) as f64))),
+            regenerate: Some(Box::new(move |n| {
+                word_code(f64::from(count) + f64::from((n - 1) / WORD_REROLLS_PER_WIDTH))
+            })),
         };
     }
     CodePlan { base, regenerate: None }
@@ -603,16 +611,16 @@ mod tests {
         for tag in ["alicja", "bobby", "root", "hIto3", "kiNo4", "PaLU8", "wIke5"] {
             assert_eq!(check_tag(tag), Ok(()), "{tag}");
         }
-        assert_eq!(check_tag("dashboard"), Err(TagIssue::Reserved));
-        assert_eq!(check_tag("api"), Err(TagIssue::Reserved));
-        assert_eq!(check_tag("Login"), Err(TagIssue::Reserved));
-        assert_eq!(check_tag("s"), Err(TagIssue::TooShort));
-        assert_eq!(check_tag("a/b"), Err(TagIssue::Charset));
-        assert_eq!(check_tag(".."), Err(TagIssue::Charset));
-        assert_eq!(check_tag("a b"), Err(TagIssue::Charset));
-        assert_eq!(check_tag("-lead"), Err(TagIssue::Charset));
-        assert_eq!(check_tag("x"), Err(TagIssue::TooShort));
-        assert_eq!(check_tag(&"x".repeat(33)), Err(TagIssue::TooLong));
+        assert_eq!(check_tag("dashboard"), Err(TagProblem::Reserved));
+        assert_eq!(check_tag("api"), Err(TagProblem::Reserved));
+        assert_eq!(check_tag("Login"), Err(TagProblem::Reserved));
+        assert_eq!(check_tag("s"), Err(TagProblem::TooShort));
+        assert_eq!(check_tag("a/b"), Err(TagProblem::Charset));
+        assert_eq!(check_tag(".."), Err(TagProblem::Charset));
+        assert_eq!(check_tag("a b"), Err(TagProblem::Charset));
+        assert_eq!(check_tag("-lead"), Err(TagProblem::Charset));
+        assert_eq!(check_tag("x"), Err(TagProblem::TooShort));
+        assert_eq!(check_tag(&"x".repeat(33)), Err(TagProblem::TooLong));
         assert_eq!(check_tag(&"x".repeat(32)), Ok(()));
     }
 

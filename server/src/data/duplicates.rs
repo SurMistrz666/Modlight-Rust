@@ -198,6 +198,19 @@ pub const REMINDER_MIN_BYTES: i64 = 1024 * 1024 * 1024;
 pub const SNOOZE_COOKIE: &str = "ml_dupes_snooze";
 pub const SNOOZE_DAYS: i64 = 7;
 
+const DAY_MS: i64 = 86_400_000;
+
+/// `snoozeUntil(now)`: the instant a snooze started `now` stops holding.
+pub fn snooze_until(now_ms: i64) -> i64 {
+    now_ms + SNOOZE_DAYS * DAY_MS
+}
+
+/// `snoozeCookie(now)`: the cookie the strip writes, as a `document.cookie`
+/// string; `Max-Age` matches the value inside it.
+pub fn snooze_cookie(now_ms: i64) -> String {
+    format!("{SNOOZE_COOKIE}={}; Path=/; Max-Age={}; SameSite=Lax", snooze_until(now_ms), SNOOZE_DAYS * 86_400)
+}
+
 /// `isSnoozed(value, now)`: a non-empty value whose `Number()` is finite and
 /// in the future.
 pub fn is_snoozed(value: Option<&str>, now_ms: i64) -> bool {
@@ -212,11 +225,12 @@ pub fn reminder_due(totals: &DuplicateTotals) -> bool {
     totals.redundant > REMINDER_MIN_REDUNDANT || totals.reclaimable > REMINDER_MIN_BYTES
 }
 
-/// The reminder's aggregate: the duplicate sets of one owner, minus the ones
-/// waved off, in ONE statement. Returns the totals and whether they are due.
-pub async fn duplicate_reminder(db: &PgPool, user_id: &str) -> sqlx::Result<(DuplicateTotals, bool)> {
-    let row: (Option<i32>, Option<i32>, Option<i64>) = sqlx::query_as(&format!(
-        r#"with dupes as ({DUPES_CTE})
+/// The reminder's statement (`$1` = owner id): the duplicate sets minus the
+/// dismissed ones, totalled.
+pub fn duplicate_reminder_query() -> &'static str {
+    static QUERY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!(
+            r#"with dupes as ({DUPES_CTE})
            select count(*)::int as groups,
                   coalesce(sum(d.copies - 1), 0)::int as redundant,
                   coalesce(sum(d.bytes - d.keep), 0)::bigint as reclaimable
@@ -224,10 +238,16 @@ pub async fn duplicate_reminder(db: &PgPool, user_id: &str) -> sqlx::Result<(Dup
            where not exists (select 1 from "duplicate_dismissals"
                              where "duplicate_dismissals"."owner_id" = d.owner_id
                                and "duplicate_dismissals"."checksum" = d.checksum)"#
-    ))
-    .bind(user_id)
-    .fetch_one(db)
-    .await?;
+        )
+    });
+    QUERY.as_str()
+}
+
+/// The reminder's aggregate: the duplicate sets of one owner, minus the ones
+/// waved off, in ONE statement. Returns the totals and whether they are due.
+pub async fn duplicate_reminder(db: &PgPool, user_id: &str) -> sqlx::Result<(DuplicateTotals, bool)> {
+    let row: (Option<i32>, Option<i32>, Option<i64>) =
+        sqlx::query_as(duplicate_reminder_query()).bind(user_id).fetch_one(db).await?;
     let totals = DuplicateTotals {
         groups: i64::from(row.0.unwrap_or(0)),
         redundant: i64::from(row.1.unwrap_or(0)),
