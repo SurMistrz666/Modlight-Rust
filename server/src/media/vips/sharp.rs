@@ -115,6 +115,20 @@ impl FailOn {
     }
 }
 
+/// Whether HEVC-compressed HEIF (`.heic`) pixels may be decoded.
+///
+/// sharp-libvips ships libheif with the AV1 codecs only, so production reads a
+/// HEIC's header (dimensions, page count) and fails as soon as a pipeline
+/// needs its pixels: no blurhash, no thumbnail, no avatar. Homebrew's and
+/// Debian's libheif usually do carry an HEVC decoder, which would quietly give
+/// this server previews production never had. Off, for parity; turning it on
+/// is a product decision (and an HEVC licensing one), not a port detail.
+pub const HEVC_DECODE: bool = false;
+
+/// The error production's libheif gives for those pixels.
+const HEVC_UNSUPPORTED: &str =
+    "heif: Error while loading plugin: Support for this compression format has not been built in (11.6003)";
+
 /// sharp's default `limitInputPixels`: `0x3FFF ** 2`.
 pub const DEFAULT_LIMIT_INPUT_PIXELS: u64 = 0x3FFF * 0x3FFF;
 
@@ -917,6 +931,14 @@ impl Sharp {
         let opened = open_input(&self.input)?;
         let input_image_type = opened.image_type;
         let mut image = opened.image;
+
+        // See HEVC_DECODE: production fails here, when the pixels are needed.
+        if !HEVC_DECODE
+            && input_image_type == ImageType::Heif
+            && image.get_string("heif-compression").as_deref() == Some("hevc")
+        {
+            return Err(VipsError::new(HEVC_UNSUPPORTED));
+        }
 
         let mut n_pages = self.input.pages;
         if n_pages == -1 {
