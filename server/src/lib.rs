@@ -15,6 +15,8 @@ pub mod api_token;
 pub mod audit;
 pub mod auth;
 pub mod auth_helpers;
+pub mod avatar;
+pub mod background;
 pub mod config;
 pub mod db;
 pub mod error;
