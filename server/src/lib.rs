@@ -21,6 +21,7 @@ pub mod config;
 pub mod data;
 pub mod db;
 pub mod error;
+pub mod folders;
 pub mod format;
 pub mod http;
 pub mod i18n;
