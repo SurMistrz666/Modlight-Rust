@@ -11,8 +11,11 @@ pub mod error;
 pub mod extras;
 pub mod host;
 pub mod library;
+pub mod mime;
 pub mod models;
 pub mod signin;
+pub mod tus;
+pub mod upload;
 
 pub use client::{API_KEY_HEADER, Api, Credential, REQUEST_TIMEOUT};
 pub use error::{ApiError, ApiResult};
