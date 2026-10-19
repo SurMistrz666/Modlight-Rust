@@ -4,7 +4,10 @@
 //! `modlight-macos`.
 
 pub mod app;
+pub mod capture_flow;
+pub mod capture_windows;
 pub mod commands;
+pub mod controls;
 pub mod dialogs;
 pub mod media;
 pub mod menus;
@@ -12,7 +15,10 @@ pub mod myspace;
 pub mod notification;
 pub mod qa;
 pub mod qa_uploads;
+pub mod recording_ui;
+pub mod region_overlay;
 pub mod runtime;
+pub mod scrolling;
 pub mod settings;
 pub mod shell;
 pub mod signin;

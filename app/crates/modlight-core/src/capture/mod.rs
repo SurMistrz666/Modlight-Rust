@@ -9,6 +9,7 @@
 pub mod geometry;
 pub mod options;
 pub mod region;
+pub mod scrolling;
 pub mod source;
 
 use std::sync::{Arc, Mutex};

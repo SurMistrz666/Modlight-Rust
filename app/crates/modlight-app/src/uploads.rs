@@ -402,6 +402,19 @@ impl AppState {
         if matches!(question, TaskQuestion::SignIn) {
             self.show_sign_in();
         }
+        // Answered at once: the save panel is modal, and the editor arrives in phase 4.
+        match question {
+            TaskQuestion::SaveAs { folder, file_name } => {
+                let path = self.save_as_path(&folder, &file_name);
+                let _ = reply.send(TaskAnswer::SaveAs(path));
+                return;
+            }
+            TaskQuestion::Annotate(image) => {
+                let _ = reply.send(TaskAnswer::Annotated(self.annotate_image(image)));
+                return;
+            }
+            _ => {}
+        }
         self.uploads.asks.push_back(PendingAsk {
             task,
             question,
@@ -458,8 +471,56 @@ impl AppState {
                 self.uploads.windows.before_upload =
                     Some(BeforeUpload::new(ask.task, (**info).clone(), signed_in));
             }
-            TaskQuestion::SignIn => {}
+            TaskQuestion::SignIn | TaskQuestion::SaveAs { .. } | TaskQuestion::Annotate(_) => {}
         }
+    }
+
+    /// `SaveImageToFileWithDialog`: the save panel, starting in the last folder it saved
+    /// to, else the screenshots folder (`HelpersOptions.LastSaveDirectory`). QA and
+    /// headless runs save into `<profile>/Saved` without a panel.
+    fn save_as_path(&mut self, folder: &Path, file_name: &str) -> Option<PathBuf> {
+        if self.env.qa || self.mode != crate::app::Mode::Normal {
+            let folder = self.env.profile.join("Saved");
+            let _ = std::fs::create_dir_all(&folder);
+            return Some(folder.join(file_name));
+        }
+        let last = self
+            .config
+            .get("LastSaveDirectory")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir());
+        let start = last.unwrap_or_else(|| folder.to_path_buf());
+        let extension = Path::new(file_name)
+            .extension()
+            .map(|e| e.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut dialog = rfd::FileDialog::new()
+            .set_directory(&start)
+            .set_file_name(file_name)
+            .set_title(format!(
+                "{} {file_name}",
+                t(s::UploadTask_DoAfterCaptureJobs_Choose_a_folder_to_save)
+            ));
+        if !extension.is_empty() {
+            dialog = dialog.add_filter(format!("*.{extension}"), &[extension.as_str()]);
+        }
+        let path = dialog.save_file()?;
+        if let Some(parent) = path.parent() {
+            self.config.set(
+                "LastSaveDirectory",
+                serde_json::json!(parent.to_string_lossy()),
+            );
+            self.config_dirty = true;
+        }
+        Some(path)
+    }
+
+    /// `TaskHelpers.AnnotateImage`: the image editor (phase 4). Until it exists the
+    /// picture goes on unchanged and the person is told the editor comes later.
+    fn annotate_image(&mut self, image: Arc<image::RgbaImage>) -> Option<Arc<image::RgbaImage>> {
+        self.push(crate::commands::Command::NotYet);
+        Some(image)
     }
 
     /// Answer the oldest question of this kind.
@@ -549,6 +610,8 @@ impl AppState {
                 .messages
                 .push_back(MessageBox::new(&title, &text, icon)),
             TaskEffect::ShowSignIn => self.show_sign_in(),
+            // `TaskHelpers.PinToScreen`: the pin tool arrives with phase 5.
+            TaskEffect::PinToScreen(_) => self.push(crate::commands::Command::NotYet),
             TaskEffect::DisableLargeFileWarning => {
                 self.config
                     .set("ShowLargeFileSizeWarning", serde_json::json!(0));

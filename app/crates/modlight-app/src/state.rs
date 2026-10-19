@@ -133,6 +133,10 @@ pub struct AppState {
     pub queue_snapshot_at: f64,
     /// What "the clipboard" holds in QA and headless runs (the real one is never read).
     pub qa_clipboard: Option<modlight_core::tasks::upload_manager::ClipboardContent>,
+    /// Captures, hotkeys, recording, auto capture.
+    pub captures: crate::capture_flow::Captures,
+    /// The scrolling capture window.
+    pub scrolling: Option<crate::scrolling::ScrollingWindow>,
 }
 
 /// A request to the platform layer, handled after the frame is drawn.
@@ -167,6 +171,8 @@ impl AppState {
             ..MySpace::default()
         };
         let rt = Runtime::new();
+        let env_profile = env.profile.clone();
+        let env_qa = env.qa;
         let api = Api::new(env!("CARGO_PKG_VERSION")).expect("the HTTP client starts");
         let uploads = crate::uploads::Uploads::new(
             api.clone(),
@@ -220,6 +226,8 @@ impl AppState {
             queue_snapshot: Vec::new(),
             queue_snapshot_at: f64::NEG_INFINITY,
             qa_clipboard: None,
+            captures: crate::capture_flow::Captures::new(&env_profile, env_qa),
+            scrolling: None,
         }
     }
 
