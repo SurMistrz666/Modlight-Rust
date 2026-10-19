@@ -3,9 +3,9 @@
 
 use std::time::Duration;
 
-use reqwest::multipart::{Form, Part};
 use reqwest::{Method, StatusCode};
 use serde_json::json;
+use tokio_util::sync::CancellationToken;
 
 use crate::client::{Api, Credential, REQUEST_TIMEOUT, parse};
 use crate::error::{ApiError, ApiResult, RefusalBody};
@@ -13,6 +13,7 @@ use crate::models::{
     CloudDocument, DiskReport, DuplicateDecision, DuplicateGroup, DuplicateScan, ShortLink,
     ShortLinkOptions, ThemeInfo, UploadResponse,
 };
+use crate::upload::{LiveOutcome, LiveUpload, UploadSource};
 
 /// A scan groups the whole account in SQL, so it may take longer than a listing.
 pub const DUPLICATE_SCAN_TIMEOUT: Duration = Duration::from_secs(60);
@@ -276,8 +277,8 @@ impl Api {
         Ok(link)
     }
 
-    /// One plain `POST /upload`: the file in the multipart field `upload`, the target
-    /// folder (if any) in the field `folderId`, the token in the header. No timeout: the
+    /// One plain `POST /upload` of bytes in memory: the live upload of [`crate::upload`]
+    /// with the default buffer, no progress and nothing to cancel it. No timeout: the
     /// server keeps this endpoint uncapped for header-authenticated clients.
     pub async fn upload_bytes(
         &self,
@@ -286,29 +287,22 @@ impl Api {
         bytes: Vec<u8>,
         folder_id: Option<&str>,
     ) -> ApiResult<UploadAnswer> {
-        let part = Part::bytes(bytes).file_name(file_name.to_string());
-        let mut form = Form::new().part("upload", part);
-        if let Some(folder) = folder_id.filter(|f| !f.is_empty()) {
-            form = form.text("folderId", folder.to_string());
-        }
-        let response = self
-            .request(Method::POST, &credential.url("/upload"), credential)
-            .multipart(form)
-            .send()
+        let upload = LiveUpload::new(file_name, UploadSource::Bytes(bytes)).with_folder(folder_id);
+        match self
+            .upload(credential, upload, |_, _| {}, &CancellationToken::new())
             .await
-            .map_err(ApiError::from_reqwest)?;
-        let status = response.status().as_u16();
-        let body = response.text().await.map_err(ApiError::from_reqwest)?;
-        let parsed = if (200..300).contains(&status) {
-            serde_json::from_str::<UploadResponse>(&body).ok()
-        } else {
-            None
-        };
-        Ok(UploadAnswer {
-            status,
-            body,
-            response: parsed,
-        })
+        {
+            LiveOutcome::Answered(answer) => {
+                let answer = *answer;
+                Ok(UploadAnswer {
+                    status: answer.status,
+                    body: answer.body,
+                    response: answer.response,
+                })
+            }
+            LiveOutcome::NoAnswer(text) => Err(ApiError::Transport(text)),
+            LiveOutcome::Cancelled => Err(ApiError::Cancelled),
+        }
     }
 
     /// `GET /api/health`, the server's own liveness probe; true when it answers 2xx.
