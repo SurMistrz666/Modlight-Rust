@@ -439,6 +439,11 @@ impl Look {
         self
     }
 
+    pub fn spacing(mut self, spacing: f32) -> Look {
+        self.spacing = spacing;
+        self
+    }
+
     pub fn text_color(mut self, color: Color32) -> Look {
         self.text = color;
         self.hover_text = color;

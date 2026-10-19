@@ -222,6 +222,39 @@ impl WorkerTask {
         Some(task)
     }
 
+    /// `CreateFileJobTask`: a recording (or another finished file) through the
+    /// after-capture work and, when that includes uploading, the upload.
+    pub fn file_job(
+        path: &Path,
+        metadata: TaskMetadata,
+        settings: TaskSettings,
+        custom_file_name: Option<&str>,
+        ctx: &TaskContext,
+    ) -> Option<WorkerTask> {
+        let task = WorkerTask::new(settings);
+        let path_text = path.to_string_lossy().into_owned();
+        let upload = task.with(|s| {
+            s.info.set_file_path(&path_text);
+            s.info.data_type = naming::find_data_type(&path_text, &s.info.settings);
+            let ext = naming::extension(&path_text);
+            if let Some(name) = custom_file_name.filter(|n| !n.is_empty()) {
+                s.info.file_name = naming::append_extension(name, &ext);
+            } else if s.info.settings.upload_settings.file_upload_use_name_pattern {
+                s.info.file_name = ctx.file_name(&s.info.settings, Some(&ext), None);
+            }
+            s.info.metadata = metadata;
+            s.info.job = TaskJob::Job;
+            s.info.is_upload_job()
+        });
+        if upload {
+            if std::fs::File::open(path).is_err() {
+                return None;
+            }
+            task.with(|s| s.data = Some(TaskData::File(path.to_path_buf())));
+        }
+        Some(task)
+    }
+
     /// `CreateImageUploaderTask`.
     pub fn image_upload(
         metadata: TaskMetadata,
@@ -547,13 +580,32 @@ impl WorkerTask {
         });
         let job = settings.after_capture_job;
 
-        // Beautify, effects and annotation arrive with the image editor and effects
-        // (phases 4 and 5); until then the picture goes on as it is.
+        // Beautify and effects arrive with phase 5; until then the picture goes on as
+        // it is.
+        let mut image = image;
+        if job.has(AfterCaptureTasks::AnnotateImage) {
+            // `TaskHelpers.AnnotateImage`: the editor, waited for; closing it without a
+            // picture ends the task.
+            match ctx
+                .channel
+                .ask(self.id, TaskQuestion::Annotate(image.clone()))
+                .await
+            {
+                Some(TaskAnswer::Annotated(Some(annotated))) => {
+                    image = annotated;
+                    self.with(|s| s.image = Some(image.clone()));
+                }
+                _ => return false,
+            }
+        }
         if job.has(AfterCaptureTasks::CopyImageToClipboard) {
             ctx.channel.effect(TaskEffect::CopyImage(image.clone()));
             log::info!("Image copied to clipboard.");
         }
-        // Pin to screen and printing arrive with phases 5 and 3.
+        if job.has(AfterCaptureTasks::PinToScreen) {
+            ctx.channel.effect(TaskEffect::PinToScreen(image.clone()));
+        }
+        // Printing (`SendImageToPrinter`) is not ported: see MACOS.md.
 
         self.with(|s| s.info.metadata.image = Some(image.clone()));
 
@@ -599,7 +651,37 @@ impl WorkerTask {
                 }
             }
 
-            // Save with a dialog arrives with the capture settings (phase 3).
+            if job.has(AfterCaptureTasks::SaveImageToFileWithDialog) {
+                let file_name = self.lock().info.file_name.clone();
+                let folder = ctx.screenshots_folder(&settings, Some(&metadata));
+                // Upstream asks again when writing fails; the panel is asked once per
+                // failure the same way.
+                loop {
+                    let answer = ctx
+                        .channel
+                        .ask(
+                            self.id,
+                            TaskQuestion::SaveAs {
+                                folder: folder.clone(),
+                                file_name: file_name.clone(),
+                            },
+                        )
+                        .await;
+                    let Some(TaskAnswer::SaveAs(Some(path))) = answer else {
+                        break;
+                    };
+                    self.with(|s| s.info.set_file_path(&path.to_string_lossy()));
+                    match write_file(&path, &prepared.bytes) {
+                        Ok(()) => {
+                            log::info!("Image saved to file with dialog: {}", path.display());
+                            break;
+                        }
+                        Err(error) => {
+                            log::warn!("Modlight: the image could not be saved: {error}");
+                        }
+                    }
+                }
+            }
 
             if job.has(AfterCaptureTasks::SaveThumbnailImageToFile) {
                 let (folder, name) = {
@@ -672,7 +754,41 @@ impl WorkerTask {
             return;
         }
         let job = settings.after_capture_job;
-        // Perform actions (external programs) arrive with phase 3.
+        let mut path = path;
+        if job.has(AfterCaptureTasks::PerformActions) {
+            let actions: Vec<_> = settings
+                .external_programs
+                .iter()
+                .filter(|p| p.is_active)
+                .cloned()
+                .collect();
+            if !actions.is_empty() {
+                let file_name = self.lock().info.file_name.clone();
+                let mut modified = false;
+                for action in actions {
+                    if let Some(result) = action.run(Path::new(&path)) {
+                        modified = true;
+                        path = result.path.to_string_lossy().into_owned();
+                        if let Some(input) = result.pending_delete {
+                            let _ = std::fs::remove_file(input);
+                        }
+                    }
+                }
+                if modified {
+                    let extension =
+                        crate::names::file_helpers::get_file_name_extension(&path, false);
+                    let name = crate::names::file_helpers::change_file_name_extension(
+                        &file_name, &extension,
+                    );
+                    self.with(|s| {
+                        s.info.set_file_path(&path);
+                        s.info.file_name = name;
+                        // `LoadFileStream`: the upload reads the program's output.
+                        s.data = Some(TaskData::File(PathBuf::from(&path)));
+                    });
+                }
+            }
+        }
         if job.has(AfterCaptureTasks::CopyFileToClipboard) {
             ctx.channel
                 .effect(TaskEffect::CopyFile(PathBuf::from(&path)));

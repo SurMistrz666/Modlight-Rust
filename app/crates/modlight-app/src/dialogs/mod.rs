@@ -2,7 +2,9 @@
 //! settings, duplicates, confirm. Each is a state struct plus a `ui` function that draws
 //! it filling its window and returns what the person decided.
 
+pub mod after_capture;
 pub mod after_upload;
+pub mod auto_capture;
 pub mod before_upload;
 pub mod chrome;
 pub mod clipboard_upload;
@@ -15,6 +17,8 @@ pub mod link_settings;
 pub mod message;
 pub mod paste;
 pub mod prompt;
+pub mod quick_task_editor;
+pub mod quick_task_menu;
 pub mod shorten_url;
 pub mod text_upload;
 pub mod upload_confirm;

@@ -7,6 +7,7 @@
 
 pub mod capture;
 pub mod hotkeys;
+pub mod input;
 pub mod integration;
 pub mod keychain;
 pub mod keys;
