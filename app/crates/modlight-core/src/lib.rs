@@ -4,6 +4,7 @@
 pub mod account;
 pub mod config;
 pub mod culture;
+pub mod dotnet;
 pub mod format;
 pub mod history;
 pub mod icons;
@@ -13,6 +14,7 @@ pub mod messages;
 pub mod names;
 pub mod sync;
 pub mod theme;
+pub mod upload;
 
 /// The product's name, as upstream's `Program.AppName`.
 pub const APP_NAME: &str = "Modlight";
