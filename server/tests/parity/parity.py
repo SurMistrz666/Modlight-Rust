@@ -312,3 +312,79 @@ def read_env_file(path):
             k, _, v = line.partition("=")
             values[k.strip()] = v.strip().strip('"').strip("'")
     return values
+
+
+# ── Seeding identical state on both servers ────────────────────────────────
+
+
+def sql_quote(v):
+    if v is None:
+        return "NULL"
+    if v is True:
+        return "true"
+    if v is False:
+        return "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def random_id(n=32):
+    """Better Auth's generateId alphabet."""
+    alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    return "".join(random.SystemRandom().choice(alphabet) for _ in range(n))
+
+
+class Db(object):
+    """One server's database, through `docker exec <container> psql`."""
+
+    def __init__(self, container, database, auth_secret):
+        self.container = container
+        self.database = database
+        self.auth_secret = auth_secret  # never printed
+
+    def sql(self, statement):
+        return psql(self.container, self.database, statement)
+
+    def create_user(self, user_id, email, name, role="user", user_code=None, email_verified=True, **columns):
+        """Insert a `user` row the way Better Auth would (theme 'modern',
+        quota defaults). Extra columns by their SQL names."""
+        cols = {
+            "id": user_id, "name": name, "email": email.lower(), "email_verified": email_verified,
+            "role": role, "banned": False, "two_factor_enabled": False, "user_code": user_code,
+            "used_quota": 0, "max_quota": -1, "hide_uploads": False, "copy_raw": False, "theme": "modern",
+        }
+        cols.update(columns)
+        names = ", ".join('"%s"' % k for k in cols)
+        values = ", ".join(sql_quote(v) for v in cols.values())
+        self.sql('INSERT INTO "user" (%s, "created_at", "updated_at") VALUES (%s, now(), now())' % (names, values))
+
+    def mint_session(self, user_id, ip="", user_agent="parity/1", token=None):
+        """Insert a session row and return the signed cookie VALUE for
+        `better-auth.session_token` (URI-encoded, as a browser sends it)."""
+        import base64
+        import hashlib
+        import hmac
+        token = token or random_id(32)
+        self.sql(
+            'INSERT INTO "session" ("id", "token", "user_id", "expires_at", "created_at", "updated_at", '
+            '"ip_address", "user_agent") VALUES (%s, %s, %s, now() + interval \'7 days\', now(), now(), %s, %s)'
+            % (sql_quote(random_id(32)), sql_quote(token), sql_quote(user_id), sql_quote(ip), sql_quote(user_agent)))
+        sig = base64.b64encode(hmac.new(self.auth_secret.encode(), token.encode(), hashlib.sha256).digest()).decode()
+        return urllib.parse.quote(token + "." + sig, safe="")
+
+    def create_api_token(self, user_id, token, scope="upload", name="parity"):
+        import hashlib
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        self.sql(
+            'INSERT INTO "api_tokens" ("user_id", "name", "scope", "token_hash", "preview") VALUES (%s, %s, %s, %s, %s)'
+            % (sql_quote(user_id), sql_quote(name), sql_quote(scope), sql_quote(digest), sql_quote(token[-6:])))
+
+
+SESSION_COOKIE = "better-auth.session_token"
+
+
+def signed_in(pair, ref_db, rust_db, user_id):
+    """Give both browsers of `pair` a fresh session for the same user id."""
+    pair.ref.cookies[SESSION_COOKIE] = ref_db.mint_session(user_id, ip=pair.ref.real_ip or "")
+    pair.rust.cookies[SESSION_COOKIE] = rust_db.mint_session(user_id, ip=pair.rust.real_ip or "")
