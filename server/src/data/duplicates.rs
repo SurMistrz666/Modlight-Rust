@@ -264,9 +264,9 @@ pub struct DismissalInput {
 }
 
 /// `whole(value)`: `Math.trunc(Number(value))`, positive and finite, else 0.
-fn whole(value: f64) -> i64 {
+fn whole(value: f64) -> f64 {
     let n = value.trunc();
-    if n.is_finite() && n > 0.0 { n as i64 } else { 0 }
+    if n.is_finite() && n > 0.0 { n } else { 0.0 }
 }
 
 /// Mark sets as "meant to exist": upsert per checksum, keeping `created_at`
@@ -283,11 +283,14 @@ pub async fn dismiss_checksums(db: &PgPool, user_id: &str, entries: &[DismissalI
         return Ok(0);
     }
     let checksums: Vec<String> = by_checksum.keys().cloned().collect();
-    let copies: Vec<i32> = by_checksum.values().map(|e| whole(e.copies) as i32).collect();
-    let bytes: Vec<i64> = by_checksum.values().map(|e| whole(e.bytes)).collect();
+    // Bound as doubles and cast by Postgres, like the JS numbers upstream
+    // sends: a count past the column's range is an error there too, never a
+    // value silently clamped here.
+    let copies: Vec<f64> = by_checksum.values().map(|e| whole(e.copies)).collect();
+    let bytes: Vec<f64> = by_checksum.values().map(|e| whole(e.bytes)).collect();
     let rows: Vec<String> = sqlx::query_scalar(
         r#"insert into "duplicate_dismissals" ("owner_id", "checksum", "copies", "bytes")
-           select $1, c, n, b from unnest($2::varchar[], $3::int[], $4::bigint[]) as t(c, n, b)
+           select $1, c, n::int, b::bigint from unnest($2::varchar[], $3::float8[], $4::float8[]) as t(c, n, b)
            on conflict ("owner_id", "checksum") do update set "copies" = excluded.copies, "bytes" = excluded.bytes
            returning "checksum""#,
     )

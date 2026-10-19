@@ -75,6 +75,25 @@ pub fn js_slice(s: &str, n: usize) -> &str {
     s
 }
 
+/// `s.slice(0, n)` as it reaches UTF-8 (Postgres, a response body): when the
+/// cut falls inside a surrogate pair, JavaScript keeps the lone high half,
+/// which every UTF-8 encoder (node-postgres included) writes as U+FFFD.
+pub fn js_slice_utf8(s: &str, n: usize) -> String {
+    let mut units = 0;
+    for (i, c) in s.char_indices() {
+        let width = c.len_utf16();
+        if units + width > n {
+            let mut out = s[..i].to_string();
+            if units < n {
+                out.push('\u{FFFD}');
+            }
+            return out;
+        }
+        units += width;
+    }
+    s.to_string()
+}
+
 /// Filename -> URL-safe slug, preserving meaning across diacritics.
 /// "Źródła wiedzy.docx" -> "zrodla-wiedzy"
 pub fn slugify_name(input: &str) -> String {
@@ -551,6 +570,7 @@ where
 
 #[cfg(test)]
 mod tests {
+
     //! tests/unit/naming.test.ts, tests/unit/naming-schemes.test.ts
     use std::collections::HashSet;
 
@@ -776,5 +796,15 @@ mod tests {
         assert_eq!(split_short_code("test"), (None, "test"));
         assert_eq!(media_path(Some("t"), "c", "png"), "/t/c.png");
         assert_eq!(media_path(None, "c", ""), "/c");
+    }
+
+    #[test]
+    fn slicing_through_a_surrogate_pair_leaves_a_replacement_character() {
+        assert_eq!(js_slice_utf8("abc", 2), "ab");
+        assert_eq!(js_slice_utf8("abc", 5), "abc");
+        assert_eq!(js_slice_utf8("a\u{1F600}b", 2), "a\u{FFFD}");
+        assert_eq!(js_slice_utf8("a\u{1F600}b", 3), "a\u{1F600}");
+        assert_eq!(js_slice_utf8("a\u{1F600}b", 1), "a");
+        assert_eq!(js_slice_utf8("ś", 0), "");
     }
 }

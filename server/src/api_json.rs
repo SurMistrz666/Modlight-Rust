@@ -104,10 +104,63 @@ pub async fn read_json_object(
         return Err(too_large());
     }
 
-    match serde_json::from_str::<Value>(raw) {
+    match serde_json::from_str::<Value>(&lone_surrogates_replaced(raw)) {
         Ok(Value::Object(map)) => Ok(map),
         _ => Err(JsonBodyError::new(StatusCode::BAD_REQUEST, "Body must be a JSON object.")),
     }
+}
+
+/// `JSON.parse` accepts a `\uD800`-style escape that is not half of a pair
+/// (serde_json refuses the whole document). The lone surrogate then becomes
+/// U+FFFD wherever the string is written as UTF-8 (Postgres, a response), so
+/// that is what it is rewritten to here, before parsing. Everything else is
+/// left byte for byte; a body without such an escape is not copied.
+pub fn lone_surrogates_replaced(raw: &str) -> std::borrow::Cow<'_, str> {
+    fn surrogate_at(b: &[u8], i: usize) -> Option<u16> {
+        // `\u` followed by four hex digits naming a surrogate.
+        let hex = b.get(i + 2..i + 6)?;
+        if b.get(i) != Some(&b'\\') || b.get(i + 1) != Some(&b'u') {
+            return None;
+        }
+        let v = u16::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?;
+        (0xD800..=0xDFFF).contains(&v).then_some(v)
+    }
+    let b = raw.as_bytes();
+    if !raw.contains("\\u") {
+        return std::borrow::Cow::Borrowed(raw);
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut in_string = false;
+    let mut last = 0;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'"' => in_string = !in_string,
+            b'\\' if in_string => {
+                match surrogate_at(b, i) {
+                    Some(hi) if hi <= 0xDBFF && surrogate_at(b, i + 6).is_some_and(|lo| lo >= 0xDC00) => {
+                        i += 12; // a well-formed pair stays as it is
+                        continue;
+                    }
+                    Some(_) => {
+                        out.push_str(&raw[last..i]);
+                        out.push_str("\\uFFFD");
+                        i += 6;
+                        last = i;
+                        continue;
+                    }
+                    None => i += 1, // skip the escaped character
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if last == 0 {
+        return std::borrow::Cow::Borrowed(raw);
+    }
+    out.push_str(&raw[last..]);
+    std::borrow::Cow::Owned(out)
 }
 
 /// Was a key SUPPLIED, as opposed to absent?
@@ -199,6 +252,19 @@ mod tests {
         assert!(read(&[("content-type", "application/json")], body, 16).await.is_ok());
         let e = read(&[("content-type", "application/json")], body, 15).await.unwrap_err();
         assert_eq!(e.status, StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn lone_surrogates_become_replacement_characters() {
+        assert_eq!(lone_surrogates_replaced(r#"{"a":"x"}"#), r#"{"a":"x"}"#);
+        assert_eq!(lone_surrogates_replaced(r#"{"a":"\ud800"}"#), r#"{"a":"\uFFFD"}"#);
+        assert_eq!(lone_surrogates_replaced(r#"{"a":"\udc00x\ud83d"}"#), r#"{"a":"\uFFFDx\uFFFD"}"#);
+        // A pair, an escaped backslash before a `u`, and a surrogate outside a
+        // string (invalid JSON either way) are left alone.
+        assert_eq!(lone_surrogates_replaced(r#"{"a":"\ud83d\ude00"}"#), r#"{"a":"\ud83d\ude00"}"#);
+        assert_eq!(lone_surrogates_replaced(r#"{"a":"\\ud800"}"#), r#"{"a":"\\ud800"}"#);
+        let parsed: Value = serde_json::from_str(&lone_surrogates_replaced(r#"{"a":"ab\ud800cd"}"#)).unwrap();
+        assert_eq!(parsed["a"], "ab\u{FFFD}cd");
     }
 
     #[tokio::test]
