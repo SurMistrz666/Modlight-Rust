@@ -1,0 +1,14 @@
+{
+  "url": "/reset?token=reset-token",
+  "payload": {
+    "route": "/reset",
+    "params": {},
+    "layouts": "$auth",
+    "props": {},
+    "meta": {
+      "title": "Set a new password - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

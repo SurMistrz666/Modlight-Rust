@@ -1,0 +1,24 @@
+{
+  "url": "/s/alicja/secret/unlock",
+  "payload": {
+    "route": "/s/[code]/[name]/unlock",
+    "params": {
+      "code": "alicja",
+      "name": "secret"
+    },
+    "layouts": "$root",
+    "props": {
+      "code": "alicja/secret",
+      "ownerTheme": "terminal",
+      "background": {
+        "url": "/bg/alicja?v=tok",
+        "dim": 0.7
+      }
+    },
+    "meta": {
+      "title": "Protected link - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "url": "/dashboard/trash",
+  "payload": {
+    "route": "/dashboard/trash",
+    "params": {},
+    "layouts": "$app",
+    "props": {
+      "tag": "alicja",
+      "linkBase": "https://files.example.com",
+      "totals": {
+        "files": 2,
+        "bytes": 370368
+      },
+      "items": [
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000001",
+          "code": "brisk-otter-1",
+          "filename": "screenshot-1.png",
+          "ext": "png",
+          "mimeType": "image/png",
+          "size": 123456,
+          "width": 1920,
+          "height": 1080,
+          "frames": null,
+          "blurhash": null,
+          "published": true,
+          "views": 3,
+          "downloads": 1,
+          "createdAt": "2026-10-11T12:00:00.000Z",
+          "kind": "image",
+          "folderId": null,
+          "folderName": null,
+          "expiresAt": null,
+          "maxViews": null,
+          "hasPassword": false,
+          "daysLeft": 12
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000002",
+          "code": "brisk-otter-2",
+          "filename": "clip.mp4",
+          "ext": "mp4",
+          "mimeType": "video/mp4",
+          "size": 246912,
+          "width": 1280,
+          "height": 720,
+          "frames": 900,
+          "blurhash": null,
+          "published": true,
+          "views": 6,
+          "downloads": 2,
+          "createdAt": "2026-10-12T12:00:00.000Z",
+          "kind": "video",
+          "folderId": null,
+          "folderName": null,
+          "expiresAt": null,
+          "maxViews": null,
+          "hasPassword": false,
+          "daysLeft": null
+        }
+      ]
+    },
+    "meta": {
+      "title": "Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

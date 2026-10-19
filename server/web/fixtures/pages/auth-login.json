@@ -1,0 +1,18 @@
+{
+  "url": "/login",
+  "payload": {
+    "route": "/login",
+    "params": {},
+    "layouts": "$auth",
+    "props": {
+      "registration": {
+        "open": true
+      }
+    },
+    "meta": {
+      "title": "Sign in - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

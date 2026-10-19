@@ -1,0 +1,16 @@
+{
+  "url": "/download",
+  "payload": {
+    "route": "/download",
+    "params": {},
+    "layouts": "$root",
+    "props": {
+      "release": null
+    },
+    "meta": {
+      "title": "Modlight App - Modlight",
+      "description": "Modlight App for Modlight.",
+      "applicationName": "Modlight"
+    }
+  }
+}
