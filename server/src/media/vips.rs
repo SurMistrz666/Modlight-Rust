@@ -53,10 +53,12 @@
 //!    is written only through [`Image::mutate`], which works on a private,
 //!    uncached copy (a cached copy could be handed to the next identical
 //!    call, so it must never be modified).
-//! 4. **Input bytes are lent, not copied.** [`Blob::from_bytes`] gives
-//!    libvips a pointer into the caller's `Bytes` and keeps a clone of it
-//!    alive until libvips frees the blob, however long a cached loader or a
-//!    lazily evaluated image holds it.
+//! 4. **Input bytes are copied into tracked memory.** [`Blob::from_bytes`]
+//!    hands libvips its own copy, allocated with `vips_tracked_malloc`. The
+//!    operation cache keeps every cached operation's inputs alive, and each
+//!    pipeline leaves cached operations behind (some made inside libvips);
+//!    tracked memory is what the cache's 32 MB ceiling counts, so the copies
+//!    it pins are evicted past that ceiling instead of accumulating.
 //! 5. **Errors.** A failing call turns libvips' error buffer into a
 //!    [`VipsError`] and clears it (`vips_error_buffer_copy`). The buffer is
 //!    process-wide in libvips, so under concurrent failures one message may
@@ -278,6 +280,14 @@ pub fn version() -> Result<String, VipsError> {
     init()?;
     // SAFETY: static string.
     Ok(unsafe { CStr::from_ptr(ffi::vips_version_string()) }.to_string_lossy().into_owned())
+}
+
+/// Memory libvips is tracking (`sharp.cache().memory.current`, in bytes),
+/// and the operations its cache holds (`sharp.cache().items.current`).
+pub fn cache_usage() -> Result<(usize, i32), VipsError> {
+    init()?;
+    // SAFETY: plain getters.
+    Ok(unsafe { (ffi::vips_tracked_get_mem(), ffi::vips_cache_get_size()) })
 }
 
 /// Threads libvips uses per operation (`sharp.concurrency()`).
