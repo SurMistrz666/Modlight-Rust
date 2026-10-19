@@ -965,6 +965,14 @@ impl WorkerTask {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         let (info, data) = self.with(|s| (s.info.clone(), s.data.clone()));
+        // Only images, texts and files are sent; a URL task keeps the result it was made
+        // with, and its after-upload jobs shorten or share it.
+        if !matches!(
+            info.upload_destination(),
+            DataType::Image | DataType::Text | DataType::File
+        ) {
+            return info.result.is_error();
+        }
         let started = Instant::now();
         let id = self.id;
         let task = self.clone();
