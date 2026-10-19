@@ -347,6 +347,147 @@ def media_meta(run, lib):
         % parity.sql_quote(owner))
 
 
+# ── Avatars and wallpapers (routes, actions, serving) ──────────────────────
+
+def picture_shape(res, sha=True):
+    import hashlib as _h
+    out = {"status": res.status}
+    for h in ("content-type", "cache-control", "x-content-type-options", "content-disposition"):
+        out[h] = res.header(h)
+    if res.status == 200 and res.header("content-type") != "application/json":
+        # Set by the handler for pictures; for JSON and empty answers Node
+        # chunks where hyper counts, which is transport, not the contract.
+        out["content-length"] = res.header("content-length")
+    if res.header("content-type") == "application/json":
+        text = re.sub(r"\?v=[0-9a-f]{16}", "?v=<token>", res.text())
+        out["body"] = parity.normalize_json(json.loads(text)) if text else None
+    elif sha:
+        out["sha256"] = _h.sha256(res.body).hexdigest() if res.body else None
+    else:
+        out["bytes"] = len(res.body)
+    return out
+
+
+def action_envelope_signed_out(res):
+    """A signed-out action POST on the reference never reaches the action:
+    proxy.ts answers the page path with a 307 to /login. /_rpc has no page
+    path, so the Rust framework answers with the action's own redirect."""
+    if res.status == 307 and (res.header("location") or "").split("?")[0].endswith("/login"):
+        return {"redirect": "/login"}
+    return parity.next_action_envelope(res)
+
+
+def avatars(run, lib):
+    owner, tag = lib.seed_user("av", naming_scheme="filename")
+    token = lib.seed_token(owner, "upload")
+    pair = run.pair()
+    anon = run.pair()
+    actions = parity.Actions(run, "modlight-srvlib-ref-app-1")
+    corpus = lambda name: open(os.path.join(SCRATCH, "media/corpus", name), "rb").read()
+
+    def both(name, method, path, browser_pair=None, sha=True, **kw):
+        a, b = (browser_pair or pair).both(method, path, origin=False, **kw)
+        run.compare("pictures: " + name, picture_shape(a, sha), picture_shape(b, sha))
+        return a, b
+
+    for route in ("/api/avatar", "/api/background"):
+        both("POST %s signed out" % route, "POST", route, browser_pair=anon, raw=b"x",
+             headers={"Content-Type": "image/png"})
+        both("DELETE %s signed out" % route, "DELETE", route, browser_pair=anon)
+    parity.signed_in(pair, lib.ref_db, lib.rust_db, owner)
+    for route in ("/api/avatar", "/api/background"):
+        both("POST %s wrong type" % route, "POST", route, raw=b"<svg/>", headers={"Content-Type": "image/svg+xml"})
+        both("POST %s no type" % route, "POST", route, raw=b"x")
+        both("POST %s empty" % route, "POST", route, raw=b"", headers={"Content-Type": "image/png"})
+        both("POST %s not an image" % route, "POST", route, raw=b"not a png at all",
+             headers={"Content-Type": "image/png; charset=binary"})
+    both("GET /avatar before any", "GET", "/avatar/" + tag)
+    both("GET /bg before any", "GET", "/bg/" + tag)
+    both("POST /api/avatar png", "POST", "/api/avatar", raw=corpus("parrot.png"), headers={"Content-Type": "image/png"})
+    lib.compare_rows("pictures: avatar key shape",
+                     "SELECT regexp_replace(image, '[0-9a-f]{16}', '<t>') FROM \"user\" WHERE id = %s"
+                     % parity.sql_quote(owner))
+    both("GET /avatar (no v)", "GET", "/avatar/" + tag)
+    keys = lib.both_sql('SELECT image FROM "user" WHERE id = %s' % parity.sql_quote(owner))
+    toks = [k.strip().rsplit("-", 1)[-1].replace(".webp", "") for k in keys]
+    for br, tok in zip((pair.ref, pair.rust), toks):
+        br.v = tok
+    a = pair.ref.request("GET", "/avatar/%s?v=%s" % (tag, toks[0]), origin=False)
+    b = pair.rust.request("GET", "/avatar/%s?v=%s" % (tag, toks[1]), origin=False)
+    run.compare("pictures: GET /avatar?v=<own token>", picture_shape(a), picture_shape(b))
+    both("GET /avatar?v=wrong", "GET", "/avatar/%s?v=nope" % tag)
+    both("GET /avatar unknown tag", "GET", "/avatar/nobody-%s" % lib.suffix)
+    both("POST /api/avatar animated gif", "POST", "/api/avatar", raw=corpus("anim.gif"),
+         headers={"Content-Type": "image/gif"})
+    both("GET /avatar animated", "GET", "/avatar/" + tag)
+    both("POST /api/avatar jpeg (orientation 6)", "POST", "/api/avatar", raw=corpus("landscape_o6.jpg"),
+         headers={"Content-Type": "image/jpeg"})
+    both("GET /avatar rotated", "GET", "/avatar/" + tag)
+    lib.both_sql("INSERT INTO user_code_aliases (code, user_id) VALUES (%s, %s)" % (
+        parity.sql_quote("old" + tag), parity.sql_quote(owner)))
+    both("GET /avatar via an alias", "GET", "/avatar/old" + tag)
+    both("POST /api/background jpeg", "POST", "/api/background", raw=corpus("eagle_big.jpg"),
+         headers={"Content-Type": "image/jpeg"})
+    both("GET /bg", "GET", "/bg/" + tag)
+    both("GET /bg via an alias", "GET", "/bg/old" + tag)
+    both("POST /api/background png", "POST", "/api/background", raw=corpus("parrot.png"),
+         headers={"Content-Type": "image/png"})
+    both("GET /bg after replacing", "GET", "/bg/" + tag)
+
+    # The picker and the actions.
+    files = [("parrot.png", "image/png"), ("anim.gif", "image/gif"), ("eagle.jpg", "image/jpeg"),
+             ("pic.avif", "application/octet-stream"), ("logo.svg", "image/svg+xml")]
+    for name, ctype in files:
+        data = corpus("parrot.avif") if name == "pic.avif" else (
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>' if name == "logo.svg" else corpus(name))
+        ct, body = multipart(files=[("file", name, ctype, data)])
+        pair.both("POST", "/upload", headers={"x-api-key": token, "Content-Type": ct}, raw=body, origin=False)
+    ids = {}
+    for name, _ in files:
+        a, b = lib.both_sql("SELECT id FROM uploads WHERE owner_id = %s AND filename = %s" % (
+            parity.sql_quote(owner), parity.sql_quote(name)))
+        ids[name] = (a.strip(), b.strip())
+    big = seed_upload(lib, owner, "big" + lib.suffix, size=9 * 1024 * 1024, filename="big.png")
+    ids["big"] = (big, big)
+    gone = seed_upload(lib, owner, "gone" + lib.suffix, filename="gone.png")
+    ids["gone"] = (gone, gone)
+
+    def act(name, export, args_for):
+        a = actions.call_ref(pair.ref, "avatar", export, args_for(0))
+        b = actions.call_rust(pair.rust, "avatar", export, args_for(1))
+        norm = lambda env: json.loads(re.sub(r"\?v=[0-9a-f]{16}", "?v=<token>", json.dumps(env)))
+        ea = parity.normalize_json(norm(parity.next_action_envelope(a)))
+        eb = parity.normalize_json(norm(parity.rpc_envelope(b)))
+        run.compare("pictures: action " + name, ea, eb)
+
+    # myAvatar is in CONTRACT 7.3 but no client component of the reference
+    # imports it, so its build does not expose it: not comparable here.
+    act("listAvatarPicks()", "listAvatarPicks", lambda i: [])
+    act("listAvatarPicks(search)", "listAvatarPicks", lambda i: [{"search": "  parrot "}])
+    act("listAvatarPicks(page 2)", "listAvatarPicks", lambda i: [{"page": 2}])
+    act("listAvatarPicks(null)", "listAvatarPicks", lambda i: [None])
+    act("setAvatarFromUpload(png)", "setAvatarFromUpload", lambda i: [ids["parrot.png"][i]])
+    act("setAvatarFromUpload(gif)", "setAvatarFromUpload", lambda i: [ids["anim.gif"][i]])
+    act("setAvatarFromUpload(avif as octet-stream)", "setAvatarFromUpload", lambda i: [ids["pic.avif"][i]])
+    act("setAvatarFromUpload(svg)", "setAvatarFromUpload", lambda i: [ids["logo.svg"][i]])
+    act("setAvatarFromUpload(too large)", "setAvatarFromUpload", lambda i: [ids["big"][i]])
+    act("setAvatarFromUpload(bytes missing)", "setAvatarFromUpload", lambda i: [ids["gone"][i]])
+    act("setAvatarFromUpload(not a uuid)", "setAvatarFromUpload", lambda i: ["nope"])
+    act("setAvatarFromUpload(unknown)", "setAvatarFromUpload", lambda i: [str(uuid.uuid4())])
+    act("setAvatarFromUpload(number)", "setAvatarFromUpload", lambda i: [5])
+    both("GET /avatar after the action", "GET", "/avatar/" + tag)
+
+    both("DELETE /api/avatar", "DELETE", "/api/avatar")
+    both("GET /avatar after DELETE", "GET", "/avatar/" + tag)
+    both("DELETE /api/background", "DELETE", "/api/background")
+    both("GET /bg after DELETE", "GET", "/bg/" + tag)
+    lib.compare_rows("pictures: columns after", 'SELECT image IS NULL, background_key IS NULL FROM "user" WHERE id = %s'
+                     % parity.sql_quote(owner))
+    a = actions.call_ref(anon.ref, "avatar", "listAvatarPicks", [])
+    b = actions.call_rust(anon.rust, "avatar", "listAvatarPicks", [])
+    run.compare("pictures: action listAvatarPicks signed out", action_envelope_signed_out(a), parity.rpc_envelope(b))
+
+
 # ── /api/uploads (GET, PATCH, DELETE) ──────────────────────────────────────
 
 
@@ -585,7 +726,7 @@ def main():
     ref_db = parity.Db(rc, rd, parity.read_env_file(a.ref_env)["AUTH_SECRET"])
     rust_db = parity.Db(uc, ud, parity.read_env_file(a.rust_env)["AUTH_SECRET"])
     lib = Library(run, ref_db, rust_db)
-    for name, fn in [("sharex", sharex), ("tus", tus), ("uploads_api", uploads_api), ("media_meta", media_meta)]:
+    for name, fn in [("sharex", sharex), ("tus", tus), ("uploads_api", uploads_api), ("media_meta", media_meta), ("avatars", avatars)]:
         if a.only and a.only != name:
             continue
         fn(run, lib)

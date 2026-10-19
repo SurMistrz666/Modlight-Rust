@@ -14,65 +14,21 @@
 
 use bytes::Bytes;
 
+use crate::avatar::{
+    AVATAR_MAX_FRAME_PIXELS, AVATAR_MAX_OUTPUT_BYTES, AVATAR_MAX_TOTAL_PIXELS, AVATAR_SIZE, AvatarPlan,
+    AvatarPlanReason, AvatarSource,
+};
 use crate::media::probe::probe_image_blocking;
 use crate::media::transform_cost::THUMBNAIL_TIMEOUT_MS;
 use crate::media::vips::{self, FailOn, Fit, Position, Resize, Sharp, VipsError, WebpOptions};
 
-// ---------------------------------------------------------------------------
-// From lib/avatar.ts (ported as `crate::avatar` on the srv-library branch;
-// these private copies go once the two are merged).
-// ---------------------------------------------------------------------------
-
-/// `AVATAR_SIZE`: edge of the square we store.
-const AVATAR_SIZE: u32 = 256;
-/// `AVATAR_MAX_FRAMES`: frames we are willing to encode.
-const AVATAR_MAX_FRAMES: u64 = 120;
-/// `AVATAR_MAX_FRAME_PIXELS`: decompression-bomb guard for ONE frame.
-const AVATAR_MAX_FRAME_PIXELS: u64 = 64_000_000;
-/// `AVATAR_MAX_TOTAL_PIXELS`: width x FRAME height x frame count.
-const AVATAR_MAX_TOTAL_PIXELS: u64 = 40_000_000;
-/// `AVATAR_MAX_OUTPUT_BYTES`: ceiling on what we STORE.
-const AVATAR_MAX_OUTPUT_BYTES: usize = 512 * 1024;
-
-/// `AvatarPlanReason`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AvatarPlanReason {
-    Still,
-    Frames,
-    Pixels,
-    FrameTooLarge,
-    Animate,
-}
-
-/// `AvatarPlan`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AvatarPlan {
-    ok: bool,
-    animate: bool,
-    frames: u64,
-    reason: AvatarPlanReason,
-}
-
-/// `planAvatar` (lib/avatar.ts): what to encode, decided from the source's
-/// shape alone.
+/// `planAvatar` (lib/avatar.ts) from the probe's whole-number shape.
 fn plan_avatar(width: u32, height: u32, pages: u32) -> AvatarPlan {
-    let pages = if pages > 0 { pages as u64 } else { 1 };
-    let frame_pixels = width as u64 * height as u64;
-    if frame_pixels > AVATAR_MAX_FRAME_PIXELS {
-        return AvatarPlan { ok: false, animate: false, frames: 0, reason: AvatarPlanReason::FrameTooLarge };
-    }
-    if pages <= 1 {
-        return AvatarPlan { ok: true, animate: false, frames: 1, reason: AvatarPlanReason::Still };
-    }
-    if pages > AVATAR_MAX_FRAMES {
-        return AvatarPlan { ok: true, animate: false, frames: 1, reason: AvatarPlanReason::Frames };
-    }
-    // The multiplication a per-frame guard forgets. Charging one frame here is
-    // what let a 1654x762x256 GIF read as 1.26 Mpx while costing 322.
-    if frame_pixels * pages > AVATAR_MAX_TOTAL_PIXELS {
-        return AvatarPlan { ok: true, animate: false, frames: 1, reason: AvatarPlanReason::Pixels };
-    }
-    AvatarPlan { ok: true, animate: true, frames: pages, reason: AvatarPlanReason::Animate }
+    crate::avatar::plan_avatar(AvatarSource {
+        width: f64::from(width),
+        height: f64::from(height),
+        pages: f64::from(pages),
+    })
 }
 
 // ---------------------------------------------------------------------------

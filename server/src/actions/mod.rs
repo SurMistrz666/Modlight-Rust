@@ -6,11 +6,13 @@
 //! function under the upstream module and export names:
 //! `reg.register("shortlink-unlock", "unlockShortlink", unlock_shortlink)`.
 
+pub mod avatar;
 pub mod tokens;
 
 use crate::rpc::RpcRegistry;
 
 /// Every action module. ONE LINE PER MODULE.
 pub fn register_all(reg: &mut RpcRegistry) {
+    avatar::register(reg); // app/actions/avatar.ts
     tokens::register(reg); // app/actions/tokens.ts
 }
