@@ -35,12 +35,20 @@ pub mod dashboard_admin;
 pub mod dashboard_profile;
 pub mod dashboard_tokens;
 pub mod download;
+pub mod forgot;
+pub mod invite;
 pub mod layout_app;
 pub mod layout_auth;
+pub mod login;
 pub mod meta;
+pub mod register;
+pub mod reset;
 pub mod root_layout;
+pub mod root_page;
 pub mod shell;
 pub mod table;
+pub mod two_factor;
+pub mod welcome;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -353,6 +361,14 @@ pub fn register_all(reg: &mut PageRegistry) {
     reg.layout(Layout::App, layout_app::load);
     reg.page("/dashboard/admin", dashboard_admin::load);
     reg.page("/dashboard/profile", dashboard_profile::load);
+    reg.page("/", root_page::load); // app/page.tsx
+    reg.page("/welcome", welcome::load); // app/welcome/page.tsx
+    reg.page("/login", login::load); // app/(auth)/login/page.tsx
+    reg.page("/register", register::load); // app/(auth)/register/page.tsx
+    reg.page("/forgot", forgot::load); // app/(auth)/forgot/page.tsx
+    reg.page("/reset", reset::load); // app/(auth)/reset/page.tsx
+    reg.page("/2fa", two_factor::load); // app/(auth)/2fa/page.tsx
+    reg.page("/invite/[token]", invite::load); // app/(auth)/invite/[token]/page.tsx
 }
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
