@@ -3,6 +3,8 @@
 //! adds `sharex.rs`, `disk.rs`, `finalize.rs`, ... here and replaces the
 //! placeholder in [`crate::http::raw_upload_router`].
 
+pub mod duplicate_check;
+pub mod duplicate_lookup;
 pub mod folder_target;
 pub mod tus;
 pub mod tus_server;
