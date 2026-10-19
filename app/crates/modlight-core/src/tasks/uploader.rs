@@ -8,8 +8,8 @@
 
 use std::path::Path;
 
-use modlight_api::upload::{LiveOutcome, LiveUpload, ServerAnswer, UploadRefusal, UploadSource};
 use modlight_api::ApiError;
+use modlight_api::upload::{LiveOutcome, LiveUpload, ServerAnswer, UploadRefusal, UploadSource};
 use tokio_util::sync::CancellationToken;
 
 use crate::l10n::{Arg, format, s, t, uploaders};
@@ -70,7 +70,8 @@ fn invalid_config(ctx: &TaskContext) -> UploadResult {
     );
     log::info!("{message}");
     result.errors.add(&message);
-    ctx.channel.effect(crate::tasks::host::TaskEffect::ShowSignIn);
+    ctx.channel
+        .effect(crate::tasks::host::TaskEffect::ShowSignIn);
     result
 }
 
@@ -96,7 +97,11 @@ fn refusal_error(answer: &ServerAnswer, url: &str) -> String {
         answer.reason_phrase,
     );
     if !answer.url.is_empty() && answer.url != url {
-        text.push_str(&format!("\n\n{}:\n{}", t(uploaders::ResponseWindow_Response_URL), answer.url));
+        text.push_str(&format!(
+            "\n\n{}:\n{}",
+            t(uploaders::ResponseWindow_Response_URL),
+            answer.url
+        ));
     }
     if !answer.headers.is_empty() {
         let headers: Vec<String> = answer
@@ -104,7 +109,11 @@ fn refusal_error(answer: &ServerAnswer, url: &str) -> String {
             .iter()
             .map(|(k, v)| format!("{k}: {v}"))
             .collect();
-        text.push_str(&format!("\n\n{}:\n{}", t(uploaders::ResponseWindow_Headers), headers.join("\n")));
+        text.push_str(&format!(
+            "\n\n{}:\n{}",
+            t(uploaders::ResponseWindow_Headers),
+            headers.join("\n")
+        ));
     }
     text.push_str(&format!(
         "\n\n{}:\n{}",
@@ -179,7 +188,10 @@ pub async fn upload(
         Some(TaskData::File(path)) => UploadSource::File(path),
         Some(TaskData::Bytes(bytes)) => UploadSource::Bytes(bytes.as_ref().clone()),
         None => {
-            errors.add(&transport_error("There is nothing to upload.", &credential.url("/upload")));
+            errors.add(&transport_error(
+                "There is nothing to upload.",
+                &credential.url("/upload"),
+            ));
             return UploadOutcome {
                 result: Some(UploadResult::default()),
                 errors,
@@ -199,7 +211,8 @@ pub async fn upload(
             &credential,
             upload,
             |sent, total| {
-                let progress = measured.get_or_insert_with(|| ProgressManager::new(total as i64, 0));
+                let progress =
+                    measured.get_or_insert_with(|| ProgressManager::new(total as i64, 0));
                 let moved = sent as i64 - progress.position();
                 if moved > 0 && progress.update_progress(moved) {
                     on_progress(progress.clone());
@@ -293,7 +306,11 @@ pub async fn shorten(ctx: &TaskContext, settings: &TaskSettings, url: &str) -> U
     {
         Ok(link) => result.shortened_url = link.url.unwrap_or_default(),
         Err(ApiError::Decode(_)) => result.errors.add(t(uploaders::Modlight_Invalid_response)),
-        Err(ApiError::Refused { status, detail, reason }) => {
+        Err(ApiError::Refused {
+            status,
+            detail,
+            reason,
+        }) => {
             result.errors.add(&format!(
                 "{}\nThe remote server returned an error: ({status}).\n\n{}\n{request_url}",
                 t(uploaders::Uploader_Error_message),
@@ -303,10 +320,18 @@ pub async fn shorten(ctx: &TaskContext, settings: &TaskSettings, url: &str) -> U
                 .as_deref()
                 .and_then(short_link_reason)
                 .unwrap_or_else(|| short_link_status(status));
-            let detail = if detail.is_empty() { reason.clone() } else { Some(detail) };
-            result.errors.add_first(&with_server_detail(&message, detail));
+            let detail = if detail.is_empty() {
+                reason.clone()
+            } else {
+                Some(detail)
+            };
+            result
+                .errors
+                .add_first(&with_server_detail(&message, detail));
         }
-        Err(error) => result.errors.add(&transport_error(&error.to_string(), &request_url)),
+        Err(error) => result
+            .errors
+            .add(&transport_error(&error.to_string(), &request_url)),
     }
     result
 }
@@ -333,7 +358,10 @@ fn short_link_status(status: u16) -> String {
         403 => t(uploaders::Modlight_Token_not_allowed).to_string(),
         409 => t(uploaders::Modlight_Address_taken).to_string(),
         429 => t(uploaders::Modlight_Too_many_requests).to_string(),
-        other => format(t(uploaders::Modlight_Server_refused), &[Arg::from(other as i64)]),
+        other => format(
+            t(uploaders::Modlight_Server_refused),
+            &[Arg::from(other as i64)],
+        ),
     }
 }
 
@@ -341,7 +369,9 @@ fn short_link_status(status: u16) -> String {
 pub fn share_url(service: UrlSharingServices, url: &str) -> String {
     let encoded = naming::url_encode(url);
     match service {
-        UrlSharingServices::GoogleImageSearch => format!("https://lens.google.com/uploadbyurl?url={encoded}"),
+        UrlSharingServices::GoogleImageSearch => {
+            format!("https://lens.google.com/uploadbyurl?url={encoded}")
+        }
         UrlSharingServices::BingVisualSearch => {
             format!("https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:{encoded}")
         }

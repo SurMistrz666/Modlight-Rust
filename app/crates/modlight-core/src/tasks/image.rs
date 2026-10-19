@@ -17,7 +17,11 @@ pub struct PreparedImage {
 
 /// `PrepareImage`: the configured format, switching to JPEG when a lossless encoding is
 /// over `ImageAutoUseJPEGSize` KB (decimal kilobytes, as upstream multiplies by 1000).
-pub fn prepare_image(image: &RgbaImage, settings: &TaskSettings, _strip_png_color_space: bool) -> PreparedImage {
+pub fn prepare_image(
+    image: &RgbaImage,
+    settings: &TaskSettings,
+    _strip_png_color_space: bool,
+) -> PreparedImage {
     let images = &settings.image_settings;
     let mut prepared = PreparedImage {
         bytes: save_image(
@@ -30,7 +34,10 @@ pub fn prepare_image(image: &RgbaImage, settings: &TaskSettings, _strip_png_colo
         format: images.image_format,
     };
     let limit = images.image_auto_use_jpeg_size.max(0) as usize * 1000;
-    if images.image_auto_use_jpeg && images.image_format != ImageFormat::JPEG && prepared.bytes.len() > limit {
+    if images.image_auto_use_jpeg
+        && images.image_format != ImageFormat::JPEG
+        && prepared.bytes.len() > limit
+    {
         let filled = fill_background(image, Rgba([255, 255, 255, 255]));
         prepared.bytes = if images.image_auto_jpeg_quality {
             jpeg_auto_quality(&filled, limit, 2, 70, 100)
@@ -54,7 +61,10 @@ pub fn save_image(
 ) -> Vec<u8> {
     match format {
         ImageFormat::PNG => png(image, png_bit_depth),
-        ImageFormat::JPEG => jpeg(&fill_background(image, Rgba([255, 255, 255, 255])), jpeg_quality),
+        ImageFormat::JPEG => jpeg(
+            &fill_background(image, Rgba([255, 255, 255, 255])),
+            jpeg_quality,
+        ),
         ImageFormat::GIF => gif(image, gif_quality),
         ImageFormat::BMP => encode(&DynamicImage::ImageRgba8(image.clone()), Codec::Bmp),
         ImageFormat::TIFF => encode(&DynamicImage::ImageRgba8(image.clone()), Codec::Tiff),
@@ -107,7 +117,13 @@ pub fn jpeg(image: &RgbaImage, quality: i64) -> Vec<u8> {
 }
 
 /// `SaveJPEGAutoQuality`: from the top quality down until the bytes fit.
-pub fn jpeg_auto_quality(image: &RgbaImage, size_limit: usize, decrement: i64, min: i64, max: i64) -> Vec<u8> {
+pub fn jpeg_auto_quality(
+    image: &RgbaImage,
+    size_limit: usize,
+    decrement: i64,
+    min: i64,
+    max: i64,
+) -> Vec<u8> {
     let decrement = decrement.clamp(1, 100);
     let min = min.clamp(0, 100);
     let max = max.clamp(0, 100);
@@ -152,7 +168,12 @@ pub fn fill_background(image: &RgbaImage, color: Rgba<u8>) -> RgbaImage {
             out.put_pixel(
                 x,
                 y,
-                Rgba([mix(p.0[0], back[0]), mix(p.0[1], back[1]), mix(p.0[2], back[2]), 255]),
+                Rgba([
+                    mix(p.0[0], back[0]),
+                    mix(p.0[1], back[1]),
+                    mix(p.0[2], back[2]),
+                    255,
+                ]),
             );
         }
     }
@@ -178,7 +199,10 @@ pub fn thumbnail_jpeg(image: &RgbaImage, width: i64, height: i64) -> Option<Vec<
         th.max(1.0) as u32,
         image::imageops::FilterType::Lanczos3,
     );
-    Some(jpeg(&fill_background(&resized, Rgba([255, 255, 255, 255])), 90))
+    Some(jpeg(
+        &fill_background(&resized, Rgba([255, 255, 255, 255])),
+        90,
+    ))
 }
 
 #[cfg(test)]
@@ -186,7 +210,9 @@ mod tests {
     use super::*;
 
     fn picture(w: u32, h: u32, alpha: u8) -> RgbaImage {
-        RgbaImage::from_fn(w, h, |x, y| Rgba([(x * 7) as u8, (y * 13) as u8, 90, alpha]))
+        RgbaImage::from_fn(w, h, |x, y| {
+            Rgba([(x * 7) as u8, (y * 13) as u8, 90, alpha])
+        })
     }
 
     #[test]
@@ -210,8 +236,15 @@ mod tests {
     fn every_format_encodes_and_reads_back() {
         let image = picture(16, 8, 200);
         for format in ImageFormat::ALL {
-            let bytes = save_image(&image, *format, PngBitDepth::Automatic, 80, GifQuality::Default);
-            let back = image::load_from_memory(&bytes).unwrap_or_else(|e| panic!("{format:?}: {e}"));
+            let bytes = save_image(
+                &image,
+                *format,
+                PngBitDepth::Automatic,
+                80,
+                GifQuality::Default,
+            );
+            let back =
+                image::load_from_memory(&bytes).unwrap_or_else(|e| panic!("{format:?}: {e}"));
             assert_eq!((back.width(), back.height()), (16, 8), "{format:?}");
         }
         assert_eq!(ImageFormat::TIFF.extension(), "tif");
@@ -220,17 +253,30 @@ mod tests {
     #[test]
     fn automatic_png_drops_an_unused_alpha_channel() {
         let opaque = png(&picture(4, 4, 255), PngBitDepth::Automatic);
-        assert_eq!(image::load_from_memory(&opaque).unwrap().color(), image::ColorType::Rgb8);
+        assert_eq!(
+            image::load_from_memory(&opaque).unwrap().color(),
+            image::ColorType::Rgb8
+        );
         let clear = png(&picture(4, 4, 10), PngBitDepth::Automatic);
-        assert_eq!(image::load_from_memory(&clear).unwrap().color(), image::ColorType::Rgba8);
+        assert_eq!(
+            image::load_from_memory(&clear).unwrap().color(),
+            image::ColorType::Rgba8
+        );
     }
 
     #[test]
     fn background_fill_blends_over_white() {
         let image = RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 0]));
-        assert_eq!(fill_background(&image, Rgba([255, 255, 255, 255])).get_pixel(0, 0).0, [255, 255, 255, 255]);
+        assert_eq!(
+            fill_background(&image, Rgba([255, 255, 255, 255]))
+                .get_pixel(0, 0)
+                .0,
+            [255, 255, 255, 255]
+        );
         let half = RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 128]));
-        let p = fill_background(&half, Rgba([255, 255, 255, 255])).get_pixel(0, 0).0;
+        let p = fill_background(&half, Rgba([255, 255, 255, 255]))
+            .get_pixel(0, 0)
+            .0;
         assert!((126..=128).contains(&p[0]), "{p:?}");
     }
 

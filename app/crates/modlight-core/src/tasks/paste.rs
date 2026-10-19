@@ -123,13 +123,21 @@ impl Paste {
     /// The languages the search box lets through.
     pub fn languages(&self) -> Vec<PasteLanguage> {
         let query = self.language_filter.trim();
-        LANGUAGES.iter().copied().filter(|l| matches(l, query)).collect()
+        LANGUAGES
+            .iter()
+            .copied()
+            .filter(|l| matches(l, query))
+            .collect()
     }
 
     /// The name the file goes up under: the title sanitised as the panel does, or
     /// "paste", plus the language's extension.
     pub fn file_name(&self) -> String {
-        format!("{}.{}", sanitize_title(&self.title), self.language.extension)
+        format!(
+            "{}.{}",
+            sanitize_title(&self.title),
+            self.language.extension
+        )
     }
 
     /// The line under the editor.
@@ -137,7 +145,10 @@ impl Paste {
         let count = self.content.chars().count() as i64;
         format(
             t(s::Paste_Footer),
-            &[Arg::from(Culture::current().n0(count)), Arg::from(self.file_name())],
+            &[
+                Arg::from(Culture::current().n0(count)),
+                Arg::from(self.file_name()),
+            ],
         )
     }
 

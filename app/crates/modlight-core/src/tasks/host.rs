@@ -138,7 +138,10 @@ pub enum TaskEvent {
 
 /// One message from a task to the window.
 pub enum TaskMessage {
-    Event { task: u64, event: TaskEvent },
+    Event {
+        task: u64,
+        event: TaskEvent,
+    },
     Ask {
         task: u64,
         question: TaskQuestion,

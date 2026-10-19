@@ -41,7 +41,9 @@ pub async fn allow(info: &TaskInfo, ctx: &TaskContext, task: u64) -> bool {
         Some(TaskAnswer::SignIn(true))
     ) && ctx.credential().is_some();
     if !signed_in {
-        log::info!("Modlight: still signed out, so the upload is skipped and the file is kept locally.");
+        log::info!(
+            "Modlight: still signed out, so the upload is skipped and the file is kept locally."
+        );
     }
     signed_in
 }
@@ -51,9 +53,13 @@ pub async fn allow(info: &TaskInfo, ctx: &TaskContext, task: u64) -> bool {
 /// authorised by an upload that may not happen.
 pub fn keep_locally(info: &mut TaskInfo) {
     let settings = &mut info.settings;
-    settings.after_capture_job = settings.after_capture_job.remove(AfterCaptureTasks::DeleteFile);
+    settings.after_capture_job = settings
+        .after_capture_job
+        .remove(AfterCaptureTasks::DeleteFile);
     if info.job == TaskJob::Job {
-        settings.after_capture_job = settings.after_capture_job.with(AfterCaptureTasks::SaveImageToFile);
+        settings.after_capture_job = settings
+            .after_capture_job
+            .with(AfterCaptureTasks::SaveImageToFile);
     }
 }
 
@@ -62,7 +68,9 @@ fn uses_uploader(info: &TaskInfo) -> bool {
     match info.upload_destination() {
         DataType::Image => settings.image_destination == ImageDestination::Modlight,
         DataType::Text => settings.text_destination == TextDestination::Modlight,
-        DataType::File => settings.file_destination_for(info.data_type) == FileDestination::Modlight,
+        DataType::File => {
+            settings.file_destination_for(info.data_type) == FileDestination::Modlight
+        }
         _ => false,
     }
 }
@@ -97,13 +105,22 @@ mod tests {
     #[test]
     fn what_needs_an_account() {
         assert!(targets_modlight(&info(TaskJob::FileUpload, DataType::File)));
-        assert!(uploads_to_modlight(&info(TaskJob::FileUpload, DataType::File)));
+        assert!(uploads_to_modlight(&info(
+            TaskJob::FileUpload,
+            DataType::File
+        )));
         assert!(targets_modlight(&info(TaskJob::ShortenUrl, DataType::Url)));
-        assert!(!uploads_to_modlight(&info(TaskJob::ShortenUrl, DataType::Url)));
+        assert!(!uploads_to_modlight(&info(
+            TaskJob::ShortenUrl,
+            DataType::Url
+        )));
         assert!(!targets_modlight(&info(TaskJob::ShareUrl, DataType::Url)));
         assert!(!targets_modlight(&info(TaskJob::Download, DataType::File)));
         let mut capture = info(TaskJob::Job, DataType::Image);
-        assert!(targets_modlight(&capture), "UploadImageToHost is on by default");
+        assert!(
+            targets_modlight(&capture),
+            "UploadImageToHost is on by default"
+        );
         capture.settings.after_capture_job = AfterCaptureTasks::SaveImageToFile;
         assert!(!targets_modlight(&capture));
     }
@@ -111,10 +128,21 @@ mod tests {
     #[test]
     fn keeping_locally_saves_captures_and_never_deletes() {
         let mut capture = info(TaskJob::Job, DataType::Image);
-        capture.settings.after_capture_job = AfterCaptureTasks::UploadImageToHost.with(AfterCaptureTasks::DeleteFile);
+        capture.settings.after_capture_job =
+            AfterCaptureTasks::UploadImageToHost.with(AfterCaptureTasks::DeleteFile);
         keep_locally(&mut capture);
-        assert!(capture.settings.after_capture_job.has(AfterCaptureTasks::SaveImageToFile));
-        assert!(!capture.settings.after_capture_job.has(AfterCaptureTasks::DeleteFile));
+        assert!(
+            capture
+                .settings
+                .after_capture_job
+                .has(AfterCaptureTasks::SaveImageToFile)
+        );
+        assert!(
+            !capture
+                .settings
+                .after_capture_job
+                .has(AfterCaptureTasks::DeleteFile)
+        );
 
         let mut file = info(TaskJob::FileUpload, DataType::File);
         file.settings.after_capture_job = AfterCaptureTasks::DeleteFile;
