@@ -7,7 +7,7 @@
     "props": {},
     "meta": {
       "title": "Upload - Modlight",
-      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "description": "Drag, drop, or paste files. Resumable uploads built for multi-GB files.",
       "applicationName": "Modlight"
     }
   }

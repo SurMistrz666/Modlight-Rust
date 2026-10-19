@@ -40,9 +40,10 @@
       }
     },
     "meta": {
-      "title": "clip.mp4 - Modlight",
-      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
-      "applicationName": "Modlight"
+      "title": "clip.mp4 · example",
+      "description": null,
+      "applicationName": null,
+      "robots": null
     }
   }
 }
