@@ -306,3 +306,199 @@ fn the_app_signs_in_and_manages_the_library_on_the_reference_server() {
         "the token is gone from the profile"
     );
 }
+
+/// Delete every upload whose name is in `names`, in the library and in the trash.
+fn delete_uploads_named(state: &AppState, names: &[String]) {
+    let Some(me) = state.credential() else { return };
+    let api = state.api.clone();
+    let names = names.to_vec();
+    let _ = std::thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        runtime.block_on(async {
+            for name in &names {
+                let mut ids = Vec::new();
+                for trashed in [false, true] {
+                    if let Ok(page) = api
+                        .get_uploads(
+                            &me,
+                            &modlight_api::UploadQuery {
+                                page: 1,
+                                per_page: 120,
+                                search: Some(name.clone()),
+                                trashed,
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                    {
+                        ids.extend(
+                            page.items
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|row| row.filename.as_deref() == Some(name.as_str()))
+                                .filter_map(|row| row.id),
+                        );
+                    }
+                }
+                if !ids.is_empty() {
+                    let _ = api.delete_uploads(&me, &ids, "trash").await;
+                    let _ = api.delete_uploads(&me, &ids, "permanent").await;
+                }
+            }
+        });
+    })
+    .join();
+}
+
+#[test]
+fn the_upload_windows_drive_the_task_flow_on_the_reference_server() {
+    use modlight_app::dialogs::upload_confirm::UploadConfirmOutcome;
+
+    let Some(env) = qa_env() else {
+        eprintln!("skipped: no _wzorzec/qa-accounts.env");
+        return;
+    };
+    if !server_up() {
+        eprintln!("skipped: the reference server is not running");
+        return;
+    }
+    let token = env
+        .get("QA_APP1_TOKEN_WRITE")
+        .expect("QA_APP1_TOKEN_WRITE in qa-accounts.env")
+        .clone();
+    let profile = tempfile::tempdir().unwrap();
+    let config = AppConfig::load(profile.path());
+    let account = AccountStore::load(
+        profile.path(),
+        Box::new(FileCredentialStore::new(profile.path().join("credentials"))),
+    );
+    let state = AppState::new(
+        Env {
+            profile: profile.path().to_path_buf(),
+            qa: true,
+            frozen_now: None,
+            machine: "QA Mac".into(),
+            system_language: "en".into(),
+            system_locale: "en_US".into(),
+            reduce_motion: true,
+            system_dark: Some(true),
+        },
+        config,
+        account,
+    );
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(1040.0, 720.0))
+        .build_eframe(|cc| ModlightApp::new(cc, state, Mode::Headless));
+    {
+        let state = &mut harness.state_mut().state;
+        state.show_sign_in();
+        let window = state.windows.sign_in.as_mut().unwrap();
+        window.host = SERVER.into();
+        window.manual_token = token.clone();
+        state.sign_in_action(SignInAction::UseToken);
+    }
+    wait(&mut harness, "the sign-in", 20, |s| {
+        s.account.is_signed_in()
+    });
+    {
+        // The sign-in window closes itself after a token sign-in; make sure.
+        let state = &mut harness.state_mut().state;
+        if state.windows.sign_in.is_some() {
+            state.sign_in_action(SignInAction::Close);
+        }
+    }
+
+    // Eleven files at once: more than UploadManager uploads without asking.
+    let stamp = unique("qa-app").replace(' ', "-");
+    let names: Vec<String> = (0..11).map(|i| format!("{stamp}-{i:02}.txt")).collect();
+    let mut files = Vec::new();
+    for name in &names {
+        let path = profile.path().join(name);
+        std::fs::write(&path, format!("file {name}\n")).unwrap();
+        files.push(path);
+    }
+    let mut uploaded = names.clone();
+    {
+        let state = &mut harness.state_mut().state;
+        state.upload_paths_to(files.clone(), None);
+        assert!(
+            state.uploads.windows.multi_upload.is_some(),
+            "eleven files are asked about first"
+        );
+        assert!(state.uploads.tasks.tasks.is_empty(), "nothing started yet");
+        state.multi_upload_finished(UploadConfirmOutcome {
+            go_on: true,
+            dont_show_again: false,
+        });
+    }
+    wait(&mut harness, "eleven uploads", 60, |s| {
+        names.iter().all(|name| {
+            s.upload_tab
+                .history
+                .iter()
+                .any(|row| &row.name == name && row.has_link())
+        })
+    });
+
+    // The paste window: a title and a language make the file name.
+    let paste_title = format!("{stamp}-notes");
+    let paste_name;
+    {
+        let state = &mut harness.state_mut().state;
+        state.open_paste_window();
+        let window = state
+            .uploads
+            .windows
+            .paste
+            .as_mut()
+            .expect("the paste window");
+        window.model.title = paste_title.clone();
+        window.model.content = "# Notes\n\nfrom the paste window\n".into();
+        let (bytes, name) = window.model.try_send().expect("a paste to send");
+        paste_name = name.clone();
+        state.paste_finished(modlight_app::dialogs::paste::PasteOutcome::Send(
+            bytes, name,
+        ));
+        assert!(state.uploads.windows.paste.is_none());
+    }
+    uploaded.push(paste_name.clone());
+    assert_eq!(paste_name, format!("{paste_title}.txt"));
+    wait(&mut harness, "the paste", 30, |s| {
+        s.upload_tab
+            .history
+            .iter()
+            .any(|row| row.name == paste_name && row.has_link())
+    });
+    {
+        let state = &harness.state().state;
+        assert!(
+            state.toasts.iter().any(|t| !t.failed && !t.link.is_empty()),
+            "finished uploads say so in the corner"
+        );
+        assert!(
+            profile.path().join("History.db").is_file(),
+            "the history is written"
+        );
+        assert!(harness.state().copied.iter().any(|c| c.starts_with("http")));
+    }
+
+    // The history store has them, read back as the Upload tab reads it at start.
+    {
+        let state = &mut harness.state_mut().state;
+        state.refresh_upload_history();
+    }
+    wait(&mut harness, "the history read back", 20, |s| {
+        !s.upload_tab.loading_history
+            && s.upload_tab
+                .history
+                .iter()
+                .any(|row| row.name == paste_name)
+    });
+
+    delete_uploads_named(&harness.state().state, &uploaded);
+}
