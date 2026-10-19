@@ -348,7 +348,9 @@ impl CentralEntry {
             return Ok(None);
         }
         let stored = reader.read_int(4)?;
-        if crc32(&self.file_name) as f64 != stored {
+        // JSZip's crc32 ends in `crc ^ (-1)`: a signed 32-bit number, as
+        // `readInt(4)` reads the stored one.
+        if crc32(&self.file_name) as i32 as f64 != stored {
             return Ok(None);
         }
         let rest = reader.read_data(value.len() as f64 - 5.0)?;
@@ -417,9 +419,10 @@ impl ZipFile {
             }
 
             // addFiles: zip.file(safeName, input.decompressed, {...})
-            for (entry, name, dir, dos_permissions, unix_permissions) in named {
-                let mut safe_name = resolve(&name);
-                let mut dir = dir;
+            for (entry, name, input_dir, dos_permissions, unix_permissions) in named {
+                let unresolved = resolve(&name);
+                let mut safe_name = unresolved.clone();
+                let mut dir = input_dir;
                 if unix_permissions.is_some_and(|p| p != 0 && p & 0x4000 != 0) {
                     dir = true;
                 }
@@ -446,6 +449,13 @@ impl ZipFile {
                     }
                 };
                 files.insert(safe_name, ZipObject { dir, content });
+                // `if (!input.dir) zip.file(safeName).unsafeOriginalName = ...`:
+                // an entry that only became a folder through its Unix mode was
+                // stored under "name/", so `file(safeName)` is null and the
+                // assignment throws.
+                if !input_dir && files.get(&unresolved).is_none_or(|o| o.dir) {
+                    return err("Cannot set properties of null (setting 'unsafeOriginalName')");
+                }
             }
         }
         Ok(ZipFile { data, files, max_entry })

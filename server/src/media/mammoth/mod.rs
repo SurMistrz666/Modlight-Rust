@@ -27,12 +27,14 @@
 //!   HTML, with one exception: an element named `constructor` or `toString`
 //!   (no namespace) leaves an `undefined` in mammoth's message list, and
 //!   combining it with any other message is a `TypeError`.
-//! - **Deep nesting.** Upstream recurses on the V8 stack, which runs out
-//!   somewhere between 400 nested tables and 2343 nested unknown elements
-//!   (measured on the reference, node 24.22; the exact point depends on what
-//!   nests and on V8's tiering). Here XML nesting beyond
-//!   [`MAX_XML_DEPTH`] elements fails, matching the most common case (1952
-//!   nested unknown elements inside a paragraph).
+//! - **Deep nesting.** Upstream recurses on the V8 stack, so how deep a
+//!   document may nest depends on what nests and on how warm V8 is
+//!   (measured on the reference, node 24.22, through `docxToHtml`): a fresh
+//!   process renders 1898 nested elements inside a paragraph and fails at
+//!   1899 (after warm-up: 2499); nested `w:sdt` fail beyond 909 (warm 1249),
+//!   nested tables beyond 306 (warm 312). Here an XML part nested deeper than
+//!   [`MAX_XML_DEPTH`] elements fails, the fresh-process limit for plain
+//!   nesting; deeper `w:sdt` and table nesting still renders.
 //! - **Images run one at a time, in document order** (`promises.mapSeries`
 //!   over the deferred nodes in tree order: body, then notes in reference
 //!   order, then comments), which makes docx.ts's shared budget
@@ -63,8 +65,9 @@ use documents::Image;
 use html::ast::HtmlNode;
 use writers::html_writer::HtmlWriter;
 
-/// Element nesting a part may have (the root element is depth 1).
-pub const MAX_XML_DEPTH: usize = 1955;
+/// Element nesting a part may have (the root element is depth 1):
+/// `w:document > w:body > w:p` plus 1898 more, see the module docs.
+pub const MAX_XML_DEPTH: usize = 1901;
 
 /// A JavaScript exception somewhere in the conversion.
 #[derive(Debug, Clone, PartialEq, Eq)]
