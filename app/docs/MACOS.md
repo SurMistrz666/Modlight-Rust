@@ -19,10 +19,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | Region format (`CurrentCulture`) | `AppleLocale` region | en-US and pl-PL are modelled exactly as .NET formats them; other regions format like en-US. Interface language from `AppleLanguages`. |
 | "Reduce motion" (`SystemParameters`) | `com.apple.universalaccess reduceMotion` | Read once at start. |
 | Desktop notice placement (`NotificationWindow`, screen working area) | The visible frame of the main screen (menu bar and Dock excluded) | |
-| Explorer "Show in folder" | `open -R` (reveal in Finder) | Phase 2. |
-| `NetworkChange` events + `NetworkInterface.GetIsNetworkAvailable` | A route check (a UDP socket `connect` to a public address, no packet is sent) every 15 s and on demand | The offline queue's "no network" state; see `STATUS.md`. |
-| `FileSystemWatcher` (watch folders) | FSEvents through the `notify` crate | Phase 2. |
-| Clipboard (`ClipboardHelpers`) | NSPasteboard through `arboard` | Text, images and Finder file lists. |
+| Explorer "Show in folder" | `open -R` (reveal in Finder) | Opening a file or folder is `open -- <path>`. |
+| `NetworkChange` events + `NetworkInterface.GetIsNetworkAvailable` | `getifaddrs`: an interface other than loopback that is up, running and has an address, read before every pass of the queue (at least every 15 s) | Nothing is sent to find out. There is no change event: the queue's 15 s poll and its wake-ups stand in for `NetworkAvailabilityChanged`. |
+| `FileSystemWatcher` (watch folders) | FSEvents through the `notify` crate | Same filter rules, 1 s duplicate timer and "wait until the size stops changing" timing. FSEvents repeats flags and does not pair renames, so files are tracked by device, inode and birth time; a rename inside one folder is ignored, a move between folders or from outside is reported (as Windows' Deleted + Created). Folders and symlinks are never reported. On SMB volumes only this Mac's own changes are seen. A watched folder's "move to the screenshots folder" takes a unique name when the name exists instead of asking (nobody is at the window). |
+| Clipboard (`ClipboardHelpers`) | NSPasteboard through `arboard` | Text, images and Finder file lists. Reading asks for the file list first: Finder also puts the file's icon and name on the pasteboard, which upstream's image-then-text order would upload instead of the file. QA and headless runs never read the real clipboard (macOS may ask for paste permission). |
 | Taskbar progress (`TaskbarManager`) | Not shown | macOS has no per-window taskbar progress; the tray icon's progress and the Upload tab carry it. |
 | Inno Setup installer | `scripts/build-app.sh`: release build, `Modlight.app` with `Info.plist`, `.icns` cut from `ShareX/Modlight_Icon.ico`, ad hoc signature | Bundle id `org.modlight.Modlight` (to confirm with the owner). The script never starts the app. A DMG and components downloaded from the Components window come with phase 3. |
 | Start with Windows | Login item (`SMAppService`) | Phase 3. |
@@ -32,6 +32,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | WebView2 (YouTube sign-in) | WKWebView | Phase 3. |
 | Windows OCR | Vision | Phase 5. |
 | Import of ShareX settings | Not applicable | There is no ShareX on macOS. |
+| `Ctrl+V` on the main window (`KeyDown`) | `Cmd+V` through an AppKit local key monitor | egui only reports a paste when the clipboard holds text; the monitor sees the key whatever is on the pasteboard. A local monitor needs no permission. |
+| `SystemSounds` / `SoundPlayer` (task sounds) | `NSSound` with upstream's WAV files | Normal mode only. |
+| Drag-and-drop upload window (`DragDropUploadWindow`) | An undecorated, always-on-top viewport at the configured screen corner | Text dragged onto it is not accepted: winit delivers only files. |
+| Proxy settings for uploads | Not used yet | Upstream takes them from its proxy page (phase 3); uploads go direct. |
 
 ## Look
 
@@ -63,4 +67,21 @@ Everything not listed behaves as upstream does. The per-screen state is in
   server's origin, no `Access-Control-Allow-Private-Network`, and a request with the
   wrong `state` is answered and ignored instead of ending the sign-in.
 - **Redirects** are never followed by any request that carries the token (upstream
-  followed them in the library client).
+  followed them in the library client). A stored tus session URL is moved onto the
+  account's current origin before every request, so the token can never follow a
+  `Location` to another host.
+- **Live upload refusals** are read as soon as the server answers, without sending the
+  rest of the body (upstream wrote the whole file first). A file name containing `"`,
+  CR or LF goes out percent-encoded in the multipart header.
+- **Error texts** keep upstream's shape (the readable sentence, then the request URL,
+  status, headers and response) without the .NET stack trace section; transport errors
+  are Rust's wording, and the HTTP reason phrase is the standard one for the status.
+- **Upload from URL**: a download that answers with a non-success status is an error
+  (upstream saved nothing and went on to upload a missing file).
+- **Task questions** (large file, file exists, before upload) open one window at a
+  time, oldest first; every task waiting for a sign-in hears the answer when the sign-in
+  window closes.
+- **Paste window**: the hint says "Ctrl+Enter" as upstream does; Cmd+Enter works too.
+- **GIF bit depth 4** is written as a 256-colour GIF (the encoder has no 16-colour
+  palette mode). A custom time zone other than UTC in file name patterns falls back to
+  local time.
