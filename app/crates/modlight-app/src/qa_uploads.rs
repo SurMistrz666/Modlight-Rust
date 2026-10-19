@@ -215,6 +215,7 @@ pub fn prepare(screen: &str, state: &mut AppState, picture: Option<RgbaImage>) -
                 upload_confirm::UploadConfirm::new(upload_confirm::UploadQuestion::ManyFiles(24)),
                 crate::uploads::PendingFiles {
                     files: Vec::new(),
+                    rest: Vec::new(),
                     settings,
                 },
             ));

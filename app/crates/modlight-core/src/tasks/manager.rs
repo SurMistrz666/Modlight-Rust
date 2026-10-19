@@ -20,6 +20,20 @@ use crate::tasks::settings::AfterUploadTasks;
 use crate::tasks::worker::WorkerTask;
 use crate::upload::queue::QueueOutcome;
 
+type FullscreenProbe = Box<dyn Fn() -> bool + Send + Sync>;
+
+static FULLSCREEN_PROBE: std::sync::OnceLock<FullscreenProbe> = std::sync::OnceLock::new();
+
+/// Tell the task flow how to ask whether the frontmost window fills the screen
+/// (`CaptureHelpers.IsActiveWindowFullscreen`); the platform layer sets it once.
+pub fn set_fullscreen_probe(probe: impl Fn() -> bool + Send + Sync + 'static) {
+    let _ = FULLSCREEN_PROBE.set(Box::new(probe));
+}
+
+fn active_window_fullscreen() -> bool {
+    FULLSCREEN_PROBE.get().is_some_and(|probe| probe())
+}
+
 /// What the window learns from one event.
 #[derive(Clone, Debug, Default)]
 pub struct EventOutcome {
@@ -204,6 +218,8 @@ impl TaskManager {
                     };
                     if general.show_toast_notification_after_task_completed
                         && !error.text.is_empty()
+                        && (!general.disable_notifications_on_fullscreen
+                            || !active_window_fullscreen())
                     {
                         outcome.effects.push(TaskEffect::ShowNotificationTip {
                             text: error.text.clone(),
@@ -237,7 +253,11 @@ impl TaskManager {
                     } else {
                         naming::parse_upload_info(info, format_text, ctx)
                     };
-                    if general.show_toast_notification_after_task_completed && !text.is_empty() {
+                    if general.show_toast_notification_after_task_completed
+                        && !text.is_empty()
+                        && (!general.disable_notifications_on_fullscreen
+                            || !active_window_fullscreen())
+                    {
                         outcome.effects.push(TaskEffect::ShowNotification(Box::new(
                             NotificationConfig {
                                 duration_ms: general.toast_window_duration * 1000.0,

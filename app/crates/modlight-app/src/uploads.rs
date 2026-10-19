@@ -45,9 +45,12 @@ pub struct PendingAsk {
     pub reply: oneshot::Sender<TaskAnswer>,
 }
 
-/// What a multi-file confirmation will upload once answered.
+/// What a multi-file confirmation is about (`files`), and the paths of the same
+/// request that come after it (`rest`), uploaded whatever the answer, as upstream's
+/// loop goes on after a nested `UploadFile(folder)` returns.
 pub struct PendingFiles {
     pub files: Vec<PathBuf>,
+    pub rest: Vec<PathBuf>,
     pub settings: TaskSettings,
 }
 
@@ -58,6 +61,9 @@ pub struct UploadWindows {
     pub large_file: Option<UploadConfirm>,
     /// The many-files question, with what it is about.
     pub multi_upload: Option<(UploadConfirm, PendingFiles)>,
+    /// Many-files questions waiting for that window (upstream's are modal, one at a
+    /// time).
+    pub multi_upload_waiting: VecDeque<PendingFiles>,
     pub file_exists: Option<FileExists>,
     pub before_upload: Option<BeforeUpload>,
     pub after_uploads: Vec<AfterUpload>,
@@ -185,7 +191,10 @@ impl AppState {
             .tasks
             .recent
             .init(settings.recent_tasks_max_count, recent);
-        if settings.recent_tasks_save {
+        if settings.recent_tasks_save
+            && settings.recent_tasks_show_in_main_window
+            && !self.uploads.tasks.recent.tasks.is_empty()
+        {
             // `UpdateMainWindowList`: the recent uploads come back as finished rows.
             let restored: Vec<_> = self.uploads.tasks.recent.tasks.iter().cloned().collect();
             for recent in restored {
@@ -566,6 +575,92 @@ impl AppState {
         }
     }
 
+    /// `NotificationWindow.RunAction`: what a click on the notice or one of its buttons
+    /// does. The picture is copied before the notice goes; everything else after.
+    pub fn notification_action(&mut self, action: crate::notification::ToastAction, dismiss: bool) {
+        use crate::notification::ToastAction;
+        let Some(notice) = self.windows.notification.as_ref() else {
+            return;
+        };
+        let path = notice.file_path.clone();
+        let url = notice.url.clone();
+        let image = notice.image.clone();
+        if action == ToastAction::CopyImageToClipboard {
+            self.copy_notice_image(&path, image);
+        }
+        if dismiss {
+            self.windows.notification = None;
+        }
+        let file = PathBuf::from(&path);
+        match action {
+            ToastAction::CloseNotification | ToastAction::CopyImageToClipboard => {}
+            // The image editor and pinning arrive with phases 3 and 4.
+            ToastAction::AnnotateImage | ToastAction::PinToScreen => {}
+            ToastAction::CopyFile => {
+                if !path.is_empty() {
+                    self.effects.push(Effect::CopyFiles(vec![file]));
+                }
+            }
+            ToastAction::CopyFilePath => {
+                if !path.is_empty() {
+                    self.copy_text(&path);
+                }
+            }
+            ToastAction::CopyUrl => {
+                let text = if url.is_empty() { path } else { url };
+                self.copy_text(&text);
+            }
+            ToastAction::OpenFile => {
+                if !path.is_empty() {
+                    self.effects.push(Effect::OpenFile(file));
+                }
+            }
+            ToastAction::OpenFolder => {
+                if !path.is_empty() {
+                    self.effects.push(Effect::Reveal(file));
+                }
+            }
+            ToastAction::OpenUrl => {
+                if !url.is_empty() {
+                    self.open_url(&url);
+                } else if !path.is_empty() {
+                    self.effects.push(Effect::OpenFile(file));
+                }
+            }
+            ToastAction::Upload => {
+                if !path.is_empty() {
+                    let settings = self.default_task_settings();
+                    self.upload_files_with(vec![file], settings);
+                }
+            }
+            ToastAction::DeleteFile => {
+                if !path.is_empty() && file.is_file() {
+                    self.windows.confirm = Some(crate::dialogs::confirm::Confirm::new(
+                        t(s::MainForm_tsmiDeleteSelectedFile_Click_File_delete_confirmation),
+                        t(s::MainForm_tsmiDeleteSelectedFile_Click_Do_you_really_want_to_delete_this_file_),
+                        crate::dialogs::confirm::ConfirmAction::DeleteLocalFile(file),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// `CopyImageToClipboard`: the file on disk first, the picture in memory as the
+    /// fallback, never a path or a link; when there is neither, the person is told.
+    fn copy_notice_image(&mut self, path: &str, image: Option<Arc<image::RgbaImage>>) {
+        let from_file = (!path.is_empty()
+            && modlight_core::names::file_helpers::is_image_file(path))
+        .then(|| image::open(path).ok())
+        .flatten()
+        .map(|picture| Arc::new(picture.to_rgba8()));
+        match from_file.or(image) {
+            Some(picture) => self.effects.push(Effect::CopyImage(picture)),
+            None => {
+                self.show_notification_tip(t(s::Notification_CopyImageFailed), "Modlight", None)
+            }
+        }
+    }
+
     /// `NotificationWindow.Show` for a finished task.
     fn show_task_notification(&mut self, config: modlight_core::tasks::host::NotificationConfig) {
         self.windows.notification =
@@ -657,34 +752,94 @@ impl AppState {
         if files.is_empty() {
             return;
         }
-        let app = self.app_upload_settings();
-        if upload_manager::needs_confirmation(files.len(), app.show_multi_upload_warning) {
-            let question = UploadConfirm::new(UploadQuestion::ManyFiles(files.len()));
-            self.uploads.windows.multi_upload = Some((question, PendingFiles { files, settings }));
+        if self.needs_multi_upload_question(files.len()) {
+            self.ask_multi_upload(
+                PendingFiles {
+                    files,
+                    rest: Vec::new(),
+                    settings,
+                },
+                false,
+            );
             return;
         }
+        self.upload_each(files, settings);
+    }
+
+    fn needs_multi_upload_question(&self, count: usize) -> bool {
+        upload_manager::needs_confirmation(
+            count,
+            self.app_upload_settings().show_multi_upload_warning,
+        )
+    }
+
+    /// `foreach (file in files) UploadFile(file)`: a file becomes a task, a folder
+    /// becomes its files, every level down, and asks first when there are many; the
+    /// paths after such a folder wait for the answer.
+    fn upload_each(&mut self, files: Vec<PathBuf>, settings: TaskSettings) {
         let ctx = self.uploads.ctx.clone();
-        upload_manager::upload_files(&mut self.uploads.tasks, &files, &settings, &ctx);
+        let mut paths = files.into_iter();
+        while let Some(path) = paths.next() {
+            if path.is_file() {
+                upload_manager::upload_file(&mut self.uploads.tasks, &path, &settings, &ctx);
+            } else if path.is_dir() {
+                let inner = upload_manager::expand_paths(std::slice::from_ref(&path));
+                if inner.is_empty() {
+                    continue;
+                }
+                if self.needs_multi_upload_question(inner.len()) {
+                    let rest = paths.collect();
+                    self.ask_multi_upload(
+                        PendingFiles {
+                            files: inner,
+                            rest,
+                            settings,
+                        },
+                        true,
+                    );
+                    return;
+                }
+                upload_manager::upload_files(&mut self.uploads.tasks, &inner, &settings, &ctx);
+            }
+        }
+    }
+
+    /// Show the many-files question, or line it up behind the one that is showing. A
+    /// question raised while an answer is being carried out goes first.
+    fn ask_multi_upload(&mut self, pending: PendingFiles, nested: bool) {
+        let windows = &mut self.uploads.windows;
+        if windows.multi_upload.is_none() {
+            let question = UploadConfirm::new(UploadQuestion::ManyFiles(pending.files.len()));
+            windows.multi_upload = Some((question, pending));
+        } else if nested {
+            windows.multi_upload_waiting.push_front(pending);
+        } else {
+            windows.multi_upload_waiting.push_back(pending);
+        }
     }
 
     pub fn multi_upload_finished(&mut self, outcome: UploadConfirmOutcome) {
         let Some((_, pending)) = self.uploads.windows.multi_upload.take() else {
             return;
         };
+        // `ShowMultiUploadWarning = !result.DontShowAgain`.
         if outcome.dont_show_again {
             self.config
                 .set("ShowMultiUploadWarning", serde_json::json!(false));
             self.save_config();
             self.sync_upload_settings();
         }
+        let mut paths = Vec::new();
         if outcome.go_on {
-            let ctx = self.uploads.ctx.clone();
-            upload_manager::upload_files(
-                &mut self.uploads.tasks,
-                &pending.files,
-                &pending.settings,
-                &ctx,
-            );
+            paths.extend(pending.files);
+        }
+        paths.extend(pending.rest);
+        self.upload_each(paths, pending.settings);
+        if self.uploads.windows.multi_upload.is_none()
+            && let Some(next) = self.uploads.windows.multi_upload_waiting.pop_front()
+        {
+            let question = UploadConfirm::new(UploadQuestion::ManyFiles(next.files.len()));
+            self.uploads.windows.multi_upload = Some((question, next));
         }
     }
 
@@ -708,21 +863,11 @@ impl AppState {
         if let Some(id) = folder.as_deref() {
             self.space.select_folder_tile(Some(id));
         }
-        let app = self.app_upload_settings();
-        let mut dialog = rfd::FileDialog::new().set_title(format!(
+        let dialog = rfd::FileDialog::new().set_title(format!(
             "Modlight - {}",
             t(s::UploadManager_UploadFile_File_upload)
         ));
-        if let Some(directory) = app
-            .file_upload_default_directory
-            .as_deref()
-            .filter(|d| !d.is_empty() && Path::new(d).is_dir())
-        {
-            dialog = dialog.set_directory(directory);
-        } else if let Some(desktop) = dirs::desktop_dir() {
-            dialog = dialog.set_directory(desktop);
-        }
-        let Some(paths) = dialog.pick_files() else {
+        let Some(paths) = self.starting_in_last_folder(dialog).pick_files() else {
             return;
         };
         if let Some(parent) = paths.first().and_then(|p| p.parent()) {
@@ -740,22 +885,37 @@ impl AppState {
         if self.env.qa {
             return;
         }
-        let Some(folder) = rfd::FileDialog::new()
-            .set_title(format!(
-                "Modlight - {}",
-                t(s::UploadManager_UploadFolder_Folder_upload)
-            ))
-            .pick_folder()
-        else {
+        let dialog = rfd::FileDialog::new().set_title(format!(
+            "Modlight - {}",
+            t(s::UploadManager_UploadFolder_Folder_upload)
+        ));
+        let Some(folder) = self.starting_in_last_folder(dialog).pick_folder() else {
             return;
         };
         self.task_effect(
             TaskEffect::SetFileUploadDefaultDirectory(folder.to_string_lossy().into_owned()),
             &egui::Context::default(),
         );
+        // `UploadFile(selectedPath)`: the folder's files, asked about when many.
         let settings = self.default_task_settings();
-        let ctx = self.uploads.ctx.clone();
-        upload_manager::upload_file(&mut self.uploads.tasks, &folder, &settings, &ctx);
+        self.upload_files_with(vec![folder], settings);
+    }
+
+    /// The picker starts in `FileUploadDefaultDirectory` when it exists, else on the
+    /// Desktop.
+    fn starting_in_last_folder(&self, dialog: rfd::FileDialog) -> rfd::FileDialog {
+        let app = self.app_upload_settings();
+        if let Some(directory) = app
+            .file_upload_default_directory
+            .as_deref()
+            .filter(|d| !d.is_empty() && Path::new(d).is_dir())
+        {
+            dialog.set_directory(directory)
+        } else if let Some(desktop) = dirs::desktop_dir() {
+            dialog.set_directory(desktop)
+        } else {
+            dialog
+        }
     }
 
     /// Read the clipboard. On a Mac a copied file also leaves its icon and its name on
@@ -786,12 +946,20 @@ impl AppState {
         None
     }
 
-    /// The clipboard's text, for the windows that start from it.
+    /// The clipboard's text, for the windows that start from it (`GetText`): read even
+    /// when a picture or files are on the clipboard too.
     pub fn clipboard_text(&mut self) -> Option<String> {
-        match self.read_clipboard() {
-            Some(ClipboardContent::Text(text)) => Some(text),
-            _ => None,
+        if !matches!(self.mode, crate::app::Mode::Normal | crate::app::Mode::Qa) || self.env.qa {
+            return match &self.qa_clipboard {
+                Some(ClipboardContent::Text(text)) => Some(text.clone()),
+                _ => None,
+            };
         }
+        arboard::Clipboard::new()
+            .ok()?
+            .get_text()
+            .ok()
+            .filter(|text| !text.is_empty())
     }
 
     /// `ClipboardUploadMainWindow`: the viewer first, unless told not to show it.
@@ -1018,9 +1186,11 @@ impl AppState {
 
     /// Play one of upstream's sounds, or the person's own file.
     pub fn play_sound(sound: NotificationSound, custom: Option<String>) {
-        if let Some(path) = custom.filter(|p| !p.is_empty())
-            && modlight_macos::sound::play_file(Path::new(&path))
-        {
+        // A custom sound is played and nothing else, even when it cannot be.
+        if let Some(path) = custom.filter(|p| !p.is_empty()) {
+            if !modlight_macos::sound::play_file(Path::new(&path)) {
+                log::warn!("Modlight: the custom sound could not be played: {path}");
+            }
             return;
         }
         let bytes: &[u8] = match sound {
@@ -1103,8 +1273,17 @@ impl AppState {
                 if let Some(parent) = target.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if std::fs::rename(&path, &target).is_ok() {
+                // `File.Move` also moves between volumes, by copying and deleting.
+                let moved = std::fs::rename(&path, &target).is_ok()
+                    || (std::fs::copy(&path, &target).is_ok()
+                        && std::fs::remove_file(&path).is_ok());
+                if moved {
                     destination = target;
+                } else {
+                    log::warn!(
+                        "Modlight: {} could not be moved to the screenshots folder.",
+                        path.display()
+                    );
                 }
             }
             let ctx = self.uploads.ctx.clone();

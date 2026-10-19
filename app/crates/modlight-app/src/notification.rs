@@ -103,6 +103,8 @@ pub struct Notification {
     pub file_path: String,
     pub has_image: bool,
     pub actions: Vec<ToastAction>,
+    /// Whether each of `actions`' buttons closes the notice (`DismissNotification`).
+    pub dismiss: Vec<bool>,
     pub button_size: f32,
     pub size: (f32, f32),
     pub placement: String,
@@ -128,7 +130,10 @@ pub struct Notification {
 #[derive(Clone, Debug, PartialEq)]
 pub enum NotificationOutcome {
     Close,
+    /// A click on the card: the action, and the notice closes.
     Run(ToastAction),
+    /// A button: the action, and the notice closes when the button says so.
+    Button(ToastAction, bool),
 }
 
 impl Notification {
@@ -151,6 +156,7 @@ impl Notification {
                 .iter()
                 .filter_map(|b| ToastAction::parse(b))
                 .collect(),
+            dismiss: vec![true; settings.buttons.len()],
             button_size: settings.button_size as f32,
             size: (settings.size.0 as f32, settings.size.1 as f32),
             placement: settings.placement.clone(),
@@ -195,6 +201,11 @@ impl Notification {
             file_path: config.file_path,
             has_image: image.is_some(),
             actions: config.buttons.iter().map(|b| action(b.action)).collect(),
+            dismiss: config
+                .buttons
+                .iter()
+                .map(|b| b.dismiss_notification)
+                .collect(),
             button_size: config.button_size as f32,
             size: (config.size.width as f32, config.size.height as f32),
             placement: config.placement.name().to_string(),
@@ -231,6 +242,15 @@ impl Notification {
             ToastAction::CopyUrl | ToastAction::OpenUrl => has_target,
             ToastAction::CloseNotification => true,
         }
+    }
+
+    /// Whether the first button for `action` closes the notice.
+    pub fn dismisses(&self, action: ToastAction) -> bool {
+        self.actions
+            .iter()
+            .position(|a| *a == action)
+            .and_then(|i| self.dismiss.get(i).copied())
+            .unwrap_or(true)
     }
 
     pub fn visible_actions(&self) -> Vec<ToastAction> {
@@ -492,7 +512,7 @@ impl Notification {
                 let icon = icon_galley(ui, action.icon(), icon_size, color);
                 painter.galley(shown.center() - icon.size() / 2.0, icon, color);
                 if response.on_hover_text(action.label()).clicked() {
-                    outcome = Some(NotificationOutcome::Run(action));
+                    outcome = Some(NotificationOutcome::Button(action, self.dismisses(action)));
                 }
                 bx += button_size + 4.0;
             }
@@ -678,7 +698,7 @@ impl Notification {
                     colors.background_popup().gamma_multiply(0.92),
                 );
                 if let Some(action) = self.action_row(ui, colors, &painter, footer, &actions) {
-                    outcome = Some(NotificationOutcome::Run(action));
+                    outcome = Some(NotificationOutcome::Button(action, self.dismisses(action)));
                 }
             }
         }

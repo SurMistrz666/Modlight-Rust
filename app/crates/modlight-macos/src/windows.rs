@@ -50,3 +50,24 @@ pub fn visible_frame() -> Option<(f32, f32, f32, f32)> {
 pub fn visible_frame() -> Option<(f32, f32, f32, f32)> {
     None
 }
+
+/// Whether the active app shows a window in full screen
+/// (`CaptureHelpers.IsActiveWindowFullscreen`): the presentation options the active
+/// app put into effect include full screen. `false` off the main thread.
+#[cfg(target_os = "macos")]
+pub fn active_window_fullscreen() -> bool {
+    use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
+    use objc2_foundation::MainThreadMarker;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    NSApplication::sharedApplication(mtm)
+        .currentSystemPresentationOptions()
+        .contains(NSApplicationPresentationOptions::FullScreen)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn active_window_fullscreen() -> bool {
+    false
+}
