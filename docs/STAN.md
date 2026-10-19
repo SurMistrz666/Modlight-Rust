@@ -32,7 +32,7 @@ Ostatnia aktualizacja: 2026-10-18 (koniec dnia 1, praca wstrzymana na prośbę w
 
 | Gałąź | Worktree | Co robi |
 |---|---|---|
-| `web-spa` | `_wt/web-spa` | panel WWW bez Next.js gotowy i sprawdzony na szkielecie (1145f1b, `npm run verify`: 61 testów, build, audyt paczki). Do dokończenia: sekcje 10-12 `server/docs/CONTRACT.md` (częściowo nieaktualne) i część danych testowych `meta`. Dla serwera: `layouts.root.config`, skórka właściciela strony na `<html>`, `revalidate` przy akcjach ustawiających ciasteczka, decyzje 200 kontra 307/404 i 400 kontra 500 (HANDOFF.md) |
+| `web-spa` | scalona do `main` | panel WWW gotowy (`npm run verify` zielone), CONTRACT.md poprawiony w całości (508eff7). Prace backendu z sekcji 12 kontraktu idą w gałęziach serwera |
 | `app-1` | `_wt/app-1` | aplikacja na Maca, etap 1 prawie gotowy (3e022b7, testy zielone, test bez okna przeciw wzorcowi). Brakuje: testów zrzutów dla wszystkich ekranów (jasne skórki, PL), skryptu budującego Modlight.app, `app/docs/MACOS.md` i `STATUS.md`. Nic nie było uruchomione w prawdziwym oknie |
 | `srv-auth` | `_wt/srv-auth` | konta i logowanie: dopiero fundament (7149927): kryptografia Better Auth (hasła scrypt i bcrypt, szyfrowanie 2FA, TOTP, linki weryfikacyjne), secret-box, ustawienia, rejestracja, poczta i szablony, 227 testów. Brakuje wszystkich endpointów `/api/auth/*`, tras, akcji, stron, testów zgodności i poprawek 3, 4, 7. Zapiski z badania zachowania oryginału w HANDOFF.md. Poza repo: pusta baza `modlight_srv_auth` na dev Postgres, zatrzymany stos `_scratch/srv-auth/ref` (porty 8424/55424) |
 | `srv-library` | `_wt/srv-library` | utworzona, NIE rozpoczęta: wysyłanie plików, tus, ShareX, magazyn, foldery, kosz, duplikaty, skróty |
