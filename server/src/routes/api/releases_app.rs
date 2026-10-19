@@ -20,15 +20,17 @@
 //!
 //! | Body | Reference | Rust |
 //! |---|---|---|
-//! | valid JSON object, `Content-Type` not `application/json` (e.g. `text/plain`) | processed | 415 `Content-Type must be application/json.` |
+//! | valid JSON object, `Content-Type` missing or not `application/json` (e.g. `text/plain`) | processed | 415 `Content-Type must be application/json.` |
 //! | not JSON | 400 `Expected a JSON body.` | 400 `Body must be a JSON object.` |
-//! | JSON `null` | 500 (TypeError reading `body.version`) | 400 `Body must be a JSON object.` |
+//! | JSON `null` | 500, empty body (TypeError reading `body.version`) | 400 `Body must be a JSON object.` |
 //! | JSON array, string, number | 400 `version and code are required.` | 400 `Body must be a JSON object.` |
 //! | more than 16 KiB (declared or read) | buffered whole, processed | 413 `Body must be at most 16384 bytes.` |
 //!
 //! Every refusal keeps this route's own `json()` shape: `{"message"}` with
 //! `Cache-Control: no-store`. Everything else is 1:1, including the cache
-//! headers, the 401/403 bodies and the `release.published` audit row.
+//! headers, the 401/403 bodies and the `release.published` audit row
+//! (verified against the reference by `tests/parity/releases.py`, which pins
+//! both sides of every row above).
 
 use std::net::SocketAddr;
 
