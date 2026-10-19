@@ -334,19 +334,6 @@ impl Host {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
-
-    /// Wait until the queue holds `count` items (it restores them on its own worker).
-    fn wait_for_items(&self, count: usize, seconds: u64) -> Vec<QueueItem> {
-        let deadline = Instant::now() + Duration::from_secs(seconds);
-        loop {
-            let items = self.ctx.queue.snapshot();
-            if items.len() == count {
-                return items;
-            }
-            assert!(Instant::now() < deadline, "the queue never held {count}");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------------
@@ -683,12 +670,11 @@ fn an_upload_that_cannot_reach_the_server_is_queued_and_sent_after_a_restart() {
     let saved = std::fs::read_to_string(profile.path().join("Queue.json")).unwrap();
     assert!(saved.contains(&name), "the queue is on disk");
 
-    // The app starts again with the network back: the queue sends it over tus.
+    // The app starts again with the network back: a restored item is due at once
+    // (`Revive`), and the queue sends it over tus.
     switch.set(PASS, 0);
     let host = Host::new(profile.path(), Some((&switch.origin, &me)));
     host.ctx.queue.initialize(host.runtime.handle());
-    let items = host.wait_for_items(1, 10);
-    host.ctx.queue.send_now(&items[0].id);
     let outcome = host.queue_outcome(60);
     assert!(
         outcome.succeeded,
@@ -740,12 +726,13 @@ fn a_large_queued_upload_is_cut_and_resumes_where_it_stopped_after_a_restart() {
     {
         let host = Host::new(profile.path(), Some((&switch.origin, &me)));
         host.ctx.queue.initialize(host.runtime.handle());
-        let id = host.wait_for_items(1, 10)[0].id.clone();
-        host.ctx.queue.send_now(&id);
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
-            let item = host.ctx.queue.snapshot().into_iter().next().unwrap();
-            if item.reason == QueueReason::Unreachable && item.tus_url.is_some() {
+            let item = host.ctx.queue.snapshot().into_iter().next();
+            if let Some(item) = &item
+                && item.reason == QueueReason::Unreachable
+                && item.tus_url.is_some()
+            {
                 break;
             }
             assert!(
@@ -762,8 +749,6 @@ fn a_large_queued_upload_is_cut_and_resumes_where_it_stopped_after_a_restart() {
     switch.set(PASS, 0);
     let host = Host::new(profile.path(), Some((&switch.origin, &me)));
     host.ctx.queue.initialize(host.runtime.handle());
-    let item = host.wait_for_items(1, 10).remove(0);
-    host.ctx.queue.send_now(&item.id);
     let outcome = host.queue_outcome(120);
     assert!(
         outcome.succeeded,
