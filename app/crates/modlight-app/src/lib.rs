@@ -31,3 +31,9 @@ pub mod tray;
 pub mod upload_tab;
 pub mod uploads;
 pub mod widgets;
+// Phase 3, media: components, the Download tab, the app update.
+pub mod components_window;
+pub mod download_tab;
+pub mod media_windows;
+pub mod qa_media;
+pub mod update_window;

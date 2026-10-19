@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use egui::{Align2, Color32, Rect, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Color32, Rect, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use modlight_core::capture::geometry::IRect;
 use modlight_core::capture::region::{RegionKind, RegionSession};
 use modlight_core::capture::source::even_size;
@@ -30,7 +30,7 @@ use crate::dialogs::message::MessageBox;
 use crate::region_overlay::{OverlayPurpose, RegionOverlay};
 use crate::state::AppState;
 use crate::theme::{Colors, Weight};
-use crate::widgets::{Content, Look, button_at, layout, paint_icon, trimmed};
+use crate::widgets::{Content, Look, button_at, layout, trimmed};
 
 pub const TOOLBAR_WIDTH: f32 = 461.0;
 pub const TOOLBAR_HEIGHT: f32 = 42.0;
@@ -377,8 +377,7 @@ pub fn installed_ffmpeg(profile: &std::path::Path, qa: bool) -> Option<PathBuf> 
     if qa && let Some(path) = std::env::var_os("MODLIGHT_QA_FFMPEG").map(PathBuf::from) {
         return Some(path);
     }
-    let candidate = profile.join("Tools").join("ffmpeg");
-    candidate.is_file().then_some(candidate)
+    modlight_core::components::installed_path(profile, "ffmpeg")
 }
 
 impl AppState {
@@ -404,8 +403,20 @@ impl AppState {
         if settings.capture_settings.ffmpeg_options.is_animated_image() {
             settings.capture_settings.screen_record_two_pass_encoding = true;
         }
-        // `CheckFFmpeg`.
+        // `CheckFFmpeg`: offer the component, and record when it arrives.
         if ffmpeg_path(&settings, &self.env.profile, self.env.qa).is_none() {
+            if !crate::components_window::require(
+                self,
+                "ffmpeg",
+                s::Components_FeatureRecording,
+                crate::components_window::AfterClose::Recording(
+                    output,
+                    method,
+                    Box::new(settings.clone()),
+                ),
+            ) {
+                return;
+            }
             let shown = settings
                 .capture_settings
                 .ffmpeg_options
@@ -414,7 +425,7 @@ impl AppState {
                 .unwrap_or_else(|| {
                     self.env
                         .profile
-                        .join("Tools")
+                        .join(modlight_core::components::TOOLS_FOLDER)
                         .join("ffmpeg")
                         .display()
                         .to_string()
@@ -739,26 +750,4 @@ fn unique(path: PathBuf) -> PathBuf {
             .to_string_lossy()
             .into_owned(),
     )
-}
-
-/// Text centred in a rectangle (used by the encoding notice).
-pub fn centered(ui: &Ui, rect: Rect, text: &str, colors: &Colors) {
-    let galley = layout(
-        ui,
-        trimmed(
-            text,
-            13.0,
-            Weight::SemiBold,
-            colors.text_secondary(),
-            rect.width(),
-            1,
-        ),
-    );
-    ui.painter().galley(
-        rect.center() - galley.size() / 2.0,
-        galley,
-        colors.text_secondary(),
-    );
-    let _ = Align2::CENTER_CENTER;
-    let _ = paint_icon;
 }

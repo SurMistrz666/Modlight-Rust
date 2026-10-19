@@ -19,8 +19,8 @@ workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSData", "NSString", "NSEnumerator", "NSFileManager", "NSURL", "NSError", "NSDictionary", "NSValue", "NSObject", "NSThread"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSRunningApplication", "NSScreen", "NSWindow", "NSSound", "NSEvent", "NSWorkspace", "NSPasteboard", "NSImage", "NSCursor", "NSGraphics", "libc", "NSPasteboardItem", "block2"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSData", "NSString", "NSEnumerator", "NSFileManager", "NSURL", "NSError", "NSDictionary", "NSValue", "NSObject", "NSThread", "NSHTTPCookie", "NSURLRequest", "NSDate", "NSTimer", "NSNotification", "block2"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSRunningApplication", "NSScreen", "NSWindow", "NSSound", "NSEvent", "NSWorkspace", "NSPasteboard", "NSImage", "NSCursor", "NSGraphics", "libc", "NSPasteboardItem", "block2", "NSView", "NSAppearance", "NSColor"] }
 objc2-core-foundation = { version = "0.3", features = ["CFArray", "CFDictionary", "CFString", "CFNumber", "CFData", "CFCGTypes"] }
 objc2-core-graphics = "0.3"
 objc2-core-media = "0.3"
@@ -29,3 +29,5 @@ objc2-screen-capture-kit = "0.3"
 objc2-service-management = { version = "0.3", features = ["SMAppService"] }
 dispatch2 = "0.3"
 global-hotkey = "0.9"
+# Phase 3, media: the YouTube sign-in window (WKWebView, non-persistent data store).
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKHTTPCookieStore", "WKNavigationDelegate", "WKNavigation", "objc2-core-foundation"] }
