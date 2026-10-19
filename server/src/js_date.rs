@@ -340,8 +340,12 @@ mod tests {
         assert_eq!(iso("2026-10-20T24:00:00Z").as_deref(), Some("2026-10-21T00:00:00.000Z"));
         assert_eq!(iso("+002026-10-20").as_deref(), Some("2026-10-20T00:00:00.000Z"));
         assert!(iso("2026-13-01").is_none());
-        // V8 rolls an impossible day over (checked in the reference container).
+        // V8 checks the day against 1-31, not against the month, and carries
+        // (verified on the reference: "2031-02-30" is stored as March 2).
         assert_eq!(iso("2026-02-30").as_deref(), Some("2026-03-02T00:00:00.000Z"));
+        assert_eq!(iso("2026-04-31T10:00:00Z").as_deref(), Some("2026-05-01T10:00:00.000Z"));
+        assert!(iso("2026-02-32").is_none());
+        assert!(iso("2026-00-10").is_none());
         assert!(iso("garbage").is_none());
         assert!(iso("").is_none());
     }

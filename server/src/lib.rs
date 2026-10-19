@@ -35,6 +35,7 @@ pub mod invites;
 pub mod jobs;
 pub mod js_date;
 pub mod js_json;
+pub mod js_value;
 pub mod link_info;
 pub mod mail;
 pub mod mail_settings;
