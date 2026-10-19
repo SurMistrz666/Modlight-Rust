@@ -1,0 +1,20 @@
+[package]
+name = "modlight-macos"
+description = "macOS glue for Modlight App: Keychain through /usr/bin/security, opening links, system preferences, the windows."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+modlight-core.workspace = true
+hex.workspace = true
+log.workspace = true
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSData", "NSString", "NSEnumerator", "NSFileManager", "NSURL", "NSError"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSRunningApplication", "NSScreen", "NSWindow", "NSSound", "NSEvent", "block2"] }

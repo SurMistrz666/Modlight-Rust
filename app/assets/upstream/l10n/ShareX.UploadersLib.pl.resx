@@ -1,0 +1,487 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Common_Error" xml:space="preserve">
+    <value>Błąd</value>
+  </data>
+  <data name="FileDestination_AmazonS3" xml:space="preserve">
+    <value>Amazon S3</value>
+  </data>
+  <data name="FileDestination_AzureStorage" xml:space="preserve">
+    <value>Azure Storage</value>
+  </data>
+  <data name="FileDestination_BackblazeB2" xml:space="preserve">
+    <value>Backblaze B2</value>
+  </data>
+  <data name="FileDestination_Box" xml:space="preserve">
+    <value>Box</value>
+  </data>
+  <data name="FileDestination_CustomFileUploader" xml:space="preserve">
+    <value>Własny serwis plików</value>
+  </data>
+  <data name="FileDestination_Dropbox" xml:space="preserve">
+    <value>Dropbox</value>
+  </data>
+  <data name="FileDestination_Email" xml:space="preserve">
+    <value>E-mail</value>
+  </data>
+  <data name="FileDestination_FTP" xml:space="preserve">
+    <value>FTP</value>
+  </data>
+  <data name="FileDestination_GoogleCloudStorage" xml:space="preserve">
+    <value>Google Cloud Storage</value>
+  </data>
+  <data name="FileDestination_GoogleDrive" xml:space="preserve">
+    <value>Google Drive</value>
+  </data>
+  <data name="FileDestination_Lambda" xml:space="preserve">
+    <value>Lambda</value>
+  </data>
+  <data name="FileDestination_Lithiio" xml:space="preserve">
+    <value>LobFile</value>
+  </data>
+  <data name="FileDestination_Localhostr" xml:space="preserve">
+    <value>Hostr</value>
+  </data>
+  <data name="FileDestination_MediaFire" xml:space="preserve">
+    <value>MediaFire</value>
+  </data>
+  <data name="FileDestination_OneDrive" xml:space="preserve">
+    <value>OneDrive</value>
+  </data>
+  <data name="FileDestination_OwnCloud" xml:space="preserve">
+    <value>ownCloud / Nextcloud</value>
+  </data>
+  <data name="FileDestination_Plik" xml:space="preserve">
+    <value>Plik</value>
+  </data>
+  <data name="FileDestination_Pomf" xml:space="preserve">
+    <value>Pomf</value>
+  </data>
+  <data name="FileDestination_Pushbullet" xml:space="preserve">
+    <value>Pushbullet</value>
+  </data>
+  <data name="FileDestination_Puush" xml:space="preserve">
+    <value>puush</value>
+  </data>
+  <data name="FileDestination_Seafile" xml:space="preserve">
+    <value>Seafile</value>
+  </data>
+  <data name="FileDestination_SendSpace" xml:space="preserve">
+    <value>SendSpace</value>
+  </data>
+  <data name="FileDestination_SharedFolder" xml:space="preserve">
+    <value>Udostępniony folder</value>
+  </data>
+  <data name="FileDestination_Streamable" xml:space="preserve">
+    <value>Streamable</value>
+  </data>
+  <data name="FileDestination_Sul" xml:space="preserve">
+    <value>s-ul</value>
+  </data>
+  <data name="FileDestination_Transfersh" xml:space="preserve">
+    <value>transfer.sh</value>
+  </data>
+  <data name="FileDestination_Uguu" xml:space="preserve">
+    <value>Uguu</value>
+  </data>
+  <data name="FileDestination_Vault_ooo" xml:space="preserve">
+    <value>Vault.ooo</value>
+  </data>
+  <data name="FileDestination_YouTube" xml:space="preserve">
+    <value>YouTube</value>
+  </data>
+  <data name="ImageDestination_Chevereto" xml:space="preserve">
+    <value>Chevereto</value>
+  </data>
+  <data name="ImageDestination_CustomImageUploader" xml:space="preserve">
+    <value>Własny serwis obrazów</value>
+  </data>
+  <data name="ImageDestination_FileUploader" xml:space="preserve">
+    <value>Serwis plików</value>
+  </data>
+  <data name="ImageDestination_Flickr" xml:space="preserve">
+    <value>Flickr</value>
+  </data>
+  <data name="ImageDestination_ImageShack" xml:space="preserve">
+    <value>ImageShack</value>
+  </data>
+  <data name="ImageDestination_Imgur" xml:space="preserve">
+    <value>Imgur</value>
+  </data>
+  <data name="ImageDestination_Photobucket" xml:space="preserve">
+    <value>Photobucket</value>
+  </data>
+  <data name="ImageDestination_Vgyme" xml:space="preserve">
+    <value>vgy.me</value>
+  </data>
+  <data name="LinkFormatEnum_ForumImage" xml:space="preserve">
+    <value>Pełny obraz dla forów</value>
+  </data>
+  <data name="LinkFormatEnum_ForumLinkedImage" xml:space="preserve">
+    <value>Miniatura z łączem dla forów</value>
+  </data>
+  <data name="LinkFormatEnum_HTMLImage" xml:space="preserve">
+    <value>Pełny obraz jako HTML</value>
+  </data>
+  <data name="LinkFormatEnum_HTMLLinkedImage" xml:space="preserve">
+    <value>Miniatura z łączem jako HTML</value>
+  </data>
+  <data name="LinkFormatEnum_LocalFilePath" xml:space="preserve">
+    <value>Ścieżka pliku lokalnego</value>
+  </data>
+  <data name="LinkFormatEnum_LocalFilePathUri" xml:space="preserve">
+    <value>Ścieżka pliku lokalnego jako URI</value>
+  </data>
+  <data name="LinkFormatEnum_ShortenedURL" xml:space="preserve">
+    <value>Skrócony link</value>
+  </data>
+  <data name="LinkFormatEnum_ThumbnailURL" xml:space="preserve">
+    <value>Miniatura</value>
+  </data>
+  <data name="LinkFormatEnum_URL" xml:space="preserve">
+    <value>Pełny adres URL</value>
+  </data>
+  <data name="LinkFormatEnum_WikiImage" xml:space="preserve">
+    <value>Pełny obraz dla Wiki</value>
+  </data>
+  <data name="LinkFormatEnum_WikiLinkedImage" xml:space="preserve">
+    <value>Miniatura z łączem dla Wiki</value>
+  </data>
+  <data name="Modlight_Account_disabled" xml:space="preserve">
+    <value>To konto Modlight jest wyłączone. Poproś administratora o jego włączenie.</value>
+  </data>
+  <data name="Modlight_Address_taken" xml:space="preserve">
+    <value>Ten adres jest już zajęty w Modlight. Wybierz inny.</value>
+  </data>
+  <data name="Modlight_File_too_large" xml:space="preserve">
+    <value>Modlight odrzucił plik jako zbyt duży.</value>
+  </data>
+  <data name="Modlight_Invalid_response" xml:space="preserve">
+    <value>Modlight odpowiedział czymś, czego ta aplikacja nie potrafi odczytać.</value>
+  </data>
+  <data name="Modlight_Link_code_too_long" xml:space="preserve">
+    <value>Ta nazwa jest za długa po dodaniu Twojego tagu. Wybierz krótszą.</value>
+  </data>
+  <data name="Modlight_Link_invalid_code" xml:space="preserve">
+    <value>Modlight nie może użyć tej nazwy dla linku. Spróbuj liter i cyfr.</value>
+  </data>
+  <data name="Modlight_Link_invalid_url" xml:space="preserve">
+    <value>Modlight nie przyjął tego adresu. Krótki link musi prowadzić do adresu http lub https.</value>
+  </data>
+  <data name="Modlight_Link_no_tag" xml:space="preserve">
+    <value>To konto nie ma jeszcze tagu. Ustaw go najpierw w profilu na stronie.</value>
+  </data>
+  <data name="Modlight_Link_root_not_allowed" xml:space="preserve">
+    <value>Tylko administrator może zająć nazwę w katalogu głównym skracarki. Zostaw zaznaczone „Dodaj mój tag do linku”.</value>
+  </data>
+  <data name="Modlight_Not_signed_in" xml:space="preserve">
+    <value>Brak zalogowania w Modlight. Zaloguj się przed wysyłaniem.</value>
+  </data>
+  <data name="Modlight_Out_of_space" xml:space="preserve">
+    <value>W Modlight nie ma miejsca na ten plik. Ponowna próba nic nie da: zwolnij miejsce albo poproś administratora o zwiększenie limitu.</value>
+  </data>
+  <data name="Modlight_Request_rejected" xml:space="preserve">
+    <value>Modlight odrzucił żądanie.</value>
+  </data>
+  <data name="Modlight_Server_refused" xml:space="preserve">
+    <value>Modlight odrzucił żądanie. ({0})</value>
+  </data>
+  <data name="Modlight_Token_not_allowed" xml:space="preserve">
+    <value>Token tej aplikacji nie ma uprawnień do tej operacji. Sprawdź zakres tokenu w panelu.</value>
+  </data>
+  <data name="Modlight_Token_not_recognized" xml:space="preserve">
+    <value>Modlight nie rozpoznał tokenu tej aplikacji. Zaloguj się ponownie.</value>
+  </data>
+  <data name="Modlight_Too_many_requests" xml:space="preserve">
+    <value>Zbyt wiele żądań do Modlight. Odczekaj chwilę i spróbuj ponownie.</value>
+  </data>
+  <data name="ResponseWindow_Copy_deletion_URL" xml:space="preserve">
+    <value>Kopiuj adres URL usuwania</value>
+  </data>
+  <data name="ResponseWindow_Copy_response" xml:space="preserve">
+    <value>Kopiuj odpowiedź</value>
+  </data>
+  <data name="ResponseWindow_Copy_response_info" xml:space="preserve">
+    <value>Kopiuj informacje o odpowiedzi</value>
+  </data>
+  <data name="ResponseWindow_Copy_shortened_URL" xml:space="preserve">
+    <value>Kopiuj skrócony adres URL</value>
+  </data>
+  <data name="ResponseWindow_Copy_thumbnail_URL" xml:space="preserve">
+    <value>Kopiuj adres URL miniatury</value>
+  </data>
+  <data name="ResponseWindow_Copy_URL" xml:space="preserve">
+    <value>Kopiuj adres URL</value>
+  </data>
+  <data name="ResponseWindow_Deletion_URL" xml:space="preserve">
+    <value>Link usuwania</value>
+  </data>
+  <data name="ResponseWindow_Headers" xml:space="preserve">
+    <value>Nagłówki</value>
+  </data>
+  <data name="ResponseWindow_Inspect_the_URLs_and_response_returned_by_the_destination" xml:space="preserve">
+    <value>Sprawdź adresy URL i odpowiedź zwrócone przez miejsce docelowe.</value>
+  </data>
+  <data name="ResponseWindow_JSON_format" xml:space="preserve">
+    <value>Formatuj JSON</value>
+  </data>
+  <data name="ResponseWindow_JSON_formatting_failed" xml:space="preserve">
+    <value>Formatowanie nie powiodło się.</value>
+  </data>
+  <data name="ResponseWindow_No_response_information_is_available" xml:space="preserve">
+    <value>Informacje o odpowiedzi są niedostępne.</value>
+  </data>
+  <data name="ResponseWindow_No_result_details_are_available" xml:space="preserve">
+    <value>Szczegóły wyniku są niedostępne.</value>
+  </data>
+  <data name="ResponseWindow_Open_response_URL" xml:space="preserve">
+    <value>Otwórz adres URL odpowiedzi</value>
+  </data>
+  <data name="ResponseWindow_Open_URL" xml:space="preserve">
+    <value>Otwórz link</value>
+  </data>
+  <data name="ResponseWindow_Response_info" xml:space="preserve">
+    <value>Informacje o odpowiedzi</value>
+  </data>
+  <data name="ResponseWindow_Response_text" xml:space="preserve">
+    <value>Tekst odpowiedzi</value>
+  </data>
+  <data name="ResponseWindow_Response_URL" xml:space="preserve">
+    <value>Link odpowiedzi</value>
+  </data>
+  <data name="ResponseWindow_Result" xml:space="preserve">
+    <value>Wynik</value>
+  </data>
+  <data name="ResponseWindow_ShareX_Response" xml:space="preserve">
+    <value>Modlight - Odpowiedź</value>
+  </data>
+  <data name="ResponseWindow_Shortened_URL" xml:space="preserve">
+    <value>Skrócony link</value>
+  </data>
+  <data name="ResponseWindow_Status_code" xml:space="preserve">
+    <value>Kod statusu</value>
+  </data>
+  <data name="ResponseWindow_The_upload_completed_with_an_error" xml:space="preserve">
+    <value>Przesyłanie zakończyło się błędem.</value>
+  </data>
+  <data name="ResponseWindow_Thumbnail_URL" xml:space="preserve">
+    <value>Link miniatury</value>
+  </data>
+  <data name="ResponseWindow_Upload_response" xml:space="preserve">
+    <value>Odpowiedź przesyłania</value>
+  </data>
+  <data name="ResponseWindow_URL" xml:space="preserve">
+    <value>URL</value>
+  </data>
+  <data name="ResponseWindow_XML_format" xml:space="preserve">
+    <value>Formatuj XML</value>
+  </data>
+  <data name="ResponseWindow_XML_formatting_failed" xml:space="preserve">
+    <value>Formatowanie nie powiodło się.</value>
+  </data>
+  <data name="TextDestination_CustomTextUploader" xml:space="preserve">
+    <value>Własny serwis tekstu</value>
+  </data>
+  <data name="TextDestination_FileUploader" xml:space="preserve">
+    <value>Serwis plików</value>
+  </data>
+  <data name="TextDestination_Gist" xml:space="preserve">
+    <value>GitHub Gist</value>
+  </data>
+  <data name="TextDestination_Hastebin" xml:space="preserve">
+    <value>Hastebin</value>
+  </data>
+  <data name="TextDestination_OneTimeSecret" xml:space="preserve">
+    <value>OneTimeSecret</value>
+  </data>
+  <data name="TextDestination_Paste_ee" xml:space="preserve">
+    <value>Paste.ee</value>
+  </data>
+  <data name="TextDestination_Paste2" xml:space="preserve">
+    <value>Paste2</value>
+  </data>
+  <data name="TextDestination_Pastebin" xml:space="preserve">
+    <value>Pastebin</value>
+  </data>
+  <data name="TextDestination_Pastie" xml:space="preserve">
+    <value>Pastie</value>
+  </data>
+  <data name="TextDestination_PrivateBin" xml:space="preserve">
+    <value>PrivateBin</value>
+  </data>
+  <data name="TextDestination_Slexy" xml:space="preserve">
+    <value>Slexy</value>
+  </data>
+  <data name="TextDestination_Upaste" xml:space="preserve">
+    <value>uPaste</value>
+  </data>
+  <data name="TextUploadWindow_Cancel" xml:space="preserve">
+    <value>Anuluj</value>
+  </data>
+  <data name="TextUploadWindow_Character_count_plural" xml:space="preserve">
+    <value>Liczba znaków: {0:N0}</value>
+  </data>
+  <data name="TextUploadWindow_Character_count_singular" xml:space="preserve">
+    <value>{0:N0} znak</value>
+  </data>
+  <data name="TextUploadWindow_Enter_or_paste_the_text_you_want_to_upload" xml:space="preserve">
+    <value>Wprowadź lub wklej tekst do przesłania.</value>
+  </data>
+  <data name="TextUploadWindow_ShareX_Text_upload" xml:space="preserve">
+    <value>Modlight - Przesyłanie tekstu</value>
+  </data>
+  <data name="TextUploadWindow_Text_upload" xml:space="preserve">
+    <value>Przesyłanie tekstu</value>
+  </data>
+  <data name="TextUploadWindow_Upload" xml:space="preserve">
+    <value>Prześlij</value>
+  </data>
+  <data name="Uploader_Error_message" xml:space="preserve">
+    <value>Komunikat o błędzie:</value>
+  </data>
+  <data name="Uploader_Request_URL" xml:space="preserve">
+    <value>Adres URL żądania:</value>
+  </data>
+  <data name="Uploader_Stack_trace" xml:space="preserve">
+    <value>Ślad stosu:</value>
+  </data>
+  <data name="URLSharingServices_BingVisualSearch" xml:space="preserve">
+    <value>Wyszukiwanie wizualne Bing</value>
+  </data>
+  <data name="URLSharingServices_CustomURLSharingService" xml:space="preserve">
+    <value>Własna usługa udostępniania linku</value>
+  </data>
+  <data name="URLSharingServices_Delicious" xml:space="preserve">
+    <value>Delicious</value>
+  </data>
+  <data name="URLSharingServices_Email" xml:space="preserve">
+    <value>E-mail</value>
+  </data>
+  <data name="URLSharingServices_Facebook" xml:space="preserve">
+    <value>Facebook</value>
+  </data>
+  <data name="URLSharingServices_GoogleImageSearch" xml:space="preserve">
+    <value>Wyszukiwanie obrazów Google</value>
+  </data>
+  <data name="URLSharingServices_LinkedIn" xml:space="preserve">
+    <value>LinkedIn</value>
+  </data>
+  <data name="URLSharingServices_Pinterest" xml:space="preserve">
+    <value>Pinterest</value>
+  </data>
+  <data name="URLSharingServices_Pushbullet" xml:space="preserve">
+    <value>Pushbullet</value>
+  </data>
+  <data name="URLSharingServices_Reddit" xml:space="preserve">
+    <value>Reddit</value>
+  </data>
+  <data name="URLSharingServices_StumbleUpon" xml:space="preserve">
+    <value>StumbleUpon</value>
+  </data>
+  <data name="URLSharingServices_Tumblr" xml:space="preserve">
+    <value>Tumblr</value>
+  </data>
+  <data name="URLSharingServices_VK" xml:space="preserve">
+    <value>VK</value>
+  </data>
+  <data name="UrlShortenerType_BITLY" xml:space="preserve">
+    <value>bit.ly</value>
+  </data>
+  <data name="UrlShortenerType_CustomURLShortener" xml:space="preserve">
+    <value>Własny skracacz linku</value>
+  </data>
+  <data name="UrlShortenerType_FirebaseDynamicLinks" xml:space="preserve">
+    <value>Linki dynamiczne Firebase</value>
+  </data>
+  <data name="UrlShortenerType_ISGD" xml:space="preserve">
+    <value>is.gd</value>
+  </data>
+  <data name="UrlShortenerType_Kutt" xml:space="preserve">
+    <value>Kutt</value>
+  </data>
+  <data name="UrlShortenerType_Polr" xml:space="preserve">
+    <value>Polr</value>
+  </data>
+  <data name="UrlShortenerType_QRnet" xml:space="preserve">
+    <value>qr.net</value>
+  </data>
+  <data name="UrlShortenerType_TINYURL" xml:space="preserve">
+    <value>tinyurl.com</value>
+  </data>
+  <data name="UrlShortenerType_TURL" xml:space="preserve">
+    <value>turl.ca</value>
+  </data>
+  <data name="UrlShortenerType_TwoGP" xml:space="preserve">
+    <value>2.gp</value>
+  </data>
+  <data name="UrlShortenerType_VGD" xml:space="preserve">
+    <value>v.gd</value>
+  </data>
+  <data name="UrlShortenerType_VURL" xml:space="preserve">
+    <value>vurl.com</value>
+  </data>
+  <data name="UrlShortenerType_YOURLS" xml:space="preserve">
+    <value>yourls.org</value>
+  </data>
+  <data name="UrlShortenerType_ZeroWidthShortener" xml:space="preserve">
+    <value>Skracacz z niewidocznymi znakami</value>
+  </data>
+</root>
