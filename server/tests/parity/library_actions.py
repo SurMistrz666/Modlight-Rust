@@ -3,12 +3,22 @@ shortlink-unlock,pastes}.ts and the storage half of app/actions/admin.ts,
 called through Next's own protocol on the reference and /_rpc on Rust, on
 identical state seeded into both databases (and both storages).
 
+    # every section but `instance`, against the shared scratch reference (defaults shown)
     PARITY_REF=http://localhost:8441 PARITY_RUST=http://localhost:8445 \\
       python3 server/tests/parity/library_actions.py \\
         --ref-app modlight-srvlib-ref-app-1 --ref-db modlight-srvlib-ref-postgres-1:modlight \\
         --ref-env _scratch/srv-library/ref/.env \\
         --rust-db modlight-devdb-postgres-1:modlight_srv_library_actions --rust-env _scratch/srv-library/rust.env \\
         --rust-storage _scratch/srv-library/actions/data/storage
+
+    # everything, `instance` included, against a private reference stack
+    # (_scratch/srv-library/actions/ref/docker-compose.yml, app on 8446)
+    PARITY_REF=http://localhost:8446 PARITY_RUST=http://localhost:8445 \\
+      python3 server/tests/parity/library_actions.py --ref-app modlight-srvlib-actions-ref-app-1 \\
+        --ref-db modlight-srvlib-actions-ref-postgres-1:modlight --ref-env _scratch/srv-library/actions/ref/.env
+
+Run from the main checkout (the default paths are relative to it). The Rust
+server runs with TZ=UTC like the reference container (local-time date strings).
 
 Sections (`--only a,b`): uploads, folders, duplicates, shortlinks, unlock,
 pastes, admin (account deletion and the per-user admin reads), instance (the
