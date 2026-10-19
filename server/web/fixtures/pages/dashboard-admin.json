@@ -1,0 +1,123 @@
+{
+  "url": "/dashboard/admin",
+  "payload": {
+    "route": "/dashboard/admin",
+    "params": {},
+    "layouts": "$app",
+    "props": {
+      "session": {
+        "user": {
+          "id": "u1",
+          "email": "alicja@example.com"
+        }
+      },
+      "regEnabled": false,
+      "keyState": "unset",
+      "mail": {
+        "source": "panel",
+        "host": "smtp.example.com",
+        "port": 587,
+        "security": "starttls",
+        "user": "mailer",
+        "from": "no-reply@example.com",
+        "fromName": "",
+        "ready": true,
+        "passwordState": "set",
+        "verificationRequired": false,
+        "envAvailable": false
+      },
+      "stats": {
+        "totalFiles": 42,
+        "totalStorage": "700 MB",
+        "totalViews": 321,
+        "users": 3,
+        "admins": 1,
+        "banned": 0,
+        "orphanFiles": 2,
+        "orphanStorage": "12 MB"
+      },
+      "disk": {
+        "driver": "local",
+        "liveFiles": 42,
+        "liveBytes": 734003200,
+        "trashedFiles": 3,
+        "trashedBytes": 10485760,
+        "disk": {
+          "totalBytes": 500107862016,
+          "freeBytes": 120107862016,
+          "usedBytes": 380000000000
+        },
+        "minFreeBytes": 10737418240
+      },
+      "diskInsights": {
+        "driver": "local",
+        "local": true,
+        "kinds": [
+          {
+            "kind": "image",
+            "files": 25,
+            "bytes": 300000000
+          },
+          {
+            "kind": "video",
+            "files": 4,
+            "bytes": 400000000
+          }
+        ],
+        "kindBytes": 700000000,
+        "accounts": [
+          {
+            "id": "u1",
+            "name": "Alicja",
+            "email": "alicja@example.com",
+            "tag": "alicja",
+            "orphaned": false,
+            "rest": false,
+            "accounts": 1,
+            "liveFiles": 40,
+            "liveBytes": 700000000,
+            "trashedFiles": 3,
+            "trashedBytes": 10485760
+          }
+        ],
+        "biggest": [
+          {
+            "id": "f1",
+            "code": "big-file",
+            "filename": "movie.mp4",
+            "ext": "mp4",
+            "mimeType": "video/mp4",
+            "size": 300000000,
+            "ownerId": "u1",
+            "ownerTag": "alicja",
+            "ownerName": "Alicja",
+            "createdAt": "2026-09-01T10:00:00.000Z",
+            "views": 12,
+            "lastAccessedAt": "2026-10-15T10:00:00.000Z"
+          }
+        ],
+        "cold": [],
+        "coldTotals": {
+          "files": 0,
+          "bytes": 0,
+          "days": 180
+        },
+        "trash": {
+          "files": 3,
+          "bytes": 10485760,
+          "oldest": "2026-10-01T10:00:00.000Z",
+          "dueSoonFiles": 1,
+          "dueSoonBytes": 1048576,
+          "overdueFiles": 0,
+          "overdueBytes": 0
+        }
+      },
+      "defaultQuota": null
+    },
+    "meta": {
+      "title": "Admin - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

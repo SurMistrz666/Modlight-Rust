@@ -1,0 +1,49 @@
+{
+  "url": "/a/alicja/screenshots",
+  "payload": {
+    "route": "/a/[userCode]/[slug]",
+    "params": {
+      "userCode": "alicja",
+      "slug": "screenshots"
+    },
+    "layouts": "$root",
+    "props": {
+      "album": {
+        "name": "Screenshots",
+        "slug": "screenshots"
+      },
+      "owner": {
+        "name": "Alicja",
+        "theme": "paper"
+      },
+      "ownerCode": "alicja",
+      "ownerBase": "https://files.example.com",
+      "background": null,
+      "tiles": [
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000001",
+          "code": "brisk-otter-1",
+          "ext": "png",
+          "filename": "screenshot-1.png",
+          "mimeType": "image/png",
+          "size": 123456,
+          "blurhash": null
+        },
+        {
+          "id": "aaaaaaaa-0000-4000-8000-000000000002",
+          "code": "brisk-otter-2",
+          "ext": "mp4",
+          "filename": "clip.mp4",
+          "mimeType": "video/mp4",
+          "size": 246912,
+          "blurhash": null
+        }
+      ]
+    },
+    "meta": {
+      "title": "Screenshots - Modlight",
+      "description": "2 items · an album by Alicja",
+      "applicationName": "Modlight"
+    }
+  }
+}

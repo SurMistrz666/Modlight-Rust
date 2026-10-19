@@ -1,0 +1,14 @@
+{
+  "url": "/2fa?next=%2Fdashboard%2Fprofile",
+  "payload": {
+    "route": "/2fa",
+    "params": {},
+    "layouts": "$auth",
+    "props": {},
+    "meta": {
+      "title": "Two-factor authentication - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

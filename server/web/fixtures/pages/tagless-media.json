@@ -1,0 +1,48 @@
+{
+  "url": "/brisk-otter-1.png",
+  "payload": {
+    "route": "/[userCode]",
+    "params": {
+      "userCode": "brisk-otter-1.png"
+    },
+    "layouts": "$root",
+    "props": {
+      "ownerTheme": "synthwave",
+      "ownerBackground": null,
+      "view": "media",
+      "viewer": {
+        "filename": "screenshot-1.png",
+        "mimeType": "image/png",
+        "ext": "png",
+        "size": 123456,
+        "views": 7,
+        "downloads": 1,
+        "createdAt": {
+          "$date": "2026-10-11T12:00:00.000Z"
+        },
+        "width": 1920,
+        "height": 1080,
+        "frames": null,
+        "publicUrl": "https://files.example.com/alicja/brisk-otter-1.png",
+        "rawUrl": "https://files.example.com/alicja/brisk-otter-1/raw.png",
+        "downloadUrl": "https://files.example.com/alicja/brisk-otter-1/download",
+        "copyRaw": false,
+        "canEncode": false,
+        "signInUrl": null,
+        "textContent": null,
+        "textUnavailable": null,
+        "renderPath": null,
+        "timelineTrack": null,
+        "posterUrl": null,
+        "playback": null,
+        "playbackRepair": null
+      }
+    },
+    "meta": {
+      "title": "screenshot-1.png · example",
+      "description": null,
+      "applicationName": null,
+      "robots": null
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "url": "/s/promo/unlock",
+  "payload": {
+    "route": "/s/[code]/unlock",
+    "params": {
+      "code": "promo"
+    },
+    "layouts": "$root",
+    "props": {
+      "code": "promo",
+      "ownerTheme": "terminal",
+      "background": null
+    },
+    "meta": {
+      "title": "Protected link - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight",
+      "robots": "noindex, nofollow"
+    }
+  }
+}
