@@ -66,6 +66,13 @@ pub fn router(state: &AppState) -> Router {
         .merge(crate::routes::api::health::routes()) // app/api/health/route.ts
         .merge(crate::auth::api::routes()) // app/api/auth/[...all]/route.ts
         .merge(crate::routes::api::uploads::routes()) // app/api/uploads/route.ts
+        .merge(crate::routes::api::uploads_check::routes()) // app/api/uploads/check/route.ts
+        .merge(crate::routes::api::folders::routes()) // app/api/folders/route.ts
+        .merge(crate::routes::api::duplicates::routes()) // app/api/duplicates/route.ts
+        .merge(crate::routes::api::shortlinks::routes()) // app/api/shortlinks/route.ts
+        .merge(crate::routes::api::admin_disk::routes()) // app/api/admin/disk/route.ts
+        .merge(crate::routes::s_code::routes()) // app/s/[code]/route.ts
+        .merge(crate::routes::s_code_name::routes()) // app/s/[code]/[name]/route.ts
         // ── Frameworks ──
         .merge(crate::rpc::routes())
         .merge(crate::pages::routes())
