@@ -158,10 +158,61 @@ def cookie_list(res):
     return out
 
 
+def rejects_nested(res):
+    """Does the action's result reference an error row? React serialises a
+    value it cannot encode (a function, say) as its own `E` row and the
+    result row points at it; the client then rejects the whole call (its
+    `initializeModelChunk` rethrows the referenced chunk's error), which is
+    what the caller sees. parity.next_action_envelope only looks at the root
+    row, so it would report `ok` with a null in place of the bad value."""
+    if "text/x-component" not in (res.header("content-type") or ""):
+        return False
+    rows, errors = {}, set()
+    for line in res.text().split("\n"):
+        key, sep, payload = line.partition(":")
+        if not sep:
+            continue
+        if payload.startswith("E"):
+            errors.add(key)
+            continue
+        try:
+            rows[key] = json.loads(payload)
+        except ValueError:
+            pass
+
+    def refers(v, seen):
+        if isinstance(v, str):
+            m = re.match(r"^\$@?([0-9a-f]+)$", v)
+            if not m:
+                return False
+            k = m.group(1)
+            if k in errors:
+                return True
+            if k in rows and k not in seen:
+                seen.add(k)
+                return refers(rows[k], seen)
+            return False
+        if isinstance(v, list):
+            return any(refers(x, seen) for x in v)
+        if isinstance(v, dict):
+            return any(refers(x, seen) for x in v.values())
+        return False
+
+    head = rows.get("0")
+    return isinstance(head, dict) and refers(head.get("a"), set())
+
+
+def ref_envelope(res):
+    env = parity.next_action_envelope(res)
+    if "ok" in env and rejects_nested(res):
+        env = dict([("error", parity.MASKED)] + [(k, v) for k, v in env.items() if k == "revalidate"])
+    return env
+
+
 def call(pair, export, *args):
     a = acts.call_ref(pair.ref, "account", export, list(args))
     b = acts.call_rust(pair.rust, "account", export, list(args))
-    ea = unorigin(parity.normalize_json(parity.next_action_envelope(a)), run.ref)
+    ea = unorigin(parity.normalize_json(ref_envelope(a)), run.ref)
     eb = unorigin(parity.normalize_json(parity.rpc_envelope(b)), run.rust)
     ea["set-cookie"] = cookie_list(a)
     eb["set-cookie"] = cookie_list(b)
@@ -484,7 +535,7 @@ def check_reads():
     # listAdminUsers lists every account in the database: compare this run's.
     a = acts.call_ref(admin.ref, "account", "listAdminUsers", [])
     b = acts.call_rust(admin.rust, "account", "listAdminUsers", [])
-    ea, eb = parity.next_action_envelope(a), parity.rpc_envelope(b)
+    ea, eb = ref_envelope(a), parity.rpc_envelope(b)
     mine = lambda env: [r for r in (env.get("ok") or []) if r["id"].endswith("_" + R)]  # noqa: E731
     run.compare("listAdminUsers (this run's rows, in order)", parity.normalize_json(mine(ea)),
                 parity.normalize_json(mine(eb)))
@@ -658,7 +709,7 @@ def check_domain():
     a = acts.call_ref(user.ref, "account", "updatePreferredDomain", [run.ref + "/"])
     b = acts.call_rust(user.rust, "account", "updatePreferredDomain", [run.rust + "/"])
     run.compare("updatePreferredDomain: the app's own origin",
-                unorigin(parity.normalize_json(parity.next_action_envelope(a)), run.ref),
+                unorigin(parity.normalize_json(ref_envelope(a)), run.ref),
                 unorigin(parity.normalize_json(parity.rpc_envelope(b)), run.rust))
     check(user, "updatePreferredDomain: back to h", "updatePreferredDomain", "https://H.example.com")
 
