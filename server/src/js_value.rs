@@ -1,4 +1,4 @@
-//! JavaScript value semantics for raw action arguments.
+//! JavaScript value semantics for raw action arguments (tagged JSON).
 //!
 //! Upstream actions receive whatever React decoded from the request and use
 //! it with plain JavaScript operators (`if (id)`, `Number(x)`, `x ?? y`); there

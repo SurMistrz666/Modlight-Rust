@@ -8,7 +8,7 @@
 
 use serde_json::{Value, json};
 
-use crate::actions::js_value::{js_string, truthy};
+use crate::js_value::{js_string, truthy};
 use crate::password::{
     UnlockScope, check_rate_limit_default, mint_unlock_token, reset_rate_limit, unlock_cookie, unlock_cookie_name,
     verify_password,

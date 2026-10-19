@@ -36,6 +36,15 @@ fn local_to_utc(naive: NaiveDateTime) -> Option<JsDate> {
     }
 }
 
+/// `MakeDay`: V8 checks each field on its own (month 1-12, day 1-31), not
+/// against the month, and lets the arithmetic carry: "2031-02-30" is March 2.
+fn make_day(year: i32, month: u32, day: u32) -> Option<NaiveDate> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    NaiveDate::from_ymd_opt(year, month, 1)?.checked_add_days(chrono::Days::new(u64::from(day - 1)))
+}
+
 fn digits(s: &str, n: usize) -> Option<u32> {
     if s.len() == n && s.bytes().all(|b| b.is_ascii_digit()) { s.parse().ok() } else { None }
 }
@@ -63,7 +72,7 @@ fn parse_iso_format(s: &str) -> Option<JsDate> {
         r if r.len() == 6 && r.starts_with('-') && &r[3..4] == "-" => (digits(&r[1..3], 2)?, digits(&r[4..], 2)?),
         _ => return None,
     };
-    let date = NaiveDate::from_ymd_opt(year, month, day)?;
+    let date = make_day(year, month, day)?;
     let Some(time) = time_part else {
         // Date-only forms are UTC.
         return Some(JsDate(date.and_hms_opt(0, 0, 0)?.and_utc()));
@@ -257,7 +266,7 @@ fn parse_legacy(s: &str) -> Option<JsDate> {
             });
         }
     }
-    let date = NaiveDate::from_ymd_opt(year?, month?, day.unwrap_or(1))?;
+    let date = make_day(year?, month?, day.unwrap_or(1))?;
     let naive = date.and_time(time.unwrap_or(NaiveTime::MIN));
     match offset {
         Some(secs) => {
@@ -319,7 +328,12 @@ mod tests {
         assert_eq!(iso("2026-10-20T24:00:00Z").as_deref(), Some("2026-10-21T00:00:00.000Z"));
         assert_eq!(iso("+002026-10-20").as_deref(), Some("2026-10-20T00:00:00.000Z"));
         assert!(iso("2026-13-01").is_none());
-        assert!(iso("2026-02-30").is_none());
+        // V8 checks the day against 1-31, not against the month, and carries
+        // (verified on the reference: "2031-02-30" is stored as March 2).
+        assert_eq!(iso("2026-02-30").as_deref(), Some("2026-03-02T00:00:00.000Z"));
+        assert_eq!(iso("2026-04-31T10:00:00Z").as_deref(), Some("2026-05-01T10:00:00.000Z"));
+        assert!(iso("2026-02-32").is_none());
+        assert!(iso("2026-00-10").is_none());
         assert!(iso("garbage").is_none());
         assert!(iso("").is_none());
     }
