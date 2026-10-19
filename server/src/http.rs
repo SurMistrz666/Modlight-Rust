@@ -154,9 +154,6 @@ fn permanent_redirect(location: &str) -> Response {
     res
 }
 
-/// Next's order for the `Allow` header of a route handler.
-const METHOD_ORDER: &[&str] = &["GET", "HEAD", "OPTIONS", "POST", "PUT", "DELETE", "PATCH"];
-
 /// 405 handling as Next's app routes do it.
 fn fix_method_not_allowed(method: &Method, mut res: Response) -> Response {
     if res.status() != StatusCode::METHOD_NOT_ALLOWED {
@@ -174,7 +171,8 @@ fn fix_method_not_allowed(method: &Method, mut res: Response) -> Response {
         .filter(|m| !m.is_empty())
         .collect();
     methods.push("OPTIONS".into());
-    methods.sort_by_key(|m| METHOD_ORDER.iter().position(|o| o == m).unwrap_or(usize::MAX));
+    // `allow.sort().join(", ")` in Next's auto-implement-methods: alphabetical.
+    methods.sort();
     methods.dedup();
     let mut ok = StatusCode::NO_CONTENT.into_response();
     if let Ok(v) = HeaderValue::from_str(&methods.join(", ")) {
