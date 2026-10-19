@@ -1,0 +1,21 @@
+{
+  "url": "/authorize",
+  "payload": {
+    "route": "/authorize",
+    "params": {},
+    "layouts": "$auth",
+    "props": {
+      "parsed": {
+        "ok": false,
+        "reason": "invalid-port"
+      },
+      "session": null
+    },
+    "meta": {
+      "title": "Connect a desktop app - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight",
+      "robots": "noindex, nofollow"
+    }
+  }
+}

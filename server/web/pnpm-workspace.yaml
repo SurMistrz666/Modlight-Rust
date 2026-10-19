@@ -1,0 +1,10 @@
+# Same overrides as upstream (pnpm-workspace.yaml there), so the shared packages
+# resolve to the versions upstream's pnpm-lock.yaml pins. No package here needs a
+# build script: native parts (rolldown, lightningcss, tailwind oxide) ship as
+# prebuilt optional dependencies.
+overrides:
+  kysely: ^0.28.17
+
+# better-auth lists next, drizzle, pg, vue, svelte... as optional peers; the
+# browser bundle needs none of them, so they must not be installed here.
+autoInstallPeers: false

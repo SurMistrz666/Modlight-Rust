@@ -1,0 +1,13 @@
+{
+  "url": "/nothing/here",
+  "payload": {
+    "notFound": true,
+    "layouts": "$root",
+    "meta": {
+      "title": "Modlight",
+      "robots": "noindex",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

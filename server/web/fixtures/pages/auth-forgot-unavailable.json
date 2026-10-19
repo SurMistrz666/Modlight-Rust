@@ -1,0 +1,16 @@
+{
+  "url": "/forgot",
+  "payload": {
+    "route": "/forgot",
+    "params": {},
+    "layouts": "$auth",
+    "props": {
+      "mailReady": false
+    },
+    "meta": {
+      "title": "Forgot your password? - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "url": "/dashboard/folders",
+  "payload": {
+    "route": "/dashboard/folders",
+    "params": {},
+    "layouts": "$app",
+    "props": {
+      "current": null,
+      "breadcrumb": [],
+      "children": [
+        {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "name": "Screenshots",
+          "slug": "screenshots",
+          "isPublic": true,
+          "directCount": 12,
+          "fileCount": 20,
+          "size": 52428800,
+          "subfolderCount": 1,
+          "descendantCount": 1
+        },
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "name": "Docs",
+          "slug": "docs",
+          "isPublic": false,
+          "directCount": 3,
+          "fileCount": 3,
+          "size": 1048576,
+          "subfolderCount": 0,
+          "descendantCount": 0
+        }
+      ],
+      "totalFolders": 3,
+      "unsorted": {
+        "count": 19,
+        "size": 9437184
+      },
+      "userCode": "alicja"
+    },
+    "meta": {
+      "title": "Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}
