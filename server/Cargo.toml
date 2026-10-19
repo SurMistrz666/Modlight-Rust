@@ -77,8 +77,10 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-# Deflate for the PDF writer (pdf-lib's Flate streams, media/pdf_lib.rs).
+# Raw deflate: album ZIPs (app/a/[userCode]/[slug]/zip, archiver 8, with CRC-32)
+# and the PDF writer (pdf-lib's Flate streams, media/pdf_lib.rs).
 flate2 = "1"
+crc32fast = "1"
 
 # Misc
 dotenvy = "0.15"

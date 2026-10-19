@@ -1,0 +1,276 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:helpers="clr-namespace:ShareX.AvaloniaUI.Theming">
+    
+    <FontFamily x:Key="ShareX.FontFamily.Default">Geist, Segoe UI Variable Text, Segoe UI, avares://Avalonia.Fonts.Inter/Assets#Inter</FontFamily>
+    <FontFamily x:Key="ShareX.FontFamily.Icon">avares://ShareX.Avalonia/Assets#lucide</FontFamily>
+    <FontFamily x:Key="ShareX.FontFamily.Monospace">Cascadia Mono, Consolas, Courier New, Monospace</FontFamily>
+    <x:Double x:Key="ShareX.FontSize.Default">13</x:Double>
+
+    <!-- The two candidates ThemeManager picks between for text drawn ON the
+         accent. Outside the theme dictionaries on purpose: which one wins is
+         decided by the ACCENT's luminance, not by whether the app is in dark
+         mode, so both have to be readable from either theme. They are the same
+         two values the theme dictionaries below declare for
+         ShareX.Color.Accent.Foreground, kept here so a custom accent is still
+         answered with a colour from the palette rather than a literal.
+
+         Replaced the old ShareX.Value.Accent.Foreground.DarkSwitchRatio, which
+         nothing ever read: the 1.75 bias it named was hardcoded in C#, and it
+         was the reason a 2.21:1 pairing lost to a 2.20:1 one. -->
+    <Color x:Key="ShareX.Color.Accent.Foreground.Light">#FAFAFA</Color>
+    <Color x:Key="ShareX.Color.Accent.Foreground.Dark">#0A0C1A</Color>
+
+    <ResourceDictionary.ThemeDictionaries>
+
+        <!-- ShareX Dark theme -->
+        <ResourceDictionary x:Key="{x:Static helpers:ThemeManager.ShareXDark}">
+            <Color x:Key="ShareX.Color.Accent.Start">#7E88FB</Color>
+            <Color x:Key="ShareX.Color.Accent.End">#5857E9</Color>
+            <Color x:Key="ShareX.Color.Accent.Foreground">#0A0C1A</Color>
+
+            <Color x:Key="ShareX.Color.Text">#FAFAFA</Color>
+            <Color x:Key="ShareX.Color.Text.Secondary">#A4A4A4</Color>
+
+            <!-- Text written on the side panel rather than on the page. The same two
+                 values here, because this theme's panel is a shade of its page; they
+                 exist as separate names so a SKIN whose panel is a saturated colour can
+                 answer differently, which deco and riso in light mode have to. -->
+            <Color x:Key="ShareX.Color.Text.OnPanel">#FAFAFA</Color>
+            <Color x:Key="ShareX.Color.Text.Secondary.OnPanel">#A4A4A4</Color>
+
+            <!-- Where the keyboard is. Its own token because the border cannot say it:
+                 focused and unfocused differed by one pixel of the same brush, and that
+                 brush is under 3:1 against the panel in most skins by design. -->
+            <Color x:Key="ShareX.Color.Focus">#7E88FB</Color>
+            <Color x:Key="ShareX.Color.Focus.OnPanel">#7E88FB</Color>
+
+            <Color x:Key="ShareX.Color.Background.Main">#0A0A0A</Color>
+            <Color x:Key="ShareX.Color.Background.Panel">#131313</Color>
+            <Color x:Key="ShareX.Color.Background.Popup">#171717</Color>
+            <Color x:Key="ShareX.Color.Background.Menu">#171717</Color>
+            <Color x:Key="ShareX.Color.Background.Toolbar">#131313</Color>
+
+            <Color x:Key="ShareX.Color.Border">#262626</Color>
+            <Color x:Key="ShareX.Color.Control.Background">#171717</Color>
+            <Color x:Key="ShareX.Color.Control.Background.Hover">#282A36</Color>
+            <!-- Was #383838: a mid grey on a near-black card, which made the fields you
+                 cannot use the brightest rectangles on the page while the one you can
+                 type in stayed dark. "Off" is now quieter than "under the pointer",
+                 which is the rule Tools/generate-skins.py enforces for every skin. -->
+            <Color x:Key="ShareX.Color.Control.Background.Disabled">#282828</Color>
+            <Color x:Key="ShareX.Color.Control.Border">#262626</Color>
+            <Color x:Key="ShareX.Color.Separator">#262626</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Cancel.Background">#E0484D</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Cancel.Border">#FF6468</Color>
+            <!-- The fill under a white label. #2CBE73 was inherited and gave 2.41:1,
+                 nowhere near the 4.5:1 this project holds its own palettes to, and it
+                 had been copied verbatim into all 28 generated skins. Only the FILL
+                 moved: the rim below is the app's success colour and is also drawn as
+                 text and as status dots on dark panels (up-ok, toast-ok, dl-dot.on,
+                 the registered-hotkey tick), where a green dark enough to carry white
+                 would be unreadable in turn. One colour cannot be both.
+
+                 Hover therefore needs a value of its own. The success button used to
+                 fill with the RIM on hover, which put white on 1.87:1 - worse than the
+                 resting state it was reacting to. It now darkens instead, which is what
+                 light mode was already doing. -->
+            <Color x:Key="ShareX.Color.TaskMode.Continue.Background">#0C8048</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Continue.Background.Hover">#0A6B3C</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Continue.Border">#45D68A</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Foreground">#FFFFFF</Color>
+
+            <LinearGradientBrush x:Key="ShareX.Brush.Accent" StartPoint="0%,0%" EndPoint="100%,100%">
+                <GradientStop Color="{StaticResource ShareX.Color.Accent.Start}" Offset="0" />
+                <GradientStop Color="{StaticResource ShareX.Color.Accent.End}" Offset="1" />
+            </LinearGradientBrush>
+            <SolidColorBrush x:Key="ShareX.Brush.Accent.Start" Color="{StaticResource ShareX.Color.Accent.Start}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Accent.Foreground" Color="{StaticResource ShareX.Color.Accent.Foreground}" />
+
+            <SolidColorBrush x:Key="ShareX.Brush.Text" Color="{StaticResource ShareX.Color.Text}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Text.Secondary" Color="{StaticResource ShareX.Color.Text.Secondary}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Text.OnPanel" Color="{StaticResource ShareX.Color.Text.OnPanel}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Text.Secondary.OnPanel" Color="{StaticResource ShareX.Color.Text.Secondary.OnPanel}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Focus" Color="{StaticResource ShareX.Color.Focus}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Focus.OnPanel" Color="{StaticResource ShareX.Color.Focus.OnPanel}" />
+
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Main" Color="{StaticResource ShareX.Color.Background.Main}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Panel" Color="{StaticResource ShareX.Color.Background.Panel}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Popup" Color="{StaticResource ShareX.Color.Background.Popup}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Menu" Color="{StaticResource ShareX.Color.Background.Menu}" />
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="{StaticResource ShareX.Color.Background.Menu}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Toolbar" Color="{StaticResource ShareX.Color.Background.Toolbar}" />
+
+            <SolidColorBrush x:Key="ShareX.Brush.Border" Color="{StaticResource ShareX.Color.Border}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Control.Background" Color="{StaticResource ShareX.Color.Control.Background}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Control.Background.Hover" Color="{StaticResource ShareX.Color.Control.Background.Hover}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Control.Border" Color="{StaticResource ShareX.Color.Control.Border}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Control.Background.Disabled" Color="{StaticResource ShareX.Color.Control.Background.Disabled}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Separator" Color="{StaticResource ShareX.Color.Separator}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Cancel.Background" Color="{StaticResource ShareX.Color.TaskMode.Cancel.Background}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Cancel.Border" Color="{StaticResource ShareX.Color.TaskMode.Cancel.Border}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Continue.Background" Color="{StaticResource ShareX.Color.TaskMode.Continue.Background}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Continue.Background.Hover" Color="{StaticResource ShareX.Color.TaskMode.Continue.Background.Hover}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Continue.Border" Color="{StaticResource ShareX.Color.TaskMode.Continue.Border}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Foreground" Color="{StaticResource ShareX.Color.TaskMode.Foreground}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Overlay.Soft" Color="#30000000" />
+            <SolidColorBrush x:Key="ShareX.Brush.Overlay.Modal" Color="#80000000" />
+
+            <DrawingBrush x:Key="ShareX.Brush.Checkered" TileMode="Tile" SourceRect="0,0,30,30" DestinationRect="0,0,30,30">
+                <DrawingBrush.Drawing>
+                    <DrawingGroup>
+                        <GeometryDrawing Brush="#272727">
+                            <GeometryDrawing.Geometry>
+                                <RectangleGeometry Rect="0,0,30,30" />
+                            </GeometryDrawing.Geometry>
+                        </GeometryDrawing>
+                        <GeometryDrawing Brush="#2E2E2E">
+                            <GeometryDrawing.Geometry>
+                                <GeometryGroup>
+                                    <RectangleGeometry Rect="0,0,15,15" />
+                                    <RectangleGeometry Rect="15,15,15,15" />
+                                </GeometryGroup>
+                            </GeometryDrawing.Geometry>
+                        </GeometryDrawing>
+                    </DrawingGroup>
+                </DrawingBrush.Drawing>
+            </DrawingBrush>
+
+            <DrawingBrush x:Key="ShareX.Brush.Checkered.Small" TileMode="Tile" SourceRect="0,0,8,8" DestinationRect="0,0,8,8">
+                <DrawingBrush.Drawing>
+                    <DrawingGroup>
+                        <GeometryDrawing Brush="#272727">
+                            <GeometryDrawing.Geometry>
+                                <RectangleGeometry Rect="0,0,8,8" />
+                            </GeometryDrawing.Geometry>
+                        </GeometryDrawing>
+                        <GeometryDrawing Brush="#2E2E2E">
+                            <GeometryDrawing.Geometry>
+                                <GeometryGroup>
+                                    <RectangleGeometry Rect="0,0,4,4" />
+                                    <RectangleGeometry Rect="4,4,4,4" />
+                                </GeometryGroup>
+                            </GeometryDrawing.Geometry>
+                        </GeometryDrawing>
+                    </DrawingGroup>
+                </DrawingBrush.Drawing>
+            </DrawingBrush>
+        </ResourceDictionary>
+
+        <!-- ShareX Light -->
+        <ResourceDictionary x:Key="{x:Static helpers:ThemeManager.ShareXLight}">
+            <Color x:Key="ShareX.Color.Accent.Start">#5857E9</Color>
+            <Color x:Key="ShareX.Color.Accent.End">#4746D4</Color>
+            <Color x:Key="ShareX.Color.Accent.Foreground">#FAFAFA</Color>
+
+            <Color x:Key="ShareX.Color.Text">#0A0A0A</Color>
+            <Color x:Key="ShareX.Color.Text.Secondary">#5D5D5D</Color>
+
+            <Color x:Key="ShareX.Color.Text.OnPanel">#0A0A0A</Color>
+            <Color x:Key="ShareX.Color.Text.Secondary.OnPanel">#5D5D5D</Color>
+
+            <Color x:Key="ShareX.Color.Focus">#5857E9</Color>
+            <Color x:Key="ShareX.Color.Focus.OnPanel">#5857E9</Color>
+
+            <Color x:Key="ShareX.Color.Background.Main">#F5F5F5</Color>
+            <Color x:Key="ShareX.Color.Background.Panel">#FAFAFA</Color>
+            <Color x:Key="ShareX.Color.Background.Popup">#FFFFFF</Color>
+            <Color x:Key="ShareX.Color.Background.Menu">#FFFFFF</Color>
+            <Color x:Key="ShareX.Color.Background.Toolbar">#FAFAFA</Color>
+
+            <Color x:Key="ShareX.Color.Border">#E5E5E5</Color>
+            <Color x:Key="ShareX.Color.Control.Background">#FFFFFF</Color>
+            <Color x:Key="ShareX.Color.Control.Background.Hover">#EEF0F8</Color>
+            <!-- Was #AEAEB2, a mid grey on white: see the dark theme's note. -->
+            <Color x:Key="ShareX.Color.Control.Background.Disabled">#F2F2F2</Color>
+            <Color x:Key="ShareX.Color.Control.Border">#E5E5E5</Color>
+            <Color x:Key="ShareX.Color.Separator">#E5E5E5</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Cancel.Background">#D9000B</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Cancel.Border">#B80009</Color>
+            <!-- 4.42:1 under a white label, just under the bar. One step darker.
+                 The hover value is the rim colour this mode was already filling with,
+                 now named rather than borrowed - see the dark block above. -->
+            <Color x:Key="ShareX.Color.TaskMode.Continue.Background">#0A8146</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Continue.Background.Hover">#07733D</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Continue.Border">#07733D</Color>
+            <Color x:Key="ShareX.Color.TaskMode.Foreground">#FFFFFF</Color>
+
+            <LinearGradientBrush x:Key="ShareX.Brush.Accent" StartPoint="0%,0%" EndPoint="100%,100%">
+                <GradientStop Color="{StaticResource ShareX.Color.Accent.Start}" Offset="0" />
+                <GradientStop Color="{StaticResource ShareX.Color.Accent.End}" Offset="1" />
+            </LinearGradientBrush>
+            <SolidColorBrush x:Key="ShareX.Brush.Accent.Start" Color="{StaticResource ShareX.Color.Accent.Start}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Accent.Foreground" Color="{StaticResource ShareX.Color.Accent.Foreground}" />
+
+            <SolidColorBrush x:Key="ShareX.Brush.Text" Color="{StaticResource ShareX.Color.Text}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Text.Secondary" Color="{StaticResource ShareX.Color.Text.Secondary}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Text.OnPanel" Color="{StaticResource ShareX.Color.Text.OnPanel}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Text.Secondary.OnPanel" Color="{StaticResource ShareX.Color.Text.Secondary.OnPanel}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Focus" Color="{StaticResource ShareX.Color.Focus}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Focus.OnPanel" Color="{StaticResource ShareX.Color.Focus.OnPanel}" />
+
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Main" Color="{StaticResource ShareX.Color.Background.Main}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Panel" Color="{StaticResource ShareX.Color.Background.Panel}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Popup" Color="{StaticResource ShareX.Color.Background.Popup}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Menu" Color="{StaticResource ShareX.Color.Background.Menu}" />
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="{StaticResource ShareX.Color.Background.Menu}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Background.Toolbar" Color="{StaticResource ShareX.Color.Background.Toolbar}" />
+
+            <SolidColorBrush x:Key="ShareX.Brush.Border" Color="{StaticResource ShareX.Color.Border}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Control.Background" Color="{StaticResource ShareX.Color.Control.Background}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Control.Background.Hover" Color="{StaticResource ShareX.Color.Control.Background.Hover}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Control.Border" Color="{StaticResource ShareX.Color.Control.Border}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Control.Background.Disabled" Color="{StaticResource ShareX.Color.Control.Background.Disabled}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Separator" Color="{StaticResource ShareX.Color.Separator}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Cancel.Background" Color="{StaticResource ShareX.Color.TaskMode.Cancel.Background}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Cancel.Border" Color="{StaticResource ShareX.Color.TaskMode.Cancel.Border}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Continue.Background" Color="{StaticResource ShareX.Color.TaskMode.Continue.Background}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Continue.Background.Hover" Color="{StaticResource ShareX.Color.TaskMode.Continue.Background.Hover}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Continue.Border" Color="{StaticResource ShareX.Color.TaskMode.Continue.Border}" />
+            <SolidColorBrush x:Key="ShareX.Brush.TaskMode.Foreground" Color="{StaticResource ShareX.Color.TaskMode.Foreground}" />
+            <SolidColorBrush x:Key="ShareX.Brush.Overlay.Soft" Color="#30000000" />
+            <SolidColorBrush x:Key="ShareX.Brush.Overlay.Modal" Color="#80000000" />
+
+            <DrawingBrush x:Key="ShareX.Brush.Checkered" TileMode="Tile" SourceRect="0,0,30,30" DestinationRect="0,0,30,30">
+                <DrawingBrush.Drawing>
+                    <DrawingGroup>
+                        <GeometryDrawing Brush="#FFFFFF">
+                            <GeometryDrawing.Geometry>
+                                <RectangleGeometry Rect="0,0,30,30" />
+                            </GeometryDrawing.Geometry>
+                        </GeometryDrawing>
+                        <GeometryDrawing Brush="#EBEBEB">
+                            <GeometryDrawing.Geometry>
+                                <GeometryGroup>
+                                    <RectangleGeometry Rect="0,0,15,15" />
+                                    <RectangleGeometry Rect="15,15,15,15" />
+                                </GeometryGroup>
+                            </GeometryDrawing.Geometry>
+                        </GeometryDrawing>
+                    </DrawingGroup>
+                </DrawingBrush.Drawing>
+            </DrawingBrush>
+
+            <DrawingBrush x:Key="ShareX.Brush.Checkered.Small" TileMode="Tile" SourceRect="0,0,8,8" DestinationRect="0,0,8,8">
+                <DrawingBrush.Drawing>
+                    <DrawingGroup>
+                        <GeometryDrawing Brush="#FFFFFF">
+                            <GeometryDrawing.Geometry>
+                                <RectangleGeometry Rect="0,0,8,8" />
+                            </GeometryDrawing.Geometry>
+                        </GeometryDrawing>
+                        <GeometryDrawing Brush="#EBEBEB">
+                            <GeometryDrawing.Geometry>
+                                <GeometryGroup>
+                                    <RectangleGeometry Rect="0,0,4,4" />
+                                    <RectangleGeometry Rect="4,4,4,4" />
+                                </GeometryGroup>
+                            </GeometryDrawing.Geometry>
+                        </GeometryDrawing>
+                    </DrawingGroup>
+                </DrawingBrush.Drawing>
+            </DrawingBrush>
+        </ResourceDictionary>
+
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

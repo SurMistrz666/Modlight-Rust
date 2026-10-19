@@ -67,12 +67,12 @@ action errors), so upstream `.env` files keep their meaning.
 | `js_value.rs` | (JavaScript operators on raw arguments) | done |
 | `actions/avatar.rs` | `app/actions/avatar.ts` | done (`myAvatar` is in CONTRACT 7.3 but unreachable on the reference build: no client component imports it) |
 | `actions/convert.rs` | `app/actions/convert.ts` | done (parity: `tests/parity_media/convert_actions.py`) |
-| `actions/*` (others) | `app/actions/*.ts` | to do: `unlock.ts` (media serving) |
+| `actions/unlock.rs` | `app/actions/unlock.ts` | done (`verifyMediaPassword`; parity `media_serve.py --only gates`) |
 | `pages/` | page data, SPA shell, metadata | done (framework + table of every page and route handler) |
 | `pages/root_layout.rs` | `app/layout.tsx` | done |
 | `pages/layout_app.rs`, `pages/layout_auth.rs`, account pages | `app/(app)/layout.tsx`, `app/(auth)/layout.tsx`, `/`, `/welcome`, `/download`, auth pages, `/dashboard/{profile,tokens,admin}` | done (accounts port; the `(app)` layout reads the library's data functions) |
 | `pages/dashboard*.rs`, `pages/shortlink_unlock.rs` | `/dashboard`, `/dashboard/{folders,trash,duplicates,links,paste,upload}`, `/dashboard/admin/users/[id]/files`, `/s/[code]/unlock`, `/s/[code]/[name]/unlock` | done (parity: `tests/parity/library_pages.py`) |
-| public page loaders | `/u/..`, `/a/..`, `/[userCode]..` | to do (media serving; 501 until registered) |
+| `pages/media.rs`, `pages/public_profile.rs`, `pages/public_album.rs` | `app/[userCode]/[mediaCode]/page.tsx`, `app/[userCode]/page.tsx`, `app/u/[userCode]/page.tsx`, `app/a/[userCode]/[slug]/page.tsx` | done: props, `generateMetadata` (Open Graph, Twitter, oEmbed and link-info discovery), the owner's skin and wallpaper on `<html>`, the tagless action redirect (parity `media_serve.py`) |
 | `i18n/` | `i18n/request.ts`, next-intl formatting | done (locale, messages, ICU subset used by the dictionaries) |
 | `themes.rs`, `theme_cookies.rs` | `lib/themes.ts`, `lib/theme-cookies.ts` | done |
 | `auth/cookies.rs`, `auth/session.rs` | better-auth 1.6.13 cookies + `getSession` | done |
@@ -89,8 +89,14 @@ action errors), so upstream `.env` files keep their meaning.
 | `upload/tus.rs`, `upload/tus_server/{server,store,file_store}.rs` | `lib/upload/tus.ts`, `@tus/server` 2.4.1, `@tus/utils` 0.7.0, `@tus/file-store` 2.1.0 | done (records interchangeable with the TS store; tus-js-client 4.3.1 resumes across both; `tests/parity/tus_client.cjs`) |
 | `upload/{finalize,disk,folder_target,duplicate_lookup,duplicate_check}.rs` | `lib/upload/*` | done |
 | `media/{sniff,mime,urls,paths,paste_type,actions,derived_cache,convert_targets,av_targets}.rs` | `lib/media/*` same names | done (`derived_cache`: keys, purge, `mayCacheDerived`; reading and writing cached conversions belongs to the media serving port) |
-| `media/serve.rs` | `lib/media/serve.ts` | partial: the pure reads (`getMedia`, `cacheHeadersFor`); streaming is the media serving port's |
-| `media/{convert,convert_plan,convert_size,convert_verdict,convert_notes,convert_in_place,download_menu,av_convert,av_action,motion,motion_preview,timeline,timeline_preview,poster,frame_step,source_preview,card,card_art,card_render,player_i18n,playback_health}.rs`, `media/pdf_lib.rs`, `actions/convert.rs` | `lib/media/` same names, the part of pdf-lib 1.17.1 `convert.ts` uses, `app/actions/convert.ts` | done (media processing port: section 12) |
+| `media/serve.rs` | `lib/media/serve.ts` | done: `getMedia` (+ `lookup_media`, which tells a spent budget apart), `viewerRelation`, `consumeView`, `cacheHeadersFor`, `parseRange`, `streamMedia`; security fix 1 (the view grant, `ViewBudget`) |
+| `media/{bots,render_ticket,embed,link_formats}.rs` | `lib/media/` same names | done (media serving port) |
+| `media/{convert,convert_plan,convert_size,convert_verdict,convert_notes,convert_in_place,download_menu,av_convert,av_action,motion,motion_preview,timeline,timeline_preview,poster,frame_step,source_preview,card,card_art,card_render,player_i18n,playback_health}.rs`, `media/pdf_lib.rs` | `lib/media/` same names, the part of pdf-lib 1.17.1 `convert.ts` uses | done (media processing port: section 12) |
+| `media/part_a.rs` | the processing half of `lib/media` as the serving half calls it | the serving port's adapter, wired to the processing modules (section 12) |
+| `crypto/envelope.rs` | `lib/crypto/envelope.ts` | server part: constants, `isEncryptedUpload` (the rest runs in the browser) |
+| `routes/media_action.rs` | `app/[userCode]/[mediaCode]/[action]/route.ts` | done: `raw`, `raw.<ext>`, `download`, `render`, `timeline.vtt/jpg`, `convert` (the engines through `part_a`) |
+| `routes/{media_delete,album_zip,embed_card,oembed}.rs`, `archiver.rs` | `app/[userCode]/[mediaCode]/delete/[token]`, `app/a/[userCode]/[slug]/zip`, `app/embed/[version]/[card]`, `app/oembed`; archiver 8 / zip-stream 7 / compress-commons 7 | done (security fixes 5 and 6; the ZIP writer is archiver's zip layout for stream entries) |
+| `http/web_response.rs` | Fetch `new Response(text)` defaults | done (`text/plain;charset=UTF-8`, headers object semantics) |
 | `media/vips.rs` + `media/vips/*`, `media/{image,probe,avif_brand,blurhash,sharp_runtime,transform_cost,transform_queue,avatar,abort}.rs` | sharp 0.34.5 / libvips 8.17, `lib/media/{image,probe,avif-brand,sharp-runtime,transform-cost,transform-queue,avatar}.ts`, blurhash 2.0.5 | done (section 11) |
 | `media/{ffmpeg,av_probe,av_cost,av_workspace,av_meta}.rs` | `lib/media/*` same names | done |
 | `naming.rs`, `naming_words.rs`, `folders.rs`, `uploads.rs`, `shortlinks.rs`, `quota.rs`, `format.rs`, `avatar.rs`, `avatar_store.rs`, `background.rs`, `paste_languages.rs`, `js_date.rs`, `link_info/parse.rs`, `maintenance/trash.rs` | `lib/` same names (`js_date.rs`: V8's `new Date(string)`) | done |
@@ -367,8 +373,53 @@ Deliberate, each for a reason:
     parsing (JSON.parse accepted them); a number beyond the f64 range
     (`1e400`) or nesting deeper than 128 levels is still refused with 400
     where upstream judged the fields.
+26. **Security fix 1, view limits** (`media::serve::ViewBudget`, the exact
+    rule is in its doc comment). For a file with `max_views`, and anybody but
+    its owner or an administrator: a request upstream counted is counted
+    (unchanged); a request upstream exempted (a `Range` not starting at 0,
+    `Sec-Fetch-Dest: image|video`, `w`/`h`/`motion`, a bot) is served without
+    consuming only with the VIEW GRANT of a counted view, else it consumes one.
+    The grant is a signed cookie `ml_view_<uploadId>` = `<exp>.<HMAC(AUTH_SECRET,
+    "view|<id>|<exp>")>` (6 hours, httpOnly, `SameSite=Lax`, `Secure` in
+    production), minted by every counted view of a capped file: the preview
+    page's (document and `/_page`), and `/raw`/`/download`'s. It also lets
+    its holder through when that view was the LAST one (`views == max_views`),
+    which repairs two upstream failures: the page's own `<img>`/`<video>` on the
+    last permitted view, and an encrypted one-time file whose second ranged
+    read 404ed (verified on the reference). It applies to everything that
+    carries the file's content: the stored bytes (whole or ranged) and pictures
+    made of them (resized stills, moving tiles, timeline sheets); refusals and
+    the cue track spend nothing. Also: a preview bot on the page of a capped
+    file is not counted (as upstream) and gets no content (no inlined text, no
+    render ticket), the card of a capped text file carries no excerpt, and a
+    capped item travels in an album ZIP only by spending a view (as a download).
+    Costs: a cross-host page (owner's preferred domain different from the host
+    the page was opened on) cannot carry the cookie, so its `<img>` pays a view;
+    public gallery tiles of a capped file pay a view each; resuming a capped
+    download with `Range` pays a view.
+27. **Security fix 5**: the delete-by-link token is compared in constant time.
+28. **Security fix 6**: `/oembed` describes a published file with a view cap as
+    `{version, title, provider_name, provider_url, cache_age, type: "link"}`:
+    no raw URL, no dimensions, no player HTML (as `embed.ts` withholds
+    `og:image`/`og:video`).
+29. **Album ZIP**: the reference answers every `/a/<tag>/<slug>/zip` with 500
+    (`import archiver from "archiver"` against archiver 8, which has only
+    named exports: `TypeError: (0, a.default) is not a function`). The port
+    serves the archive the route was written for, in archiver's zip layout for
+    stream entries (`src/archiver.rs`); deflate bytes come from `flate2`, not
+    Node's zlib, so archives are equivalent (same entries, order, names,
+    flags, attributes, CRCs and contents), not byte-identical.
+30. **Metadata placement**: Next 16 streams a slow `generateMetadata` into the
+    BODY for browsers (it blocks the head only for the bots it recognises);
+    the port always puts it in `<head>`. Same tags, same order.
+31. **Plain-object lookups**: `RENDERABLE`, `EXT_CATEGORY` and `LONG_TYPES`
+    match only their listed keys (upstream found `constructor` and friends on
+    the prototype, so a stored type `constructor` was offered the render toggle
+    and an extension `constructor` a card URL spelled from a function).
+32. **Derived responses** (thumbnails, motion tiles) carry `Content-Length`;
+    Next sent them chunked. Same bytes.
 
-26. **ffmpeg version (media processing)**: the argument vectors are upstream's
+33. **ffmpeg version (media processing)**: the argument vectors are upstream's
     and identical to the reference's (verified, `tests/parity_media`), but
     they were written for ffmpeg 5.1 (Debian 12, the production image). On
     ffmpeg 7+ (Homebrew's 9 on the Mac): `-fflags +shortest` is no longer a
@@ -381,27 +432,25 @@ Deliberate, each for a reason:
     WebP of an AVIF sequence, fail). Run the server with the reference's
     ffmpeg major (the Docker image on Debian 12) for identical behaviour; with
     it, every status, header, argument vector and deterministic output matched.
-27. **Text on the embed card**: libvips' Pango is put on its fontconfig
+34. **Text on the embed card**: libvips' Pango is put on its fontconfig
     backend (`PANGOCAIRO_BACKEND=fc`, set once at libvips start unless the
     operator set it). It is the only backend Linux has; on macOS Pango would
     otherwise pick CoreText, which never sees the `fontfile` and draws a
     system face. With it every card is pixel-identical to the reference.
-28. **PDF output** (`media/pdf_lib.rs`): pdf-lib's file structure object for
+35. **PDF output** (`media/pdf_lib.rs`): pdf-lib's file structure object for
     object; the Flate streams are compressed by miniz rather than pako (they
     inflate to the same bytes). Like pdf-lib, the info dates and the XObject
     name (`Image-` + random) change on every call, so no two PDFs are equal
     byte for byte on either server.
-29. **`HEVC_DECODE = false`**, decided exactly as upstream decides it: by
+36. **`HEVC_DECODE = false`**, decided exactly as upstream decides it: by
     the libheif sharp-libvips 1.2.4 ships (1.20.2 with aom only, no libde265,
     checked in the reference container: `metadata()` reads a HEIC's header
     as `compression: hevc`, `toBuffer()` fails with "Support for this
     compression format has not been built in"). So HEIC gets no blurhash, no
     thumbnail of its own, no conversion target (convert-targets offers none)
     and no motion tile (`not-animated`), on both servers.
-30. **Lookups by a caller's string** in `media/card.rs` (extension ->
-    category) and `media/source_preview.rs` (paste language -> extension)
-    use exact keys; upstream's object lookups also found inherited names
-    (`constructor`), the same family as item 15.
+37. **Lookups by a caller's string** in `media/source_preview.rs` (paste
+    language -> extension) use exact keys, as item 31 does for the card table.
 
 ## 10. Verified on 2026-10-18
 
@@ -503,7 +552,7 @@ Also ported and used inside: `av_convert` (`planAv`, `runAvPlan`, `avVariant`,
 `frameOffset`, `animationFilters`, `webScaleFilter`, `audioCoverPath`),
 `convert_plan` and `convert_in_place` (`convertUploadInPlace` behind the
 `convert` RPC module), `frame_step` (the player's arithmetic, server twin),
-`pdf_lib` (section 9, item 28).
+`pdf_lib` (section 9, item 35).
 
 Verification (re-runnable, see each script's header):
 
@@ -523,6 +572,6 @@ in all 595 cases; outputs byte-identical for every JPEG, WebP (still and
 animated, including every motion tile), GIF, MP4/MOV remux and encode, MP3,
 WAV, poster and timeline sheet and track; PNG and AVIF differ in their bytes
 only (encoder builds; same pixels), Matroska and Ogg differ by their random
-segment/serial ids (same streams), PDFs as item 28; CMYK input shifts colour
+segment/serial ids (same streams), PDFs as item 35; CMYK input shifts colour
 by about 3/255 (section 11). All 155 embed cards are pixel-identical. With
-Homebrew's ffmpeg 9 instead, see item 26.
+Homebrew's ffmpeg 9 instead, see item 33.

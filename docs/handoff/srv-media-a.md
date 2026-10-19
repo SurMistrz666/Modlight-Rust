@@ -42,7 +42,7 @@ ported here: `motion-route`, `timeline-route`, `player-ssr`,
 `player-contract` (route and React tests: part B / the SPA).
 
 The API part B calls is SKELETON section 12; deviations are SKELETON section 9,
-items 26-30 (+ the docx section).
+items 33-37 (+ the docx section).
 
 ## Parity (against the scratch reference)
 
@@ -63,7 +63,7 @@ python3 server/tests/parity_media/convert_actions.py   # Rust server started wit
 Results on 2026-10-20: see SKELETON section 12 (statuses, headers and
 ffmpeg/ffprobe argument vectors identical in every case; byte identity where
 the encoders are deterministic across the libvips/ffmpeg builds; every embed
-card pixel-identical; the convert RPC module 20/20) and item 26 for what
+card pixel-identical; the convert RPC module 20/20) and item 33 for what
 Homebrew's ffmpeg 9 changes.
 
 ## Open / for others
@@ -72,7 +72,7 @@ Homebrew's ffmpeg 9 changes.
   `card.rs` is ported here (the card route needs `parse_card_file` and
   `render_card`).
 - Runtime image: Debian 12 (ffmpeg 5.1, the reference's major) and libvips
-  >= 8.17; on ffmpeg 7+ three upstream argument vectors fail (item 26).
+  >= 8.17; on ffmpeg 7+ three upstream argument vectors fail (item 33).
 - `convertTargetsForUpload`, `convertTargetsForSelection`, `convertUploads`
   have no action id in the reference build (no client component imports
   them), so they were checked against `convertUpload` and the CONTRACT, not

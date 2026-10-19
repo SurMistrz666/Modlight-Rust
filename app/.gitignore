@@ -1,0 +1,4 @@
+# Local QA profiles and credentials (PORT.md section 4)
+/.qa/
+/target/
+/dist/
