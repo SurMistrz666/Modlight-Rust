@@ -32,6 +32,7 @@ pub mod headers;
 pub mod proxy;
 pub mod set_cookie;
 pub mod static_files;
+pub mod web_response;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -82,6 +83,11 @@ pub fn router(state: &AppState) -> Router {
         .merge(crate::routes::api::admin_disk::routes()) // app/api/admin/disk/route.ts
         .merge(crate::routes::s_code::routes()) // app/s/[code]/route.ts
         .merge(crate::routes::s_code_name::routes()) // app/s/[code]/[name]/route.ts
+        .merge(crate::routes::media_action::routes()) // app/[userCode]/[mediaCode]/[action]/route.ts
+        .merge(crate::routes::media_delete::routes()) // app/[userCode]/[mediaCode]/delete/[token]/route.ts
+        .merge(crate::routes::album_zip::routes()) // app/a/[userCode]/[slug]/zip/route.ts
+        .merge(crate::routes::embed_card::routes()) // app/embed/[version]/[card]/route.ts
+        .merge(crate::routes::oembed::routes()) // app/oembed/route.ts
         // ── Frameworks ──
         .merge(crate::rpc::routes())
         .merge(crate::pages::routes())

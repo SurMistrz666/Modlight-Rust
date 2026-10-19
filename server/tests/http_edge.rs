@@ -118,9 +118,11 @@ async fn methods_like_next_route_handlers() {
 #[tokio::test]
 async fn unported_handlers_and_malformed_paths() {
     let app = App::new(state());
-    let zip = get(&app, "/a/someone/folder/zip").await;
-    assert_eq!(zip.status, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(zip.json()["file"], "app/a/[userCode]/[slug]/zip/route.ts");
+    // Every upstream route handler is ported now; the placeholder still names
+    // the upstream file for one that is not registered.
+    let route = modlight_server::pages::table::find_route("/a/[userCode]/[slug]/zip").unwrap();
+    let placeholder = modlight_server::pages::not_ported_handler(route);
+    assert_eq!(placeholder.status(), StatusCode::NOT_IMPLEMENTED);
     let bad = get(&app, "/a%ZZ/b").await;
     assert_eq!(bad.status, StatusCode::BAD_REQUEST);
     let missing = get(&app, "/no/such/page/here").await;
