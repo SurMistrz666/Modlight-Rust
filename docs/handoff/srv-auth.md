@@ -93,7 +93,21 @@ worktree root, with `S=/Users/marcinasdfg/Desktop/modlight/_scratch/srv-auth`,
 | `server/tests/parity/authorize.py $R --ref-app modlight-srvauth-ref-app-1 --ref-db-container modlight-srvauth-ref-postgres-1 --rust-db modlight_srv_auth $E` | 155/155 |
 | `server/tests/parity/admin_settings.py` (same flags as authorize.py) | 436/436 |
 | `server/tests/parity/panel.py $R --ref-app-container modlight-srvauth-ref-app-1 --ref-db-container modlight-srvauth-ref-postgres-1 --rust-db modlight_srv_auth $E --rust-storage $S/rust/data/storage` | 79/83: the 4 failures are its "scenario's state on the reference" self-checks, which expect DEFAULT_USER_QUOTA=20 GB (helper A's stack); this reference runs with -1. Every reference-vs-Rust comparison passes |
-| `admin_users.py` (helper D), `crosscompat.py` (helper X) | see the final report of srv-auth |
+| `server/tests/parity/admin_users.py $R --scratch $S --ref-app modlight-srvauth-ref-app-1 --ref-db modlight-srvauth-ref-postgres-1/modlight --rust-db modlight-devdb-postgres-1/modlight_srv_auth --ref-env $S/ref/.env --rust-env $S/rust/rust.env` | 618/618 (one NOTE: a name cut through an emoji pair is compared as U+FFFD) |
+
+Cross-compatibility proof (helper X): the original app and the Rust server on
+ONE database (a copy of the srv-auth reference database) with ONE AUTH_SECRET.
+Stack `_scratch/srv-auth-x/stack` (project `modlight-srvauth-x`, app 8431,
+Postgres 55431; brought down after the run), Rust started with
+`server/tests/parity/crosscompat-rust.sh <stack dir> 8439 <scratch>`, then
+`python3 server/tests/parity/crosscompat.py --ts http://localhost:8431 --rust http://localhost:8439 --container modlight-srvauth-x-postgres-1`:
+227/227, in both directions: copied sessions, sign-up/in/out, sessions and
+dont_remember, change-password, two-factor (secret, TOTP, backup codes, trust
+device, regenerate, disable), mailed verification and reset links (SMTP
+password in the v1 secret box), admin (set-role, impersonate, ban/unban,
+set-user-password, create-user, remove-user). Rust's `serve` migration step is
+a no-op on a database the original migrated (schema dump and drizzle
+bookkeeping identical; the 14 migration hashes match upstream `drizzle/`).
 
 ## Deliberate differences
 
@@ -139,12 +153,17 @@ worktree root, with `S=/Users/marcinasdfg/Desktop/modlight/_scratch/srv-auth`,
 
 ## Things created outside the repo (names only, never values)
 
-- Databases on the dev Postgres (127.0.0.1:55421): `modlight_srv_auth` (mine);
-  helpers' databases `modlight_srv_auth_*` (see the final report for which
-  were dropped).
+- Database `modlight_srv_auth` on the dev Postgres (127.0.0.1:55421) (mine).
+  The helpers' databases `modlight_srv_auth_{a,d,m,r,t}` were dropped (P
+  dropped its own); `parity-server.sh` recreates one on the next run.
 - Scratch reference stack `_scratch/srv-auth/ref` (project
-  `modlight-srvauth-ref`); helpers' stacks under `_scratch/srv-auth-*/`
-  (each brought down with `docker compose down -v` by its helper).
+  `modlight-srvauth-ref`): brought down with `docker compose down` (volumes
+  kept; `docker compose up -d` there to run the parity scripts again).
+  Helpers' stacks under `_scratch/srv-auth-*/` were each brought down with
+  `docker compose down -v` by their helper.
+- Helper worktrees `_wt/srv-auth-{a,d,m,p,r,t,x}` (branches merged here) still
+  exist with their `target/` dirs; remove them with `git worktree remove` when
+  no longer needed.
 - `_scratch/srv-auth/acct/` holds symlinks to the two env files for account.py.
 
 ## Gotchas
