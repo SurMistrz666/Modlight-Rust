@@ -155,6 +155,10 @@ unsafe extern "C" {
     pub fn vips_cache_set_max_mem(max_mem: usize);
     pub fn vips_cache_set_max_files(max_files: c_int);
     pub fn vips_operation_block_set(name: *const c_char, state: gboolean);
+    pub fn vips_tracked_malloc(size: usize) -> *mut c_void;
+    pub fn vips_tracked_free(s: *mut c_void);
+    pub fn vips_tracked_get_mem() -> usize;
+    pub fn vips_cache_get_size() -> c_int;
 
     // --- libvips: errors ------------------------------------------------------
     pub fn vips_error_buffer_copy() -> *mut c_char;

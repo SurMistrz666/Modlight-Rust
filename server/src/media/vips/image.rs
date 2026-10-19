@@ -3,10 +3,8 @@
 //! sharp pipeline uses. Every wrapper is one [`Operation`] call; adding
 //! another libvips operation means adding another five-line method here.
 
-use std::collections::HashMap;
 use std::ffi::{CStr, c_int, c_void};
 use std::ptr::NonNull;
-use std::sync::{LazyLock, Mutex};
 
 use bytes::Bytes;
 
@@ -583,30 +581,26 @@ impl MutableImage {
 }
 
 // ---------------------------------------------------------------------------
-// Blob: input bytes lent to libvips without a copy
+// Blob: input bytes handed to libvips
 // ---------------------------------------------------------------------------
 
-/// Keeps a clone of every `Bytes` lent to libvips alive until libvips frees
-/// the blob that points into it. Keyed by the data pointer; any clone sharing
-/// that pointer keeps the same storage alive, so popping any one is correct.
-static LENT: LazyLock<Mutex<HashMap<usize, Vec<Bytes>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-unsafe extern "C" fn release_lent(data: *mut c_void, _area: *mut c_void) -> c_int {
-    let mut lent = LENT.lock().unwrap_or_else(|e| e.into_inner());
-    let key = data as usize;
-    if let Some(list) = lent.get_mut(&key) {
-        list.pop();
-        if list.is_empty() {
-            lent.remove(&key);
-        }
-    }
+unsafe extern "C" fn free_tracked(data: *mut c_void, _area: *mut c_void) -> c_int {
+    // SAFETY: `data` came from vips_tracked_malloc in `Blob::from_bytes`.
+    unsafe { ffi::vips_tracked_free(data) };
     0
 }
 
-/// A `VipsBlob` over a `Bytes`, without copying. libvips may keep the blob
-/// (and so the bytes) alive after this value is dropped - inside a cached
-/// loader, or a lazily evaluated image - and the bytes live exactly as long
-/// as it does.
+/// A `VipsBlob` holding a copy of the input, in memory libvips TRACKS.
+///
+/// A copy rather than a pointer into the caller's `Bytes`, because libvips
+/// keeps the blob for as long as anything in its operation cache refers to
+/// it: every pipeline leaves a few cached operations behind (some of them made
+/// inside libvips, out of our reach), and each pins its source. sharp does not
+/// feel that (its blob points into a JavaScript buffer it does not own); a
+/// Rust blob that owned the caller's `Bytes` would keep up to 50 recent inputs
+/// of up to 32 MB alive. Tracked memory is what the cache's 32 MB ceiling
+/// (sharp-runtime.ts) is measured against, so with the copy the cache evicts
+/// those entries as soon as they add up past the ceiling it was given.
 pub struct Blob {
     ptr: NonNull<ffi::VipsBlob>,
 }
@@ -620,12 +614,24 @@ impl Blob {
             return Err(VipsError::new("Input Buffer is empty"));
         }
         super::init()?;
-        let data = bytes.as_ptr();
-        LENT.lock().unwrap_or_else(|e| e.into_inner()).entry(data as usize).or_default().push(bytes.clone());
-        // SAFETY: `data` stays valid until `release_lent` runs, which libvips
-        // calls exactly once when the last reference to the blob goes.
-        let p = unsafe { ffi::vips_blob_new(Some(release_lent), data.cast(), bytes.len()) };
-        NonNull::new(p).map(|ptr| Blob { ptr }).ok_or_else(|| VipsError::new("vips_blob_new failed"))
+        // SAFETY: a fresh tracked allocation of exactly `len` bytes, filled,
+        // then owned by the blob, which frees it through `free_tracked` when its
+        // last reference goes.
+        unsafe {
+            let data = ffi::vips_tracked_malloc(bytes.len());
+            if data.is_null() {
+                return Err(VipsError::from_buffer("vips_tracked_malloc"));
+            }
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), data.cast::<u8>(), bytes.len());
+            let p = ffi::vips_blob_new(Some(free_tracked), data, bytes.len());
+            match NonNull::new(p) {
+                Some(ptr) => Ok(Blob { ptr }),
+                None => {
+                    ffi::vips_tracked_free(data);
+                    Err(VipsError::new("vips_blob_new failed"))
+                }
+            }
+        }
     }
 
     pub(crate) fn as_ptr(&self) -> *mut ffi::VipsBlob {
