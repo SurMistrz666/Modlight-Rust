@@ -124,8 +124,9 @@ async fn create_paste(ctx: ActionCtx) -> ActionResult {
     }
 
     // `(input.language || "text").toLowerCase()`. Only the closed LANG_EXT
-    // list maps to an extension; any other name, including the property names
-    // every JavaScript object inherits ("constructor"), is "txt" here.
+    // list maps to an extension; any other name is "txt". Deliberate
+    // deviation (SKELETON.md section 9): upstream's object lookup also found
+    // "constructor" and "__proto__", wrote the bytes under a junk key and threw.
     let language = prop(input, "language");
     let lang = if truthy(language) {
         match language {

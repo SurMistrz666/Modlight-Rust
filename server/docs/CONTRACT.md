@@ -3634,7 +3634,8 @@ Ownership is checked by `getOwnedFolder(userId, id)`: a non-string or non-uuid i
 ##### folders.listFolders
 - Signature: `listFolders(): Promise<{ id: string; parentId: string | null; name: string; slug: string; isPublic: boolean; count: number }[]>`
 - Auth: requireUser.
-- Does: `SELECT id, parent_id, name, slug, is_public, (SELECT count(*)::int FROM uploads WHERE folder_id = folders.id AND deleted_at IS NULL) AS count FROM folders WHERE owner_id = me`. There is **no ORDER BY**, and the port must not add one.
+- Does: `SELECT id, parent_id, name, slug, is_public, (<count subquery>) AS count FROM folders WHERE owner_id = me`. There is **no ORDER BY**, and the port must not add one.
+  - The subquery is meant as "live uploads in this folder", but drizzle renders the columns of a single-table select's SQL fields without their table (`buildSelection(.., {isSingleTable: true})`), so Postgres receives `(select count(*)::int from "uploads" where "folder_id" = "id" and "deleted_at" is null)`, where both names resolve to `uploads`. **`count` is therefore 0 for every folder** (verified on the reference); the port sends the same SQL.
 - Returns: an array of `{id, parentId, name, slug, isPublic, count}`.
 - Errors: none of its own; the common failure modes in 7.2.6 apply.
 - Redirect / notFound: `{"redirect":"/login"}` when there is no session (requireUser). Never notFound.
