@@ -33,7 +33,8 @@ Ostatnia aktualizacja: 2026-10-18 (koniec dnia 1, praca wstrzymana na prośbę w
 | Gałąź | Worktree | Co robi |
 |---|---|---|
 | `web-spa` | scalona do `main` | panel WWW gotowy (`npm run verify` zielone), CONTRACT.md poprawiony w całości (508eff7). Prace backendu z sekcji 12 kontraktu idą w gałęziach serwera |
-| `app-1` | `_wt/app-1` | aplikacja na Maca, etap 1 prawie gotowy (3e022b7, testy zielone, test bez okna przeciw wzorcowi). Brakuje: testów zrzutów dla wszystkich ekranów (jasne skórki, PL), skryptu budującego Modlight.app, `app/docs/MACOS.md` i `STATUS.md`. Nic nie było uruchomione w prawdziwym oknie |
+| `app-1` | scalona do `main` (dff2386) | aplikacja na Maca, etapy 1 i 2: logowanie, biblioteka, wygląd (zrzuty 42 ekranów x jasny/ciemny x EN/PL), skrypt `Modlight.app`, wysyłanie (kolejka, tus ze wznawianiem, offline, historia, wklejanie, skracacz, foldery obserwowane). Tylko bez okna; prawdziwe okno do sprawdzenia z właścicielem |
+| `app-3` | `_wt/app-3` | W TOKU: etap 3 (zrzuty ekranu, skróty, nagrywanie ffmpeg, komponenty, yt-dlp, zakładka Serwer, ustawienia, start z systemem, usługa Findera) |
 | `srv-auth` | scalona do `main` (bbde0a3) | konta, logowanie zgodne z Better Auth, 2FA, admin, poczta, wydania, strony auth i układ (app); skrypty porównawcze z oryginałem zielone, zgodność kont/sesji/2FA w obie strony 227/227; poprawki 3, 4, 7 wdrożone. Szczegóły i pozostałe różnice: `docs/handoff/srv-auth.md` |
 | `srv-library` | scalona do `main` (1be08bc) | wysyłanie (ShareX z poprawką 2, tus zgodny z Uppy i aplikacją), magazyn lokalny i S3, foldery, kosz, duplikaty, skróty, awatary i tapety, wiązanie libvips, strony biblioteki; 975 testów, porównania z oryginałem zielone. Otwarte pozycje dla mediów: `docs/handoff/srv-library.md` |
 | `srv-media-a` | `_wt/srv-media-a` | W TOKU: przetwarzanie mediów (konwersje, podglądy ruchome i osi czasu, okładki, docx, karty OG) |
