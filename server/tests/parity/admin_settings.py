@@ -228,18 +228,21 @@ DELIVERED = SinkCursor()
 
 
 class Senders(object):
+    """Signs the pair in as an admin with test mails left in its budget."""
+
     def __init__(self, pair):
         self.pair = pair
         self.used = 5
         self.count = 0
+        self.current = None
 
     def next(self):
         if self.used >= 5:
             self.count += 1
-            user_id, _ = seed_user("mailer%d" % self.count, role="admin")
-            parity.signed_in(self.pair, REF_DB, RUST_DB, user_id)
+            self.current, _ = seed_user("mailer%d" % self.count, role="admin")
             self.used = 0
         self.used += 1
+        parity.signed_in(self.pair, REF_DB, RUST_DB, self.current)
 
 
 def configure(pair, name, **fields):
@@ -249,13 +252,39 @@ def configure(pair, name, **fields):
     return act(pair, "save " + name, "mail", "saveSmtpSettings", [data])
 
 
-def test_mail(senders, name, to=parity.UNDEFINED, delivered=False, ignore_server_says=False):
+def test_mail(senders, name, to=parity.UNDEFINED, delivered=False, ignore_server_says=False, expect=None):
+    """sendTestMail as a fresh-enough admin; `expect` is the outcome the
+    scenario is meant to produce (`"ok"`, a failure kind, or `"error"`), so a
+    scenario that silently stopped exercising its path fails."""
     senders.next()
     ignore = ("tookMs", "serverSays") if ignore_server_says else ("tookMs",)
     args = [] if to is parity.UNDEFINED else [to]
-    act(senders.pair, "test mail: " + name, "mail", "sendTestMail", args, ignore=ignore)
+    _, rust = act(senders.pair, "test mail: " + name, "mail", "sendTestMail", args, ignore=ignore)
+    ok = rust.get("ok")
+    got = "error" if "error" in rust else ("ok" if isinstance(ok, dict) and ok.get("ok") else (ok or {}).get("kind"))
+    if expect is not None:
+        run.compare("test mail outcome: " + name, expect, got)
     if delivered:
         DELIVERED.check(name)
+
+
+def signed_out_or(user_id):
+    """A pair signed in as `user_id`, or signed out.
+
+    Signed out means a session cookie with a bad signature: these actions are
+    bundled with /dashboard/admin, so the harness posts them there on the
+    reference, and without ANY session cookie proxy.ts answers that path
+    first (307 to /login?next=%2Fdashboard%2Fadmin, verified) and the action
+    never runs. The SPA posts to /_rpc, which has no such gate; with a cookie
+    that does not verify, both servers reach the action's own requireAdmin().
+    """
+    p = run.pair()
+    if user_id:
+        parity.signed_in(p, REF_DB, RUST_DB, user_id)
+    else:
+        p.ref.cookies[parity.SESSION_COOKIE] = "garbage"
+        p.rust.cookies[parity.SESSION_COOKIE] = "garbage"
+    return p
 
 
 # ── registration ────────────────────────────────────────────────────────────
@@ -263,9 +292,7 @@ def test_mail(senders, name, to=parity.UNDEFINED, delivered=False, ignore_server
 
 def registration(pair, admin, user):
     for who, setup in (("signed out", None), ("non-admin", user)):
-        p = run.pair()
-        if setup:
-            parity.signed_in(p, REF_DB, RUST_DB, setup)
+        p = signed_out_or(setup)
         for export, args in (("setRegistrationEnabled", [True]), ("saveRegistrationKey", ["k"]),
                              ("revealRegistrationKey", [])):
             act(p, "%s %s" % (who, export), "registration", export, args)
@@ -326,9 +353,7 @@ def mail(pair, admin, user):
     good = {"host": "127.0.0.1", "port": SINK_BASE, "security": "none", "user": "", "from": "no-reply@sink.test",
             "fromName": "Parity"}
     for who, setup in (("signed out", None), ("non-admin", user)):
-        p = run.pair()
-        if setup:
-            parity.signed_in(p, REF_DB, RUST_DB, setup)
+        p = signed_out_or(setup)
         for export, args in (("saveSmtpSettings", [good]), ("clearSmtpSettings", []), ("clearSmtpPassword", []),
                              ("setVerificationRequired", [True]), ("sendTestMail", [])):
             act(p, "%s %s" % (who, export), "mail", export, args)
@@ -339,7 +364,7 @@ def mail(pair, admin, user):
     ref, _ = act(pair, "clearSmtpSettings (start)", "mail", "clearSmtpSettings", [])
     status_matches(pair, "clearSmtpSettings", ref)
     senders = Senders(pair)
-    test_mail(senders, "nothing configured")
+    test_mail(senders, "nothing configured", expect="not-configured")
     parity.signed_in(pair, REF_DB, RUST_DB, admin)
 
     # Validation, in upstream's order: host, from, port, then the password rule.
@@ -362,60 +387,60 @@ def mail(pair, admin, user):
     ref, _ = configure(pair, "relay (no auth)", port=SINK_BASE + 0.9, fromName="  Parity  ", security="bogus")
     status_matches(pair, "save relay", ref)
     ref, _ = configure(pair, "relay again (nothing changed)", security="none")
-    test_mail(senders, "own address", delivered=True)
-    test_mail(senders, "named and upper-case domain", "  Some One <someone@Example.TEST>  ", delivered=True)
-    test_mail(senders, "two recipients", "a@x.test, b@x.test", delivered=True)
-    test_mail(senders, "one accepted, one rejected", "a@x.test; reject@x.test", delivered=True)
-    test_mail(senders, "no address at all", "not-an-address")
-    test_mail(senders, "recipient rejected", "reject@x.test")
-    test_mail(senders, "message refused", "reject-data@x.test", delivered=True)
-    test_mail(senders, "non-string recipient", 5)
-    test_mail(senders, "unicode name", "Zażółć <zz@x.test>", delivered=True)
+    test_mail(senders, "own address", delivered=True, expect="ok")
+    test_mail(senders, "named and upper-case domain", "  Some One <someone@Example.TEST>  ", delivered=True, expect="ok")
+    test_mail(senders, "two recipients", "a@x.test, b@x.test", delivered=True, expect="ok")
+    test_mail(senders, "one accepted, one rejected", "a@x.test; reject@x.test", delivered=True, expect="ok")
+    test_mail(senders, "no address at all", "not-an-address", expect="recipient")
+    test_mail(senders, "recipient rejected", "reject@x.test", expect="recipient")
+    test_mail(senders, "message refused", "reject-data@x.test", delivered=True, expect="recipient")
+    test_mail(senders, "non-string recipient", 5, expect="error")
+    test_mail(senders, "unicode name", "Zażółć <zz@x.test>", delivered=True, expect="ok")
 
     parity.signed_in(pair, REF_DB, RUST_DB, admin)
     configure(pair, "authenticated", user="good-user", password="good-pass")
-    test_mail(senders, "AUTH PLAIN", delivered=True)
+    test_mail(senders, "AUTH PLAIN", delivered=True, expect="ok")
     parity.signed_in(pair, REF_DB, RUST_DB, admin)
     ref, _ = configure(pair, "same identity, no password (kept)", user="  good-user ")
     status_matches(pair, "save kept password", ref)
     configure(pair, "password as a number (kept, truthy)", user="good-user", password=5)
     configure(pair, "password as an array (throws after writing)", user="good-user", password=["x"])
     configure(pair, "wrong password", user="good-user", password="bad-pass")
-    test_mail(senders, "AUTH failure")
+    test_mail(senders, "AUTH failure", expect="auth")
     parity.signed_in(pair, REF_DB, RUST_DB, admin)
     configure(pair, "AUTH LOGIN only", port=SINK_BASE + 6, user="good-user", password="good-pass")
-    test_mail(senders, "AUTH LOGIN", delivered=True)
+    test_mail(senders, "AUTH LOGIN", delivered=True, expect="ok")
     parity.signed_in(pair, REF_DB, RUST_DB, admin)
     configure(pair, "AUTH CRAM-MD5 only", port=SINK_BASE + 7, user="good-user", password="good-pass")
-    test_mail(senders, "AUTH CRAM-MD5", delivered=True)
+    test_mail(senders, "AUTH CRAM-MD5", delivered=True, expect="ok")
     parity.signed_in(pair, REF_DB, RUST_DB, admin)
     configure(pair, "EHLO refused", port=SINK_BASE + 5, user="good-user", password="good-pass")
-    test_mail(senders, "HELO fallback", delivered=True)
+    test_mail(senders, "HELO fallback", delivered=True, expect="ok")
     parity.signed_in(pair, REF_DB, RUST_DB, admin)
     configure(pair, "host change forgets the password", host="localhost", user="good-user")
     ref, _ = act(pair, "clearSmtpPassword", "mail", "clearSmtpPassword", [])
     status_matches(pair, "clearSmtpPassword", ref)
-    test_mail(senders, "user without a password (not ready)")
+    test_mail(senders, "user without a password (not ready)", expect="not-configured")
 
     parity.signed_in(pair, REF_DB, RUST_DB, admin)
-    for name, port, extra, server_says in [
-        ("greeting 554", SINK_BASE + 1, {}, True),
-        ("closed at once", SINK_BASE + 3, {}, True),
-        ("STARTTLS then hang-up", SINK_BASE + 4, {}, True),
-        ("STARTTLS required, refused", SINK_BASE, {"security": "starttls"}, True),
-        ("implicit TLS against plain text", SINK_BASE, {"security": "tls"}, False),
-        ("connection refused", SINK_BASE + 74, {}, True),
-        ("sender rejected", SINK_BASE, {"from": "reject-from@sink.test"}, True),
+    for name, port, extra, server_says, expect in [
+        ("greeting 554", SINK_BASE + 1, {}, True, "recipient"),
+        ("closed at once", SINK_BASE + 3, {}, True, "unknown"),
+        ("STARTTLS then hang-up", SINK_BASE + 4, {}, True, "tls"),
+        ("STARTTLS required, refused", SINK_BASE, {"security": "starttls"}, True, "tls"),
+        ("implicit TLS against plain text", SINK_BASE, {"security": "tls"}, False, "tls"),
+        ("connection refused", SINK_BASE + 74, {}, True, "tls"),
+        ("sender rejected", SINK_BASE, {"from": "reject-from@sink.test"}, True, "recipient"),
     ]:
         configure(pair, name, port=port, **extra)
-        test_mail(senders, name, ignore_server_says=not server_says)
+        test_mail(senders, name, ignore_server_says=not server_says, expect=expect)
         parity.signed_in(pair, REF_DB, RUST_DB, admin)
     configure(pair, "unknown host", host="nonexistent.invalid")
-    test_mail(senders, "unknown host")
+    test_mail(senders, "unknown host", expect="connection")
     if not ARGS.skip_slow:
         parity.signed_in(pair, REF_DB, RUST_DB, admin)
         configure(pair, "silent server", port=SINK_BASE + 2)
-        test_mail(senders, "greeting never received")
+        test_mail(senders, "greeting never received", expect="connection")
 
     # The throttle: a sixth test within 15 minutes by the same admin.
     parity.signed_in(pair, REF_DB, RUST_DB, admin)
