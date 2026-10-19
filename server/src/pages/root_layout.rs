@@ -12,7 +12,10 @@
 //! cookie when it fails (`getSession().catch(() => null)`).
 //!
 //! Payload (`layouts.root`):
-//! `{ locale, messages, messagesHash, timeZone, mode, theme }`.
+//! `{ locale, messages, messagesHash, timeZone, mode, theme, config }`, where
+//! `config` is the public part of `lib/config.ts` (`appName`, `embedBrand`,
+//! `appUrl`, `appDomains`, `shortUrl`) that upstream's client components read
+//! from the server-rendered tree (`PublicConfig` in the SPA, CONTRACT 5.7).
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -69,5 +72,17 @@ pub async fn load(ctx: PageCtx) -> LayoutResult {
         "timeZone": server_time_zone(),
         "mode": root.mode,
         "theme": root.theme,
+        "config": public_config(&ctx.state.config),
     }))
+}
+
+/// `PublicConfig` (CONTRACT 5.7): never any other config field.
+pub fn public_config(config: &crate::config::Config) -> Value {
+    json!({
+        "appName": config.app_name,
+        "embedBrand": config.embed_brand,
+        "appUrl": config.app_url,
+        "appDomains": config.app_domains,
+        "shortUrl": config.short_url,
+    })
 }

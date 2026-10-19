@@ -126,6 +126,18 @@ pub fn js_number(s: &str) -> f64 {
     t.parse::<f64>().unwrap_or(f64::NAN)
 }
 
+/// `Math.round(n)`: halves round towards +Infinity (`-2.5` -> `-2`), NaN and
+/// the infinities pass through.
+pub fn js_round(n: f64) -> f64 {
+    if !n.is_finite() {
+        return n;
+    }
+    let f = n.floor();
+    let r = if n - f >= 0.5 { f + 1.0 } else { f };
+    // Math.round(-0.4) is -0; keep the sign of zero like JavaScript.
+    if r == 0.0 && n.is_sign_negative() { -0.0 } else { r }
+}
+
 /// `[+-]? (digits [. digits?] | . digits) ([eE] [+-]? digits)?`
 fn is_js_decimal_literal(t: &str) -> bool {
     let b = t.as_bytes();
