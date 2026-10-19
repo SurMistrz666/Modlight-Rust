@@ -12,7 +12,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::AppConfig;
+use crate::tasks::actions::ExternalProgram;
 use crate::watch::WatchFolderSettings;
+
+/// A member Newtonsoft may have written as `null` (`TaskSettings.Cleanup` nulls every
+/// group a hotkey takes from the defaults): read as the default.
+pub fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + serde::de::DeserializeOwned,
+{
+    let value = Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Ok(T::default());
+    }
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
 
 /// A `[Flags]` enum as a set of bits, with the names upstream gives them.
 pub trait FlagNames: Sized + Copy {
@@ -79,7 +94,7 @@ macro_rules! flags {
             }
         }
 
-        impl FlagNames for $name {
+        impl $crate::tasks::settings::FlagNames for $name {
             const NAMES: &'static [(&'static str, u32)] = &[$((stringify!($flag), $bit)),*];
             fn from_bits(bits: u32) -> Self {
                 $name(bits)
@@ -89,15 +104,15 @@ macro_rules! flags {
             }
         }
 
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                let value = Value::deserialize(deserializer)?;
-                Ok(<$name as FlagNames>::parse_value(&value).unwrap_or_default())
+        impl<'de> ::serde::Deserialize<'de> for $name {
+            fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let value = <::serde_json::Value as ::serde::Deserialize>::deserialize(deserializer)?;
+                Ok(<$name as $crate::tasks::settings::FlagNames>::parse_value(&value).unwrap_or_default())
             }
         }
 
-        impl Serialize for $name {
-            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        impl ::serde::Serialize for $name {
+            fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
                 serializer.serialize_str(&self.names())
             }
         }
@@ -169,12 +184,12 @@ macro_rules! named_enum {
             }
         }
 
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                let value = Value::deserialize(deserializer)?;
+        impl<'de> ::serde::Deserialize<'de> for $name {
+            fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let value = <::serde_json::Value as ::serde::Deserialize>::deserialize(deserializer)?;
                 Ok(match &value {
-                    Value::String(text) => $name::parse(text).unwrap_or_default(),
-                    Value::Number(n) => n
+                    ::serde_json::Value::String(text) => $name::parse(text).unwrap_or_default(),
+                    ::serde_json::Value::Number(n) => n
                         .as_u64()
                         .and_then(|i| $name::ALL.get(i as usize).copied())
                         .unwrap_or_default(),
@@ -183,13 +198,17 @@ macro_rules! named_enum {
             }
         }
 
-        impl Serialize for $name {
-            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        impl ::serde::Serialize for $name {
+            fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
                 serializer.serialize_str(self.name())
             }
         }
     };
 }
+
+#[allow(unused_imports)]
+pub(crate) use flags;
+pub(crate) use named_enum;
 
 named_enum! {
     /// `ImageDestination`.
@@ -419,6 +438,10 @@ pub struct ImageSettings {
     #[serde(rename = "ImageAutoJPEGQuality")]
     pub image_auto_jpeg_quality: bool,
     pub file_exist_action: FileExistAction,
+    pub selected_image_effect_preset: i64,
+    pub show_image_effects_window_after_capture: bool,
+    pub image_effect_only_region_capture: bool,
+    pub use_random_image_effect: bool,
     pub thumbnail_width: i64,
     pub thumbnail_height: i64,
     pub thumbnail_name: String,
@@ -436,6 +459,10 @@ impl Default for ImageSettings {
             image_auto_use_jpeg_size: 2048,
             image_auto_jpeg_quality: false,
             file_exist_action: FileExistAction::Ask,
+            selected_image_effect_preset: 0,
+            show_image_effects_window_after_capture: false,
+            image_effect_only_region_capture: false,
+            use_random_image_effect: false,
             thumbnail_width: 200,
             thumbnail_height: 0,
             thumbnail_name: "-thumbnail".into(),
@@ -500,6 +527,7 @@ pub struct AdvancedSettings {
     pub use_after_capture_tasks_during_file_upload: bool,
     pub text_task_save_as_file: bool,
     pub auto_clear_clipboard: bool,
+    pub region_capture_disable_annotation: bool,
     pub image_extensions: Option<Vec<String>>,
     pub text_extensions: Option<Vec<String>>,
     #[serde(rename = "EarlyCopyURL")]
@@ -529,6 +557,7 @@ impl Default for AdvancedSettings {
             use_after_capture_tasks_during_file_upload: true,
             text_task_save_as_file: true,
             auto_clear_clipboard: false,
+            region_capture_disable_annotation: false,
             image_extensions: None,
             text_extensions: None,
             early_copy_url: false,
@@ -573,8 +602,13 @@ impl AdvancedSettings {
 #[serde(rename_all = "PascalCase", default)]
 pub struct TaskSettings {
     pub description: Option<String>,
+    /// The hotkey's job (`HotkeyType`) when these are a hotkey's settings.
+    pub job: crate::hotkeys::HotkeyType,
+    pub use_default_after_capture_job: bool,
     pub after_capture_job: AfterCaptureTasks,
+    pub use_default_after_upload_job: bool,
     pub after_upload_job: AfterUploadTasks,
+    pub use_default_destinations: bool,
     pub image_destination: ImageDestination,
     pub image_file_destination: FileDestination,
     pub text_destination: TextDestination,
@@ -586,11 +620,27 @@ pub struct TaskSettings {
     pub url_sharing_service_destination: UrlSharingServices,
     pub override_screenshots_folder: bool,
     pub screenshots_folder: Option<String>,
+    pub use_default_general_settings: bool,
+    #[serde(deserialize_with = "null_default")]
     pub general_settings: GeneralSettings,
+    pub use_default_image_settings: bool,
+    #[serde(deserialize_with = "null_default")]
     pub image_settings: ImageSettings,
+    pub use_default_capture_settings: bool,
+    #[serde(deserialize_with = "null_default")]
+    pub capture_settings: crate::capture::options::CaptureSettings,
+    pub use_default_upload_settings: bool,
+    #[serde(deserialize_with = "null_default")]
     pub upload_settings: UploadSettings,
+    pub use_default_actions: bool,
+    #[serde(deserialize_with = "null_default")]
+    pub external_programs: Vec<ExternalProgram>,
+    pub use_default_tools_settings: bool,
+    pub use_default_advanced_settings: bool,
+    #[serde(deserialize_with = "null_default")]
     pub advanced_settings: AdvancedSettings,
     pub watch_folder_enabled: bool,
+    #[serde(deserialize_with = "null_default")]
     pub watch_folder_list: Vec<WatchFolderSettings>,
     /// Where THIS upload is going (a folder tile that was dropped on). Not a setting;
     /// never read from or written to the file.
@@ -605,6 +655,19 @@ impl Default for TaskSettings {
     fn default() -> Self {
         TaskSettings {
             description: None,
+            job: crate::hotkeys::HotkeyType::None,
+            use_default_after_capture_job: true,
+            use_default_after_upload_job: true,
+            use_default_destinations: true,
+            use_default_general_settings: true,
+            use_default_image_settings: true,
+            use_default_capture_settings: true,
+            use_default_upload_settings: true,
+            use_default_actions: true,
+            use_default_tools_settings: true,
+            use_default_advanced_settings: true,
+            capture_settings: crate::capture::options::CaptureSettings::default(),
+            external_programs: Vec::new(),
             // UploadImageToHost is on, unlike ShareX: this is a client for a server that
             // holds the screenshots; the file on disk is what survives a refusal.
             after_capture_job: AfterCaptureTasks::CopyImageToClipboard

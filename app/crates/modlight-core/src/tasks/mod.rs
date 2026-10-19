@@ -5,6 +5,7 @@
 //! Nothing here touches a window: a task asks its questions and hands its side
 //! effects (clipboard, sounds, toasts) to the window through a [`host::TaskChannel`].
 
+pub mod actions;
 pub mod context;
 pub mod gate;
 pub mod host;
