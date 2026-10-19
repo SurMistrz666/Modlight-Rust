@@ -310,19 +310,21 @@ impl Limiter {
                 }
             });
         }
+        // Until the job owns the slot, leaving this function (an error, or the
+        // caller dropping this future while it waits) stops the watcher.
+        let detach = detach.drop_guard();
         // Dropping this future means the caller went away.
         let caller_gone = deadline.abort_on_drop();
         let signal = deadline.signal();
 
         if let Err(err) = self.acquire(weight, &signal).await {
-            detach.cancel();
             caller_gone.disarm();
             return Err(err);
         }
 
         // From here the slot is held until `f`'s future really settles.
         self.shared.lock().running += 1;
-        let slot = SlotGuard { shared: self.shared.clone(), weight, detach: detach.clone() };
+        let slot = SlotGuard { shared: self.shared.clone(), weight, detach: detach.disarm() };
         let work = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(signal.clone()))) {
             Ok(work) => work,
             Err(panic) => {

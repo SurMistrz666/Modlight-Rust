@@ -357,7 +357,6 @@ impl Image {
     }
 
     /// `vips_smartcrop` with `interesting` = `"attention"` or `"entropy"`.
-    /// `premultiplied` exists since libvips 8.13.
     pub fn smartcrop(
         &self,
         width: i32,
@@ -370,7 +369,7 @@ impl Image {
             .set("width", width)
             .set("height", height)
             .set("interesting", Arg::Nick(interesting))
-            .set_if_known("premultiplied", premultiplied)
+            .set("premultiplied", premultiplied)
             .call()?
             .image("out")
     }
