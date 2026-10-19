@@ -177,6 +177,60 @@ mod tests {
         assert_eq!(encode83(16_777_215.0, 4), "TSUA");
     }
 
+    /// The xorshift32 the vector generator used (see the fixture's header in
+    /// `_scratch/srv-library/media/blurhash/vectors.js`).
+    fn pixels(pattern: &str, seed: u32, w: usize, h: usize) -> Vec<u8> {
+        let mut s = if seed == 0 { 1 } else { seed };
+        let mut next = move || {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            s
+        };
+        let mut out = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                match pattern {
+                    "noise" => {
+                        let v = next();
+                        out[i..i + 4].copy_from_slice(&v.to_le_bytes());
+                    }
+                    "gradient" => {
+                        let v = next() & 15;
+                        out[i] = ((x * 255) as f64 / (w.max(2) - 1) as f64).floor() as u8;
+                        out[i + 1] = ((y * 255) as f64 / (h.max(2) - 1) as f64).floor() as u8;
+                        out[i + 2] = ((seed as u64 * 37 + v as u64) & 255) as u8;
+                        out[i + 3] = 255;
+                    }
+                    _ => {
+                        out[i] = (seed & 255) as u8;
+                        out[i + 1] = ((seed >> 8) & 255) as u8;
+                        out[i + 2] = ((seed >> 16) & 255) as u8;
+                        out[i + 3] = 255;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Hashes the reference package (blurhash 2.0.5 under Node 24 in the
+    /// reference container) computed for these exact pixels.
+    #[test]
+    fn matches_the_reference_package_hash_for_hash() {
+        let vectors: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../../tests/fixtures/blurhash_vectors.json")).unwrap();
+        assert!(vectors.len() > 500);
+        for v in &vectors {
+            let get = |k: &str| v[k].as_u64().unwrap();
+            let (w, h) = (get("w") as u32, get("h") as u32);
+            let px = pixels(v["pattern"].as_str().unwrap(), get("seed") as u32, w as usize, h as usize);
+            let hash = encode(&px, w, h, get("cx") as u32, get("cy") as u32).unwrap();
+            assert_eq!(hash, v["hash"].as_str().unwrap(), "{v}");
+        }
+    }
+
     #[test]
     fn a_flat_colour_has_no_ac_energy() {
         // One grey pixel: DC only, every AC component quantises to the middle.
