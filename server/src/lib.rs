@@ -13,6 +13,7 @@ pub mod api_caller;
 pub mod api_json;
 pub mod api_scopes;
 pub mod api_token;
+pub mod archiver;
 pub mod audit;
 pub mod auth;
 pub mod auth_helpers;

@@ -22,6 +22,7 @@ pub mod releases;
 pub mod shortlink_unlock;
 pub mod shortlinks;
 pub mod tokens;
+pub mod unlock;
 pub mod uploads;
 
 use crate::rpc::RpcRegistry;
@@ -45,4 +46,5 @@ pub fn register_all(reg: &mut RpcRegistry) {
     shortlink_unlock::register(reg); // app/actions/shortlink-unlock.ts
     pastes::register(reg); // app/actions/pastes.ts
     admin_library::register(reg); // app/actions/admin.ts (orphans, account deletion, maintenance)
+    unlock::register(reg); // app/actions/unlock.ts
 }

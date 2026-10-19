@@ -48,7 +48,10 @@ pub mod invite;
 pub mod layout_app;
 pub mod layout_auth;
 pub mod login;
+pub mod media;
 pub mod meta;
+pub mod public_album;
+pub mod public_profile;
 pub mod register;
 pub mod reset;
 pub mod root_layout;
@@ -388,6 +391,10 @@ pub fn register_all(reg: &mut PageRegistry) {
     reg.page("/dashboard/admin/users/[id]/files", dashboard_admin_user_files::load); // app/(app)/dashboard/admin/users/[id]/files/page.tsx
     reg.page("/s/[code]/unlock", shortlink_unlock::load); // app/s/[code]/unlock/page.tsx
     reg.page("/s/[code]/[name]/unlock", shortlink_unlock::load_scoped); // app/s/[code]/[name]/unlock/page.tsx
+    reg.page("/[userCode]/[mediaCode]", media::load); // app/[userCode]/[mediaCode]/page.tsx
+    reg.page("/[userCode]", media::load_tagless); // app/[userCode]/page.tsx
+    reg.page("/u/[userCode]", public_profile::load); // app/u/[userCode]/page.tsx
+    reg.page("/a/[userCode]/[slug]", public_album::load); // app/a/[userCode]/[slug]/page.tsx
 }
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
