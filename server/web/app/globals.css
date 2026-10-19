@@ -1,0 +1,2258 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THEMING MODEL
+   ---------------------------------------------------------------------------
+   Two independent axes, both rendered server-side onto <html>:
+
+     data-theme = the SKIN     (default | glass | synthwave | terminal | paper | win98)
+     data-mode  = the MODE     (light | dark | system)
+
+   `default` was called `modern` until the Liquid Glass rework; the old id is
+   kept as a selector alias so a row (or a cookie) that still says "modern"
+   renders the same skin it always did. See THEME_ALIASES in lib/themes.ts.
+
+   A skin never declares `--background` & friends directly. It declares a PAIR
+   per token — `--l-*` (light) and `--d-*` (dark) — and a single mode switch at
+   the bottom of this file maps the chosen side onto the live token. That is
+   what makes the light/dark toggle work for *every* skin: skins and modes write
+   to different custom properties, so they can never out-specify each other.
+   (The previous `.dark` block lost to `[data-theme=…]` on specificity, which is
+   why the toggle was dead for five of the six skins.)
+
+   Adding a skin = one block of `--l-*` / `--d-*` pairs. Nothing else.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Tailwind's `dark:` variant follows the same signal as the tokens: an explicit
+   data-mode="dark", or data-mode="system" while the OS asks for dark. */
+@custom-variant dark {
+  &:is([data-mode="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:is([data-mode="system"] *) {
+      @slot;
+    }
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-geist-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ───────────────────────── Skin: default ─────────────────────────
+   Also the fallback layer: every later skin only overrides what it changes,
+   so anything it leaves out still resolves to a sane default value.
+   Contrast (WCAG AA, verified): fg/bg 19.8 light · 19.0 dark,
+   muted-fg/bg 6.6 · 8.0, primary-fg/primary 5.1 · 6.3. */
+:root,
+[data-theme="default"],
+[data-theme="modern"] {
+  --l-background: oklch(1 0 0);                      --d-background: oklch(0.145 0 0);
+  --l-foreground: oklch(0.145 0 0);                  --d-foreground: oklch(0.985 0 0);
+  --l-card: oklch(1 0 0);                            --d-card: oklch(0.205 0 0);
+  --l-card-foreground: oklch(0.145 0 0);             --d-card-foreground: oklch(0.985 0 0);
+  --l-popover: oklch(1 0 0);                         --d-popover: oklch(0.205 0 0);
+  --l-popover-foreground: oklch(0.145 0 0);          --d-popover-foreground: oklch(0.985 0 0);
+  --l-primary: oklch(0.546 0.215 277);               --d-primary: oklch(0.672 0.169 277);
+  --l-primary-foreground: oklch(0.985 0 0);          --d-primary-foreground: oklch(0.16 0.03 277);
+  --l-secondary: oklch(0.97 0 0);                    --d-secondary: oklch(0.269 0 0);
+  --l-secondary-foreground: oklch(0.205 0 0);        --d-secondary-foreground: oklch(0.985 0 0);
+  --l-muted: oklch(0.97 0 0);                        --d-muted: oklch(0.269 0 0);
+  --l-muted-foreground: oklch(0.478 0 0);            --d-muted-foreground: oklch(0.72 0 0);
+  --l-accent: oklch(0.955 0.012 277);                --d-accent: oklch(0.29 0.022 277);
+  --l-accent-foreground: oklch(0.205 0 0);           --d-accent-foreground: oklch(0.985 0 0);
+  --l-destructive: oklch(0.55 0.235 27);             --d-destructive: oklch(0.704 0.191 22);
+  --l-border: oklch(0.922 0 0);                      --d-border: oklch(1 0 0 / 12%);
+  --l-input: oklch(0.922 0 0);                       --d-input: oklch(1 0 0 / 15%);
+  --l-ring: oklch(0.546 0.215 277);                  --d-ring: oklch(0.672 0.169 277);
+
+  --l-sidebar: oklch(0.985 0 0);                     --d-sidebar: oklch(0.185 0 0);
+  --l-sidebar-foreground: oklch(0.145 0 0);          --d-sidebar-foreground: oklch(0.985 0 0);
+  --l-sidebar-primary: oklch(0.546 0.215 277);       --d-sidebar-primary: oklch(0.672 0.169 277);
+  --l-sidebar-primary-foreground: oklch(0.985 0 0);  --d-sidebar-primary-foreground: oklch(0.16 0.03 277);
+  --l-sidebar-accent: oklch(0.955 0.012 277);        --d-sidebar-accent: oklch(0.27 0.022 277);
+  --l-sidebar-accent-foreground: oklch(0.205 0 0);   --d-sidebar-accent-foreground: oklch(0.985 0 0);
+  --l-sidebar-border: oklch(0.922 0 0);              --d-sidebar-border: oklch(1 0 0 / 10%);
+  --l-sidebar-ring: oklch(0.546 0.215 277);          --d-sidebar-ring: oklch(0.672 0.169 277);
+
+  --l-chart-1: oklch(0.546 0.215 277);               --d-chart-1: oklch(0.672 0.169 277);
+  --l-chart-2: oklch(0.6 0.19 320);                  --d-chart-2: oklch(0.72 0.15 320);
+  --l-chart-3: oklch(0.58 0.15 210);                 --d-chart-3: oklch(0.72 0.13 210);
+  --l-chart-4: oklch(0.6 0.15 150);                  --d-chart-4: oklch(0.74 0.14 150);
+  --l-chart-5: oklch(0.65 0.16 60);                  --d-chart-5: oklch(0.78 0.14 60);
+
+  /* Page canvas — the `background` shorthand a skin paints on <body>. */
+  --l-canvas: var(--l-background);                   --d-canvas: var(--d-background);
+  /* Optional raised-panel treatment: the skin's box-shadow for a surface at
+     rest (`--bevel`), while the pointer is over it (`--bevel-hover`) and while
+     it is being pressed (`--bevel-sunken`). win98 uses them as literal bevels;
+     the themed skins use them for hard cartoon shadows, gilt frames, off-
+     register ink and starlight rims. Never `var()`-chained to each other: a
+     nested .skin-scope inherits computed values, so a default of
+     `var(--l-bevel)` would leak the *root* skin's shadow into a preview. */
+  --l-bevel: none;                                   --d-bevel: none;
+  --l-bevel-hover: none;                             --d-bevel-hover: none;
+  --l-bevel-sunken: none;                            --d-bevel-sunken: none;
+  /* Decorative paint layered onto a panel surface (parchment sheen, dot
+     screen, deco flutes, starlight glow). Applied as `background-image`, so
+     it is always safe to leave at `none`. */
+  --l-panel: none;                                   --d-panel: none;
+
+  --radius: 0.625rem;
+}
+
+/* ───────────────────────── Skin: glass ─────────────────────────
+   Liquid glass, ported from the sibling app (board.example.com), where it is the
+   skin people actually keep switched on.
+
+   The lesson from that build is restraint. Its glass is *achromatic*: neutral
+   greys, a light-grey "primary" instead of a coloured accent, and a panel that
+   is nothing more than `rgba(23,23,23,.55)` behind `blur(14px) saturate(110%)`,
+   with a hairline white rim and one soft drop shadow. No rainbow, no aurora,
+   no 20px lens on every element. What sells it is that the panel is genuinely
+   *thin* - you can read the light behind it - and that the rim catches that
+   light along the top edge.
+
+   This skin is that material rebuilt on our OKLCH tokens, with a light mode
+   added (the original is dark-only) and the tint kept almost fully neutral:
+   a trace of chroma in the wallpaper only, so the saturate() in the backdrop
+   has something to lift and the glass does not read as grey plastic.
+
+   Composition, in paint order:
+     1. backdrop  blur + saturate                    → --glass-backdrop
+     2. tint      the --card / --popover token, low alpha by design
+     3. sheen     top highlight → transparent → foot shade  → --glass-sheen
+     4. rim       hairline outline + top lip          → --glass-rim
+     5. drop      one soft shadow                     → --glass-drop
+
+   Which surfaces get which is the whole performance story - see the two rules
+   under "Backdrop filters" below. */
+[data-theme="glass"] {
+  --l-background: oklch(0.97 0 0);                   --d-background: oklch(0.17 0 0);
+  --l-foreground: oklch(0.2 0 0);                    --d-foreground: oklch(0.94 0 0);
+  /* Deliberately low alpha: the panel is a pane of glass, not a frosted lid. */
+  --l-card: oklch(1 0 0 / 62%);                      --d-card: oklch(0.205 0 0 / 55%);
+  --l-card-foreground: oklch(0.2 0 0);               --d-card-foreground: oklch(0.94 0 0);
+  /* The floating layer covers real content, so it is denser than a card. */
+  --l-popover: oklch(1 0 0 / 88%);                   --d-popover: oklch(0.205 0 0 / 84%);
+  --l-popover-foreground: oklch(0.2 0 0);            --d-popover-foreground: oklch(0.94 0 0);
+  /* Achromatic accent, the way the original does it: near-black on light,
+     near-white on dark. Nothing in the chrome competes with the wallpaper. */
+  --l-primary: oklch(0.24 0 0);                      --d-primary: oklch(0.94 0 0);
+  --l-primary-foreground: oklch(0.98 0 0);           --d-primary-foreground: oklch(0.2 0 0);
+  --l-secondary: oklch(1 0 0 / 72%);                 --d-secondary: oklch(0.26 0 0 / 70%);
+  --l-secondary-foreground: oklch(0.24 0 0);         --d-secondary-foreground: oklch(0.94 0 0);
+  --l-muted: oklch(1 0 0 / 66%);                     --d-muted: oklch(0.24 0 0 / 70%);
+  --l-muted-foreground: oklch(0.44 0 0);             --d-muted-foreground: oklch(0.7 0 0);
+  --l-accent: oklch(0.2 0 0 / 8%);                   --d-accent: oklch(1 0 0 / 12%);
+  --l-accent-foreground: oklch(0.24 0 0);            --d-accent-foreground: oklch(0.94 0 0);
+  --l-destructive: oklch(0.55 0.23 27);              --d-destructive: oklch(0.7 0.19 22);
+  --l-border: oklch(0.2 0 0 / 12%);                  --d-border: oklch(1 0 0 / 11%);
+  --l-input: oklch(0.2 0 0 / 16%);                   --d-input: oklch(1 0 0 / 15%);
+  --l-ring: oklch(0.42 0 0);                         --d-ring: oklch(0.66 0 0);
+
+  --l-sidebar: oklch(1 0 0 / 66%);                   --d-sidebar: oklch(0.2 0 0 / 62%);
+  --l-sidebar-foreground: oklch(0.2 0 0);            --d-sidebar-foreground: oklch(0.94 0 0);
+  --l-sidebar-primary: oklch(0.24 0 0);              --d-sidebar-primary: oklch(0.94 0 0);
+  --l-sidebar-primary-foreground: oklch(0.98 0 0);   --d-sidebar-primary-foreground: oklch(0.2 0 0);
+  --l-sidebar-accent: oklch(0.2 0 0 / 8%);           --d-sidebar-accent: oklch(1 0 0 / 12%);
+  --l-sidebar-accent-foreground: oklch(0.24 0 0);    --d-sidebar-accent-foreground: oklch(0.94 0 0);
+  --l-sidebar-border: oklch(0.2 0 0 / 10%);          --d-sidebar-border: oklch(1 0 0 / 10%);
+  --l-sidebar-ring: oklch(0.42 0 0);                 --d-sidebar-ring: oklch(0.66 0 0);
+
+  /* The wallpaper. Glass over a flat fill is just a lighter rectangle, so the
+     canvas is a few very wide, very soft pools of light - almost neutral, but
+     carrying just enough chroma for the backdrop's saturate() to find. The
+     first layer is a tiled fractal-noise tile: it stops the huge gradients
+     banding on 8-bit panels and gives the material a trace of grain. */
+  --l-canvas:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E") 0 0 / 180px 180px repeat,
+    radial-gradient(62rem 50rem at 6% -14%, oklch(1 0 0 / 92%), transparent 62%),
+    radial-gradient(54rem 46rem at 106% 4%, oklch(0.88 0.016 265 / 72%), transparent 62%),
+    radial-gradient(50rem 44rem at 84% 112%, oklch(0.9 0.012 175 / 58%), transparent 64%),
+    oklch(0.945 0.005 265);
+  --d-canvas:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E") 0 0 / 180px 180px repeat,
+    radial-gradient(64rem 52rem at 6% -14%, oklch(0.34 0.014 265 / 82%), transparent 62%),
+    radial-gradient(56rem 48rem at 106% 4%, oklch(0.28 0.012 265 / 76%), transparent 62%),
+    radial-gradient(50rem 44rem at 84% 112%, oklch(0.26 0.01 190 / 66%), transparent 64%),
+    oklch(0.145 0 0);
+
+  /* ── The material itself ─────────────────────────────────────────────── */
+
+  /* Structural chrome. blur(14px) saturate(110%) is the original's recipe,
+     and it is deliberately mild: the point is to keep the wallpaper legible
+     through the pane, not to erase it. */
+  --l-glass-backdrop: blur(14px) saturate(115%);
+  --d-glass-backdrop: blur(14px) saturate(110%);
+  /* Menus, sheets and dialogs sit closest to the user and cover real content,
+     so they get the denser pane. */
+  --l-glass-backdrop-near: blur(24px) saturate(125%);
+  --d-glass-backdrop-near: blur(24px) saturate(120%);
+  /* What sits *under* a modal is dimmed, not obliterated - the user has to
+     keep their bearings. */
+  --l-glass-dim: blur(3px) saturate(105%) brightness(0.96);
+  --d-glass-dim: blur(3px) saturate(105%) brightness(0.72);
+
+  /* Specular: a highlight along the top lip that fades out by 40%, and a
+     shadow gathering at the foot. Straight from the original's column shell. */
+  --l-glass-sheen:
+    linear-gradient(180deg, oklch(1 0 0 / 55%) 0%, oklch(1 0 0 / 0%) 42%, oklch(0.2 0 0 / 4%) 100%);
+  --d-glass-sheen:
+    linear-gradient(180deg, oklch(1 0 0 / 5%) 0%, oklch(1 0 0 / 0%) 40%, oklch(0 0 0 / 9%) 100%);
+
+  /* The cut edge: a hairline outline all round, brighter along the top where
+     the light lands. Two shadows, not five - the original is restrained and
+     that is exactly why it does not look like plastic. */
+  --l-glass-rim:
+    inset 0 0 0 1px oklch(0.2 0 0 / 9%),
+    inset 0 1px 0 0 oklch(1 0 0 / 85%);
+  --d-glass-rim:
+    inset 0 0 0 1px oklch(1 0 0 / 7%),
+    inset 0 1px 0 0 oklch(1 0 0 / 9%);
+
+  /* One soft shadow. Glass is thin and floats close to what it covers. */
+  --l-glass-drop:
+    0 1px 2px -1px oklch(0.2 0 0 / 6%),
+    0 8px 24px -10px oklch(0.2 0 0 / 18%);
+  --d-glass-drop:
+    0 8px 24px -6px oklch(0 0 0 / 45%);
+  --l-glass-drop-near:
+    0 2px 4px -2px oklch(0.2 0 0 / 10%),
+    0 24px 56px -22px oklch(0.2 0 0 / 30%);
+  --d-glass-drop-near:
+    0 24px 64px -18px oklch(0 0 0 / 65%);
+
+  --radius: 0.75rem;
+}
+
+[data-theme="glass"] body {
+  background: var(--canvas);
+  background-attachment: fixed;
+}
+
+/* Every page-level wrapper paints an opaque `bg-background` across the whole
+   viewport - which in this skin would bury the wallpaper the material exists
+   to sample, leaving glass panels floating over a flat grey field. Hand those
+   full-height surfaces back to the canvas.
+   Scoped by height so it cannot reach the many small controls that also use
+   `bg-background` (the switch knob, the active tab, outline buttons), and
+   matched with `~=` so partial tints like the top bar's `bg-background/70`
+   keep theirs - those are a different class token.
+
+   `:not(body)` is load-bearing. The root layout renders
+   `<body class="bg-background text-foreground min-h-full">`, which matches
+   every other half of this selector - so without the exclusion the rule
+   stripped the background-color off the one element that paints the wallpaper,
+   and the base colour of `--canvas` was silently replaced by the browser's
+   white. The gradient layers still rendered, which is exactly why it went
+   unnoticed here: this skin's base is near-white anyway. */
+[data-theme="glass"]
+  :is(
+    [class*="min-h-svh"],
+    [class*="min-h-dvh"],
+    [class*="min-h-full"],
+    [class*="h-dvh"]
+  )[class~="bg-background"]:not(body) {
+  background-color: transparent;
+}
+
+/* ── Every glass surface: sheen + rim + soft drop ──────────────────────────
+   No backdrop-filter here on purpose. Each filtered element becomes its own
+   compositing layer, and a dashboard renders a grid of file cards; the rim and
+   the sheen are what actually sell the material and they are pure paint.
+   `background-image` is safe to claim because these elements set only a
+   background-*color* - the exceptions that ship a real gradient opt out
+   through the :not(). */
+[data-theme="glass"]
+  :is(
+    [data-slot="card"],
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="sheet-content"],
+    [data-slot="popover-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="select-content"],
+    [data-slot="alert"],
+    [class*="bg-card"],
+    [class*="bg-popover"],
+    [class*="bg-sidebar"]
+  ):not([class*="bg-gradient"], [class*="bg-linear"], [class*="bg-radial"]) {
+  background-image: var(--glass-sheen);
+  box-shadow: var(--glass-rim), var(--glass-drop);
+  transition:
+    box-shadow 240ms cubic-bezier(0.32, 0.72, 0, 1),
+    background-color 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ── Backdrop filters: structural surfaces only ────────────────────────────
+   A backdrop-filter is the expensive ingredient - one GPU pass and one
+   compositing layer per element, every frame it is on screen. The original
+   spends it on a handful of board columns and the card dialog, and nowhere
+   else, which is why it stays smooth.
+
+   Here that budget goes to: the rail, the top bar, the floating action bars,
+   and the auth/site chrome that already asked for the strongest blur. It
+   pointedly does NOT go to `[class*="backdrop-blur"]` as a whole: a single
+   file card carries up to six small `backdrop-blur` badges (the play button,
+   the extension chip, the select box), so a 60-file grid would have opened
+   ~360 lensed layers. Those badges keep Tailwind's own cheap blur. */
+[data-theme="glass"]
+  :is(
+    aside[class*="backdrop-blur"],
+    header[class*="backdrop-blur"],
+    nav[class*="backdrop-blur"],
+    [class*="backdrop-blur-xl"],
+    [class*="pointer-events-auto"][class*="backdrop-blur"]
+  ) {
+  backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
+}
+
+/* ── The floating layer: denser pane, deeper shadow ────────────────────── */
+[data-theme="glass"]
+  :is(
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="sheet-content"],
+    [data-slot="popover-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="select-content"]
+  ) {
+  backdrop-filter: var(--glass-backdrop-near);
+  -webkit-backdrop-filter: var(--glass-backdrop-near);
+  box-shadow: var(--glass-rim), var(--glass-drop-near);
+}
+
+/* ── The layer beneath a modal is dimmed, not pulverised ───────────────── */
+[data-theme="glass"] :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"]) {
+  backdrop-filter: var(--glass-dim);
+  -webkit-backdrop-filter: var(--glass-dim);
+}
+
+/* ── Accessibility ────────────────────────────────────────────────────────
+   Reduce Transparency is a real setting people rely on - and on Windows it is
+   simply "Transparency effects: off", which plenty of people have without ever
+   thinking of it as an accessibility choice. So the fallback is the one Apple
+   itself ships: the surfaces stop being see-through, and *nothing else
+   changes*. The sheen, the lit rim, the depth and the wallpaper are opaque
+   paint rather than transparency, so they stay and the skin keeps its identity
+   - switching them off would have left a flat grey theme wearing the name
+   "Liquid Glass".
+
+   Overriding the --l-* / --d-* pairs rather than the resolved tokens means the
+   mode switch further down picks the opaque values up for free, in both modes.
+
+   Worth knowing when this skin is being looked at: on Windows this query
+   matches whenever Settings > Personalisation > Colours > "Transparency
+   effects" is off, and Chromium reports it in headless runs too - so a
+   screenshot can silently be of this branch rather than the material above.
+   `scripts/glass-css-build.ts --lens` compiles with the query neutralised,
+   which is how both paths get verified. */
+@media (prefers-reduced-transparency: reduce) {
+  [data-theme="glass"] {
+    /* Panels go effectively opaque; what floats over real content goes all
+       the way. The wallpaper survives as the page background, so the skin
+       still reads as itself. */
+    --l-card: oklch(1 0 0 / 92%);                    --d-card: oklch(0.205 0 0 / 92%);
+    --l-secondary: oklch(1 0 0 / 94%);               --d-secondary: oklch(0.26 0 0 / 94%);
+    --l-muted: oklch(1 0 0 / 92%);                   --d-muted: oklch(0.24 0 0 / 92%);
+    --l-sidebar: oklch(1 0 0 / 94%);                 --d-sidebar: oklch(0.2 0 0 / 94%);
+    --l-popover: oklch(1 0 0 / 99%);                 --d-popover: oklch(0.205 0 0 / 99%);
+    --l-border: oklch(0.2 0 0 / 18%);                --d-border: oklch(1 0 0 / 16%);
+
+    /* And the lens itself is withdrawn entirely - the blur is the part of this
+       material that actually costs legibility. */
+    --l-glass-backdrop: none;                        --d-glass-backdrop: none;
+    --l-glass-backdrop-near: none;                   --d-glass-backdrop-near: none;
+    --l-glass-dim: none;                             --d-glass-dim: none;
+  }
+}
+
+/* Increase Contrast: keep the geometry, thicken the tint and darken the
+   secondary text until the busiest part of the wallpaper cannot eat it. */
+@media (prefers-contrast: more) {
+  [data-theme="glass"] {
+    --l-card: oklch(1 0 0 / 94%);                    --d-card: oklch(0.19 0 0 / 94%);
+    --l-popover: oklch(1 0 0 / 99%);                 --d-popover: oklch(0.19 0 0 / 99%);
+    --l-muted-foreground: oklch(0.34 0 0);           --d-muted-foreground: oklch(0.86 0 0);
+    --l-border: oklch(0.2 0 0 / 36%);                --d-border: oklch(1 0 0 / 34%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="glass"] * {
+    transition-duration: 0.01ms;
+  }
+}
+
+/* ───────────────────────── Skin: synthwave ─────────────────────────
+   Neon magenta & cyan. Dark = midnight arcade, light = a Miami afternoon. */
+[data-theme="synthwave"] {
+  --l-background: oklch(0.965 0.025 310);            --d-background: oklch(0.16 0.06 300);
+  --l-foreground: oklch(0.26 0.09 305);              --d-foreground: oklch(0.95 0.03 320);
+  --l-card: oklch(0.99 0.012 310);                   --d-card: oklch(0.22 0.07 300);
+  --l-card-foreground: oklch(0.26 0.09 305);         --d-card-foreground: oklch(0.96 0.02 320);
+  --l-popover: oklch(0.99 0.012 310);                --d-popover: oklch(0.2 0.07 300);
+  --l-popover-foreground: oklch(0.26 0.09 305);      --d-popover-foreground: oklch(0.96 0.02 320);
+  --l-primary: oklch(0.52 0.22 350);                 --d-primary: oklch(0.72 0.2 350);
+  --l-primary-foreground: oklch(0.99 0.01 350);      --d-primary-foreground: oklch(0.15 0.05 350);
+  --l-secondary: oklch(0.92 0.045 310);              --d-secondary: oklch(0.3 0.08 300);
+  --l-secondary-foreground: oklch(0.28 0.09 305);    --d-secondary-foreground: oklch(0.96 0.02 320);
+  --l-muted: oklch(0.93 0.035 310);                  --d-muted: oklch(0.26 0.06 300);
+  --l-muted-foreground: oklch(0.44 0.07 305);        --d-muted-foreground: oklch(0.8 0.06 320);
+  --l-accent: oklch(0.86 0.08 200);                  --d-accent: oklch(0.7 0.16 200);
+  --l-accent-foreground: oklch(0.28 0.07 220);       --d-accent-foreground: oklch(0.15 0.05 200);
+  --l-destructive: oklch(0.55 0.23 27);              --d-destructive: oklch(0.7 0.19 22);
+  --l-border: oklch(0.55 0.12 320 / 30%);            --d-border: oklch(0.55 0.12 320 / 40%);
+  --l-input: oklch(0.55 0.12 320 / 40%);             --d-input: oklch(0.45 0.1 320 / 55%);
+  --l-ring: oklch(0.52 0.22 350);                    --d-ring: oklch(0.72 0.2 350);
+
+  --l-sidebar: oklch(0.945 0.03 310);                --d-sidebar: oklch(0.19 0.07 300);
+  --l-sidebar-foreground: oklch(0.26 0.09 305);      --d-sidebar-foreground: oklch(0.95 0.03 320);
+  --l-sidebar-primary: oklch(0.52 0.22 350);         --d-sidebar-primary: oklch(0.72 0.2 350);
+  --l-sidebar-primary-foreground: oklch(0.99 0.01 350); --d-sidebar-primary-foreground: oklch(0.15 0.05 350);
+  --l-sidebar-accent: oklch(0.88 0.06 310);          --d-sidebar-accent: oklch(0.3 0.08 300);
+  --l-sidebar-accent-foreground: oklch(0.28 0.09 305); --d-sidebar-accent-foreground: oklch(0.96 0.02 320);
+  --l-sidebar-border: oklch(0.55 0.12 320 / 26%);    --d-sidebar-border: oklch(0.55 0.12 320 / 35%);
+  --l-sidebar-ring: oklch(0.52 0.22 350);            --d-sidebar-ring: oklch(0.72 0.2 350);
+
+  /* The trailing solid layer is the shorthand's background-color: without it
+     the element reports `transparent`, and a failed gradient shows white. */
+  --l-canvas: linear-gradient(160deg, oklch(0.975 0.03 320), oklch(0.94 0.045 275)) oklch(0.965 0.025 310);
+  --d-canvas: linear-gradient(160deg, oklch(0.18 0.07 300), oklch(0.12 0.05 290)) oklch(0.16 0.06 300);
+
+  --radius: 0.5rem;
+}
+[data-theme="synthwave"] body {
+  background: var(--canvas);
+  background-attachment: fixed;
+}
+
+/* ───────────────────────── Skin: terminal ─────────────────────────
+   Phosphor green, monospace. Dark = CRT console, light = green-bar paper. */
+[data-theme="terminal"] {
+  --l-background: oklch(0.975 0.015 150);            --d-background: oklch(0.15 0.01 150);
+  --l-foreground: oklch(0.3 0.08 150);               --d-foreground: oklch(0.86 0.18 150);
+  --l-card: oklch(0.995 0.006 150);                  --d-card: oklch(0.19 0.01 150);
+  --l-card-foreground: oklch(0.3 0.08 150);          --d-card-foreground: oklch(0.86 0.18 150);
+  --l-popover: oklch(0.995 0.006 150);               --d-popover: oklch(0.17 0.01 150);
+  --l-popover-foreground: oklch(0.3 0.08 150);       --d-popover-foreground: oklch(0.86 0.18 150);
+  --l-primary: oklch(0.42 0.12 150);                 --d-primary: oklch(0.82 0.2 150);
+  --l-primary-foreground: oklch(0.98 0.01 150);      --d-primary-foreground: oklch(0.12 0.02 150);
+  --l-secondary: oklch(0.93 0.03 150);               --d-secondary: oklch(0.24 0.02 150);
+  --l-secondary-foreground: oklch(0.3 0.08 150);     --d-secondary-foreground: oklch(0.86 0.18 150);
+  --l-muted: oklch(0.94 0.02 150);                   --d-muted: oklch(0.22 0.01 150);
+  --l-muted-foreground: oklch(0.44 0.07 150);        --d-muted-foreground: oklch(0.68 0.12 150);
+  --l-accent: oklch(0.88 0.06 150);                  --d-accent: oklch(0.3 0.05 150);
+  --l-accent-foreground: oklch(0.28 0.08 150);       --d-accent-foreground: oklch(0.86 0.18 150);
+  --l-destructive: oklch(0.5 0.2 27);                --d-destructive: oklch(0.7 0.19 25);
+  --l-border: oklch(0.45 0.1 150 / 32%);             --d-border: oklch(0.45 0.1 150 / 40%);
+  --l-input: oklch(0.45 0.1 150 / 42%);              --d-input: oklch(0.32 0.05 150 / 55%);
+  --l-ring: oklch(0.42 0.12 150);                    --d-ring: oklch(0.82 0.2 150);
+
+  --l-sidebar: oklch(0.955 0.012 150);               --d-sidebar: oklch(0.17 0.01 150);
+  --l-sidebar-foreground: oklch(0.3 0.08 150);       --d-sidebar-foreground: oklch(0.86 0.18 150);
+  --l-sidebar-primary: oklch(0.42 0.12 150);         --d-sidebar-primary: oklch(0.82 0.2 150);
+  --l-sidebar-primary-foreground: oklch(0.98 0.01 150); --d-sidebar-primary-foreground: oklch(0.12 0.02 150);
+  --l-sidebar-accent: oklch(0.89 0.05 150);          --d-sidebar-accent: oklch(0.26 0.03 150);
+  --l-sidebar-accent-foreground: oklch(0.28 0.08 150); --d-sidebar-accent-foreground: oklch(0.86 0.18 150);
+  --l-sidebar-border: oklch(0.45 0.1 150 / 28%);     --d-sidebar-border: oklch(0.45 0.1 150 / 35%);
+  --l-sidebar-ring: oklch(0.42 0.12 150);            --d-sidebar-ring: oklch(0.82 0.2 150);
+
+  /* Restated rather than inherited: a nested .skin-scope (the theme picker's
+     miniature) inherits the *computed* --l-canvas from :root, which would have
+     already substituted the root skin's background. Every skin therefore
+     re-derives it from its own background. */
+  --l-canvas: var(--l-background);                   --d-canvas: var(--d-background);
+
+  --radius: 0.15rem;
+}
+[data-theme="terminal"] body,
+[data-theme="terminal"].skin-scope {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* ───────────────────────── Skin: paper ─────────────────────────
+   Warm serif stationery. Light = daylight notebook, dark = lamp-lit desk. */
+[data-theme="paper"] {
+  --l-background: oklch(0.96 0.02 85);               --d-background: oklch(0.19 0.015 60);
+  --l-foreground: oklch(0.28 0.04 50);               --d-foreground: oklch(0.93 0.02 80);
+  --l-card: oklch(0.99 0.01 85);                     --d-card: oklch(0.235 0.018 60);
+  --l-card-foreground: oklch(0.28 0.04 50);          --d-card-foreground: oklch(0.93 0.02 80);
+  --l-popover: oklch(0.99 0.01 85);                  --d-popover: oklch(0.235 0.018 60);
+  --l-popover-foreground: oklch(0.28 0.04 50);       --d-popover-foreground: oklch(0.93 0.02 80);
+  --l-primary: oklch(0.5 0.13 40);                   --d-primary: oklch(0.77 0.11 60);
+  --l-primary-foreground: oklch(0.98 0.01 85);       --d-primary-foreground: oklch(0.2 0.03 55);
+  --l-secondary: oklch(0.92 0.03 85);                --d-secondary: oklch(0.3 0.02 60);
+  --l-secondary-foreground: oklch(0.3 0.04 50);      --d-secondary-foreground: oklch(0.93 0.02 80);
+  --l-muted: oklch(0.93 0.02 85);                    --d-muted: oklch(0.28 0.018 60);
+  --l-muted-foreground: oklch(0.44 0.03 60);         --d-muted-foreground: oklch(0.74 0.02 75);
+  --l-accent: oklch(0.9 0.04 85);                    --d-accent: oklch(0.33 0.03 60);
+  --l-accent-foreground: oklch(0.3 0.04 50);         --d-accent-foreground: oklch(0.93 0.02 80);
+  --l-destructive: oklch(0.5 0.19 27);               --d-destructive: oklch(0.7 0.17 25);
+  --l-border: oklch(0.85 0.03 70);                   --d-border: oklch(0.36 0.02 60);
+  --l-input: oklch(0.85 0.03 70);                    --d-input: oklch(0.38 0.02 60);
+  --l-ring: oklch(0.5 0.13 40);                      --d-ring: oklch(0.77 0.11 60);
+
+  --l-sidebar: oklch(0.94 0.02 85);                  --d-sidebar: oklch(0.22 0.016 60);
+  --l-sidebar-foreground: oklch(0.28 0.04 50);       --d-sidebar-foreground: oklch(0.93 0.02 80);
+  --l-sidebar-primary: oklch(0.5 0.13 40);           --d-sidebar-primary: oklch(0.77 0.11 60);
+  --l-sidebar-primary-foreground: oklch(0.98 0.01 85); --d-sidebar-primary-foreground: oklch(0.2 0.03 55);
+  --l-sidebar-accent: oklch(0.9 0.04 85);            --d-sidebar-accent: oklch(0.31 0.025 60);
+  --l-sidebar-accent-foreground: oklch(0.3 0.04 50); --d-sidebar-accent-foreground: oklch(0.93 0.02 80);
+  --l-sidebar-border: oklch(0.85 0.03 70);           --d-sidebar-border: oklch(0.34 0.02 60);
+  --l-sidebar-ring: oklch(0.5 0.13 40);              --d-sidebar-ring: oklch(0.77 0.11 60);
+
+  --l-canvas: var(--l-background);                   --d-canvas: var(--d-background);
+
+  --radius: 0.4rem;
+}
+[data-theme="paper"] body,
+[data-theme="paper"].skin-scope {
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+}
+
+/* ───────────────────────── Skin: win98 ─────────────────────────
+   Light = a maximised application window: warm-grey chrome on a teal-tinted
+   desktop. Dark = the after-hours desktop, deep teal behind slate chrome.
+   Bevels are a token too, so they invert with the mode. */
+[data-theme="win98"] {
+  --l-background: #a8bdbd;                           --d-background: #06312f;
+  --l-foreground: #000000;                           --d-foreground: #ffffff;
+  --l-card: #d4d0c8;                                 --d-card: #3b3b3b;
+  --l-card-foreground: #000000;                      --d-card-foreground: #ffffff;
+  --l-popover: #d4d0c8;                              --d-popover: #3b3b3b;
+  --l-popover-foreground: #000000;                   --d-popover-foreground: #ffffff;
+  --l-primary: #000080;                              --d-primary: #8098e8;
+  --l-primary-foreground: #ffffff;                   --d-primary-foreground: #0b1030;
+  --l-secondary: #c0c0c0;                            --d-secondary: #3b3b3b;
+  --l-secondary-foreground: #000000;                 --d-secondary-foreground: #ffffff;
+  --l-muted: #c0c0c0;                                --d-muted: #3b3b3b;
+  --l-muted-foreground: #414141;                     --d-muted-foreground: #c2c2c2;
+  --l-accent: #000080;                               --d-accent: #8098e8;
+  --l-accent-foreground: #ffffff;                    --d-accent-foreground: #0b1030;
+  --l-destructive: #8b0000;                          --d-destructive: #ff7b72;
+  --l-border: #000000;                               --d-border: #000000;
+  --l-input: #ffffff;                                --d-input: #1c1c1c;
+  --l-ring: #000080;                                 --d-ring: #8098e8;
+
+  --l-sidebar: #c0c0c0;                              --d-sidebar: #3b3b3b;
+  --l-sidebar-foreground: #000000;                   --d-sidebar-foreground: #ffffff;
+  --l-sidebar-primary: #000080;                      --d-sidebar-primary: #8098e8;
+  --l-sidebar-primary-foreground: #ffffff;           --d-sidebar-primary-foreground: #0b1030;
+  --l-sidebar-accent: #000080;                       --d-sidebar-accent: #8098e8;
+  --l-sidebar-accent-foreground: #ffffff;            --d-sidebar-accent-foreground: #0b1030;
+  --l-sidebar-border: #808080;                       --d-sidebar-border: #000000;
+  --l-sidebar-ring: #000080;                         --d-sidebar-ring: #8098e8;
+
+  --l-bevel: inset -1px -1px #0a0a0a, inset 1px 1px #ffffff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
+  --d-bevel: inset -1px -1px #000000, inset 1px 1px #6f6f6f, inset -2px -2px #1a1a1a, inset 2px 2px #545454;
+  /* The same bevel with the light source flipped: what a Win98 control looks
+     like when it is pressed in, or when it is a field you type into. */
+  --l-bevel-sunken: inset 1px 1px #808080, inset -1px -1px #ffffff, inset 2px 2px #404040, inset -2px -2px #dfdfdf;
+  --d-bevel-sunken: inset 1px 1px #1a1a1a, inset -1px -1px #6f6f6f, inset 2px 2px #000000, inset -2px -2px #545454;
+
+  --l-canvas: var(--l-background);                   --d-canvas: var(--d-background);
+
+  --radius: 0px;
+}
+[data-theme="win98"] body,
+[data-theme="win98"].skin-scope {
+  font-family: Tahoma, "MS Sans Serif", Geneva, Verdana, sans-serif;
+}
+[data-theme="win98"] .bg-card,
+[data-theme="win98"] .bg-popover {
+  box-shadow: var(--bevel);
+}
+
+/* Controls, ported from the sibling app's win98 skin: buttons stand proud,
+   fields are cut into the panel. Targeting `data-slot` rather than the bare
+   `button`/`input` elements keeps this off the icon-only buttons' geometry -
+   the original had to fight its own `padding` overrides to stop Lucide icons
+   being squeezed out of 28px buttons, and the fix was to change only the
+   surface. Nothing here touches size, padding or font-size for that reason. */
+[data-theme="win98"] [data-slot="button"] {
+  border-color: transparent;
+  box-shadow: var(--bevel);
+}
+[data-theme="win98"] [data-slot="button"]:active:not(:disabled) {
+  box-shadow: var(--bevel-sunken);
+  /* Press = the label moves with the bevel. A padding shift would deform
+     icon-only buttons, so it is a transform. */
+  transform: translate(1px, 1px);
+}
+[data-theme="win98"] [data-slot="button"]:focus-visible {
+  outline: 1px dotted currentColor;
+  outline-offset: -4px;
+}
+[data-theme="win98"]
+  :is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"]) {
+  border-color: transparent;
+  box-shadow: var(--bevel-sunken);
+}
+/* A bevel is a box-shadow, and so is shadcn's focus ring - so replacing one
+   silences the other. The dotted outline is both the era-correct focus mark
+   and the thing that keeps these controls keyboard-navigable. */
+[data-theme="win98"]
+  :is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"]):focus-visible {
+  outline: 1px dotted currentColor;
+  outline-offset: -4px;
+}
+
+/* Chunky 16px scrollbars with a raised thumb - as much a part of the look as
+   the bevels. Overrides the skin-tinted thin scrollbar set in @layer base. */
+[data-theme="win98"] * {
+  scrollbar-width: auto;
+}
+[data-theme="win98"] *::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+[data-theme="win98"] *::-webkit-scrollbar-track {
+  background-color: var(--muted);
+  background-image: repeating-conic-gradient(
+    color-mix(in srgb, var(--foreground) 12%, transparent) 0deg 90deg,
+    transparent 90deg 180deg
+  );
+  background-size: 2px 2px;
+}
+[data-theme="win98"] *::-webkit-scrollbar-thumb {
+  background: var(--card);
+  box-shadow: var(--bevel);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THEMED SKINS
+   ---------------------------------------------------------------------------
+   The six skins below are the answer to "give me themes, not repaints". Each
+   one carries four things a palette swap cannot:
+
+     · a WALLPAPER  built from CSS only (tiled gradients, conic sunbursts,
+       feTurbulence grain in a data URI) — no fetched image, so an offline
+       Docker build renders identically,
+     · a SHAPE LANGUAGE — `--radius` plus a `--bevel` family that decides
+       whether a panel is framed in gilt, stamped with a hard ink shadow,
+       printed slightly off-register, or lit along one edge,
+     · TYPOGRAPHY from system stacks (no webfont, no network), including the
+       tracking and casing that actually carry the period,
+     · a MICRO-INTERACTION: what a surface does under the pointer.
+
+   Nothing here is component-aware. Every skin only writes tokens plus a few
+   rules keyed on `data-slot`, so a component never learns which skin is on.
+
+   Contrast: every foreground/background pair below is checked by
+   `node scripts` against WCAG AA (4.5:1 body, 3:1 large) in BOTH modes.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Discord-inspired, not Discord.
+   What people mean by that phrase is the ELEVATION LADDER - a dark rail, a
+   darker sidebar, a lighter content column - plus one indigo accent and soft
+   rounding. That is what this borrows. The colours are ours: hue 272 keeps it
+   inside Modlight's own blue-violet family (the default skin sits at 277), and
+   the accent is deliberately lighter and less saturated than Discord's blurple,
+   so this reads as a cousin of the default skin rather than as a knock-off. */
+[data-theme="discord"] {
+  --l-background: oklch(0.968 0.006 272);            --d-background: oklch(0.19 0.018 272);
+  --l-foreground: oklch(0.22 0.022 272);             --d-foreground: oklch(0.955 0.006 272);
+  --l-card: oklch(1 0 0);                            --d-card: oklch(0.228 0.018 272);
+  --l-card-foreground: oklch(0.22 0.022 272);        --d-card-foreground: oklch(0.955 0.006 272);
+  --l-popover: oklch(1 0 0);                         --d-popover: oklch(0.248 0.018 272);
+  --l-popover-foreground: oklch(0.22 0.022 272);     --d-popover-foreground: oklch(0.955 0.006 272);
+  --l-primary: oklch(0.52 0.185 272);                --d-primary: oklch(0.66 0.155 272);
+  --l-primary-foreground: oklch(0.985 0.004 272);    --d-primary-foreground: oklch(0.16 0.03 272);
+  --l-secondary: oklch(0.935 0.012 272);             --d-secondary: oklch(0.26 0.02 272);
+  --l-secondary-foreground: oklch(0.24 0.022 272);   --d-secondary-foreground: oklch(0.955 0.006 272);
+  --l-muted: oklch(0.945 0.01 272);                  --d-muted: oklch(0.245 0.018 272);
+  --l-muted-foreground: oklch(0.475 0.022 272);      --d-muted-foreground: oklch(0.705 0.016 272);
+  --l-accent: oklch(0.925 0.022 272);                --d-accent: oklch(0.295 0.03 272);
+  --l-accent-foreground: oklch(0.24 0.022 272);      --d-accent-foreground: oklch(0.955 0.006 272);
+  --l-destructive: oklch(0.55 0.215 25);             --d-destructive: oklch(0.66 0.19 22);
+  --l-border: oklch(0.3 0.03 272 / 14%);             --d-border: oklch(1 0 0 / 9%);
+  --l-input: oklch(0.3 0.03 272 / 22%);              --d-input: oklch(1 0 0 / 14%);
+  --l-ring: oklch(0.52 0.185 272);                   --d-ring: oklch(0.66 0.155 272);
+  --l-sidebar: oklch(0.942 0.01 272);                --d-sidebar: oklch(0.155 0.02 272);
+  --l-sidebar-foreground: oklch(0.22 0.022 272);     --d-sidebar-foreground: oklch(0.955 0.006 272);
+  --l-sidebar-primary: oklch(0.52 0.185 272);        --d-sidebar-primary: oklch(0.66 0.155 272);
+  --l-sidebar-primary-foreground: oklch(0.985 0.004 272); --d-sidebar-primary-foreground: oklch(0.16 0.03 272);
+  --l-sidebar-accent: oklch(0.905 0.025 272);        --d-sidebar-accent: oklch(0.275 0.028 272);
+  --l-sidebar-accent-foreground: oklch(0.24 0.022 272); --d-sidebar-accent-foreground: oklch(0.955 0.006 272);
+  --l-sidebar-border: oklch(0.3 0.03 272 / 12%);     --d-sidebar-border: oklch(1 0 0 / 7%);
+  --l-sidebar-ring: oklch(0.52 0.185 272);           --d-sidebar-ring: oklch(0.66 0.155 272);
+  --l-chart-1: oklch(0.52 0.185 272);                --d-chart-1: oklch(0.66 0.155 272);
+  --l-chart-2: oklch(0.6 0.14 200);                  --d-chart-2: oklch(0.7 0.13 200);
+  --l-chart-3: oklch(0.62 0.16 150);                 --d-chart-3: oklch(0.72 0.15 150);
+  --l-chart-4: oklch(0.68 0.16 60);                  --d-chart-4: oklch(0.76 0.15 65);
+  --l-chart-5: oklch(0.58 0.2 15);                   --d-chart-5: oklch(0.66 0.18 15);
+  --l-canvas: oklch(0.968 0.006 272);                --d-canvas: oklch(0.19 0.018 272);
+  --l-panel: linear-gradient(180deg, oklch(1 0 0 / 60%) 0%, oklch(1 0 0 / 0%) 40%);
+  --d-panel: linear-gradient(180deg, oklch(0.8 0.06 272 / 7%) 0%, oklch(1 0 0 / 0%) 40%);
+  --l-bevel: 0 1px 2px -1px oklch(0.2 0.03 272 / 14%), 0 10px 24px -18px oklch(0.25 0.06 272 / 30%);
+  --d-bevel: inset 0 1px 0 0 oklch(1 0 0 / 6%), 0 12px 30px -22px oklch(0 0 0 / 80%);
+  --l-bevel-hover: 0 0 0 1px oklch(0.52 0.185 272 / 20%), 0 14px 30px -18px oklch(0.25 0.06 272 / 38%);
+  --d-bevel-hover: inset 0 1px 0 0 oklch(1 0 0 / 12%), 0 0 0 1px oklch(0.66 0.155 272 / 24%), 0 16px 36px -22px oklch(0 0 0 / 85%);
+  --l-bevel-sunken: inset 0 1px 3px 0 oklch(0.2 0.03 272 / 14%); --d-bevel-sunken: inset 0 1px 3px 0 oklch(0 0 0 / 50%);
+
+  --radius: 0.5rem;
+}
+
+/* Spotify-inspired, not Spotify.
+   The borrowed idea is a near-black ground, clearly lifted cards, generous
+   rounding, and exactly ONE vivid accent doing all the work. The green sits at
+   hue 158 and is lighter than Spotify's, and the greys carry only a whisper of
+   it, so the result is its own colour rather than a copy of a brand. */
+[data-theme="spotify"] {
+  --l-background: oklch(0.975 0.004 160);            --d-background: oklch(0.135 0.003 160);
+  --l-foreground: oklch(0.17 0.012 160);             --d-foreground: oklch(0.97 0.003 160);
+  --l-card: oklch(1 0 0);                            --d-card: oklch(0.203 0.005 160);
+  --l-card-foreground: oklch(0.17 0.012 160);        --d-card-foreground: oklch(0.97 0.003 160);
+  --l-popover: oklch(1 0 0);                         --d-popover: oklch(0.228 0.005 160);
+  --l-popover-foreground: oklch(0.17 0.012 160);     --d-popover-foreground: oklch(0.97 0.003 160);
+  --l-primary: oklch(0.735 0.155 158);                --d-primary: oklch(0.755 0.165 158);
+  --l-primary-foreground: oklch(0.19 0.045 158);     --d-primary-foreground: oklch(0.16 0.04 158);
+  --l-secondary: oklch(0.94 0.008 160);              --d-secondary: oklch(0.235 0.006 160);
+  --l-secondary-foreground: oklch(0.19 0.012 160);   --d-secondary-foreground: oklch(0.97 0.003 160);
+  --l-muted: oklch(0.948 0.006 160);                 --d-muted: oklch(0.22 0.005 160);
+  --l-muted-foreground: oklch(0.46 0.014 160);       --d-muted-foreground: oklch(0.72 0.008 160);
+  --l-accent: oklch(0.925 0.024 158);                --d-accent: oklch(0.272 0.012 160);
+  --l-accent-foreground: oklch(0.19 0.012 160);      --d-accent-foreground: oklch(0.97 0.003 160);
+  --l-destructive: oklch(0.55 0.215 25);             --d-destructive: oklch(0.66 0.19 22);
+  --l-border: oklch(0.25 0.02 160 / 14%);            --d-border: oklch(1 0 0 / 10%);
+  --l-input: oklch(0.25 0.02 160 / 22%);             --d-input: oklch(1 0 0 / 15%);
+  --l-ring: oklch(0.55 0.145 158);                   --d-ring: oklch(0.755 0.165 158);
+  --l-sidebar: oklch(0.955 0.006 160);               --d-sidebar: oklch(0.112 0.003 160);
+  --l-sidebar-foreground: oklch(0.17 0.012 160);     --d-sidebar-foreground: oklch(0.97 0.003 160);
+  --l-sidebar-primary: oklch(0.735 0.155 158);        --d-sidebar-primary: oklch(0.755 0.165 158);
+  --l-sidebar-primary-foreground: oklch(0.19 0.045 158); --d-sidebar-primary-foreground: oklch(0.16 0.04 158);
+  --l-sidebar-accent: oklch(0.912 0.028 158);        --d-sidebar-accent: oklch(0.252 0.012 160);
+  --l-sidebar-accent-foreground: oklch(0.19 0.012 160); --d-sidebar-accent-foreground: oklch(0.97 0.003 160);
+  --l-sidebar-border: oklch(0.25 0.02 160 / 12%);    --d-sidebar-border: oklch(1 0 0 / 7%);
+  --l-sidebar-ring: oklch(0.55 0.145 158);           --d-sidebar-ring: oklch(0.755 0.165 158);
+  --l-chart-1: oklch(0.55 0.145 158);                --d-chart-1: oklch(0.755 0.165 158);
+  --l-chart-2: oklch(0.58 0.14 200);                 --d-chart-2: oklch(0.7 0.13 200);
+  --l-chart-3: oklch(0.62 0.16 100);                 --d-chart-3: oklch(0.76 0.15 100);
+  --l-chart-4: oklch(0.66 0.16 55);                  --d-chart-4: oklch(0.78 0.15 60);
+  --l-chart-5: oklch(0.56 0.2 20);                   --d-chart-5: oklch(0.66 0.18 20);
+  --l-canvas: oklch(0.975 0.004 160);                --d-canvas: oklch(0.135 0.003 160);
+  --l-panel: linear-gradient(180deg, oklch(1 0 0 / 66%) 0%, oklch(1 0 0 / 0%) 42%);
+  --d-panel: linear-gradient(180deg, oklch(0.8 0.06 158 / 6%) 0%, oklch(1 0 0 / 0%) 40%);
+  --l-bevel: 0 1px 2px -1px oklch(0.2 0.02 160 / 14%), 0 10px 26px -18px oklch(0.25 0.04 160 / 28%);
+  --d-bevel: inset 0 1px 0 0 oklch(1 0 0 / 6%), 0 12px 30px -22px oklch(0 0 0 / 85%);
+  --l-bevel-hover: 0 0 0 1px oklch(0.55 0.145 158 / 22%), 0 16px 34px -18px oklch(0.25 0.04 160 / 36%);
+  --d-bevel-hover: inset 0 1px 0 0 oklch(1 0 0 / 12%), 0 0 0 1px oklch(0.755 0.165 158 / 26%), 0 16px 36px -22px oklch(0 0 0 / 88%);
+  --l-bevel-sunken: inset 0 1px 3px 0 oklch(0.2 0.02 160 / 14%); --d-bevel-sunken: inset 0 1px 3px 0 oklch(0 0 0 / 55%);
+
+  --radius: 0.75rem;
+}
+
+/* ───────────────────────── Skin: nebula ─────────────────────────
+   Deep field. Dark is the hero: a genuine starfield (three tiled layers of
+   1px radial-gradients at different tile sizes, which is what gives the sky
+   depth instead of an even dusting) under three nebula pools.
+
+   Light is not "the same thing but pale" — it is the photographic plate the
+   sky used to be recorded on: a negative, so the stars are dark specks on
+   near-white and the nebulae are bleached auroras. Same object, inverted
+   process, which is a period-correct reason for the two modes to differ.
+
+   Surfaces are lit from above: one hairline of light along the top edge and a
+   long, very soft drop. Hovering brightens the rim, as though the panel caught
+   more of it. */
+[data-theme="nebula"] {
+  --l-background: oklch(0.965 0.012 250);            --d-background: oklch(0.13 0.03 275);
+  --l-foreground: oklch(0.21 0.04 265);              --d-foreground: oklch(0.95 0.015 260);
+  --l-card: oklch(0.99 0.006 250);                   --d-card: oklch(0.185 0.035 275);
+  --l-card-foreground: oklch(0.21 0.04 265);         --d-card-foreground: oklch(0.95 0.015 260);
+  --l-popover: oklch(0.995 0.004 250);               --d-popover: oklch(0.2 0.035 275);
+  --l-popover-foreground: oklch(0.21 0.04 265);      --d-popover-foreground: oklch(0.95 0.015 260);
+  --l-primary: oklch(0.5 0.18 275);                  --d-primary: oklch(0.72 0.15 285);
+  --l-primary-foreground: oklch(0.99 0.005 275);     --d-primary-foreground: oklch(0.15 0.04 285);
+  --l-secondary: oklch(0.93 0.02 250);               --d-secondary: oklch(0.25 0.04 275);
+  --l-secondary-foreground: oklch(0.23 0.04 265);    --d-secondary-foreground: oklch(0.95 0.015 260);
+  --l-muted: oklch(0.94 0.015 250);                  --d-muted: oklch(0.22 0.035 275);
+  --l-muted-foreground: oklch(0.45 0.04 265);        --d-muted-foreground: oklch(0.74 0.03 265);
+  --l-accent: oklch(0.925 0.03 250);                 --d-accent: oklch(0.28 0.05 275);
+  --l-accent-foreground: oklch(0.23 0.04 265);       --d-accent-foreground: oklch(0.95 0.015 260);
+  --l-destructive: oklch(0.55 0.22 27);              --d-destructive: oklch(0.7 0.19 22);
+  --l-border: oklch(0.35 0.06 265 / 18%);            --d-border: oklch(0.85 0.08 265 / 14%);
+  --l-input: oklch(0.35 0.06 265 / 26%);             --d-input: oklch(0.85 0.08 265 / 20%);
+  --l-ring: oklch(0.5 0.18 275);                     --d-ring: oklch(0.72 0.15 285);
+
+  --l-sidebar: oklch(0.945 0.018 255);               --d-sidebar: oklch(0.165 0.035 278);
+  --l-sidebar-foreground: oklch(0.21 0.04 265);      --d-sidebar-foreground: oklch(0.95 0.015 260);
+  --l-sidebar-primary: oklch(0.5 0.18 275);          --d-sidebar-primary: oklch(0.72 0.15 285);
+  --l-sidebar-primary-foreground: oklch(0.99 0.005 275); --d-sidebar-primary-foreground: oklch(0.15 0.04 285);
+  --l-sidebar-accent: oklch(0.91 0.035 250);         --d-sidebar-accent: oklch(0.26 0.05 275);
+  --l-sidebar-accent-foreground: oklch(0.23 0.04 265); --d-sidebar-accent-foreground: oklch(0.95 0.015 260);
+  --l-sidebar-border: oklch(0.35 0.06 265 / 16%);    --d-sidebar-border: oklch(0.85 0.08 265 / 12%);
+  --l-sidebar-ring: oklch(0.5 0.18 275);             --d-sidebar-ring: oklch(0.72 0.15 285);
+
+  --l-chart-1: oklch(0.5 0.18 275);                  --d-chart-1: oklch(0.72 0.15 285);
+  --l-chart-2: oklch(0.55 0.13 215);                 --d-chart-2: oklch(0.75 0.12 215);
+  --l-chart-3: oklch(0.55 0.17 330);                 --d-chart-3: oklch(0.74 0.15 330);
+  --l-chart-4: oklch(0.6 0.13 75);                   --d-chart-4: oklch(0.82 0.12 80);
+  --l-chart-5: oklch(0.55 0.11 185);                 --d-chart-5: oklch(0.76 0.1 185);
+
+  /* Three star tiles at 190 / 330 / 470px. Coprime-ish sizes stop the eye
+     finding the repeat, which a single tile always gives away. */
+  --d-canvas:
+    radial-gradient(1.4px 1.4px at 34px 22px, oklch(1 0 0 / 92%), transparent 100%) 0 0 / 190px 190px repeat,
+    radial-gradient(1.1px 1.1px at 128px 96px, oklch(0.93 0.05 250 / 78%), transparent 100%) 0 0 / 190px 190px repeat,
+    radial-gradient(1px 1px at 76px 158px, oklch(1 0 0 / 55%), transparent 100%) 0 0 / 190px 190px repeat,
+    radial-gradient(1.9px 1.9px at 212px 66px, oklch(0.94 0.07 65 / 72%), transparent 100%) 0 0 / 330px 330px repeat,
+    radial-gradient(1.2px 1.2px at 58px 252px, oklch(1 0 0 / 48%), transparent 100%) 0 0 / 330px 330px repeat,
+    radial-gradient(1.6px 1.6px at 300px 380px, oklch(0.9 0.09 230 / 62%), transparent 100%) 0 0 / 470px 470px repeat,
+    radial-gradient(70rem 52rem at 12% -12%, oklch(0.38 0.13 300 / 55%), transparent 62%),
+    radial-gradient(60rem 48rem at 104% 12%, oklch(0.34 0.12 235 / 50%), transparent 62%),
+    radial-gradient(52rem 44rem at 62% 112%, oklch(0.32 0.1 190 / 42%), transparent 64%),
+    oklch(0.13 0.03 275);
+  /* The negative: same star coordinates, dark ink, bleached nebulae. */
+  --l-canvas:
+    radial-gradient(1.4px 1.4px at 34px 22px, oklch(0.3 0.06 265 / 30%), transparent 100%) 0 0 / 190px 190px repeat,
+    radial-gradient(1.1px 1.1px at 128px 96px, oklch(0.3 0.06 265 / 22%), transparent 100%) 0 0 / 190px 190px repeat,
+    radial-gradient(1.9px 1.9px at 212px 66px, oklch(0.35 0.08 300 / 22%), transparent 100%) 0 0 / 330px 330px repeat,
+    radial-gradient(1.6px 1.6px at 300px 380px, oklch(0.35 0.08 230 / 18%), transparent 100%) 0 0 / 470px 470px repeat,
+    radial-gradient(66rem 50rem at 10% -14%, oklch(0.9 0.06 300 / 72%), transparent 62%),
+    radial-gradient(58rem 46rem at 104% 10%, oklch(0.9 0.05 235 / 66%), transparent 62%),
+    radial-gradient(50rem 42rem at 64% 112%, oklch(0.92 0.045 190 / 58%), transparent 64%),
+    oklch(0.965 0.012 250);
+
+  --l-panel: linear-gradient(180deg, oklch(1 0 0 / 72%) 0%, oklch(1 0 0 / 0%) 46%);
+  --d-panel: linear-gradient(180deg, oklch(0.82 0.1 280 / 8%) 0%, oklch(1 0 0 / 0%) 44%);
+
+  --l-bevel:
+    inset 0 1px 0 0 oklch(1 0 0 / 92%),
+    0 1px 2px -1px oklch(0.2 0.05 265 / 12%),
+    0 12px 30px -20px oklch(0.3 0.1 275 / 38%);
+  --d-bevel:
+    inset 0 1px 0 0 oklch(1 0 0 / 10%),
+    inset 0 0 0 1px oklch(0.7 0.12 280 / 8%),
+    0 14px 36px -22px oklch(0 0 0 / 80%);
+  --l-bevel-hover:
+    inset 0 1px 0 0 oklch(1 0 0 / 96%),
+    0 0 0 1px oklch(0.5 0.18 275 / 22%),
+    0 18px 40px -22px oklch(0.3 0.1 275 / 46%);
+  --d-bevel-hover:
+    inset 0 1px 0 0 oklch(1 0 0 / 18%),
+    inset 0 0 0 1px oklch(0.75 0.14 285 / 26%),
+    0 18px 44px -22px oklch(0 0 0 / 85%);
+  --l-bevel-sunken: inset 0 1px 3px 0 oklch(0.2 0.05 265 / 16%);
+  --d-bevel-sunken: inset 0 1px 3px 0 oklch(0 0 0 / 55%);
+
+  --radius: 1rem;
+}
+[data-theme="nebula"] :is(h1, h2),
+[data-theme="nebula"] [data-slot="sidebar-group-label"] {
+  letter-spacing: 0.025em;
+}
+
+/* ───────────────────────── Skin: grimoire ─────────────────────────
+   The fantasy tome. It is deliberately NOT `paper` in green: paper is clean
+   modern stationery, grimoire is a bound object. What separates them is the
+   frame — every panel wears a gilt double rule, drawn as three inset shadows
+   (hairline gold, a gap in the panel's own colour, a fainter gold) so the page
+   sits inside a border the way an illuminated page sits inside its gilding.
+   No SVG needed, and it inverts with the mode for free.
+
+   Light is aged parchment: turbulence for the fibre, a vignette so the sheet
+   darkens toward its edges. Dark is the same book by candlelight — leather
+   grain, one warm pool falling from the top, gold instead of green as the
+   accent because ink does not glow but gilding does.
+
+   Palatino/Book Antiqua ahead of Georgia: it is the old-style face Windows and
+   macOS both ship, and its higher stroke contrast is what reads as "printed in
+   1600" rather than "set on a screen in 2005". Headings run small-caps. */
+[data-theme="grimoire"] {
+  --l-background: oklch(0.925 0.035 82);             --d-background: oklch(0.155 0.02 55);
+  --l-foreground: oklch(0.25 0.05 55);               --d-foreground: oklch(0.92 0.03 82);
+  --l-card: oklch(0.965 0.028 84);                   --d-card: oklch(0.2 0.025 52);
+  --l-card-foreground: oklch(0.25 0.05 55);          --d-card-foreground: oklch(0.92 0.03 82);
+  --l-popover: oklch(0.975 0.025 84);                --d-popover: oklch(0.22 0.025 52);
+  --l-popover-foreground: oklch(0.25 0.05 55);       --d-popover-foreground: oklch(0.92 0.03 82);
+  --l-primary: oklch(0.4 0.09 158);                  --d-primary: oklch(0.75 0.11 90);
+  --l-primary-foreground: oklch(0.97 0.02 85);       --d-primary-foreground: oklch(0.18 0.03 60);
+  --l-secondary: oklch(0.885 0.04 82);               --d-secondary: oklch(0.26 0.025 52);
+  --l-secondary-foreground: oklch(0.27 0.05 55);     --d-secondary-foreground: oklch(0.92 0.03 82);
+  --l-muted: oklch(0.9 0.035 82);                    --d-muted: oklch(0.235 0.02 52);
+  --l-muted-foreground: oklch(0.42 0.045 60);        --d-muted-foreground: oklch(0.75 0.035 80);
+  --l-accent: oklch(0.86 0.06 84);                   --d-accent: oklch(0.3 0.04 60);
+  --l-accent-foreground: oklch(0.27 0.05 55);        --d-accent-foreground: oklch(0.92 0.03 82);
+  --l-destructive: oklch(0.44 0.16 30);              --d-destructive: oklch(0.66 0.17 28);
+  --l-border: oklch(0.62 0.07 74);                   --d-border: oklch(0.42 0.05 66);
+  --l-input: oklch(0.58 0.07 74);                    --d-input: oklch(0.46 0.05 66);
+  --l-ring: oklch(0.52 0.11 86);                     --d-ring: oklch(0.75 0.11 90);
+
+  --l-sidebar: oklch(0.885 0.045 80);                --d-sidebar: oklch(0.175 0.022 52);
+  --l-sidebar-foreground: oklch(0.25 0.05 55);       --d-sidebar-foreground: oklch(0.92 0.03 82);
+  --l-sidebar-primary: oklch(0.4 0.09 158);          --d-sidebar-primary: oklch(0.75 0.11 90);
+  --l-sidebar-primary-foreground: oklch(0.97 0.02 85); --d-sidebar-primary-foreground: oklch(0.18 0.03 60);
+  --l-sidebar-accent: oklch(0.83 0.06 84);           --d-sidebar-accent: oklch(0.28 0.04 60);
+  --l-sidebar-accent-foreground: oklch(0.27 0.05 55); --d-sidebar-accent-foreground: oklch(0.92 0.03 82);
+  --l-sidebar-border: oklch(0.6 0.07 74);            --d-sidebar-border: oklch(0.4 0.05 66);
+  --l-sidebar-ring: oklch(0.52 0.11 86);             --d-sidebar-ring: oklch(0.75 0.11 90);
+
+  --l-chart-1: oklch(0.4 0.09 158);                  --d-chart-1: oklch(0.75 0.11 90);
+  --l-chart-2: oklch(0.5 0.11 86);                   --d-chart-2: oklch(0.7 0.1 150);
+  --l-chart-3: oklch(0.44 0.16 30);                  --d-chart-3: oklch(0.68 0.15 30);
+  --l-chart-4: oklch(0.45 0.09 265);                 --d-chart-4: oklch(0.7 0.1 265);
+  --l-chart-5: oklch(0.48 0.07 320);                 --d-chart-5: oklch(0.72 0.08 320);
+
+  --l-canvas:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23f)' opacity='0.055'/%3E%3C/svg%3E") 0 0 / 220px 220px repeat,
+    radial-gradient(90% 45% at 50% -4%, oklch(0.975 0.028 86 / 42%), transparent 70%),
+    radial-gradient(130% 110% at 50% 44%, transparent 30%, oklch(0.5 0.07 58 / 30%) 100%),
+    oklch(0.915 0.038 82);
+  --d-canvas:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.62' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23f)' opacity='0.085'/%3E%3C/svg%3E") 0 0 / 200px 200px repeat,
+    radial-gradient(80rem 46rem at 50% -20%, oklch(0.44 0.08 72 / 46%), transparent 60%),
+    radial-gradient(140% 120% at 50% 46%, transparent 38%, oklch(0.06 0.012 40 / 58%) 100%),
+    oklch(0.155 0.02 55);
+
+  --l-panel:
+    linear-gradient(180deg, oklch(1 0 0 / 55%) 0%, oklch(1 0 0 / 0%) 40%),
+    radial-gradient(130% 90% at 50% 0%, oklch(0.99 0.02 86 / 55%), transparent 70%);
+  --d-panel: linear-gradient(180deg, oklch(0.8 0.08 82 / 7%) 0%, oklch(1 0 0 / 0%) 44%);
+
+  /* The gilding: hairline gold, a 2px gap in the panel's own colour, then a
+     fainter gold. Reading outward it is exactly how a tooled cover is ruled. */
+  --l-bevel:
+    inset 0 0 0 1px oklch(0.58 0.1 84 / 62%),
+    inset 0 0 0 3px oklch(0.965 0.028 84),
+    inset 0 0 0 4px oklch(0.58 0.1 84 / 30%),
+    0 2px 10px -6px oklch(0.3 0.05 55 / 38%);
+  --d-bevel:
+    inset 0 0 0 1px oklch(0.76 0.11 90 / 48%),
+    inset 0 0 0 3px oklch(0.2 0.025 52),
+    inset 0 0 0 4px oklch(0.76 0.11 90 / 22%),
+    0 4px 14px -8px oklch(0 0 0 / 62%);
+  --l-bevel-hover:
+    inset 0 0 0 1px oklch(0.55 0.12 84 / 92%),
+    inset 0 0 0 3px oklch(0.965 0.028 84),
+    inset 0 0 0 4px oklch(0.55 0.12 84 / 52%),
+    0 4px 16px -8px oklch(0.3 0.05 55 / 45%);
+  --d-bevel-hover:
+    inset 0 0 0 1px oklch(0.8 0.13 90 / 80%),
+    inset 0 0 0 3px oklch(0.2 0.025 52),
+    inset 0 0 0 4px oklch(0.8 0.13 90 / 40%),
+    0 6px 20px -10px oklch(0 0 0 / 70%);
+  --l-bevel-sunken: inset 0 1px 3px 0 oklch(0.3 0.05 55 / 28%);
+  --d-bevel-sunken: inset 0 1px 3px 0 oklch(0 0 0 / 55%);
+
+  --radius: 0.25rem;
+}
+[data-theme="grimoire"] body,
+[data-theme="grimoire"].skin-scope {
+  font-family: "Palatino Linotype", Palatino, "Book Antiqua", "Iowan Old Style", Georgia, serif;
+}
+[data-theme="grimoire"] :is(h1, h2),
+[data-theme="grimoire"] [data-slot="sidebar-group-label"] {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.045em;
+}
+
+/* ───────────────────────── Skin: cartoon ─────────────────────────
+   Cel-shaded, the way an animation cel actually works: one matte ink line
+   holds every form, fills are flat and saturated, and depth is a hard offset
+   block rather than a gradient. So `--border` is INK in both modes (it is the
+   line, not a divider), the outline is carried as `inset 0 0 0 2px` inside the
+   bevel — paint, not `border-width`, so nothing shifts by 2px — and the drop
+   is `4px 4px 0 0` with zero blur.
+
+   The motion is the other half. Buttons overshoot on hover with a springy
+   curve and squash into their own shadow on press (translate + shrunken
+   offset), which is squash-and-stretch reduced to two keyframes. Cards get a
+   slightly irregular radius so the frames look drawn rather than computed.
+
+   Light is a daytime sky over a halftone dot screen; dark is the same short
+   after sundown, grape-purple, with the ink line going nearly black. */
+[data-theme="cartoon"] {
+  /* Dark deliberately widens the gap between page and panel. A cel line is
+     black at night too, so the fills have to move instead: the page drops and
+     the cards lift, leaving the ink readable against both. */
+  --l-background: oklch(0.925 0.06 215);             --d-background: oklch(0.17 0.055 288);
+  --l-foreground: oklch(0.18 0.02 260);              --d-foreground: oklch(0.97 0.02 95);
+  --l-card: oklch(0.985 0.02 95);                    --d-card: oklch(0.33 0.065 285);
+  --l-card-foreground: oklch(0.18 0.02 260);         --d-card-foreground: oklch(0.97 0.02 95);
+  --l-popover: oklch(0.99 0.015 95);                 --d-popover: oklch(0.35 0.065 285);
+  --l-popover-foreground: oklch(0.18 0.02 260);      --d-popover-foreground: oklch(0.97 0.02 95);
+  --l-primary: oklch(0.55 0.2 27);                   --d-primary: oklch(0.72 0.17 32);
+  --l-primary-foreground: oklch(0.99 0.01 95);       --d-primary-foreground: oklch(0.17 0.04 32);
+  --l-secondary: oklch(0.88 0.09 92);                --d-secondary: oklch(0.75 0.15 92);
+  --l-secondary-foreground: oklch(0.18 0.02 260);    --d-secondary-foreground: oklch(0.18 0.04 60);
+  --l-muted: oklch(0.9 0.04 215);                    --d-muted: oklch(0.36 0.05 285);
+  --l-muted-foreground: oklch(0.4 0.04 250);         --d-muted-foreground: oklch(0.83 0.04 92);
+  --l-accent: oklch(0.85 0.11 197);                  --d-accent: oklch(0.43 0.08 285);
+  --l-accent-foreground: oklch(0.18 0.02 260);       --d-accent-foreground: oklch(0.97 0.02 95);
+  --l-destructive: oklch(0.5 0.21 25);               --d-destructive: oklch(0.68 0.19 25);
+  --l-border: oklch(0.18 0.02 260);                  --d-border: oklch(0.09 0.02 285);
+  --l-input: oklch(0.18 0.02 260);                   --d-input: oklch(0.09 0.02 285);
+  --l-ring: oklch(0.55 0.2 27);                      --d-ring: oklch(0.72 0.17 32);
+
+  --l-sidebar: oklch(0.95 0.07 95);                  --d-sidebar: oklch(0.24 0.07 288);
+  --l-sidebar-foreground: oklch(0.18 0.02 260);      --d-sidebar-foreground: oklch(0.97 0.02 95);
+  --l-sidebar-primary: oklch(0.55 0.2 27);           --d-sidebar-primary: oklch(0.72 0.17 32);
+  --l-sidebar-primary-foreground: oklch(0.99 0.01 95); --d-sidebar-primary-foreground: oklch(0.17 0.04 32);
+  --l-sidebar-accent: oklch(0.85 0.11 197);          --d-sidebar-accent: oklch(0.43 0.08 285);
+  --l-sidebar-accent-foreground: oklch(0.18 0.02 260); --d-sidebar-accent-foreground: oklch(0.97 0.02 95);
+  --l-sidebar-border: oklch(0.18 0.02 260);          --d-sidebar-border: oklch(0.09 0.02 285);
+  --l-sidebar-ring: oklch(0.55 0.2 27);              --d-sidebar-ring: oklch(0.72 0.17 32);
+
+  --l-chart-1: oklch(0.55 0.2 27);                   --d-chart-1: oklch(0.72 0.17 32);
+  --l-chart-2: oklch(0.55 0.15 235);                 --d-chart-2: oklch(0.74 0.14 235);
+  --l-chart-3: oklch(0.58 0.14 145);                 --d-chart-3: oklch(0.76 0.14 145);
+  --l-chart-4: oklch(0.62 0.15 92);                  --d-chart-4: oklch(0.82 0.15 92);
+  --l-chart-5: oklch(0.52 0.18 310);                 --d-chart-5: oklch(0.72 0.16 310);
+
+  --l-canvas:
+    radial-gradient(circle at 50% 50%, oklch(0.18 0.02 260 / 9%) 0 1.6px, transparent 1.7px) 0 0 / 15px 15px repeat,
+    radial-gradient(70rem 40rem at 50% -22%, oklch(0.99 0.03 95 / 78%), transparent 62%),
+    oklch(0.925 0.06 215);
+  --d-canvas:
+    radial-gradient(circle at 50% 50%, oklch(1 0 0 / 7%) 0 1.6px, transparent 1.7px) 0 0 / 15px 15px repeat,
+    radial-gradient(70rem 44rem at 50% -22%, oklch(0.33 0.09 300 / 72%), transparent 62%),
+    oklch(0.17 0.055 288);
+
+  --l-bevel: inset 0 0 0 2px oklch(0.18 0.02 260), 4px 4px 0 0 oklch(0.18 0.02 260);
+  --d-bevel: inset 0 0 0 2px oklch(0.09 0.02 285), 4px 4px 0 0 oklch(0.09 0.02 285);
+  --l-bevel-hover: inset 0 0 0 2px oklch(0.18 0.02 260), 7px 7px 0 0 oklch(0.18 0.02 260);
+  --d-bevel-hover: inset 0 0 0 2px oklch(0.09 0.02 285), 7px 7px 0 0 oklch(0.09 0.02 285);
+  --l-bevel-sunken: inset 0 0 0 2px oklch(0.18 0.02 260), 1px 1px 0 0 oklch(0.18 0.02 260);
+  --d-bevel-sunken: inset 0 0 0 2px oklch(0.09 0.02 285), 1px 1px 0 0 oklch(0.09 0.02 285);
+
+  --radius: 1.1rem;
+}
+[data-theme="cartoon"] body,
+[data-theme="cartoon"].skin-scope {
+  font-family: "Trebuchet MS", "Segoe UI", Verdana, var(--font-geist-sans), sans-serif;
+}
+/* Drawn, not computed: each corner gets its own pair of radii. */
+[data-theme="cartoon"] :is([data-slot="card"], [data-slot="dialog-content"], [data-slot="alert"]) {
+  border-radius: 20px 26px 18px 24px / 24px 18px 26px 20px;
+}
+[data-theme="cartoon"] [data-slot="button"] {
+  border-color: transparent;
+  box-shadow: var(--bevel);
+  transition:
+    transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 180ms ease;
+}
+[data-theme="cartoon"] [data-slot="button"]:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: var(--bevel-hover);
+}
+[data-theme="cartoon"] [data-slot="button"]:active:not(:disabled) {
+  transform: translate(3px, 3px);
+  box-shadow: var(--bevel-sunken);
+}
+[data-theme="cartoon"]
+  :is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"]) {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px var(--border);
+}
+
+/* ───────────────────────── Skin: mono ─────────────────────────
+   Black and white with exactly one colour, and everything else carried by
+   typography and rule weight — which is where the brutalist half of the brief
+   landed: radius 0, no soft shadow anywhere, a visible column grid ruled into
+   the page, and every panel stamped with a heavy 2px rule along its top edge.
+
+   Helvetica/Arial ahead of Geist on purpose: the grotesque is the face this
+   layout language was invented in, and it is on every machine. Headings are
+   tracked tight and set heavy so the size jump does the work no colour is
+   allowed to do.
+
+   The one colour is vermillion. It is `--primary` and `--ring` and nothing
+   else, so it only ever appears where the interface wants a decision made. */
+[data-theme="mono"] {
+  --l-background: oklch(0.99 0 0);                   --d-background: oklch(0.11 0 0);
+  --l-foreground: oklch(0.14 0 0);                   --d-foreground: oklch(0.97 0 0);
+  --l-card: oklch(1 0 0);                            --d-card: oklch(0.15 0 0);
+  --l-card-foreground: oklch(0.14 0 0);              --d-card-foreground: oklch(0.97 0 0);
+  --l-popover: oklch(1 0 0);                         --d-popover: oklch(0.16 0 0);
+  --l-popover-foreground: oklch(0.14 0 0);           --d-popover-foreground: oklch(0.97 0 0);
+  --l-primary: oklch(0.52 0.22 27);                  --d-primary: oklch(0.63 0.22 27);
+  --l-primary-foreground: oklch(1 0 0);              --d-primary-foreground: oklch(0.1 0.02 27);
+  --l-secondary: oklch(0.955 0 0);                   --d-secondary: oklch(0.2 0 0);
+  --l-secondary-foreground: oklch(0.14 0 0);         --d-secondary-foreground: oklch(0.97 0 0);
+  --l-muted: oklch(0.96 0 0);                        --d-muted: oklch(0.17 0 0);
+  --l-muted-foreground: oklch(0.42 0 0);             --d-muted-foreground: oklch(0.72 0 0);
+  --l-accent: oklch(0.94 0 0);                       --d-accent: oklch(0.22 0 0);
+  --l-accent-foreground: oklch(0.14 0 0);            --d-accent-foreground: oklch(0.97 0 0);
+  --l-destructive: oklch(0.42 0.2 27);               --d-destructive: oklch(0.72 0.19 27);
+  --l-border: oklch(0.14 0 0 / 16%);                 --d-border: oklch(1 0 0 / 15%);
+  --l-input: oklch(0.14 0 0 / 26%);                  --d-input: oklch(1 0 0 / 22%);
+  --l-ring: oklch(0.52 0.22 27);                     --d-ring: oklch(0.63 0.22 27);
+
+  --l-sidebar: oklch(0.975 0 0);                     --d-sidebar: oklch(0.135 0 0);
+  --l-sidebar-foreground: oklch(0.14 0 0);           --d-sidebar-foreground: oklch(0.97 0 0);
+  --l-sidebar-primary: oklch(0.52 0.22 27);          --d-sidebar-primary: oklch(0.63 0.22 27);
+  --l-sidebar-primary-foreground: oklch(1 0 0);      --d-sidebar-primary-foreground: oklch(0.1 0.02 27);
+  --l-sidebar-accent: oklch(0.93 0 0);               --d-sidebar-accent: oklch(0.21 0 0);
+  --l-sidebar-accent-foreground: oklch(0.14 0 0);    --d-sidebar-accent-foreground: oklch(0.97 0 0);
+  --l-sidebar-border: oklch(0.14 0 0 / 16%);         --d-sidebar-border: oklch(1 0 0 / 14%);
+  --l-sidebar-ring: oklch(0.52 0.22 27);             --d-sidebar-ring: oklch(0.63 0.22 27);
+
+  /* Greys plus the one colour, so a chart cannot smuggle a palette in. */
+  --l-chart-1: oklch(0.52 0.22 27);                  --d-chart-1: oklch(0.63 0.22 27);
+  --l-chart-2: oklch(0.2 0 0);                       --d-chart-2: oklch(0.95 0 0);
+  --l-chart-3: oklch(0.42 0 0);                      --d-chart-3: oklch(0.78 0 0);
+  --l-chart-4: oklch(0.62 0 0);                      --d-chart-4: oklch(0.6 0 0);
+  --l-chart-5: oklch(0.8 0 0);                       --d-chart-5: oklch(0.42 0 0);
+
+  --l-canvas:
+    repeating-linear-gradient(90deg, oklch(0.14 0 0 / 5%) 0 1px, transparent 1px 88px)
+    oklch(0.99 0 0);
+  --d-canvas:
+    repeating-linear-gradient(90deg, oklch(1 0 0 / 6%) 0 1px, transparent 1px 88px)
+    oklch(0.11 0 0);
+
+  --l-bevel: inset 0 2px 0 0 oklch(0.14 0 0);
+  --d-bevel: inset 0 2px 0 0 oklch(0.97 0 0);
+  --l-bevel-hover: inset 0 2px 0 0 oklch(0.52 0.22 27);
+  --d-bevel-hover: inset 0 2px 0 0 oklch(0.63 0.22 27);
+  --l-bevel-sunken: inset 0 2px 0 0 oklch(0.14 0 0);
+  --d-bevel-sunken: inset 0 2px 0 0 oklch(0.97 0 0);
+
+  --radius: 0px;
+}
+[data-theme="mono"] body,
+[data-theme="mono"].skin-scope {
+  font-family: "Helvetica Neue", Helvetica, Arial, var(--font-geist-sans), sans-serif;
+}
+[data-theme="mono"] :is(h1, h2, h3) {
+  letter-spacing: -0.028em;
+  font-weight: 800;
+}
+[data-theme="mono"] [data-slot="sidebar-group-label"] {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+/* ───────────────────────── Skin: deco ─────────────────────────
+   1925: gold on navy, and geometry doing the decorating. The wallpaper is a
+   sunburst — a repeating-conic-gradient anchored just above the top edge, so
+   the rays fan across the page the way they fan over a Chrysler-building
+   spandrel — crossed with a fine diagonal fluting.
+
+   Two structural decisions carry it further than colour could:
+     · the rail is navy-and-gold in BOTH modes. Deco interiors put the dark
+       lacquered frame around the cream room, not beside it, and a rail that
+       does not flip is a stronger identity than one that tracks the mode.
+     · every panel is capped by a 2px gold rule with fluting beneath it
+       (`--panel`, drawn as a 26px band), which is the stepped cornice.
+
+   Century Gothic / Futura is the geometric sans the period invented; headings
+   run uppercase at 0.16em because deco lettering is spaced, not just capped. */
+[data-theme="deco"] {
+  --l-background: oklch(0.955 0.02 85);              --d-background: oklch(0.16 0.045 265);
+  --l-foreground: oklch(0.2 0.02 265);               --d-foreground: oklch(0.94 0.03 85);
+  --l-card: oklch(0.985 0.012 85);                   --d-card: oklch(0.21 0.05 265);
+  --l-card-foreground: oklch(0.2 0.02 265);          --d-card-foreground: oklch(0.94 0.03 85);
+  --l-popover: oklch(0.99 0.01 85);                  --d-popover: oklch(0.23 0.05 265);
+  --l-popover-foreground: oklch(0.2 0.02 265);       --d-popover-foreground: oklch(0.94 0.03 85);
+  --l-primary: oklch(0.45 0.09 76);                  --d-primary: oklch(0.8 0.12 86);
+  --l-primary-foreground: oklch(0.985 0.01 85);      --d-primary-foreground: oklch(0.17 0.04 265);
+  --l-secondary: oklch(0.91 0.03 85);                --d-secondary: oklch(0.26 0.05 265);
+  --l-secondary-foreground: oklch(0.2 0.02 265);     --d-secondary-foreground: oklch(0.94 0.03 85);
+  --l-muted: oklch(0.92 0.025 85);                   --d-muted: oklch(0.23 0.045 265);
+  --l-muted-foreground: oklch(0.42 0.03 72);         --d-muted-foreground: oklch(0.78 0.05 85);
+  --l-accent: oklch(0.88 0.05 85);                   --d-accent: oklch(0.3 0.06 265);
+  --l-accent-foreground: oklch(0.2 0.02 265);        --d-accent-foreground: oklch(0.94 0.03 85);
+  --l-destructive: oklch(0.46 0.19 28);              --d-destructive: oklch(0.66 0.18 28);
+  --l-border: oklch(0.5 0.08 80 / 34%);              --d-border: oklch(0.74 0.11 86 / 26%);
+  --l-input: oklch(0.5 0.08 80 / 44%);               --d-input: oklch(0.74 0.11 86 / 34%);
+  --l-ring: oklch(0.5 0.1 80);                       --d-ring: oklch(0.8 0.12 86);
+
+  /* The lacquered frame. Identical in both modes, by design. */
+  --l-sidebar: oklch(0.22 0.05 265);                 --d-sidebar: oklch(0.185 0.05 265);
+  --l-sidebar-foreground: oklch(0.95 0.03 85);       --d-sidebar-foreground: oklch(0.94 0.03 85);
+  --l-sidebar-primary: oklch(0.8 0.12 86);           --d-sidebar-primary: oklch(0.8 0.12 86);
+  --l-sidebar-primary-foreground: oklch(0.17 0.04 265); --d-sidebar-primary-foreground: oklch(0.17 0.04 265);
+  --l-sidebar-accent: oklch(0.3 0.06 265);           --d-sidebar-accent: oklch(0.28 0.06 265);
+  --l-sidebar-accent-foreground: oklch(0.95 0.03 85); --d-sidebar-accent-foreground: oklch(0.94 0.03 85);
+  --l-sidebar-border: oklch(0.74 0.11 86 / 28%);     --d-sidebar-border: oklch(0.74 0.11 86 / 24%);
+  --l-sidebar-ring: oklch(0.8 0.12 86);              --d-sidebar-ring: oklch(0.8 0.12 86);
+
+  --l-chart-1: oklch(0.5 0.1 80);                    --d-chart-1: oklch(0.8 0.12 86);
+  --l-chart-2: oklch(0.4 0.08 200);                  --d-chart-2: oklch(0.7 0.09 200);
+  --l-chart-3: oklch(0.42 0.09 30);                  --d-chart-3: oklch(0.72 0.11 30);
+  --l-chart-4: oklch(0.38 0.07 150);                 --d-chart-4: oklch(0.68 0.09 150);
+  --l-chart-5: oklch(0.35 0.06 300);                 --d-chart-5: oklch(0.66 0.08 300);
+
+  --l-canvas:
+    repeating-conic-gradient(from 200deg at 50% -12%, oklch(0.55 0.1 80 / 3.5%) 0deg 0.7deg, transparent 0.7deg 7deg),
+    repeating-linear-gradient(135deg, oklch(0.5 0.08 80 / 2.5%) 0 1px, transparent 1px 15px),
+    oklch(0.955 0.02 85);
+  --d-canvas:
+    repeating-conic-gradient(from 200deg at 50% -12%, oklch(0.85 0.12 86 / 4%) 0deg 0.7deg, transparent 0.7deg 7deg),
+    repeating-linear-gradient(135deg, oklch(0.8 0.1 86 / 3%) 0 1px, transparent 1px 15px),
+    oklch(0.16 0.045 265);
+
+  /* The cornice: fluting under the gold cap rule. Sized to a 26px band by the
+     shared surface rule below. */
+  --l-panel: repeating-linear-gradient(90deg, oklch(0.5 0.1 80 / 12%) 0 1px, transparent 1px 7px);
+  --d-panel: repeating-linear-gradient(90deg, oklch(0.82 0.12 86 / 14%) 0 1px, transparent 1px 7px);
+  --panel-size: 100% 26px;
+  --panel-repeat: no-repeat;
+
+  --l-bevel:
+    inset 0 2px 0 0 oklch(0.5 0.1 80 / 88%),
+    inset 0 0 0 1px oklch(0.5 0.1 80 / 22%),
+    0 2px 8px -5px oklch(0.2 0.03 265 / 32%);
+  --d-bevel:
+    inset 0 2px 0 0 oklch(0.8 0.12 86 / 92%),
+    inset 0 0 0 1px oklch(0.8 0.12 86 / 20%),
+    0 6px 18px -10px oklch(0 0 0 / 70%);
+  --l-bevel-hover:
+    inset 0 2px 0 0 oklch(0.5 0.1 80),
+    inset 0 0 0 1px oklch(0.5 0.1 80 / 45%),
+    0 4px 14px -6px oklch(0.2 0.03 265 / 40%);
+  --d-bevel-hover:
+    inset 0 2px 0 0 oklch(0.86 0.13 86),
+    inset 0 0 0 1px oklch(0.86 0.13 86 / 42%),
+    0 8px 24px -12px oklch(0 0 0 / 78%);
+  --l-bevel-sunken: inset 0 2px 0 0 oklch(0.5 0.1 80 / 88%), inset 0 3px 5px 0 oklch(0.2 0.03 265 / 18%);
+  --d-bevel-sunken: inset 0 2px 0 0 oklch(0.8 0.12 86 / 92%), inset 0 3px 5px 0 oklch(0 0 0 / 45%);
+
+  --radius: 0.1rem;
+}
+[data-theme="deco"] body,
+[data-theme="deco"].skin-scope {
+  font-family: "Century Gothic", Futura, "Trebuchet MS", var(--font-geist-sans), sans-serif;
+}
+[data-theme="deco"] :is(h1, h2),
+[data-theme="deco"] [data-slot="sidebar-group-label"] {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+/* ───────────────────────── Skin: riso ─────────────────────────
+   Duplicator print — the look of a risograph sleeve, and the closest an
+   interface gets to the record-cover mood this was asked for. Named for the
+   process, not for any artist: no likeness, no name, nothing borrowed.
+
+   Three artefacts of the real machine, all in CSS:
+     · the paper: uncoated stock, so a turbulence grain over a warm off-white,
+     · the screen: everything is halftone, so panels carry a 5px dot screen,
+     · MISREGISTRATION: the drum runs one colour at a time and the sheet never
+       lands twice in the same place, so panels sit between a pink shadow down-
+       right and a blue one up-left. Hover pulls the two apart — the sheet
+       slipping a millimetre further — which is the micro-interaction.
+
+   The rail is a solid federal-blue spot field in both modes: riso layouts are
+   flat areas of one ink, not tinted greys. Headings are set in the condensed
+   grotesque every sleeve uses, uppercase. */
+[data-theme="riso"] {
+  --l-background: oklch(0.945 0.015 95);             --d-background: oklch(0.145 0.015 265);
+  --l-foreground: oklch(0.19 0.02 265);              --d-foreground: oklch(0.95 0.015 95);
+  --l-card: oklch(0.975 0.01 95);                    --d-card: oklch(0.195 0.018 265);
+  --l-card-foreground: oklch(0.19 0.02 265);         --d-card-foreground: oklch(0.95 0.015 95);
+  --l-popover: oklch(0.985 0.008 95);                --d-popover: oklch(0.215 0.018 265);
+  --l-popover-foreground: oklch(0.19 0.02 265);      --d-popover-foreground: oklch(0.95 0.015 95);
+  --l-primary: oklch(0.53 0.23 12);                  --d-primary: oklch(0.7 0.2 15);
+  --l-primary-foreground: oklch(0.985 0.008 95);     --d-primary-foreground: oklch(0.15 0.04 15);
+  --l-secondary: oklch(0.9 0.02 95);                 --d-secondary: oklch(0.25 0.02 265);
+  --l-secondary-foreground: oklch(0.19 0.02 265);    --d-secondary-foreground: oklch(0.95 0.015 95);
+  --l-muted: oklch(0.91 0.018 95);                   --d-muted: oklch(0.22 0.018 265);
+  --l-muted-foreground: oklch(0.4 0.03 265);         --d-muted-foreground: oklch(0.75 0.02 95);
+  --l-accent: oklch(0.87 0.06 250);                  --d-accent: oklch(0.3 0.05 255);
+  --l-accent-foreground: oklch(0.19 0.02 265);       --d-accent-foreground: oklch(0.95 0.015 95);
+  --l-destructive: oklch(0.5 0.22 25);               --d-destructive: oklch(0.68 0.19 25);
+  --l-border: oklch(0.19 0.02 265 / 28%);            --d-border: oklch(1 0 0 / 15%);
+  --l-input: oklch(0.19 0.02 265 / 40%);             --d-input: oklch(1 0 0 / 22%);
+  --l-ring: oklch(0.53 0.23 12);                     --d-ring: oklch(0.7 0.2 15);
+
+  /* One flat spot colour, not a tint. */
+  --l-sidebar: oklch(0.36 0.11 255);                 --d-sidebar: oklch(0.24 0.09 255);
+  --l-sidebar-foreground: oklch(0.96 0.02 95);       --d-sidebar-foreground: oklch(0.95 0.015 95);
+  --l-sidebar-primary: oklch(0.72 0.2 15);           --d-sidebar-primary: oklch(0.7 0.2 15);
+  --l-sidebar-primary-foreground: oklch(0.15 0.04 15); --d-sidebar-primary-foreground: oklch(0.15 0.04 15);
+  --l-sidebar-accent: oklch(0.45 0.11 255);          --d-sidebar-accent: oklch(0.32 0.09 255);
+  --l-sidebar-accent-foreground: oklch(0.96 0.02 95); --d-sidebar-accent-foreground: oklch(0.95 0.015 95);
+  --l-sidebar-border: oklch(1 0 0 / 20%);            --d-sidebar-border: oklch(1 0 0 / 16%);
+  --l-sidebar-ring: oklch(0.72 0.2 15);              --d-sidebar-ring: oklch(0.7 0.2 15);
+
+  --l-chart-1: oklch(0.53 0.23 12);                  --d-chart-1: oklch(0.7 0.2 15);
+  --l-chart-2: oklch(0.42 0.13 255);                 --d-chart-2: oklch(0.66 0.13 255);
+  --l-chart-3: oklch(0.58 0.15 85);                  --d-chart-3: oklch(0.8 0.14 88);
+  --l-chart-4: oklch(0.5 0.14 160);                  --d-chart-4: oklch(0.72 0.13 160);
+  --l-chart-5: oklch(0.35 0.03 265);                 --d-chart-5: oklch(0.82 0.02 95);
+
+  --l-canvas:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23f)' opacity='0.06'/%3E%3C/svg%3E") 0 0 / 200px 200px repeat,
+    radial-gradient(circle at 50% 50%, oklch(0.19 0.02 265 / 7%) 0 1.1px, transparent 1.2px) 0 0 / 6px 6px repeat,
+    oklch(0.945 0.015 95);
+  --d-canvas:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23f)' opacity='0.075'/%3E%3C/svg%3E") 0 0 / 200px 200px repeat,
+    radial-gradient(circle at 50% 50%, oklch(1 0 0 / 6%) 0 1.1px, transparent 1.2px) 0 0 / 6px 6px repeat,
+    oklch(0.145 0.015 265);
+
+  --l-panel: radial-gradient(circle at 50% 50%, oklch(0.19 0.02 265 / 5%) 0 1px, transparent 1.1px);
+  --d-panel: radial-gradient(circle at 50% 50%, oklch(1 0 0 / 5%) 0 1px, transparent 1.1px);
+  --panel-size: 5px 5px;
+
+  --l-bevel:
+    3px 3px 0 0 oklch(0.53 0.23 12 / 30%),
+    -3px -3px 0 0 oklch(0.42 0.14 255 / 22%);
+  --d-bevel:
+    3px 3px 0 0 oklch(0.7 0.2 15 / 32%),
+    -3px -3px 0 0 oklch(0.6 0.14 255 / 24%);
+  --l-bevel-hover:
+    5px 5px 0 0 oklch(0.53 0.23 12 / 34%),
+    -4px -4px 0 0 oklch(0.42 0.14 255 / 26%);
+  --d-bevel-hover:
+    5px 5px 0 0 oklch(0.7 0.2 15 / 36%),
+    -4px -4px 0 0 oklch(0.6 0.14 255 / 28%);
+  --l-bevel-sunken: inset 0 1px 3px 0 oklch(0.19 0.02 265 / 22%);
+  --d-bevel-sunken: inset 0 1px 3px 0 oklch(0 0 0 / 50%);
+
+  --radius: 0.2rem;
+}
+[data-theme="riso"] :is(h1, h2, h3),
+[data-theme="riso"] [data-slot="sidebar-group-label"] {
+  font-family: "Arial Narrow", "Helvetica Neue Condensed", Haettenschweiler, Impact, var(--font-geist-sans), sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.015em;
+}
+
+/* ═══════════════════ Shared plumbing for the themed skins ═══════════════════
+   One selector list, six skins. Anything that had to be per-skin lives in the
+   token blocks above; what is left here is mechanism.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The wallpaper. `fixed` so a tiled pattern behaves like the surface the page
+   is printed on rather than a rug that slides under it. */
+:is(
+    [data-theme="nebula"],
+    [data-theme="grimoire"],
+    [data-theme="cartoon"],
+    [data-theme="mono"],
+    [data-theme="deco"],
+    [data-theme="riso"],
+    [data-theme="discord"],
+    [data-theme="spotify"]
+  )
+  body {
+  background: var(--canvas);
+  background-attachment: fixed;
+}
+
+/* Same problem the glass skin has: page-level wrappers paint an opaque
+   `bg-background` across the viewport and bury the wallpaper. Scoped by height
+   so it cannot reach the small controls that also use `bg-background`, and
+   matched with `~=` so partial tints (`bg-background/70`) keep theirs.
+   `:not(body)` keeps it off the element painting the wallpaper - see the note
+   on the glass copy of this rule. */
+:is(
+    [data-theme="nebula"],
+    [data-theme="grimoire"],
+    [data-theme="cartoon"],
+    [data-theme="mono"],
+    [data-theme="deco"],
+    [data-theme="riso"],
+    [data-theme="discord"],
+    [data-theme="spotify"]
+  )
+  :is(
+    [class*="min-h-svh"],
+    [class*="min-h-dvh"],
+    [class*="min-h-full"],
+    [class*="h-dvh"]
+  )[class~="bg-background"]:not(body) {
+  background-color: transparent;
+}
+
+/* Every panel surface wears the skin's decorative paint and its shadow family.
+   `background-image` is safe to claim because these elements set only a
+   background-*color*; anything shipping a real gradient opts out through the
+   :not(). All of these tokens default to `none`, so a skin pays only for what
+   it declares.
+
+   No backdrop-filter anywhere in this block, deliberately: a dashboard renders
+   a grid of file cards, and one filtered element is one compositing layer per
+   frame. Everything here is plain paint. */
+:is(
+    [data-theme="nebula"],
+    [data-theme="grimoire"],
+    [data-theme="cartoon"],
+    [data-theme="mono"],
+    [data-theme="deco"],
+    [data-theme="riso"],
+    [data-theme="discord"],
+    [data-theme="spotify"]
+  )
+  :is(
+    [data-slot="card"],
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="sheet-content"],
+    [data-slot="popover-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="select-content"],
+    [data-slot="alert"],
+    [class*="bg-card"],
+    [class*="bg-popover"]
+  ):not([class*="bg-gradient"], [class*="bg-linear"], [class*="bg-radial"]) {
+  background-image: var(--panel);
+  background-size: var(--panel-size, auto);
+  background-repeat: var(--panel-repeat, repeat);
+  background-position: 0 0;
+  box-shadow: var(--bevel);
+  transition:
+    box-shadow 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    background-color 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* The micro-interaction, kept to the one surface a pointer actually tracks: a
+   card. Menus and dialogs are not hovered as objects, so they keep their rest
+   state and the page stays quiet. */
+:is(
+    [data-theme="nebula"],
+    [data-theme="grimoire"],
+    [data-theme="cartoon"],
+    [data-theme="mono"],
+    [data-theme="deco"],
+    [data-theme="riso"],
+    [data-theme="discord"],
+    [data-theme="spotify"]
+  )
+  :is([data-slot="card"], [class*="bg-card"]):hover {
+  box-shadow: var(--bevel-hover);
+}
+
+/* Increase Contrast: thicken every hairline and pull secondary text toward the
+   foreground, so a busy wallpaper cannot eat it. */
+@media (prefers-contrast: more) {
+  [data-theme="nebula"] {
+    --l-muted-foreground: oklch(0.33 0.04 265);      --d-muted-foreground: oklch(0.86 0.03 265);
+    --l-border: oklch(0.35 0.06 265 / 42%);          --d-border: oklch(0.85 0.08 265 / 36%);
+  }
+  [data-theme="grimoire"] {
+    --l-muted-foreground: oklch(0.32 0.05 58);       --d-muted-foreground: oklch(0.86 0.035 82);
+    --l-border: oklch(0.48 0.08 74);                 --d-border: oklch(0.58 0.07 70);
+  }
+  [data-theme="cartoon"] {
+    --l-muted-foreground: oklch(0.3 0.04 250);       --d-muted-foreground: oklch(0.9 0.03 92);
+  }
+  [data-theme="mono"] {
+    --l-muted-foreground: oklch(0.3 0 0);            --d-muted-foreground: oklch(0.85 0 0);
+    --l-border: oklch(0.14 0 0 / 42%);               --d-border: oklch(1 0 0 / 38%);
+  }
+  [data-theme="deco"] {
+    --l-muted-foreground: oklch(0.31 0.03 72);       --d-muted-foreground: oklch(0.88 0.05 85);
+    --l-border: oklch(0.5 0.08 80 / 62%);            --d-border: oklch(0.74 0.11 86 / 52%);
+  }
+  [data-theme="riso"] {
+    --l-muted-foreground: oklch(0.29 0.03 265);      --d-muted-foreground: oklch(0.87 0.02 95);
+    --l-border: oklch(0.19 0.02 265 / 55%);          --d-border: oklch(1 0 0 / 38%);
+  }
+}
+
+/* Reduce Transparency. None of these skins is see-through — panels are opaque
+   and nothing uses a backdrop-filter — so the only thing to withdraw is the
+   translucent decorative paint layered over them. The wallpaper survives as
+   the page background, so each skin still reads as itself. */
+@media (prefers-reduced-transparency: reduce) {
+  :is(
+      [data-theme="nebula"],
+      [data-theme="grimoire"],
+      [data-theme="cartoon"],
+      [data-theme="mono"],
+      [data-theme="deco"],
+      [data-theme="riso"],
+      [data-theme="discord"],
+      [data-theme="spotify"]
+    ) {
+    --l-panel: none;                                 --d-panel: none;
+  }
+}
+
+/* Reduce Motion. The transforms and shadow transitions above are the whole
+   motion budget, so cutting them here leaves the skins fully intact - the
+   states still change, they just change instantly. */
+@media (prefers-reduced-motion: reduce) {
+  :is(
+      [data-theme="nebula"],
+      [data-theme="grimoire"],
+      [data-theme="cartoon"],
+      [data-theme="mono"],
+      [data-theme="deco"],
+      [data-theme="riso"],
+      [data-theme="discord"],
+      [data-theme="spotify"]
+    )
+    * {
+    transition-duration: 0.01ms;
+    animation-duration: 0.01ms;
+  }
+  [data-theme="cartoon"] [data-slot="button"]:hover:not(:disabled),
+  [data-theme="cartoon"] [data-slot="button"]:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* ═══════════════════════ Mode switch (the only place a mode is resolved) ═══
+   Skins write `--l-*` / `--d-*`; these three rules pick a side. They target
+   different properties than the skins do, so no skin can ever out-specify the
+   mode — which is exactly the bug this replaces. */
+:root {
+  color-scheme: light dark;
+}
+
+/* `.skin-scope` rides along in all three blocks below.
+   ---------------------------------------------------------------------------
+   A nested element can carry `data-theme` — the `--l-*` / `--d-*` pairs are
+   ordinary inherited custom properties — but the pair→token resolution only
+   ever happened at :root, so a nested skin declared its palette and nothing
+   read it. Adding the class to these three selector lists is the whole fix,
+   and it costs nothing: the theme picker can now render a live miniature of a
+   skin (real wallpaper, real radius, real bevel, real font) using the same CSS
+   the page itself would use, instead of a hand-maintained table of hex codes
+   that drifts the moment a token changes.
+
+   It follows the ROOT's mode on purpose. The miniature is a preview of the
+   skin, not of the mode; the mode toggle is a separate control and the
+   previews should answer it. */
+:root,
+.skin-scope {
+  --background: var(--l-background);
+  --foreground: var(--l-foreground);
+  --card: var(--l-card);
+  --card-foreground: var(--l-card-foreground);
+  --popover: var(--l-popover);
+  --popover-foreground: var(--l-popover-foreground);
+  --primary: var(--l-primary);
+  --primary-foreground: var(--l-primary-foreground);
+  --secondary: var(--l-secondary);
+  --secondary-foreground: var(--l-secondary-foreground);
+  --muted: var(--l-muted);
+  --muted-foreground: var(--l-muted-foreground);
+  --accent: var(--l-accent);
+  --accent-foreground: var(--l-accent-foreground);
+  --destructive: var(--l-destructive);
+  --border: var(--l-border);
+  --input: var(--l-input);
+  --ring: var(--l-ring);
+  --sidebar: var(--l-sidebar);
+  --sidebar-foreground: var(--l-sidebar-foreground);
+  --sidebar-primary: var(--l-sidebar-primary);
+  --sidebar-primary-foreground: var(--l-sidebar-primary-foreground);
+  --sidebar-accent: var(--l-sidebar-accent);
+  --sidebar-accent-foreground: var(--l-sidebar-accent-foreground);
+  --sidebar-border: var(--l-sidebar-border);
+  --sidebar-ring: var(--l-sidebar-ring);
+  --chart-1: var(--l-chart-1);
+  --chart-2: var(--l-chart-2);
+  --chart-3: var(--l-chart-3);
+  --chart-4: var(--l-chart-4);
+  --chart-5: var(--l-chart-5);
+  --canvas: var(--l-canvas);
+  --bevel: var(--l-bevel);
+  --bevel-hover: var(--l-bevel-hover);
+  --bevel-sunken: var(--l-bevel-sunken);
+  --panel: var(--l-panel);
+  /* Liquid Glass material (only the glass skin defines these; for every other
+     skin they resolve to nothing and are never referenced). */
+  --glass-backdrop: var(--l-glass-backdrop);
+  --glass-backdrop-near: var(--l-glass-backdrop-near);
+  --glass-dim: var(--l-glass-dim);
+  --glass-sheen: var(--l-glass-sheen);
+  --glass-rim: var(--l-glass-rim);
+  --glass-drop: var(--l-glass-drop);
+  --glass-drop-near: var(--l-glass-drop-near);
+}
+
+:root[data-mode="light"] {
+  color-scheme: light;
+}
+
+/* Explicit dark. (The `system` case is the media query further down — a
+   selector and a media query cannot share one rule, hence the repetition.) */
+:root[data-mode="dark"] {
+  color-scheme: dark;
+}
+
+:root[data-mode="dark"],
+:root[data-mode="dark"] .skin-scope {
+  --background: var(--d-background);
+  --foreground: var(--d-foreground);
+  --card: var(--d-card);
+  --card-foreground: var(--d-card-foreground);
+  --popover: var(--d-popover);
+  --popover-foreground: var(--d-popover-foreground);
+  --primary: var(--d-primary);
+  --primary-foreground: var(--d-primary-foreground);
+  --secondary: var(--d-secondary);
+  --secondary-foreground: var(--d-secondary-foreground);
+  --muted: var(--d-muted);
+  --muted-foreground: var(--d-muted-foreground);
+  --accent: var(--d-accent);
+  --accent-foreground: var(--d-accent-foreground);
+  --destructive: var(--d-destructive);
+  --border: var(--d-border);
+  --input: var(--d-input);
+  --ring: var(--d-ring);
+  --sidebar: var(--d-sidebar);
+  --sidebar-foreground: var(--d-sidebar-foreground);
+  --sidebar-primary: var(--d-sidebar-primary);
+  --sidebar-primary-foreground: var(--d-sidebar-primary-foreground);
+  --sidebar-accent: var(--d-sidebar-accent);
+  --sidebar-accent-foreground: var(--d-sidebar-accent-foreground);
+  --sidebar-border: var(--d-sidebar-border);
+  --sidebar-ring: var(--d-sidebar-ring);
+  --chart-1: var(--d-chart-1);
+  --chart-2: var(--d-chart-2);
+  --chart-3: var(--d-chart-3);
+  --chart-4: var(--d-chart-4);
+  --chart-5: var(--d-chart-5);
+  --canvas: var(--d-canvas);
+  --bevel: var(--d-bevel);
+  --bevel-hover: var(--d-bevel-hover);
+  --bevel-sunken: var(--d-bevel-sunken);
+  --panel: var(--d-panel);
+  --glass-backdrop: var(--d-glass-backdrop);
+  --glass-backdrop-near: var(--d-glass-backdrop-near);
+  --glass-dim: var(--d-glass-dim);
+  --glass-sheen: var(--d-glass-sheen);
+  --glass-rim: var(--d-glass-rim);
+  --glass-drop: var(--d-glass-drop);
+  --glass-drop-near: var(--d-glass-drop-near);
+}
+
+/* data-mode="system" is what the server renders before the client has had a
+   say; it must honour the OS immediately, with no JavaScript involved. */
+@media (prefers-color-scheme: dark) {
+  :root[data-mode="system"] {
+    color-scheme: dark;
+  }
+
+  :root[data-mode="system"],
+  :root[data-mode="system"] .skin-scope {
+    --background: var(--d-background);
+    --foreground: var(--d-foreground);
+    --card: var(--d-card);
+    --card-foreground: var(--d-card-foreground);
+    --popover: var(--d-popover);
+    --popover-foreground: var(--d-popover-foreground);
+    --primary: var(--d-primary);
+    --primary-foreground: var(--d-primary-foreground);
+    --secondary: var(--d-secondary);
+    --secondary-foreground: var(--d-secondary-foreground);
+    --muted: var(--d-muted);
+    --muted-foreground: var(--d-muted-foreground);
+    --accent: var(--d-accent);
+    --accent-foreground: var(--d-accent-foreground);
+    --destructive: var(--d-destructive);
+    --border: var(--d-border);
+    --input: var(--d-input);
+    --ring: var(--d-ring);
+    --sidebar: var(--d-sidebar);
+    --sidebar-foreground: var(--d-sidebar-foreground);
+    --sidebar-primary: var(--d-sidebar-primary);
+    --sidebar-primary-foreground: var(--d-sidebar-primary-foreground);
+    --sidebar-accent: var(--d-sidebar-accent);
+    --sidebar-accent-foreground: var(--d-sidebar-accent-foreground);
+    --sidebar-border: var(--d-sidebar-border);
+    --sidebar-ring: var(--d-sidebar-ring);
+    --chart-1: var(--d-chart-1);
+    --chart-2: var(--d-chart-2);
+    --chart-3: var(--d-chart-3);
+    --chart-4: var(--d-chart-4);
+    --chart-5: var(--d-chart-5);
+    --canvas: var(--d-canvas);
+    --bevel: var(--d-bevel);
+    --bevel-hover: var(--d-bevel-hover);
+    --bevel-sunken: var(--d-bevel-sunken);
+    --panel: var(--d-panel);
+    --glass-backdrop: var(--d-glass-backdrop);
+    --glass-backdrop-near: var(--d-glass-backdrop-near);
+    --glass-dim: var(--d-glass-dim);
+    --glass-sheen: var(--d-glass-sheen);
+    --glass-rim: var(--d-glass-rim);
+    --glass-drop: var(--d-glass-drop);
+    --glass-drop-near: var(--d-glass-drop-near);
+  }
+}
+
+/* The preview scope itself: a box that paints the skin's wallpaper and hands
+   its palette to everything inside. `isolation` keeps any blend the skin
+   introduces from reaching the real page around it. */
+.skin-scope {
+  background: var(--canvas);
+  color: var(--foreground);
+  isolation: isolate;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--primary) 28%, transparent);
+    color: var(--foreground);
+  }
+
+  /* Scrollbars follow the skin instead of punching a stock-grey hole in it. */
+  * {
+    scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent) transparent;
+    scrollbar-width: thin;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Wallpaper — the image an account puts behind its own panel and behind every
+   public page it owns.
+
+   Painted from three custom properties set on <html> by <ThemeApplier>:
+     --ml-bg-image  a url(), always /bg/{tag} on this origin
+     --ml-bg-dim    0-1, how far the skin's own --background veils it
+     data-bg="on"   present only when there is one
+
+   Two fixed layers rather than a background on <body>, for three reasons: the
+   image must not scroll with a long file list, `background-attachment: fixed`
+   is unreliable on mobile Safari, and the veil has to sit between the photo and
+   the content so the skin's tokens keep deciding contrast. Both are inert
+   (pointer-events, aria-hidden by virtue of being pseudo-elements) and sit
+   behind everything via a negative z-index on a rooted stacking context.
+
+   The body's own opaque --background is what would hide all of this, so it is
+   dropped here and handed to the veil instead. Cards, dialogs and the sidebar
+   keep their opaque surfaces on purpose: text legibility must not depend on
+   which photograph somebody chose.
+   --------------------------------------------------------------------------- */
+html[data-bg="on"] {
+  /* Establishes the stacking context the two layers live behind, so z-index:-1
+     cannot escape to sit behind the page's own background. */
+  isolation: isolate;
+}
+
+html[data-bg="on"] body {
+  background-color: transparent;
+}
+
+html[data-bg="on"] body::before,
+html[data-bg="on"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+html[data-bg="on"] body::before {
+  background-image: var(--ml-bg-image);
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+html[data-bg="on"] body::after {
+  background-color: color-mix(
+    in oklab,
+    var(--background) calc(var(--ml-bg-dim, 0.7) * 100%),
+    transparent
+  );
+}
+
+/* Skins that already paint their own full-page texture (starfields, pergament,
+   halftone) would fight the photograph for the same space. The wallpaper wins:
+   the account chose it explicitly, the texture came with the skin. */
+html[data-bg="on"] body {
+  background-image: none;
+}
+
+/* The app's own page backdrop — the full-height container a route paints itself
+   on. Identical to `bg-background`, and that is the point: it exists so the
+   wallpaper can tell a PAGE backdrop apart from the dozen small controls that
+   also use --background (switch thumbs, outline buttons, the active tab, the
+   sidebar rail). Blanking `bg-background` wholesale would punch holes in all of
+   those; blanking this hands the page over to the photograph and nothing else.
+   Unlayered on purpose, so it outranks the utility it shadows. */
+@utility page-surface {
+  background-color: var(--background);
+}
+
+html[data-bg="on"] .page-surface {
+  background-color: transparent;
+}
+
+/* The Modlight tile — the exact paint used by app/icon.svg and
+   app/apple-icon.png, so the in-app mark and the browser-tab favicon are the
+   same object. Brand colours are deliberately literal here: a logo does not
+   re-tint per skin, and `bg-primary` was what made the mark turn navy under
+   win98 and go dark-on-violet in every dark mode (--primary-foreground is a
+   near-black there). The second gradient is the brand ramp; the first is the
+   light catching the top of the tile, matched by a rect in icon.svg. */
+@utility brand-tile {
+  background-image:
+    linear-gradient(180deg, oklch(1 0 0 / 22%) 0%, oklch(1 0 0 / 0%) 55%),
+    linear-gradient(151deg, #6e6bf5 0%, #3b2fc2 100%);
+  color: #fff;
+}
+
+@utility skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in oklab, var(--foreground) 7%, transparent),
+      transparent
+    );
+    animation: modlight-shimmer 1.6s infinite;
+    /* Set --shimmer-delay inline to stagger a grid of placeholders; a delay on
+       the host element would never reach this pseudo-element. */
+    animation-delay: var(--shimmer-delay, 0ms);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &::after {
+      animation: none;
+    }
+  }
+}
+
+@keyframes modlight-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Player — the media-chrome controls, dressed in whichever skin is on.
+
+   The library ships no look of its own: every control reads CSS variables and
+   falls back to a dark default nobody here ever sees, because the block below
+   maps all of them onto our tokens. That is the whole reason it was chosen over
+   the players that come with a finished skin - there is no foreign palette to
+   fight, and nothing here names a colour.
+
+   Two mechanics worth knowing before editing this:
+
+     · the controls are custom elements in the LIGHT dom, so these plain
+       document rules outrank the `:host` defaults inside their shadow roots.
+       That is also why `.ml-player svg` can resize the icons we slot in.
+     · a skin is never named here except where it genuinely has a different
+       idea of what a raised panel is (the `--bevel` families). Everything else
+       follows the tokens and therefore follows all twelve skins for free.
+   --------------------------------------------------------------------------- */
+
+.ml-player {
+  display: block;
+  width: 100%;
+  height: 100%;
+
+  /* Palette. */
+  --media-primary-color: var(--foreground);
+  --media-secondary-color: var(--card);
+  --media-text-color: var(--foreground);
+  --media-icon-color: var(--foreground);
+  /* The clip sits on the page, not in a black slab - the same decision the
+     stage around it makes with `object-contain`. */
+  --media-background-color: transparent;
+  --media-control-background: transparent;
+  --media-control-hover-background: color-mix(in oklab, var(--foreground) 12%, transparent);
+
+  /* Metrics. An 18px icon in a 20px line box with 9px of padding on each side
+     is a 38px control - the same target as the buttons in the action bar just
+     below the media, so the two rows read as one interface. */
+  --media-control-height: 20px;
+  --media-control-padding: 9px;
+  --media-font-family: inherit;
+  --media-font-size: 12px;
+  --media-font-weight: 500;
+  --media-focus-box-shadow: 0 0 0 2px var(--ring);
+
+  /* Scrubber. `--media-range-bar-color` is the played part, the buffered strip
+     is the same foreground at lower strength so it never competes with it. */
+  --media-range-track-height: 4px;
+  --media-range-track-border-radius: calc(var(--radius) * 0.35);
+  --media-range-track-background: color-mix(in oklab, var(--foreground) 20%, transparent);
+  --media-range-bar-color: var(--primary);
+  --media-time-range-buffered-color: color-mix(in oklab, var(--foreground) 38%, transparent);
+  --media-range-thumb-background: var(--primary);
+  --media-range-thumb-width: 12px;
+  --media-range-thumb-height: 12px;
+  --media-range-thumb-border-radius: 999px;
+  /* Single length on purpose: the library computes the control height as
+     calc(var(--media-control-height) + 2 * var(--media-range-padding)), and a
+     two-value shorthand makes that calc() invalid, so the entire height
+     declaration was being thrown away. Horizontal breathing room is given by
+     the padding rule on the range element instead. */
+  --media-range-padding: 0px;
+
+  /* Time preview bubble and tooltips: our popover surface. */
+  --media-preview-background: var(--popover);
+  /* NOT transparent: media-time-range paints the time bubble from this variable
+     alone, so clearing it left the digits as bare text on whatever frame the
+     video happened to be showing. It has to carry the same surface as the
+     thumbnail bubble above it. */
+  --media-preview-time-background: var(--popover);
+  --media-preview-time-text-shadow: none;
+  --media-preview-border-radius: var(--radius);
+  /* The frame shown while scrubbing. media-chrome draws it itself out of the
+     sprite sheet the metadata track points at (see the <track> in
+     MediaPlayer.tsx), so all there is to say here is how it is framed - and
+     the raised skins frame it the way they frame every other panel, which in
+     win98 means the picture really is sunk into the bevel.
+     The two floors are ZEROED on purpose: the library SCALES a tile up to
+     whatever minimum it finds (120x80 by default), and our sheet is rendered
+     at 160px on the long edge for exactly this box - so the default floor blew
+     a portrait tile up by a third and made it soft, to no one's benefit. With
+     no floor every tile is drawn at the size it was rendered for. */
+  --media-preview-thumbnail-min-width: 0px;
+  --media-preview-thumbnail-min-height: 0px;
+  --media-preview-thumbnail-box-shadow: var(--bevel);
+  --media-tooltip-background: var(--popover);
+  --media-tooltip-border: 1px solid var(--border);
+  --media-tooltip-border-radius: var(--radius);
+  --media-tooltip-arrow-color: var(--popover);
+  --media-tooltip-padding: 0.3em 0.55em;
+
+  --ml-player-icon: 18px;
+}
+
+/* Before the custom elements upgrade, `<media-controller>` is an unknown inline
+   element and the controls are empty boxes. The video keeps its own native
+   controls for that window (see MediaPlayer.tsx), so the page is usable at
+   first paint and never shows two sets of controls at once. */
+.ml-player:not(:defined) {
+  display: block;
+}
+.ml-player:not(:defined) > :not(.ml-player-media) {
+  display: none;
+}
+
+/* The half-upgraded case, which `:not(:defined)` cannot see. `Promise.all`
+   rejects on the first failed import, but modules that already resolved have
+   registered their elements - so the controller can be DEFINED while the player
+   never finished coming up. Then our bar un-hides itself while the video keeps
+   its native controls, which is the "two players, one of them dead" report.
+   MediaPlayer stamps this attribute when it gives up; from that point the
+   browser's own controls are the interface. */
+.ml-player[data-player-failed] > :not(.ml-player-media) {
+  display: none;
+}
+
+.ml-player .ml-player-media {
+  width: 100%;
+  height: 100%;
+  /* Letterbox on the page background rather than cropping. */
+  object-fit: contain;
+  background: transparent;
+}
+
+/* The bar is a Modlight panel: same surface, same border, same corner and the
+   skin's own raised treatment where it has one. Width is capped and centred for
+   the same reason the action bar below it is - a control strip stretched across
+   a 27 inch monitor puts the play button and the fullscreen button a metre
+   apart. */
+.ml-player media-control-bar {
+  align-items: center;
+  gap: 2px;
+  width: min(64rem, 100% - 1.25rem);
+  margin: 0 auto 0.625rem;
+  padding: 0.25rem 0.375rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--card) 90%, transparent);
+  box-shadow: 0 16px 36px -24px color-mix(in oklab, var(--foreground) 70%, transparent);
+}
+
+/* Each control rounds the way our own buttons do, so the hover tint is a
+   Modlight button and not a rectangle cut out of the bar. */
+.ml-player media-control-bar > * {
+  border-radius: calc(var(--radius) * 0.7);
+}
+
+/* The scrubber's own corner radius, which has to be set ON the element rather
+   than inherited from the controller like every other variable in this file.
+   media-time-range's shadow root declares `--media-box-border-radius: 4px` and
+   `--media-preview-border-radius: var(--media-box-border-radius)` in its own
+   `:host` block - a declaration on the element beats a value inherited from an
+   ancestor, so `.ml-player { --media-preview-border-radius }` above never
+   reached it and the preview bubble kept the library's 4px corners under a
+   panel built on 10px ones. A document rule on the host outranks its `:host`,
+   which is what makes this one line work. */
+.ml-player media-time-range {
+  --media-box-border-radius: var(--radius);
+}
+
+/* The clock sits between the seek buttons and the scrubber; without its own
+   breathing room the digits touch an icon on both sides. */
+.ml-player media-time-display {
+  padding-inline: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  .ml-player media-control-bar {
+    background: color-mix(in oklab, var(--card) 82%, transparent);
+    backdrop-filter: blur(10px);
+  }
+}
+
+/* Skins whose --card is ALREADY translucent must not have that alpha multiplied
+   a second time by the rules above. In glass the card is 62% (light) / 55%
+   (dark), which the 82% blend drove to roughly 0.5 - and half-opaque is not a
+   surface, it is a suggestion: the control text was competing with whatever the
+   video was showing underneath it. These two paint on the opaque background
+   instead and keep the blur, so the strip still reads as glass without
+   surrendering legibility. */
+[data-theme="glass"] .ml-player media-control-bar {
+  background: color-mix(in oklab, var(--background) 88%, var(--foreground) 6%);
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  [data-theme="glass"] .ml-player media-control-bar {
+    background: color-mix(in oklab, var(--background) 82%, var(--foreground) 6%);
+    backdrop-filter: blur(14px);
+  }
+}
+
+/* The skins that define a raised panel treat the bar as one, exactly like a
+   card: win98 bevels it, cartoon stamps an ink shadow under it, grimoire gilds
+   its frame, mono rules a heavy line across its top, riso prints it off
+   register. Named one by one because `--bevel` is `none` everywhere else and
+   `none` cannot be combined with the soft shadow above. */
+:is(
+    [data-theme="win98"],
+    [data-theme="nebula"],
+    [data-theme="grimoire"],
+    [data-theme="cartoon"],
+    [data-theme="mono"],
+    [data-theme="deco"],
+    [data-theme="riso"],
+    [data-theme="discord"],
+    [data-theme="spotify"]
+  )
+  .ml-player
+  media-control-bar {
+  box-shadow: var(--bevel);
+}
+
+/* Win98 had no borderless controls: a button is a raised bevel that sinks when
+   pressed. This is the one place a skin needs to reach the individual controls,
+   and it is why they are not given `data-slot="button"` wholesale - the cartoon
+   skin's 4px ink drop under each of eleven small controls reads as noise. */
+[data-theme="win98"] .ml-player media-control-bar {
+  gap: 2px;
+}
+[data-theme="win98"]
+  .ml-player
+  :is(
+    media-play-button,
+    media-mute-button,
+    media-fullscreen-button,
+    media-playback-rate-button,
+    media-seek-backward-button,
+    media-seek-forward-button
+  ) {
+  background: var(--card);
+  box-shadow: var(--bevel);
+}
+
+/* ...but the bevel is a box-shadow, and so is the focus ring, so setting one
+   deleted the other: seven of the eleven controls became invisible to keyboard
+   navigation in this skin alone. Both are listed here so the bevel survives and
+   the ring is still drawn around it. `:focus-visible` rather than `:focus`
+   keeps the ring off a mouse click, which is what the rest of the app does. */
+[data-theme="win98"]
+  .ml-player
+  :is(
+    media-play-button,
+    media-mute-button,
+    media-fullscreen-button,
+    media-playback-rate-button,
+    media-seek-backward-button,
+    media-seek-forward-button
+  ):focus-visible {
+  box-shadow: var(--bevel), 0 0 0 2px var(--ring);
+  outline: none;
+}
+
+/* Hover was lost the same way: the document rule pinned the background, so the
+   shadow root's hover tint had nothing to change. */
+[data-theme="win98"]
+  .ml-player
+  :is(
+    media-play-button,
+    media-mute-button,
+    media-fullscreen-button,
+    media-playback-rate-button,
+    media-seek-backward-button,
+    media-seek-forward-button
+  ):hover {
+  background: color-mix(in oklab, var(--card) 88%, var(--foreground) 12%);
+}
+[data-theme="win98"]
+  .ml-player
+  :is(
+    media-play-button,
+    media-mute-button,
+    media-fullscreen-button,
+    media-playback-rate-button,
+    media-seek-backward-button,
+    media-seek-forward-button
+  ):active {
+  box-shadow: var(--bevel-sunken);
+}
+
+/* Icons are ours (lucide), so the player draws with the same pen as the rest of
+   the app. They are stroked, not filled, which is why the size is set here
+   rather than through --media-button-icon-*: those only reach a slotted <svg>. */
+.ml-player span[slot] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ml-player span[slot] > svg {
+  width: var(--ml-player-icon);
+  height: var(--ml-player-icon);
+}
+
+/* Narrow players drop the extras rather than wrapping to a second row: the
+   seek buttons and the volume slider go, and the mute button still mutes.
+   The breakpoint attribute is set by the controller from its OWN width, so a
+   narrow window behaves like a phone. */
+.ml-player:not([breakpointsm]) .ml-player-optional {
+  display: none;
+}
+
+/* Text controls are as wide as their label, which leaves the playback-rate
+   button under the touch minimum however much vertical padding it gets. */
+@media (pointer: coarse) {
+  .ml-player media-playback-rate-button {
+    min-width: 44px;
+  }
+}
+
+/* Focus beats the inactivity timer. `media-controller` sets `userinactive` on a
+   timer that knows nothing about the keyboard, so without this the bar faded
+   out from under whoever was tabbing through it. Also covers :focus-within for
+   the case where focus lands before React's handler runs. */
+.ml-player[data-keyboard-held] media-control-bar,
+.ml-player:focus-within media-control-bar {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+/* The error dialog paints itself from a colour hardcoded in the library
+   (rgb(20 20 30 / .8)) with no variable to override, while its text came from
+   our --foreground. In the six light skins that put near-black text on a
+   near-black sheet. Restated here on our own surface, where both sides come
+   from the same palette. */
+.ml-player media-error-dialog {
+  background: color-mix(in oklab, var(--background) 92%, var(--foreground) 8%);
+  color: var(--foreground);
+}
+.ml-player media-error-dialog::part(dialog) {
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Tailwind's preflight sets `padding: 0` on every button-ish element, and that
+   document rule beats the shadow root's default that reads
+   --media-control-padding. The variables alone therefore produced 18x18 targets
+   on a phone, whatever they said. Restating the padding as a real declaration
+   on the light-DOM elements is what actually sizes them. */
+.ml-player media-control-bar > :is(
+    media-play-button,
+    media-mute-button,
+    media-fullscreen-button,
+    media-playback-rate-button,
+    media-seek-backward-button,
+    media-seek-forward-button
+  ) {
+  padding: var(--media-control-padding);
+}
+
+/* Touch: 20px icon + 12px padding on each side clears the 44px target. */
+@media (pointer: coarse) {
+  .ml-player {
+    --media-control-height: 20px;
+    /* 18px icon + 13px each side = 44px, the documented minimum. 12px landed on
+       42 and "nearly" is not a target size. */
+    --media-control-padding: 13px;
+    --media-range-thumb-width: 14px;
+    --media-range-thumb-height: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ml-player {
+    --media-control-transition-in: none;
+    --media-control-transition-out: none;
+    --media-range-thumb-transition: none;
+    --media-range-segment-transition: none;
+    --media-preview-transition-property: none;
+  }
+  .ml-player media-control-bar {
+    transition: none;
+  }
+}
+
+/* Audio has no picture to sit on, so the controller is the bar and nothing
+   else: no gesture layer, no autohide, no letterbox. */
+.ml-player-audio {
+  height: auto;
+}
+.ml-player-audio media-control-bar {
+  margin: 0;
+}

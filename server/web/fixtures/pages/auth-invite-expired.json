@@ -1,0 +1,19 @@
+{
+  "url": "/invite/old",
+  "payload": {
+    "route": "/invite/[token]",
+    "params": {
+      "token": "old"
+    },
+    "layouts": "$auth",
+    "props": {
+      "token": "old",
+      "preview": null
+    },
+    "meta": {
+      "title": "Set up your account - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}
