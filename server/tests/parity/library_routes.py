@@ -71,7 +71,8 @@ class Area(object):
             text = re.sub(pattern, repl, text)
         return parity.normalize_json(json.loads(text))
 
-    def shape(self, r, extra=(), headers=("content-type", "cache-control", "retry-after", "location", "allow")):
+    def shape(self, r, extra=(), headers=("content-type", "cache-control", "retry-after", "location", "allow"),
+              tidy=None):
         out = {"status": r.status}
         for h in headers:
             v = r.header(h)
@@ -83,11 +84,13 @@ class Area(object):
                 v = "<1-60>" if v.isdigit() and 0 < int(v) <= 60 else v
             out[h] = v
         body = r.json()
+        if tidy and body is not None:
+            body = tidy(body)
         out["body"] = self.label(body, extra) if body is not None else self.label(r.text(), extra)
         return out
 
     def call(self, name, method, path, token=None, body=None, raw=None, ctype=None, headers=None, extra=(),
-             per_side=None, compare_body=True, internal_error=False):
+             per_side=None, compare_body=True, internal_error=False, tidy=None):
         """The same request on both servers. `per_side(side)` may return
         overrides ({"body": ..., "path": ...}) for 'ref' and 'rust'."""
         out = []
@@ -108,7 +111,7 @@ class Area(object):
             elif raw is not None:
                 kw["raw"] = raw
             out.append(br.request(method, o.get("path", path), **kw))
-        shapes = [self.shape(r, extra) for r in out]
+        shapes = [self.shape(r, extra, tidy=tidy) for r in out]
         if internal_error:
             # A thrown error: Next answers an empty 500, the port's
             # AppError::Internal a JSON `{"message":"Internal server error"}`
@@ -259,6 +262,20 @@ def folders_api(run, lib):
                                               deleted_at="2026-02-01T00:00:00.000Z"), "<loose-trashed>")
     path = "/api/folders"
 
+    def ties(body):
+        """`order by sort_order, name` leaves folders with the same name in
+        whatever order Postgres finds them, which differs between two
+        databases: order only those ties, by slug."""
+        rows = body.get("folders") if isinstance(body, dict) else None
+        if isinstance(rows, list):
+            body["folders"] = sorted(rows, key=lambda f: (rows.index(next(x for x in rows if x.get("sortOrder") ==
+                                                                          f.get("sortOrder") and x.get("name") ==
+                                                                          f.get("name"))), f.get("slug") or ""))
+        return body
+
+    def listing(name, token=None):
+        a.call(name, "GET", path, token=token, tidy=ties)
+
     def created(responses, label):
         """Record the folder id each server created under one label."""
         ids = {}
@@ -281,8 +298,8 @@ def folders_api(run, lib):
 
     # GET
     common_refusals(a, "GET", path, full, reader, uploader, None, write=False)
-    a.call("GET read token", "GET", path, token=reader)
-    a.call("GET as the other account", "GET", path, token=other_full)
+    listing("GET read token", token=reader)
+    listing("GET as the other account", token=other_full)
     a.call("PUT is not a method", "PUT", path, token=full, body={})
     a.call("OPTIONS", "OPTIONS", path)
     a.call("HEAD", "HEAD", path, token=full)
@@ -367,7 +384,7 @@ def folders_api(run, lib):
     folder_rows("after PATCH")
 
     # GET with what the writes built (counts are DIRECT contents only).
-    a.call("GET after writes", "GET", path, token=full)
+    listing("GET after writes", token=full)
 
     # DELETE
     a.call("DELETE no id", "DELETE", path, token=full, body={})
@@ -384,15 +401,15 @@ def folders_api(run, lib):
     a.call("DELETE with contents", "DELETE", path, token=full, body={"id": mine, "withContents": True})
     upload_rows("after delete with contents")
     folder_rows("after delete with contents")
-    a.call("GET after deletes", "GET", path, token=full)
+    listing("GET after deletes", token=full)
 
     # A session instead of a token (the lightweight caller: no ban check).
     a.signed_in(owner)
-    a.call("GET with a session", "GET", path)
+    listing("GET with a session")
     created(a.call("POST with a session", "POST", path, body={"name": "Session " + sfx}), "<session>")
     lib.both_sql('UPDATE "user" SET banned = true WHERE id = %s' % Q(owner))
-    a.call("GET with a banned session", "GET", path)
-    a.call("GET with a banned account's token", "GET", path, token=full)
+    listing("GET with a banned session")
+    listing("GET with a banned account's token", token=full)
     lib.both_sql('UPDATE "user" SET banned = false WHERE id = %s' % Q(owner))
     a.signed_out()
 
