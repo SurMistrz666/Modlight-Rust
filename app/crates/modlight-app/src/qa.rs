@@ -85,6 +85,28 @@ pub const SCREENS: &[&str] = &[
     "settings-components",
     "update-available",
     "update-download",
+    // Phase 3, settings (`qa_settings::SCREENS`).
+    "settings-capture-region",
+    "settings-capture",
+    "settings-image",
+    "settings-image-effects",
+    "settings-thumbnail",
+    "settings-file-naming",
+    "settings-recorder",
+    "settings-ocr",
+    "settings-clipboard-upload",
+    "settings-notifications",
+    "settings-tools",
+    "settings-actions",
+    "settings-watch-folders",
+    "settings-task-advanced",
+    "settings-action-editor",
+    "settings-watch-folder-editor",
+    "settings-notification-buttons",
+    "ffmpeg-options",
+    "ffmpeg-options-video",
+    "ffmpeg-options-audio",
+    "ffmpeg-options-advanced",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.
@@ -550,6 +572,9 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
     if let Some(size) = crate::qa_media::prepare(screen, state) {
         return size;
     }
+    if let Some(size) = crate::qa_settings::prepare(screen, state) {
+        return size;
+    }
     match screen {
         "my-space" | "toasts" | "my-space-wide" => {
             load_library(state, ctx, files(), 9);
@@ -775,6 +800,7 @@ pub fn is_main_window(screen: &str) -> bool {
     !crate::qa_uploads::is_dialog(screen)
         && !crate::qa_capture::is_dialog(screen)
         && !crate::qa_media::is_dialog(screen)
+        && !crate::qa_settings::is_dialog(screen)
         && !matches!(
             screen,
             "sign-in"
@@ -830,6 +856,10 @@ impl eframe::App for ShotApp {
             return;
         }
         if let Some(wanted) = crate::qa_media::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
+        if let Some(wanted) = crate::qa_settings::draw(&self.screen, ui, state) {
             self.wanted = wanted;
             return;
         }

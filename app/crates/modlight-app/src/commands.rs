@@ -95,6 +95,8 @@ pub enum Command {
     OpenScrollingCapture,
     /// An entry of the quick task menu, by position.
     QuickTask(usize),
+    /// An entry of a menu whose owner reads the position itself; never run.
+    Local(usize),
 }
 
 impl AppState {
@@ -203,6 +205,7 @@ impl AppState {
                 let settings = self.default_task_settings();
                 self.open_scrolling_capture(settings);
             }
+            Command::Local(_) => {}
             Command::QuickTask(index) => {
                 let choice = self
                     .captures

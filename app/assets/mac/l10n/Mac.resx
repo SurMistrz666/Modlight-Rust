@@ -4,4 +4,22 @@
   <data name="HotkeyProblem" xml:space="preserve">
     <value>macOS would not give up {0}, so that shortcut does nothing. Another app on this Mac already holds it.</value>
   </data>
+  <data name="FFmpegMultipleDevicesFound" xml:space="preserve">
+    <value>{0} AVFoundation devices found.</value>
+  </data>
+  <data name="FFmpegOneDeviceFound" xml:space="preserve">
+    <value>{0} AVFoundation device found.</value>
+  </data>
+  <data name="FFmpegNoDevicesFound" xml:space="preserve">
+    <value>No AVFoundation devices found. Screen capture is ready.</value>
+  </data>
+  <data name="FFmpegDeviceEnumerationFailed" xml:space="preserve">
+    <value>FFmpeg could not list the AVFoundation devices. Screen capture is still available.</value>
+  </data>
+  <data name="FFmpegVideoToolbox" xml:space="preserve">
+    <value>On this Mac the hardware encoder is VideoToolbox; only the bitrate applies.</value>
+  </data>
+  <data name="FFmpegPathPlaceholder" xml:space="preserve">
+    <value>Path to ffmpeg</value>
+  </data>
 </root>

@@ -75,6 +75,8 @@ pub struct Captures {
     /// The main window was hidden for a capture and comes back afterwards.
     pub main_hidden: bool,
     /// The quick task menu's editor.
+    /// The screen recording options window (`FFmpegOptionsWindow`).
+    pub ffmpeg_window: Option<crate::ffmpeg_window::FFmpegWindow>,
     pub quick_task_editor: Option<crate::dialogs::quick_task_editor::QuickTaskEditor>,
 }
 
@@ -107,6 +109,7 @@ impl Captures {
             auto_capture: Default::default(),
             simulated: Vec::new(),
             main_hidden: false,
+            ffmpeg_window: None,
             quick_task_editor: None,
         }
     }
@@ -480,6 +483,15 @@ impl AppState {
             OverlayPurpose::AutoCaptureRegion => {
                 if let RegionOutcome::Completed { screen_rect, .. } = outcome {
                     self.auto_capture_region_chosen(screen_rect);
+                }
+            }
+            OverlayPurpose::CustomRegion(target) => {
+                if let RegionOutcome::Completed { screen_rect, .. } = outcome {
+                    self.set_task_member(
+                        target,
+                        &["CaptureSettings", "CaptureCustomRegion"],
+                        serde_json::json!(screen_rect.to_text()),
+                    );
                 }
             }
             OverlayPurpose::ScrollingRegion => {
@@ -881,6 +893,33 @@ impl AppState {
         if view.minimize {
             auto.hidden = true;
         }
+    }
+
+    /// `RegionCaptureTasks.GetRectangleRegion` for the task settings' `Select region...`,
+    /// with the region options of the settings being edited.
+    pub fn select_custom_region(&mut self, target: crate::task_pages::TaskTarget) {
+        if self.captures.overlay.is_some() || self.captures.busy {
+            return;
+        }
+        let settings = self.task_settings_of(target);
+        let source = self.captures.source.clone();
+        self.captures.busy = true;
+        self.rt.spawn_blocking(move || {
+            let request = capture::region_request(RegionKind::Default, &settings, source.as_ref());
+            move |state: &mut AppState, _ctx: &egui::Context| {
+                state.captures.busy = false;
+                if let Ok(mut request) = request {
+                    request.enable_annotations = false;
+                    let session = RegionSession::new(request);
+                    state.captures.overlay = Some(RegionOverlay::new(
+                        session,
+                        OverlayPurpose::CustomRegion(target),
+                        settings,
+                        state.time,
+                    ));
+                }
+            }
+        });
     }
 
     pub fn auto_capture_action(&mut self, action: crate::dialogs::auto_capture::AutoCaptureAction) {
