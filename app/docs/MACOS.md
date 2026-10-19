@@ -32,6 +32,9 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | WebView2 (YouTube sign-in) | WKWebView | Phase 3. |
 | Windows OCR | Vision | Phase 5. |
 | Import of ShareX settings | Not applicable | There is no ShareX on macOS. |
+| `CaptureHelpers.IsActiveWindowFullscreen` (`DisableNotificationsOnFullscreen`) | The active app's presentation options include full screen (`NSApplication.currentSystemPresentationOptions`) | Read on the main thread when a task finishes. |
+| `FileHelpers.DeleteFile(path, sendToRecycleBin)` (the notice's "Delete file") | `NSFileManager.trashItemAtURL` (to the Trash) | After the same Yes/No question. |
+| `Directory.GetFiles(folder, "*.*", AllDirectories)` for a folder upload | The same walk, without Finder's `.DS_Store` | A Mac writes one into nearly every folder it opens; Windows has nothing comparable, so it is not sent as one of the person's files. |
 | `Ctrl+V` on the main window (`KeyDown`) | `Cmd+V` through an AppKit local key monitor | egui only reports a paste when the clipboard holds text; the monitor sees the key whatever is on the pasteboard. A local monitor needs no permission. |
 | `SystemSounds` / `SoundPlayer` (task sounds) | `NSSound` with upstream's WAV files | Normal mode only. |
 | Drag-and-drop upload window (`DragDropUploadWindow`) | An undecorated, always-on-top viewport at the configured screen corner | Text dragged onto it is not accepted: winit delivers only files. |
@@ -82,6 +85,9 @@ Everything not listed behaves as upstream does. The per-screen state is in
   time, oldest first; every task waiting for a sign-in hears the answer when the sign-in
   window closes.
 - **Paste window**: the hint says "Ctrl+Enter" as upstream does; Cmd+Enter works too.
+- **Desktop notice actions** "Annotate image" and "Pin to screen" do nothing until the
+  image editor and the pin tool arrive (phases 3 and 4); every other action is
+  upstream's.
 - **GIF bit depth 4** is written as a 256-colour GIF (the encoder has no 16-colour
   palette mode). A custom time zone other than UTC in file name patterns falls back to
   local time.

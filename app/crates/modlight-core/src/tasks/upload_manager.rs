@@ -48,10 +48,17 @@ fn collect_files(folder: &Path, files: &mut Vec<PathBuf>) {
     for path in entries {
         if path.is_dir() {
             collect_files(&path, files);
-        } else if path.is_file() {
+        } else if path.is_file() && !is_finder_metadata(&path) {
             files.push(path);
         }
     }
+}
+
+/// Finder's per-folder view settings (`.DS_Store`): a Mac writes one into almost every
+/// folder it opens, where Windows has nothing comparable, so a folder upload leaves it
+/// out rather than sending it as one of the person's files.
+fn is_finder_metadata(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == ".DS_Store")
 }
 
 /// Whether uploading `count` files needs the multi-upload question first.

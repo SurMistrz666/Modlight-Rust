@@ -1,6 +1,6 @@
 //! What the system says, and the few things the app asks it to do.
 
-pub use crate::windows::{show_app_windows, visible_frame};
+pub use crate::windows::{active_window_fullscreen, show_app_windows, visible_frame};
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -44,6 +44,23 @@ pub fn open_path(path: &Path) -> bool {
         .stderr(Stdio::null())
         .spawn()
         .is_ok()
+}
+
+/// Move a file to the Trash (`FileHelpers.DeleteFile(path, sendToRecycleBin: true)`).
+/// The error is the system's own sentence.
+#[cfg(target_os = "macos")]
+pub fn move_to_trash(path: &Path) -> Result<(), String> {
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, None)
+        .map_err(|error| error.localizedDescription().to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn move_to_trash(path: &Path) -> Result<(), String> {
+    std::fs::remove_file(path).map_err(|e| e.to_string())
 }
 
 fn defaults_read(domain: &str, key: &str) -> Option<String> {

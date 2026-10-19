@@ -15,8 +15,13 @@ use crate::widgets::{Content, Look, button_at, button_width, layout, paint_icon,
 pub enum ConfirmAction {
     Trash(Vec<String>),
     DeleteForever(Vec<String>),
-    EmptyTrash { ids: Vec<String>, bytes: i64 },
+    EmptyTrash {
+        ids: Vec<String>,
+        bytes: i64,
+    },
     DuplicatesTrash,
+    /// A file on this Mac, to the Trash (the desktop notice's "Delete file").
+    DeleteLocalFile(std::path::PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq)]

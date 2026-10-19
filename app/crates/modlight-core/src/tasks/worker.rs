@@ -579,13 +579,12 @@ impl WorkerTask {
                     .handle_exists_file(&folder.join(&file_name), &settings, ctx)
                     .await
                 {
+                    // `Info.FilePath = filePath` names the task after the file too, so a
+                    // name chosen in the file-exists window is the one uploaded.
+                    self.with(|s| s.info.set_file_path(&path.to_string_lossy()));
                     match write_file(&path, &prepared.bytes) {
                         Ok(()) => {
                             log::info!("Image saved to file: {}", path.display());
-                            self.with(|s| s.info.set_file_path(&path.to_string_lossy()));
-                            // Setting the path renamed the task after the file; the
-                            // upload keeps the name it was given.
-                            self.with(|s| s.info.file_name = file_name.clone());
                         }
                         Err(error) => ctx.channel.effect(TaskEffect::MessageBox {
                             text: format!(
@@ -711,13 +710,10 @@ impl WorkerTask {
                 // the uploaded bytes below (`GetBytes`) do not carry one.
                 let mut bytes = vec![0xEF, 0xBB, 0xBF];
                 bytes.extend_from_slice(text.as_bytes());
+                self.with(|s| s.info.set_file_path(&path.to_string_lossy()));
                 match write_file(&path, &bytes) {
                     Ok(()) => {
                         log::info!("Text saved to file: {}", path.display());
-                        self.with(|s| {
-                            s.info.set_file_path(&path.to_string_lossy());
-                            s.info.file_name = file_name.clone();
-                        });
                     }
                     Err(error) => log::warn!("Modlight: the text could not be saved: {error}"),
                 }
@@ -774,11 +770,12 @@ impl WorkerTask {
             .handle_exists_file(&folder.join(&file_name), &settings, ctx)
             .await
         else {
+            // `Info.FilePath = null` clears the name as well.
+            self.with(|s| s.info.set_file_path(""));
             return false;
         };
         self.with(|s| {
             s.info.set_file_path(&path.to_string_lossy());
-            s.info.file_name = file_name.clone();
             s.info.status = t(s::UploadTask_DownloadAndUpload_Downloading).to_string();
         });
         ctx.channel.event(self.id, TaskEvent::StatusChanged);

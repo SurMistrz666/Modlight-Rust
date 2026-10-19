@@ -717,6 +717,11 @@ impl AppState {
             ConfirmAction::DeleteForever(ids) => self.remove_files(ids, "permanent"),
             ConfirmAction::EmptyTrash { ids, bytes } => self.delete_trash(ids, bytes),
             ConfirmAction::DuplicatesTrash => self.trash_duplicates(),
+            ConfirmAction::DeleteLocalFile(path) => {
+                if let Err(error) = modlight_macos::system::move_to_trash(&path) {
+                    log::warn!("Modlight: {} could not be deleted: {error}", path.display());
+                }
+            }
         }
     }
 

@@ -81,6 +81,9 @@ impl ModlightApp {
         }
         if matches!(mode, Mode::Normal | Mode::Qa) {
             modlight_macos::keys::install();
+            modlight_core::tasks::manager::set_fullscreen_probe(
+                modlight_macos::system::active_window_fullscreen,
+            );
         }
         if mode == Mode::Normal && app.state.config.show_tray() {
             app.tray = crate::tray::Tray::new(ctx, &app.state);
@@ -143,17 +146,23 @@ impl ModlightApp {
         if state.tab == crate::state::Tab::MySpace && !modal {
             state.my_space_keys(ctx);
         }
-        // Cmd+V outside a text field uploads the clipboard (`ClipboardUploadMainWindow`).
-        if !modal && !ctx.egui_wants_keyboard_input() && self.mode != Mode::Shot {
-            let main_focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
-            let pasted = if modlight_macos::keys::monitoring() {
-                modlight_macos::keys::take_command_v()
-            } else {
-                ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
-            };
-            if pasted && main_focused {
-                state.push(crate::commands::Command::ClipboardUpload);
-            }
+        // Cmd+V outside a text field uploads the clipboard (`ClipboardUploadMainWindow`);
+        // upstream's window keys answer on My space only. The flag is read every frame
+        // so a press on another tab does not fire later.
+        let pasted = if modlight_macos::keys::monitoring() {
+            modlight_macos::keys::take_command_v()
+        } else {
+            ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
+        };
+        let main_focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        if pasted
+            && main_focused
+            && state.tab == crate::state::Tab::MySpace
+            && !modal
+            && !ctx.egui_wants_keyboard_input()
+            && self.mode != Mode::Shot
+        {
+            state.push(crate::commands::Command::ClipboardUpload);
         }
         state.details_tick(ctx);
         state.tick_motion(ctx);
@@ -772,25 +781,9 @@ impl ModlightApp {
         );
         match outcome {
             Some(NotificationOutcome::Close) => state.windows.notification = None,
-            Some(NotificationOutcome::Run(action)) => {
-                if action == crate::notification::ToastAction::CopyUrl {
-                    let url = state
-                        .windows
-                        .notification
-                        .as_ref()
-                        .map(|n| n.url.clone())
-                        .unwrap_or_default();
-                    state.copy_text(&url);
-                } else if action == crate::notification::ToastAction::OpenUrl {
-                    let url = state
-                        .windows
-                        .notification
-                        .as_ref()
-                        .map(|n| n.url.clone())
-                        .unwrap_or_default();
-                    state.open_url(&url);
-                }
-                state.windows.notification = None;
+            Some(NotificationOutcome::Run(action)) => state.notification_action(action, true),
+            Some(NotificationOutcome::Button(action, dismiss)) => {
+                state.notification_action(action, dismiss)
             }
             None => {}
         }
