@@ -28,6 +28,7 @@ const PROJECTS: &[(&str, &str)] = &[
     ("ShareX.Avalonia", "avalonia"),
     ("ShareX.UploadersLib", "uploaders"),
     ("ShareX.HelpersLib", "helpers"),
+    ("ShareX.ScreenCaptureLib", "capture"),
 ];
 
 fn read_resx(path: &Path) -> BTreeMap<String, String> {
