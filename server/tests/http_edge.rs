@@ -66,13 +66,22 @@ async fn raw_upload_paths_bypass_everything() {
 
 #[tokio::test]
 async fn shortener_host_rewrites_to_s() {
-    let app =
-        App::new(state_with(&[("APP_URL", "https://host.example.com"), ("SHORTLINK_URL", "https://s.example.com")]));
+    let mut state = state_with(&[("APP_URL", "https://host.example.com"), ("SHORTLINK_URL", "https://s.example.com")]);
+    // Give up on the unreachable database at once rather than after the
+    // pool's 10 s acquire timeout.
+    state.db = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgresql://nobody@127.0.0.1:1/none")
+        .unwrap();
+    let app = App::new(state);
     let req = Request::get("/promo").header("host", "s.example.com").body(Body::empty()).unwrap();
     let a = call(&app, req).await;
-    // /s/[code] is a route handler that is not ported yet: its placeholder.
-    assert_eq!(a.status, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(a.json()["route"], "/s/[code]");
+    // The rewrite reached the /s/[code] handler (not the 501 placeholder):
+    // it looks the code up, and this state's database is unreachable, so the
+    // lookup fails as a 500. The redirect itself is checked against a real
+    // database in tests/library_routes_db.rs.
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(a.json(), serde_json::json!({ "message": "Internal server error" }));
     // The same path on the main host is a tagless media page.
     let req = Request::get("/promo").header("host", "host.example.com").body(Body::empty()).unwrap();
     let b = call(&app, req).await;
@@ -97,6 +106,10 @@ async fn methods_like_next_route_handlers() {
         call(&app, Request::builder().method(Method::OPTIONS).uri("/_rpc/a/b").body(Body::empty()).unwrap()).await;
     assert_eq!(options.status, StatusCode::NO_CONTENT);
     assert_eq!(options.header("allow").as_deref(), Some("OPTIONS, POST"));
+    // Next sorts the list alphabetically (auto-implement-methods).
+    let folders =
+        call(&app, Request::builder().method(Method::OPTIONS).uri("/api/folders").body(Body::empty()).unwrap()).await;
+    assert_eq!(folders.header("allow").as_deref(), Some("DELETE, GET, HEAD, OPTIONS, PATCH, POST"));
     let wrong = get(&app, "/_rpc/a/b").await;
     assert_eq!(wrong.status, StatusCode::METHOD_NOT_ALLOWED);
     assert!(wrong.header("allow").is_none());
