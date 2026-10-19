@@ -26,6 +26,7 @@ pub mod mail;
 pub mod mail_settings;
 pub mod mail_templates;
 pub mod maintenance;
+pub mod media;
 pub mod pages;
 pub mod password;
 pub mod paths;

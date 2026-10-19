@@ -4,3 +4,4 @@
 //! placeholder in [`crate::http::raw_upload_router`].
 
 pub mod tus;
+pub mod tus_server;
