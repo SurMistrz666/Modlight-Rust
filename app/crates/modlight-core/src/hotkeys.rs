@@ -730,6 +730,225 @@ pub fn resolve_task_settings(task: &Value, defaults: &Value) -> crate::tasks::Ta
     serde_json::from_value(Value::Object(merged)).unwrap_or_default()
 }
 
+/// What registers a key with the system (`HotkeyForm.RegisterHotkey`): the Mac's
+/// global-hotkey registration, or a fake in QA and tests.
+pub trait HotkeyBackend: Send {
+    /// Take the key; the id is what [`HotkeyManager::triggered`] will be called with.
+    fn register(&mut self, info: HotkeyInfo) -> Result<u32, String>;
+    fn unregister(&mut self, id: u32);
+}
+
+/// `HotkeyManager`: the list, what the system took, and the switches.
+pub struct HotkeyManager {
+    pub hotkeys: Vec<HotkeySettings>,
+    ids: Vec<Option<u32>>,
+    backend: Box<dyn HotkeyBackend>,
+    /// `IgnoreHotkeys`: while a hotkey is being typed into the settings page.
+    pub ignore: bool,
+    /// `Settings.DisableHotkeys`.
+    pub disabled: bool,
+}
+
+impl HotkeyManager {
+    pub fn new(
+        backend: Box<dyn HotkeyBackend>,
+        hotkeys: Vec<HotkeySettings>,
+        disabled: bool,
+    ) -> HotkeyManager {
+        let ids = vec![None; hotkeys.len()];
+        HotkeyManager {
+            hotkeys,
+            ids,
+            backend,
+            ignore: false,
+            disabled,
+        }
+    }
+
+    fn sync_ids(&mut self) {
+        self.ids.resize(self.hotkeys.len(), None);
+    }
+
+    /// `RegisterHotkey`.
+    pub fn register(&mut self, index: usize) {
+        self.sync_ids();
+        let Some(hotkey) = self.hotkeys.get(index) else {
+            return;
+        };
+        if self.disabled && hotkey.job() != HotkeyType::DisableHotkeys {
+            return;
+        }
+        self.unregister(index);
+        let info = self.hotkeys[index].info;
+        if info.is_valid() {
+            match self.backend.register(info) {
+                Ok(id) => {
+                    self.ids[index] = Some(id);
+                    self.hotkeys[index].status = HotkeyStatus::Registered;
+                    log::info!("Hotkey registered: {}", info.text());
+                }
+                Err(error) => {
+                    self.hotkeys[index].status = HotkeyStatus::Failed;
+                    log::info!("Hotkey register failed: {} ({error})", info.text());
+                }
+            }
+        } else {
+            self.hotkeys[index].status = HotkeyStatus::NotConfigured;
+        }
+    }
+
+    /// `UnregisterHotkey` (without removing it from the list).
+    pub fn unregister(&mut self, index: usize) {
+        self.sync_ids();
+        if let Some(Some(id)) = self.ids.get(index).copied() {
+            self.backend.unregister(id);
+            self.ids[index] = None;
+        }
+        if let Some(hotkey) = self.hotkeys.get_mut(index) {
+            hotkey.status = HotkeyStatus::NotConfigured;
+        }
+    }
+
+    /// `RegisterAllHotkeys`.
+    pub fn register_all(&mut self) {
+        for index in 0..self.hotkeys.len() {
+            self.register(index);
+        }
+    }
+
+    /// `RegisterFailedHotkeys`.
+    pub fn register_failed(&mut self) {
+        for index in 0..self.hotkeys.len() {
+            if self.hotkeys[index].status == HotkeyStatus::Failed {
+                self.register(index);
+            }
+        }
+    }
+
+    /// `UnregisterAllHotkeys(false, temporary)`.
+    pub fn unregister_all(&mut self, temporary: bool) {
+        for index in 0..self.hotkeys.len() {
+            if !temporary || self.hotkeys[index].job() != HotkeyType::DisableHotkeys {
+                self.unregister(index);
+            }
+        }
+    }
+
+    /// Replace the list (`UpdateHotkeys`).
+    pub fn update(&mut self, hotkeys: Vec<HotkeySettings>) {
+        self.unregister_all(false);
+        self.hotkeys = hotkeys;
+        self.ids = vec![None; self.hotkeys.len()];
+        self.register_all();
+    }
+
+    /// Remove one (`UnregisterHotkey(…, removeFromList)`).
+    pub fn remove(&mut self, index: usize) {
+        if index < self.hotkeys.len() {
+            self.unregister(index);
+            self.hotkeys.remove(index);
+            self.ids.remove(index);
+        }
+    }
+
+    /// Add one and register it.
+    pub fn add(&mut self, hotkey: HotkeySettings) -> usize {
+        self.hotkeys.push(hotkey);
+        self.ids.push(None);
+        let index = self.hotkeys.len() - 1;
+        self.register(index);
+        index
+    }
+
+    /// Move one (`Move(item, offset)`, wrapping around).
+    pub fn move_by(&mut self, index: usize, offset: i64) -> usize {
+        let count = self.hotkeys.len() as i64;
+        if count < 2 || index as i64 >= count {
+            return index;
+        }
+        let new = ((index as i64 + offset) % count + count) % count;
+        let hotkey = self.hotkeys.remove(index);
+        let id = self.ids.remove(index);
+        self.hotkeys.insert(new as usize, hotkey);
+        self.ids.insert(new as usize, id);
+        new as usize
+    }
+
+    /// `ToggleHotkeys(hotkeysDisabled)`.
+    pub fn toggle(&mut self, disabled: bool) {
+        self.disabled = disabled;
+        if disabled {
+            self.unregister_all(true);
+        } else {
+            self.register_all();
+        }
+    }
+
+    /// `ResetHotkeys`.
+    pub fn reset(&mut self) {
+        self.unregister_all(false);
+        self.hotkeys = default_hotkeys();
+        self.ids = vec![None; self.hotkeys.len()];
+        self.register_all();
+    }
+
+    /// `FailedHotkeys`.
+    pub fn failed(&self) -> Vec<&HotkeySettings> {
+        self.hotkeys
+            .iter()
+            .filter(|h| h.status == HotkeyStatus::Failed)
+            .collect()
+    }
+
+    /// The hotkey a system id belongs to, unless hotkeys are being ignored
+    /// (`HotkeyForm_HotkeyPress`; the full-screen check is the caller's).
+    pub fn triggered(&self, id: u32) -> Option<&HotkeySettings> {
+        if self.ignore {
+            return None;
+        }
+        self.ids
+            .iter()
+            .position(|i| *i == Some(id))
+            .and_then(|index| self.hotkeys.get(index))
+    }
+
+    /// The registered shortcut of a job, for the Capture tab's tiles (`HotkeyFor`).
+    pub fn shortcut_for(&self, job: HotkeyType) -> Option<String> {
+        self.hotkeys
+            .iter()
+            .find(|h| h.job() == job && h.status == HotkeyStatus::Registered && h.info.is_valid())
+            .map(|h| h.info.text())
+    }
+
+    pub fn id_of(&self, index: usize) -> Option<u32> {
+        self.ids.get(index).copied().flatten()
+    }
+}
+
+/// A backend that takes every key except those listed as taken (QA, tests).
+#[derive(Default)]
+pub struct FakeBackend {
+    pub taken: Vec<HotkeyInfo>,
+    next: u32,
+    pub registered: std::sync::Arc<std::sync::Mutex<Vec<(u32, HotkeyInfo)>>>,
+}
+
+impl HotkeyBackend for FakeBackend {
+    fn register(&mut self, info: HotkeyInfo) -> Result<u32, String> {
+        let mut registered = self.registered.lock().unwrap();
+        if self.taken.contains(&info) || registered.iter().any(|(_, i)| *i == info) {
+            return Err("taken by another app".into());
+        }
+        self.next += 1;
+        registered.push((self.next, info));
+        Ok(self.next)
+    }
+
+    fn unregister(&mut self, id: u32) {
+        self.registered.lock().unwrap().retain(|(i, _)| *i != id);
+    }
+}
+
 /// The Mac's defaults (`HotkeyManager.GetDefaultHotkeyList`).
 ///
 /// Upstream binds Print Screen with and without modifiers. A Mac keyboard has no Print
@@ -930,6 +1149,52 @@ mod tests {
             crate::tasks::settings::ImageFormat::JPEG,
             "image settings are not overridden"
         );
+    }
+
+    #[test]
+    fn the_manager_registers_reports_failures_and_toggles() {
+        let backend = FakeBackend {
+            taken: vec![HotkeyInfo::new(Keys::CONTROL | Keys::SHIFT | 49)],
+            ..FakeBackend::default()
+        };
+        let registered = backend.registered.clone();
+        let mut manager = HotkeyManager::new(Box::new(backend), default_hotkeys(), false);
+        manager.register_all();
+        assert_eq!(manager.failed().len(), 1);
+        assert_eq!(manager.failed()[0].job(), HotkeyType::PrintScreen);
+        assert_eq!(registered.lock().unwrap().len(), 4);
+        let id = manager.id_of(0).unwrap();
+        assert_eq!(
+            manager.triggered(id).unwrap().job(),
+            HotkeyType::RectangleRegion
+        );
+        manager.ignore = true;
+        assert!(manager.triggered(id).is_none());
+        manager.ignore = false;
+        assert_eq!(
+            manager.shortcut_for(HotkeyType::RectangleRegion).as_deref(),
+            Some("Cmd + Shift + 2")
+        );
+        assert_eq!(
+            manager.shortcut_for(HotkeyType::PrintScreen),
+            None,
+            "a failed key is not shown"
+        );
+        manager.toggle(true);
+        assert!(registered.lock().unwrap().is_empty());
+        manager.toggle(false);
+        assert_eq!(registered.lock().unwrap().len(), 4);
+        let index = manager.add(HotkeySettings::new(
+            HotkeyType::ActiveMonitor,
+            Keys::CONTROL | 77,
+        ));
+        assert_eq!(manager.hotkeys[index].status, HotkeyStatus::Registered);
+        assert_eq!(manager.move_by(index, 1), 0);
+        assert_eq!(manager.hotkeys[0].job(), HotkeyType::ActiveMonitor);
+        manager.remove(0);
+        assert_eq!(registered.lock().unwrap().len(), 4);
+        manager.reset();
+        assert_eq!(manager.hotkeys.len(), 5);
     }
 
     #[test]
