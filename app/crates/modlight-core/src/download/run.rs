@@ -251,8 +251,10 @@ impl LineReader {
         }
         let status = fields[0].trim();
         let downloaded = parse_long(fields[1]).unwrap_or(0);
+        // Upstream reads the estimate as a whole number too, so a fractional estimate
+        // ("1000.5") counts as unknown there and here.
         let total = parse_long(fields[2])
-            .or_else(|| parse_double(fields[3]).map(|v| v as i64))
+            .or_else(|| parse_long(fields[3]))
             .unwrap_or(0);
         let speed = parse_double(fields[4]).unwrap_or(0.0);
         let eta = parse_double(fields[5]).map(|v| v as i32).unwrap_or(-1);
@@ -636,12 +638,18 @@ mod tests {
                 is_working: false
             })
         );
-        // The estimate stands in when the total is not known.
-        let RunEvent::Progress(p) = reader.read("@ML|downloading|500|NA|1000.0|NA|NA").unwrap()
+        // A whole-number estimate stands in when the total is not known; a fractional
+        // one is not read (as upstream's `long.TryParse`).
+        let RunEvent::Progress(p) = reader.read("@ML|downloading|500|NA|1000|NA|NA").unwrap()
         else {
             panic!()
         };
         assert_eq!((p.total, p.speed, p.eta), (1000, 0.0, -1));
+        let RunEvent::Progress(p) = reader.read("@ML|downloading|500|NA|1000.5|NA|NA").unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(p.total, 0);
         // A finished stream: working, and the next stream counts on top of it.
         let RunEvent::Progress(done) = reader
             .read("@ML|finished|4194304|4194304|NA|NA|NA")
