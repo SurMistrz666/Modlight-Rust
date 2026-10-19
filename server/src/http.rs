@@ -65,6 +65,7 @@ pub fn router(state: &AppState) -> Router {
         // ── Route handlers (app/**/route.ts): ONE LINE PER MODULE ──
         .merge(crate::routes::api::health::routes()) // app/api/health/route.ts
         .merge(crate::auth::api::routes()) // app/api/auth/[...all]/route.ts
+        .merge(crate::routes::api::uploads::routes()) // app/api/uploads/route.ts
         // ── Frameworks ──
         .merge(crate::rpc::routes())
         .merge(crate::pages::routes())

@@ -6,6 +6,7 @@ pub mod av_meta;
 pub mod derived_cache;
 pub mod image;
 pub mod mime;
+pub mod motion_preview;
 pub mod paste_type;
 pub mod paths;
 pub mod sniff;

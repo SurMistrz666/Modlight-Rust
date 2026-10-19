@@ -18,6 +18,19 @@ pub struct DeletableMedia {
     pub thumb_key: Option<String>,
 }
 
+impl From<&crate::db::models::Upload> for DeletableMedia {
+    /// A full row carries everything a delete needs.
+    fn from(u: &crate::db::models::Upload) -> Self {
+        DeletableMedia {
+            id: u.id,
+            owner_id: u.owner_id.clone(),
+            size: u.size,
+            storage_key: u.storage_key.clone(),
+            thumb_key: u.thumb_key.clone(),
+        }
+    }
+}
+
 /// `BulkDeleteResult`
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct BulkDeleteResult {
