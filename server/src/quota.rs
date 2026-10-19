@@ -25,6 +25,11 @@ const UNLIMITED_WORDS: &[&str] = &["-1", "unlimited", "none", "no limit", "∞",
 /// Largest integer JavaScript represents exactly (`Number.MAX_SAFE_INTEGER`).
 pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
+/// `Number.isSafeInteger`
+pub fn is_safe_integer(n: f64) -> bool {
+    n.is_finite() && n.trunc() == n && n.abs() <= 9_007_199_254_740_991.0
+}
+
 /// Parse an admin-typed size into bytes: `20G`, `512 MB`, `1.5TiB`, `1,5G`, a
 /// bare byte count, and the "unlimited" spellings. `None` when the input
 /// cannot be understood.

@@ -1,89 +1,160 @@
-//! Port of `lib/background.ts`: account wallpapers (`user.background_key`,
-//! `user.background_dim`) and how the panel paints them.
+//! Port of `lib/background.ts`: per-account wallpaper, the image a user puts
+//! behind their panel and behind every public page they own.
+//!
+//! Framework-agnostic helpers only (no db), so the serving route, the upload
+//! route, the profile form and the theme applier all agree on the same rules.
 
-use serde::Serialize;
-use serde_json::Value;
-
+use crate::config::js_number;
 use crate::http::cookies::encode_uri_component;
+use crate::naming::js_round;
 
+/// Where a wallpaper lives in storage. The token is what makes the URL cacheable.
 pub const BACKGROUND_PREFIX: &str = "backgrounds";
+
+/// Re-encoded output, always.
 pub const BACKGROUND_CONTENT_TYPE: &str = "image/webp";
-/// Largest source accepted for re-encoding.
-pub const BACKGROUND_MAX_BYTES: u64 = 12 * 1024 * 1024;
-/// Longest edge of the stored wallpaper.
+
+/// Largest upload we will even read, before re-encoding.
+pub const BACKGROUND_MAX_BYTES: usize = 12 * 1024 * 1024;
+
+/// Longest edge kept after re-encoding.
 pub const BACKGROUND_MAX_EDGE: u32 = 2560;
-pub const DIM_MIN: i64 = 0;
-pub const DIM_MAX: i64 = 95;
-/// The lowest dim that keeps body text legible over any photo (measured).
-pub const DIM_SAFE: i64 = 68;
-/// Chosen for the same measurement with margin rather than for looks.
+
+/// Veil strength bounds, in percent of the skin's own background colour.
+pub const DIM_MIN: f64 = 0.0;
+pub const DIM_MAX: f64 = 95.0;
+
+/// Weakest veil at which body text still clears WCAG AA over the worst image
+/// (not enforced; the slider warns below it).
+pub const DIM_SAFE: i32 = 68;
+
+/// The value a wallpaper gets without anyone touching the slider: legible over
+/// any photo (5.31:1 worst case).
 pub const DIM_DEFAULT: i32 = 70;
 
-/// `clampDim(value)` for a number (`None` = null/undefined).
-pub fn clamp_dim(value: Option<f64>) -> i64 {
+/// A value as `clampDim` may receive it (the action passes whatever the
+/// client sent).
+#[derive(Debug, Clone, PartialEq)]
+pub enum DimInput<'a> {
+    /// `null` or `undefined`
+    Absent,
+    Number(f64),
+    Text(&'a str),
+    /// Anything else (`Number(true)` is 1, `Number({})` NaN, ...): the already
+    /// converted number.
+    Other(f64),
+}
+
+/// `clampDim(value)`. null, undefined and "" all coerce to 0 through
+/// `Number()`, and 0 is a meaningful setting here (no veil at all), so they
+/// are rejected before any coercion happens.
+pub fn clamp_dim(value: DimInput<'_>) -> i32 {
+    let n = match value {
+        DimInput::Absent => return DIM_DEFAULT,
+        DimInput::Text("") => return DIM_DEFAULT,
+        DimInput::Text(t) => js_number(t),
+        DimInput::Number(n) | DimInput::Other(n) => n,
+    };
+    if !n.is_finite() {
+        return DIM_DEFAULT;
+    }
+    js_round(n).clamp(DIM_MIN, DIM_MAX) as i32
+}
+
+/// `clampDim(n)` for a stored integer (`background_dim` column).
+pub fn clamp_dim_i(value: Option<i32>) -> i32 {
     match value {
-        None => DIM_DEFAULT as i64,
-        Some(n) if !n.is_finite() => DIM_DEFAULT as i64,
-        Some(n) => (crate::naming::js_round(n) as i64).clamp(DIM_MIN, DIM_MAX),
+        None => DIM_DEFAULT,
+        Some(v) => clamp_dim(DimInput::Number(f64::from(v))),
     }
 }
 
-/// `clampDim(value: unknown)`: null, undefined and "" are the default (they
-/// would coerce to 0, which is a meaningful setting); anything else goes
-/// through `Number()`.
-pub fn clamp_dim_value(value: Option<&Value>) -> i64 {
-    match value {
-        None | Some(Value::Null) => DIM_DEFAULT as i64,
-        Some(Value::String(s)) if s.is_empty() => DIM_DEFAULT as i64,
-        Some(Value::String(s)) => clamp_dim(Some(crate::config::js_number(s))),
-        Some(Value::Number(n)) => clamp_dim(n.as_f64()),
-        Some(Value::Bool(b)) => clamp_dim(Some(if *b { 1.0 } else { 0.0 })),
-        // Number([]) is 0, Number([5]) is 5, Number({}) is NaN.
-        Some(Value::Array(a)) if a.is_empty() => clamp_dim(Some(0.0)),
-        Some(Value::Array(a)) if a.len() == 1 => match &a[0] {
-            Value::Number(n) => clamp_dim(n.as_f64()),
-            Value::String(s) => clamp_dim(Some(crate::config::js_number(s))),
-            Value::Null => clamp_dim(Some(0.0)),
-            _ => DIM_DEFAULT as i64,
-        },
-        Some(_) => DIM_DEFAULT as i64,
-    }
-}
-
-/// Storage key for a fresh wallpaper.
+/// Storage key for a fresh wallpaper: `backgrounds/<userId>-<token>.webp`.
 pub fn background_key(user_id: &str, token: &str) -> String {
     format!("{BACKGROUND_PREFIX}/{user_id}-{token}.webp")
 }
 
-/// The cache-busting fragment of a key.
+/// The cache-busting fragment of a key: `backgrounds/<id>-<token>.webp` ->
+/// token; "" for anything that does not look like one of our keys.
 pub fn background_token(key: Option<&str>) -> String {
-    crate::avatar::key_token(key)
+    let Some(key) = key.filter(|k| !k.is_empty()) else {
+        return String::new();
+    };
+    let base = match key.rfind('/') {
+        Some(i) => &key[i + 1..],
+        None => key,
+    };
+    let base = base.strip_suffix(".webp").unwrap_or(base);
+    match base.rfind('-') {
+        Some(dash) => base[dash + 1..].to_string(),
+        None => String::new(),
+    }
 }
 
-/// Public URL of an account's wallpaper, or `None` when it has none.
+/// Public URL of an account's wallpaper (`/bg/<tag>[?v=<token>]`), or `None`
+/// when it has none. Keyed by tag (already public), root-relative on purpose.
 pub fn background_url(user_code: Option<&str>, key: Option<&str>) -> Option<String> {
-    let user_code = user_code.filter(|u| !u.is_empty())?;
+    let user_code = user_code.filter(|c| !c.is_empty())?;
     let key = key.filter(|k| !k.is_empty())?;
     let token = background_token(Some(key));
-    let v = if token.is_empty() { String::new() } else { format!("?v={}", encode_uri_component(&token)) };
-    Some(format!("/bg/{}{v}", encode_uri_component(user_code)))
+    let mut url = format!("/bg/{}", encode_uri_component(user_code));
+    if !token.is_empty() {
+        url.push_str(&format!("?v={}", encode_uri_component(&token)));
+    }
+    Some(url)
 }
 
 /// Everything the theme applier needs to paint one.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct BackgroundStyle {
     pub url: String,
-    /// 0-1, ready for CSS.
+    /// 0-1, ready for CSS. Serialised as JavaScript writes the number (`0`,
+    /// not serde's `0.0`, for a veil of 0).
+    #[serde(serialize_with = "serialize_js_number")]
     pub dim: f64,
 }
 
-pub fn background_style(user_code: Option<&str>, key: Option<&str>, dim: Option<f64>) -> Option<BackgroundStyle> {
-    let url = background_url(user_code, key)?;
-    Some(BackgroundStyle { url, dim: clamp_dim(Some(dim.unwrap_or(DIM_DEFAULT as f64))) as f64 / 100.0 })
+fn serialize_js_number<S: serde::Serializer>(n: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&crate::rpc::tagged::Num(*n), serializer)
 }
 
-pub fn is_accepted_background_type(kind: Option<&str>) -> bool {
-    crate::avatar::is_accepted_image_type(kind)
+/// `backgroundStyle(userCode, key, dim)`.
+pub fn background_style(user_code: Option<&str>, key: Option<&str>, dim: Option<i32>) -> Option<BackgroundStyle> {
+    let url = background_url(user_code, key)?;
+    Some(BackgroundStyle { url, dim: f64::from(clamp_dim_i(dim)) / 100.0 })
+}
+
+const ACCEPTED: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif"];
+
+/// Image types we accept for re-encoding (SVG excluded deliberately).
+pub fn is_accepted_background_type(t: Option<&str>) -> bool {
+    t.filter(|t| !t.is_empty()).is_some_and(|t| {
+        let base = t.split(';').next().unwrap_or("");
+        ACCEPTED.contains(&crate::config::js_trim(base).to_lowercase().as_str())
+    })
+}
+
+/// `clampDim(value: unknown)` for a JSON value (an action argument): null and
+/// "" are the default, anything else goes through `Number()`.
+pub fn clamp_dim_value(value: Option<&serde_json::Value>) -> i32 {
+    use serde_json::Value;
+    let number = |s: &str| DimInput::Number(js_number(s));
+    clamp_dim(match value {
+        None | Some(Value::Null) => DimInput::Absent,
+        Some(Value::String(s)) if s.is_empty() => DimInput::Absent,
+        Some(Value::String(s)) => number(s),
+        Some(Value::Number(n)) => DimInput::Number(n.as_f64().unwrap_or(f64::NAN)),
+        Some(Value::Bool(b)) => DimInput::Other(if *b { 1.0 } else { 0.0 }),
+        // Number([]) is 0, Number([5]) is 5, Number({}) is NaN.
+        Some(Value::Array(a)) if a.is_empty() => DimInput::Other(0.0),
+        Some(Value::Array(a)) if a.len() == 1 => match &a[0] {
+            Value::Number(n) => DimInput::Other(n.as_f64().unwrap_or(f64::NAN)),
+            Value::String(s) => DimInput::Other(js_number(s)),
+            Value::Null => DimInput::Other(0.0),
+            _ => DimInput::Other(f64::NAN),
+        },
+        Some(_) => DimInput::Other(f64::NAN),
+    })
 }
 
 /// For the file picker's `accept` attribute.
@@ -93,55 +164,72 @@ pub fn background_accept() -> String {
 
 #[cfg(test)]
 mod tests {
-    //! tests/unit/background.test.ts
-    use serde_json::json;
-
     use super::*;
 
+    // tests/unit/background.test.ts (the pure helpers)
     #[test]
-    fn clamp_dim_rules() {
-        assert_eq!(clamp_dim(Some(0.0)), 0);
-        assert_eq!(clamp_dim(Some(55.0)), 55);
-        assert_eq!(clamp_dim(Some(95.0)), 95);
-        assert_eq!(clamp_dim(Some(-40.0)), DIM_MIN);
-        assert_eq!(clamp_dim(Some(1000.0)), DIM_MAX);
-        assert_eq!(clamp_dim(None), DIM_DEFAULT as i64);
-        assert_eq!(clamp_dim_value(Some(&json!("abc"))), DIM_DEFAULT as i64);
-        assert_eq!(clamp_dim_value(Some(&json!(""))), DIM_DEFAULT as i64);
-        assert_eq!(clamp_dim_value(Some(&json!(null))), DIM_DEFAULT as i64);
-        assert_eq!(clamp_dim_value(Some(&json!("40"))), 40);
-        assert_eq!(clamp_dim(Some(f64::NAN)), DIM_DEFAULT as i64);
-        assert_eq!(clamp_dim(Some(f64::INFINITY)), DIM_DEFAULT as i64);
-        assert_eq!(clamp_dim(Some(55.4)), 55);
-        assert_eq!(clamp_dim(Some(55.6)), 56);
+    fn clamp_dim_rejects_absent_values_before_coercion() {
+        assert_eq!(clamp_dim(DimInput::Absent), 70);
+        assert_eq!(clamp_dim(DimInput::Text("")), 70);
+        assert_eq!(clamp_dim(DimInput::Number(0.0)), 0);
+        assert_eq!(clamp_dim(DimInput::Number(-5.0)), 0);
+        assert_eq!(clamp_dim(DimInput::Number(120.0)), 95);
+        assert_eq!(clamp_dim(DimInput::Number(42.5)), 43);
+        assert_eq!(clamp_dim(DimInput::Text("33")), 33);
+        assert_eq!(clamp_dim(DimInput::Text("abc")), 70);
+        assert_eq!(clamp_dim(DimInput::Number(f64::NAN)), 70);
+        assert_eq!(clamp_dim(DimInput::Number(f64::INFINITY)), 70);
     }
 
     #[test]
-    fn keys_urls_and_styles() {
+    fn urls_and_tokens() {
+        assert_eq!(background_token(Some("backgrounds/u1-abc123.webp")), "abc123");
+        assert_eq!(background_token(Some("backgrounds/u1.webp")), "");
+        assert_eq!(background_token(None), "");
+        assert_eq!(background_url(Some("bob"), Some("backgrounds/u1-tok.webp")).as_deref(), Some("/bg/bob?v=tok"));
+        assert_eq!(background_url(Some("a b"), Some("backgrounds/x.webp")).as_deref(), Some("/bg/a%20b"));
+        assert_eq!(background_url(None, Some("k")), None);
+        assert_eq!(background_url(Some("bob"), None), None);
+        assert_eq!(
+            background_style(Some("bob"), Some("backgrounds/u-t.webp"), None),
+            Some(BackgroundStyle { url: "/bg/bob?v=t".into(), dim: 0.7 })
+        );
+        assert_eq!(
+            serde_json::to_string(&background_style(Some("bob"), Some("backgrounds/u-t.webp"), Some(0))).unwrap(),
+            r#"{"url":"/bg/bob?v=t","dim":0}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&background_style(Some("bob"), Some("backgrounds/u-t.webp"), Some(7))).unwrap(),
+            r#"{"url":"/bg/bob?v=t","dim":0.07}"#
+        );
+        assert!(is_accepted_background_type(Some("image/PNG; q=1")));
+        assert!(!is_accepted_background_type(Some("image/svg+xml")));
+    }
+
+    #[test]
+    fn clamp_dim_of_json_values() {
+        use serde_json::json;
+        assert_eq!(clamp_dim_value(Some(&json!("abc"))), DIM_DEFAULT);
+        assert_eq!(clamp_dim_value(Some(&json!(""))), DIM_DEFAULT);
+        assert_eq!(clamp_dim_value(Some(&json!(null))), DIM_DEFAULT);
+        assert_eq!(clamp_dim_value(None), DIM_DEFAULT);
+        assert_eq!(clamp_dim_value(Some(&json!("40"))), 40);
+        assert_eq!(clamp_dim_value(Some(&json!(55.4))), 55);
+        assert_eq!(clamp_dim_value(Some(&json!(55.6))), 56);
+        assert_eq!(clamp_dim_value(Some(&json!([]))), 0);
+        assert_eq!(clamp_dim_value(Some(&json!({}))), DIM_DEFAULT);
+    }
+
+    #[test]
+    fn keys_and_accepted_types() {
         let key = background_key("user_123", "deadbeef");
         assert_eq!(key, "backgrounds/user_123-deadbeef.webp");
-        assert_eq!(background_token(Some(&key)), "deadbeef");
         assert_eq!(background_token(Some(&background_key("a-b-c", "cafe"))), "cafe");
-        assert_eq!(background_token(None), "");
-        assert_eq!(background_token(Some("nodash")), "");
-        assert_eq!(background_url(None, Some("backgrounds/u-1.webp")), None);
-        assert_eq!(background_url(Some("tag"), None), None);
-        assert_eq!(
-            background_url(Some("mytag"), Some(&background_key("u", "abc123"))).as_deref(),
-            Some("/bg/mytag?v=abc123")
-        );
         assert_eq!(background_url(Some("a\"b"), Some(&background_key("u", "t"))).as_deref(), Some("/bg/a%22b?v=t"));
         assert_eq!(background_url(Some("tag"), Some("legacy.webp")).as_deref(), Some("/bg/tag"));
-        assert_eq!(
-            background_style(Some("tag"), Some(&background_key("u", "t")), Some(60.0)),
-            Some(BackgroundStyle { url: "/bg/tag?v=t".into(), dim: 0.6 })
-        );
-        assert_eq!(background_style(Some("tag"), None, Some(60.0)), None);
-        assert_eq!(background_style(Some("tag"), Some(&background_key("u", "t")), None).unwrap().dim, 0.7);
         for t in crate::avatar::ACCEPTED_TYPES {
             assert!(is_accepted_background_type(Some(t)));
         }
-        assert!(is_accepted_background_type(Some("IMAGE/PNG")));
         assert!(is_accepted_background_type(Some("image/jpeg; charset=binary")));
         for t in [Some("image/svg+xml"), Some("text/html"), Some("application/octet-stream"), None, Some("")] {
             assert!(!is_accepted_background_type(t));
