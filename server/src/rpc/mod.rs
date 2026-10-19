@@ -204,9 +204,13 @@ impl ActionCtx {
         self.cookies.push(cookie);
     }
 
-    /// `(await cookies()).delete(name)`
+    /// `(await cookies()).delete(name)`: Next writes an empty value that
+    /// expired at the epoch, `name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT`
+    /// (no `Max-Age`; verified on the reference).
     pub fn delete_cookie(&self, name: &str) {
-        self.cookies.push(SetCookie::new(name, "").path("/").expired());
+        let mut cookie = SetCookie::new(name, "").path("/");
+        cookie.expires = Some(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH);
+        self.cookies.push(cookie);
     }
 
     /// `(await cookies()).get(name)?.value` for every request cookie.
