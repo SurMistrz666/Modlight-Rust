@@ -227,3 +227,23 @@ mod tests {
         assert!(plan(f64::NAN, 100.0, 4.0).ok);
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    // tests/unit/avatar.test.ts (avatarUrl)
+    #[test]
+    fn avatar_urls() {
+        assert_eq!(avatar_url(Some("bob"), None), None);
+        assert_eq!(avatar_url(Some("bob"), Some("")), None);
+        assert_eq!(avatar_url(Some("bob"), Some("avatars/u1-tok.webp")).as_deref(), Some("/avatar/bob?v=tok"));
+        assert_eq!(avatar_url(Some("bob"), Some("avatars/u1.webp")).as_deref(), Some("/avatar/bob"));
+        assert_eq!(avatar_url(None, Some("avatars/u1-tok.webp")), None);
+        assert_eq!(avatar_url(Some("bob"), Some("uploads/x.png")), None);
+        assert_eq!(avatar_url(None, Some("HTTPS://cdn/x.png")).as_deref(), Some("HTTPS://cdn/x.png"));
+        assert_eq!(avatar_url(None, Some("/static/a.png")).as_deref(), Some("/static/a.png"));
+    }
+}

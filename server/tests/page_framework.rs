@@ -44,6 +44,7 @@ async fn login(ctx: PageCtx) -> PageResult {
     Ok(PageData {
         props: json!({ "next": ctx.search.get("next").unwrap_or("/dashboard") }),
         meta: PageMeta::titled("Sign in"),
+        skin: None,
     })
 }
 

@@ -2,96 +2,94 @@
 //! the messages SAY lives in [`crate::mail_templates`]; where the credentials
 //! come from lives in [`crate::mail_settings`].
 //!
-//! nodemailer is replaced by lettre with the same connection semantics:
+//! nodemailer is reproduced rather than replaced ([`smtp`], [`address`]),
+//! because the SMTP test button shows the operator nodemailer's own verdicts:
 //!
-//! | `security` | nodemailer | lettre |
+//! | `security` | nodemailer option | meaning |
 //! |---|---|---|
-//! | `tls` | `secure: true` (implicit TLS, the historical port 465) | `Tls::Wrapper` |
-//! | `starttls` | `requireTLS: true` (refuses to continue without the upgrade) | `Tls::Required` |
-//! | `none` | neither: opportunistic STARTTLS when the server offers it | `Tls::Opportunistic` |
+//! | `tls` | `secure: true` | implicit TLS (the historical port 465) |
+//! | `starttls` | `requireTLS: true` | STARTTLS, and REFUSE to continue without it |
+//! | `none` | neither | plain connect; STARTTLS when the server offers it |
 //!
-//! Certificates are verified against the Mozilla root set (nodemailer used
-//! Node's bundled Mozilla roots). Authentication is attempted only when a user
-//! is configured. Timeouts: nodemailer had separate connect (10 s), greeting
-//! (10 s) and socket (20 s) limits; lettre has one per-operation timeout,
-//! set to 20 s, and the connection is bounded by 10 s on top.
+//! Timeouts: connection 10 s, greeting 10 s, socket 20 s. nodemailer sets none
+//! of these by default, which is fine for a background job and wrong for the
+//! "send a test message" button: a wrong host or a firewalled port would
+//! leave the operator staring at a spinner until the kernel gave up on the
+//! TCP handshake, which can take minutes. Its debug output (which prints the
+//! AUTH exchange) is never on; nothing here logs the dialogue.
 //!
 //! The message is `multipart/alternative` (text, then `multipart/related`
 //! html + the inline logo by Content-ID), the structure nodemailer builds for
-//! html + text + a cid attachment.
+//! html + text + a cid attachment; lettre formats the MIME parts.
+//!
+//! The upstream transporter is cached against a fingerprint of the settings
+//! (`mailFingerprint`) so a changed configuration rebuilds it in every
+//! process. Without connection pooling (lib/mail.ts sets none) a transporter
+//! holds no state between messages, so here the options are simply rebuilt
+//! from the settings snapshot on every send, which has the same effect.
 
-use std::sync::Mutex;
-use std::time::Duration;
+pub mod address;
+pub mod smtp;
 
-use lettre::message::header::ContentType;
-use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::transport::smtp::client::{Tls, TlsParameters};
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use lettre::message::header::{ContentType, HeaderName, HeaderValue, Headers};
+use lettre::message::{Attachment, MultiPart, SinglePart};
 
-use crate::mail_settings::{ResolvedMail, SmtpSecurity, load_mail_settings, mail_fingerprint};
+use crate::mail_settings::{ResolvedMail, SmtpSecurity, load_mail_settings};
 use crate::mail_templates::{LOGO_CID, RenderedMail, logo_attachment};
 use crate::secret_box::{redact_secrets, smtp_secret_forms};
 use crate::state::AppState;
+pub use smtp::{SendInfo, SmtpError as SmtpFailure};
 
 /// `MailNotConfiguredError`.
 pub const MAIL_NOT_CONFIGURED: &str = "Outgoing mail is not configured on this installation.";
 
-const SOCKET_TIMEOUT: Duration = Duration::from_secs(20);
-
-type Transport = AsyncSmtpTransport<Tokio1Executor>;
-
-struct Cached {
-    fingerprint: String,
-    transport: Transport,
+/// A transporter for one configuration (`nodemailer.createTransport(
+/// transportOptions(mail))`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Transport {
+    pub options: smtp::SmtpOptions,
 }
 
-static TRANSPORT: Mutex<Option<Cached>> = Mutex::new(None);
-
-fn build_transport(mail: &ResolvedMail) -> anyhow::Result<Transport> {
-    let params = TlsParameters::new(mail.host.clone())?;
-    let tls = match mail.security {
-        SmtpSecurity::Tls => Tls::Wrapper(params),
-        SmtpSecurity::Starttls => Tls::Required(params),
-        SmtpSecurity::None => Tls::Opportunistic(params),
-    };
-    let port = u16::try_from(mail.port).unwrap_or(587);
-    let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(mail.host.clone())
-        .port(port)
-        .tls(tls)
-        .timeout(Some(SOCKET_TIMEOUT));
-    if !mail.user.is_empty() {
-        builder = builder.credentials(Credentials::new(mail.user.clone(), mail.password.clone()));
+/// `transportOptions(mail)`: "tls" is implicit TLS, "starttls" connects in
+/// clear and REFUSES to continue if the server will not upgrade, "none"
+/// leaves nodemailer's own upgrade-when-offered in charge, which is what an
+/// env-configured install has always done. Authentication only with a user.
+pub fn transport_options(mail: &ResolvedMail) -> Transport {
+    Transport {
+        options: smtp::SmtpOptions {
+            host: mail.host.clone(),
+            port: mail.port,
+            secure: mail.security == SmtpSecurity::Tls,
+            require_tls: mail.security == SmtpSecurity::Starttls,
+            auth: (!mail.user.is_empty())
+                .then(|| smtp::Credentials { user: mail.user.clone(), pass: mail.password.clone() }),
+            connection_timeout: smtp::CONNECTION_TIMEOUT,
+            greeting_timeout: smtp::GREETING_TIMEOUT,
+            socket_timeout: smtp::SOCKET_TIMEOUT,
+        },
     }
-    Ok(builder.build())
 }
 
-/// `getTransport()`: the transport for the CURRENT configuration, cached
-/// against a fingerprint of the settings it was built from, or `None` when
-/// mail is not ready.
+/// `getTransport()`: the transporter for the CURRENT configuration, or `None`
+/// when mail is not ready.
 pub async fn get_transport(state: &AppState) -> anyhow::Result<Option<(Transport, ResolvedMail)>> {
     let mail = load_mail_settings(state, false).await?;
     if !mail.ready {
         return Ok(None);
     }
-    let fingerprint = mail_fingerprint(&mail);
-    let mut guard = TRANSPORT.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.as_ref().map(|c| c.fingerprint.as_str()) != Some(fingerprint.as_str()) {
-        *guard = Some(Cached { fingerprint, transport: build_transport(&mail)? });
-    }
-    let transport = guard.as_ref().map(|c| c.transport.clone()).expect("set above");
-    Ok(Some((transport, mail)))
+    Ok(Some((transport_options(&mail), mail)))
 }
 
 /// `envelopeFrom(mail)`: the display name is stripped of quotes and line
-/// breaks rather than escaped.
+/// breaks rather than escaped: a name is not worth a header-injection
+/// surface, and nobody's brand needs one.
 pub fn envelope_from(mail: &ResolvedMail) -> String {
     let name: String = mail.from_name.chars().filter(|c| !matches!(c, '"' | '\r' | '\n')).collect();
     let name = crate::config::js_trim(&name);
     if name.is_empty() { mail.from.clone() } else { format!("\"{name}\" <{}>", mail.from) }
 }
 
-/// One outgoing message.
+/// One outgoing message (`MailMessage`).
 #[derive(Debug, Clone)]
 pub struct MailMessage {
     pub to: String,
@@ -111,106 +109,75 @@ impl MailMessage {
     }
 }
 
-fn mailbox(value: &str) -> anyhow::Result<Mailbox> {
-    value.parse::<Mailbox>().map_err(|e| anyhow::anyhow!("Invalid address {value:?}: {e}"))
+fn pre_encoded(name: &'static str, value: String) -> HeaderValue {
+    HeaderValue::dangerous_new_pre_encoded(HeaderName::new_from_ascii_str(name), value.clone(), value)
 }
 
-fn build_message(state: &AppState, mail: &ResolvedMail, msg: &MailMessage) -> anyhow::Result<Message> {
-    let html_part = SinglePart::builder().header(ContentType::TEXT_HTML).body(msg.html.clone());
+/// What nodemailer puts on the wire for `sendMail({ from, to, subject, html,
+/// text, attachments: logoAttachments() })`: the envelope its MIME tree
+/// derives from the From and To values, and the message.
+pub fn compose(state: &AppState, mail: &ResolvedMail, msg: &MailMessage) -> (smtp::Envelope, Vec<u8>) {
+    let mut senders = Vec::new();
+    let from_header = address::convert_addresses(&address::addressparser(&envelope_from(mail)), &mut senders);
+    let mut recipients = Vec::new();
+    let to_header = address::convert_addresses(&address::addressparser(&msg.to), &mut recipients);
+    let envelope = smtp::Envelope { from: senders.first().cloned().unwrap_or_default(), to: recipients };
+
+    let html = SinglePart::builder().header(ContentType::TEXT_HTML).body(msg.html.clone());
+    let text = SinglePart::builder().header(ContentType::TEXT_PLAIN).body(msg.text.clone());
     let body = match logo_attachment(&state.paths.public) {
         Some((filename, bytes)) => {
             let logo = Attachment::new_inline_with_name(LOGO_CID.to_string(), filename)
                 .body(bytes, ContentType::parse("image/png").expect("static content type"));
-            MultiPart::alternative()
-                .singlepart(SinglePart::plain(msg.text.clone()))
-                .multipart(MultiPart::related().singlepart(html_part).singlepart(logo))
+            MultiPart::alternative().singlepart(text).multipart(MultiPart::related().singlepart(html).singlepart(logo))
         }
-        None => MultiPart::alternative().singlepart(SinglePart::plain(msg.text.clone())).singlepart(html_part),
+        None => MultiPart::alternative().singlepart(text).singlepart(html),
     };
-    Ok(Message::builder()
-        .from(mailbox(&envelope_from(mail))?)
-        .to(mailbox(&msg.to)?)
-        .subject(msg.subject.clone())
-        .multipart(body)?)
+
+    // `_generateMessageId`: random hex groups at the sender's domain.
+    let id = hex::encode(rand::random::<[u8; 16]>());
+    let domain = envelope.from.rsplit('@').next().filter(|d| !d.is_empty()).unwrap_or("localhost");
+    let message_id = format!("<{}-{}-{}-{}-{}@{domain}>", &id[..8], &id[8..12], &id[12..16], &id[16..20], &id[20..]);
+
+    let mut headers = Headers::new();
+    if !from_header.is_empty() {
+        headers.insert_raw(pre_encoded("From", from_header));
+    }
+    if !to_header.is_empty() {
+        headers.insert_raw(pre_encoded("To", to_header));
+    }
+    headers.insert_raw(HeaderValue::new(HeaderName::new_from_ascii_str("Subject"), msg.subject.clone()));
+    headers.insert_raw(pre_encoded("Message-ID", message_id));
+    headers.insert_raw(pre_encoded("Date", chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S +0000").to_string()));
+    headers.insert_raw(pre_encoded("MIME-Version", "1.0".to_string()));
+
+    let mut bytes = headers.to_string().into_bytes();
+    bytes.extend_from_slice(&body.formatted());
+    (envelope, bytes)
 }
 
-/// What an SMTP attempt failed with, in nodemailer's vocabulary.
-#[derive(Debug, Clone)]
-pub struct SmtpFailure {
-    /// nodemailer's `err.code`: EAUTH, EENVELOPE, ETLS, ESOCKET, ECONNECTION,
-    /// ETIMEDOUT, EDNS, or "" when unknown.
-    pub code: &'static str,
-    /// `err.responseCode`.
-    pub response_code: Option<u16>,
-    /// `err.response`: the server's own words, when it said anything.
-    pub response: Option<String>,
-    /// `err.message`.
-    pub message: String,
-}
-
-fn classify_lettre(err: &lettre::transport::smtp::Error) -> SmtpFailure {
-    let message = err.to_string();
-    let response_code = err.status().map(|c| {
-        let text = c.to_string();
-        text.parse::<u16>().unwrap_or(0)
-    });
-    let response = response_code.map(|code| {
-        let detail = std::error::Error::source(err).map(|s| s.to_string()).unwrap_or_default();
-        if detail.is_empty() { code.to_string() } else { format!("{code} {detail}") }
-    });
-    let lower = message.to_ascii_lowercase();
-    let code = if let Some(c) = response_code {
-        match c {
-            535 | 534 | 530 => "EAUTH",
-            550 | 553 | 554 => "EENVELOPE",
-            _ => "",
-        }
-    } else if err.is_timeout() {
-        "ETIMEDOUT"
-    } else if err.is_tls() {
-        "ETLS"
-    } else if lower.contains("failed to lookup") || lower.contains("dns") || lower.contains("nodename nor servname") {
-        "EDNS"
-    } else if lower.contains("connection") || lower.contains("network") || lower.contains("refused") {
-        "ECONNECTION"
-    } else {
-        ""
-    };
-    SmtpFailure { code, response_code, response, message }
-}
-
-/// Send through an already-built transport and return the accepted
-/// recipients (the SMTP test needs the raw failure to classify it).
+/// `transport.sendMail(...)` on an already-built transporter, with the
+/// transporter's own error (the SMTP test needs it to classify the failure).
 pub async fn send_with_transport(
     state: &AppState,
     transport: &Transport,
     mail: &ResolvedMail,
     msg: &MailMessage,
-) -> Result<Vec<String>, SmtpFailure> {
-    let message = build_message(state, mail, msg).map_err(|e| SmtpFailure {
-        code: "EENVELOPE",
-        response_code: None,
-        response: None,
-        message: e.to_string(),
-    })?;
-    let recipients: Vec<String> = message.envelope().to().iter().map(|a| a.to_string()).collect();
-    let attempt = tokio::time::timeout(Duration::from_secs(10) + SOCKET_TIMEOUT * 3, transport.send(message)).await;
-    match attempt {
-        Ok(Ok(_)) => Ok(recipients),
-        Ok(Err(err)) => Err(classify_lettre(&err)),
-        Err(_) => Err(SmtpFailure {
-            code: "ETIMEDOUT",
-            response_code: None,
-            response: None,
-            message: "Connection timeout".into(),
-        }),
-    }
+) -> Result<SendInfo, SmtpFailure> {
+    let (envelope, bytes) = compose(state, mail, msg);
+    smtp::send(&transport.options, &envelope, &bytes).await
 }
 
-/// `sendMail(msg)`: refuses loudly when mail is not configured (production);
-/// development logs the message and returns, so a developer with no SMTP
-/// server can still click the link. Errors are redacted before anyone reads
-/// them: the server's own error text routinely quotes part of the AUTH line.
+/// `sendMail(msg)`: refuses loudly when mail is not configured, and that is a
+/// deliberate change: the previous behaviour logged the message and reported
+/// success, so "reset my password" told the user to check an inbox that would
+/// never receive anything. A caller that must not fail (verification on
+/// sign-up) checks `mailReady()` first.
+///
+/// Development keeps the console fallback, because a developer with no SMTP
+/// server still has to be able to click the link. Errors are redacted before
+/// anyone reads them: the server's own error text routinely quotes part of
+/// the AUTH line back at us.
 pub async fn send_mail(state: &AppState, msg: &MailMessage) -> anyhow::Result<()> {
     let Some((transport, mail)) = get_transport(state).await? else {
         if !state.config.is_prod {
@@ -222,8 +189,7 @@ pub async fn send_mail(state: &AppState, msg: &MailMessage) -> anyhow::Result<()
     match send_with_transport(state, &transport, &mail, msg).await {
         Ok(_) => Ok(()),
         Err(failure) => {
-            let raw = failure.response.unwrap_or(failure.message);
-            anyhow::bail!(redact_secrets(&raw, &smtp_secret_forms(&mail.user, &mail.password)))
+            anyhow::bail!(redact_secrets(&failure.message, &smtp_secret_forms(&mail.user, &mail.password)))
         }
     }
 }
@@ -254,5 +220,21 @@ mod tests {
         assert_eq!(envelope_from(&resolved("Modlight")), "\"Modlight\" <no-reply@example.invalid>");
         assert_eq!(envelope_from(&resolved("  Evil\"\r\nBcc: x ")), "\"EvilBcc: x\" <no-reply@example.invalid>");
         assert_eq!(envelope_from(&resolved("\"\"")), "no-reply@example.invalid");
+    }
+
+    #[test]
+    fn transport_options_follow_the_security_mode() {
+        let mut mail = resolved("Modlight");
+        let t = transport_options(&mail).options;
+        assert!(!t.secure && t.require_tls && t.auth.is_none());
+        mail.security = SmtpSecurity::Tls;
+        mail.user = "u".into();
+        mail.password = "p".into();
+        let t = transport_options(&mail).options;
+        assert!(t.secure && !t.require_tls);
+        assert_eq!(t.auth, Some(smtp::Credentials { user: "u".into(), pass: "p".into() }));
+        mail.security = SmtpSecurity::None;
+        let t = transport_options(&mail).options;
+        assert!(!t.secure && !t.require_tls);
     }
 }

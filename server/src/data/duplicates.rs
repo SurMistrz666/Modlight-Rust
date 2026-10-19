@@ -524,3 +524,114 @@ mod tests {
         assert_eq!(parse_upload_ids(Some(&json!(null))), Err(IdListIssue::Empty));
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    // tests/unit/duplicate-reminder.test.ts (rule and snooze)
+    #[test]
+    fn reminder_rule_and_snooze() {
+        let t = |redundant, reclaimable| DuplicateTotals { groups: 1, redundant, reclaimable };
+        assert!(!reminder_due(&t(10, REMINDER_MIN_BYTES)));
+        assert!(reminder_due(&t(11, 0)));
+        assert!(reminder_due(&t(0, REMINDER_MIN_BYTES + 1)));
+        assert!(!is_snoozed(None, 1000));
+        assert!(!is_snoozed(Some(""), 1000));
+        assert!(!is_snoozed(Some("abc"), 1000));
+        assert!(!is_snoozed(Some("999"), 1000));
+        assert!(is_snoozed(Some("1001"), 1000));
+        assert!(!is_snoozed(Some("Infinity"), 1000));
+    }
+
+    /// The reminder SQL, whitespace-flattened.
+    fn reminder_sql() -> String {
+        duplicate_reminder_query().split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    // tests/unit/duplicate-reminder.test.ts: "the reminder aggregate"
+    #[test]
+    fn the_aggregate_leaves_out_every_set_the_owner_has_waved_off() {
+        // This single clause is "count the next threshold from zero".
+        let text = reminder_sql();
+        assert!(text.contains("not exists"));
+        assert!(text.contains(r#""duplicate_dismissals""#));
+        assert!(text.contains(r#""checksum" = d.checksum"#));
+    }
+
+    #[test]
+    fn the_aggregate_matches_a_dismissal_on_the_owner_as_well_as_on_the_bytes() {
+        // A checksum is a global fact about bytes; matching on it alone would
+        // let one account silence another account's reminder.
+        assert!(reminder_sql().contains(r#""owner_id" = d.owner_id"#));
+    }
+
+    #[test]
+    fn the_aggregate_carries_the_same_safety_clauses_as_the_full_scan() {
+        let text = reminder_sql();
+        assert!(text.contains(r#""checksum" is not null"#));
+        assert!(text.contains(r#"length("uploads"."checksum") > 0"#));
+        assert!(text.contains(r#""deleted_at" is null"#));
+        assert!(text.contains("having count(*) > 1"));
+    }
+
+    #[test]
+    fn the_aggregate_scopes_to_one_account_as_a_bound_parameter_and_asks_for_no_rows() {
+        let text = reminder_sql();
+        assert!(text.contains(r#""owner_id" = $1"#));
+        assert!(!text.contains("$2"));
+        // One row out, whatever the library holds: this runs on every panel load.
+        assert!(text.contains("count(*)::int as groups"));
+        assert!(!text.to_lowercase().contains("limit"));
+    }
+
+    #[test]
+    fn the_aggregate_never_casts_a_byte_total_to_int4() {
+        assert!(reminder_sql().contains("::bigint as reclaimable"));
+    }
+
+    // tests/unit/duplicate-reminder.test.ts: "when the reminder is allowed to speak"
+    #[test]
+    fn says_nothing_at_either_threshold_exactly_and_speaks_one_over() {
+        let t = |redundant, reclaimable| DuplicateTotals { groups: 1, redundant, reclaimable };
+        assert!(!reminder_due(&t(REMINDER_MIN_REDUNDANT, 0)));
+        assert!(!reminder_due(&t(0, REMINDER_MIN_BYTES)));
+        assert!(reminder_due(&t(REMINDER_MIN_REDUNDANT + 1, 0)));
+        assert!(reminder_due(&t(0, REMINDER_MIN_BYTES + 1)));
+        // A gigabyte the way the panel prints one.
+        assert_eq!(REMINDER_MIN_BYTES, 1024_i64.pow(3));
+        // Quiet on an empty library.
+        assert!(!reminder_due(&t(0, 0)));
+    }
+
+    // tests/unit/duplicate-reminder.test.ts: "the snooze"
+    #[test]
+    fn the_snooze_holds_for_exactly_as_long_as_it_says_then_lapses() {
+        let now = 1_787_140_800_000; // Date.UTC(2026, 7, 19, 12, 0, 0)
+        let value = snooze_until(now).to_string();
+        assert!(is_snoozed(Some(&value), now));
+        assert!(is_snoozed(Some(&value), now + SNOOZE_DAYS * 86_400_000 - 1));
+        assert!(!is_snoozed(Some(&value), now + SNOOZE_DAYS * 86_400_000));
+    }
+
+    #[test]
+    fn the_snooze_treats_anything_unreadable_as_not_snoozed() {
+        let now = 1_787_140_800_000;
+        assert!(!is_snoozed(None, now));
+        assert!(!is_snoozed(Some(""), now));
+        assert!(!is_snoozed(Some("soon"), now));
+        assert!(!is_snoozed(Some("Infinity"), now));
+    }
+
+    #[test]
+    fn the_snooze_cookie_max_age_agrees_with_the_instant_inside_it() {
+        let now = 1_787_140_800_000;
+        let cookie = snooze_cookie(now);
+        assert!(cookie.starts_with(&format!("{SNOOZE_COOKIE}={};", snooze_until(now))));
+        assert!(cookie.contains(&format!("Max-Age={}", SNOOZE_DAYS * 86_400)));
+        assert!(cookie.contains("Path=/"));
+        assert!(cookie.contains("SameSite=Lax"));
+    }
+}

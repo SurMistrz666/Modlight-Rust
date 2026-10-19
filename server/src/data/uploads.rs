@@ -390,3 +390,21 @@ mod tests {
         assert!(kind_filter("other").unwrap().contains("not in ('application/pdf'"));
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    #[test]
+    fn kinds_without_extension() {
+        assert_eq!(kind_of_stored("Image/PNG; x=1", "file"), "image");
+        assert_eq!(kind_of_stored("text/plain", "paste"), "paste");
+        assert_eq!(kind_of_stored("application/pdf", "file"), "document");
+        assert_eq!(kind_of_stored("text/csv", "file"), "document");
+        assert_eq!(kind_of_stored("application/zip", "file"), "archive");
+        assert_eq!(kind_of_stored("application/octet-stream", "file"), "other");
+        assert_eq!(kind_of_stored("", "file"), "other");
+    }
+}

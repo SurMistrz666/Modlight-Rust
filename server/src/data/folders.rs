@@ -391,3 +391,52 @@ mod tests {
         assert_eq!(tree[0].id.as_u128(), 3);
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    fn row(id: u128, parent: Option<u128>, name: &str, count: i64, size: i64) -> FolderRow {
+        FolderRow {
+            id: Uuid::from_u128(id),
+            parent_id: parent.map(Uuid::from_u128),
+            name: name.into(),
+            slug: name.into(),
+            is_public: false,
+            sort_order: 0,
+            created_at: JsDate::from_millis(0).unwrap(),
+            count,
+            size,
+        }
+    }
+
+    // tests/unit/folders-core.test.ts (buildFolderTree)
+    #[test]
+    fn tree_rolls_totals_up_and_keeps_orphans_at_the_root() {
+        let rows = vec![
+            row(1, None, "a", 1, 10),
+            row(2, Some(1), "b", 2, 20),
+            row(3, Some(2), "c", 3, 30),
+            row(4, Some(99), "orphan", 4, 40),
+            row(5, Some(5), "self", 5, 50),
+        ];
+        let tree = build_folder_tree(&rows);
+        let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "orphan", "self"]);
+        assert_eq!(tree[0].total_count, 6);
+        assert_eq!(tree[0].total_size, 60);
+        assert_eq!(tree[0].children[0].total_count, 5);
+        assert_eq!(tree[0].children[0].children[0].total_count, 3);
+        assert_eq!(tree[1].total_count, 4);
+    }
+
+    #[test]
+    fn a_two_node_cycle_is_reachable_from_no_root() {
+        let rows = vec![row(1, Some(2), "x", 1, 1), row(2, Some(1), "y", 1, 1), row(3, None, "z", 1, 1)];
+        let tree = build_folder_tree(&rows);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].name, "z");
+    }
+}

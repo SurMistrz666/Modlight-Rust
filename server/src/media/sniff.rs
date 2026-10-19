@@ -769,3 +769,56 @@ mod tests {
         assert_eq!(ext_of_name(Some(".gitignore")), "gitignore");
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    // tests/unit/sniff.test.ts: "mimeFromExt"
+    #[test]
+    fn mime_from_ext_says_nothing_rather_than_guessing() {
+        assert_eq!(mime_from_ext(Some("qqq")), None);
+        assert_eq!(mime_from_ext(Some("")), None);
+        assert_eq!(mime_from_ext(None), None);
+    }
+
+    #[test]
+    fn mime_from_ext_normalises_the_key() {
+        assert_eq!(mime_from_ext(Some("PNG")), Some("image/png"));
+        assert_eq!(mime_from_ext(Some(".Mp4")), Some("video/mp4"));
+        assert_eq!(mime_from_ext(Some("  .avif ")), Some("image/avif"));
+        // An inherited property name of the upstream object is not an entry.
+        assert_eq!(mime_from_ext(Some("constructor")), None);
+    }
+
+    // tests/unit/sniff.test.ts: "isUselessMime / isSharperType" (the first half)
+    #[test]
+    fn knows_which_types_carry_no_information() {
+        assert!(is_useless_mime(Some("application/octet-stream")));
+        assert!(is_useless_mime(Some("binary/octet-stream")));
+        assert!(is_useless_mime(Some("")));
+        assert!(is_useless_mime(None));
+        assert!(is_useless_mime(Some(" Application/Octet-Stream; x=1")));
+        assert!(!is_useless_mime(Some("image/png")));
+    }
+
+    #[test]
+    fn normalisers() {
+        assert_eq!(normalize_mime(Some("Image/PNG; charset=x")), "image/png");
+        assert_eq!(normalize_mime(None), "");
+        assert_eq!(normalize_ext(Some(".PNG")), "png");
+        assert_eq!(normalize_ext(Some("..png")), ".png");
+        assert_eq!(normalize_ext(None), "");
+    }
+
+    #[test]
+    fn the_table_is_upstream_size_and_has_unique_keys() {
+        assert_eq!(MIME_BY_EXT.len(), 127);
+        let mut keys: Vec<&str> = MIME_BY_EXT.iter().map(|(k, _)| *k).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), MIME_BY_EXT.len());
+    }
+}

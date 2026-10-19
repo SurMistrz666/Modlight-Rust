@@ -236,3 +236,50 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    // tests/unit/background.test.ts (the pure helpers)
+    #[test]
+    fn clamp_dim_rejects_absent_values_before_coercion() {
+        assert_eq!(clamp_dim(DimInput::Absent), 70);
+        assert_eq!(clamp_dim(DimInput::Text("")), 70);
+        assert_eq!(clamp_dim(DimInput::Number(0.0)), 0);
+        assert_eq!(clamp_dim(DimInput::Number(-5.0)), 0);
+        assert_eq!(clamp_dim(DimInput::Number(120.0)), 95);
+        assert_eq!(clamp_dim(DimInput::Number(42.5)), 43);
+        assert_eq!(clamp_dim(DimInput::Text("33")), 33);
+        assert_eq!(clamp_dim(DimInput::Text("abc")), 70);
+        assert_eq!(clamp_dim(DimInput::Number(f64::NAN)), 70);
+        assert_eq!(clamp_dim(DimInput::Number(f64::INFINITY)), 70);
+    }
+
+    #[test]
+    fn urls_and_tokens() {
+        assert_eq!(background_token(Some("backgrounds/u1-abc123.webp")), "abc123");
+        assert_eq!(background_token(Some("backgrounds/u1.webp")), "");
+        assert_eq!(background_token(None), "");
+        assert_eq!(background_url(Some("bob"), Some("backgrounds/u1-tok.webp")).as_deref(), Some("/bg/bob?v=tok"));
+        assert_eq!(background_url(Some("a b"), Some("backgrounds/x.webp")).as_deref(), Some("/bg/a%20b"));
+        assert_eq!(background_url(None, Some("k")), None);
+        assert_eq!(background_url(Some("bob"), None), None);
+        assert_eq!(
+            background_style(Some("bob"), Some("backgrounds/u-t.webp"), None),
+            Some(BackgroundStyle { url: "/bg/bob?v=t".into(), dim: 0.7 })
+        );
+        assert_eq!(
+            serde_json::to_string(&background_style(Some("bob"), Some("backgrounds/u-t.webp"), Some(0))).unwrap(),
+            r#"{"url":"/bg/bob?v=t","dim":0}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&background_style(Some("bob"), Some("backgrounds/u-t.webp"), Some(7))).unwrap(),
+            r#"{"url":"/bg/bob?v=t","dim":0.07}"#
+        );
+        assert!(is_accepted_background_type(Some("image/PNG; q=1")));
+        assert!(!is_accepted_background_type(Some("image/svg+xml")));
+    }
+}

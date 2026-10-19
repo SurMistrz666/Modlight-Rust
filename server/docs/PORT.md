@@ -209,8 +209,10 @@ Read the better-auth source of the exact version pinned in
 
 ## 11. Translations
 
-`messages/` is shared: the SPA bundles it, the Rust server uses it where
-upstream translates on the server (mail, metadata, error pages). Locale
+`messages/` is shared: the Rust server sends the dictionaries of the resolved
+locale to the SPA in `layouts.root.messages` (skipped when the SPA already holds
+them, `X-Modlight-Messages`), and uses them itself where upstream translates on
+the server (mail, metadata, error pages). Locale
 resolution as in `i18n/request.ts` (cookie `ml_locale`, then Accept-Language).
 ICU message syntax is formatted the way `next-intl` formats it.
 

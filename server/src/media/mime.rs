@@ -366,3 +366,55 @@ mod tests {
         assert!(!is_text_payload(Some("video/mp2t"), None));
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    // tests/unit/mime.test.ts: "mime helpers" > "mediaKind"
+    #[test]
+    fn media_kinds() {
+        assert_eq!(media_kind(Some("image/png"), None), MediaKind::Image);
+        assert_eq!(media_kind(Some("video/mp4"), None), MediaKind::Video);
+        assert_eq!(media_kind(Some("text/plain"), None), MediaKind::Text);
+        assert_eq!(media_kind(Some("application/pdf"), None), MediaKind::Pdf);
+        assert_eq!(media_kind(Some("application/zip"), None), MediaKind::Archive);
+        assert_eq!(media_kind(Some("image/svg+xml"), None), MediaKind::Other);
+        assert_eq!(media_kind(Some("application/octet-stream"), None), MediaKind::Other);
+        // The archive rule is a substring test, as upstream's regex.
+        assert_eq!(media_kind(Some("application/x-gtar"), None), MediaKind::Archive);
+        assert_eq!(media_kind(Some("application/epub+zip"), None), MediaKind::Archive);
+        assert_eq!(media_kind(Some("audio/mpeg"), None), MediaKind::Audio);
+        assert_eq!(media_kind(None, None), MediaKind::Other);
+    }
+
+    // tests/unit/mime.test.ts: "a stored type that says nothing falls back to the name"
+    #[test]
+    fn consults_the_extension_only_when_the_stored_type_is_useless() {
+        assert_eq!(effective_type(Some("image/png"), Some("gif")), "image/png"); // stored type wins
+        assert_eq!(effective_type(Some("application/octet-stream"), Some("avif")), "image/avif");
+        assert_eq!(effective_type(Some("Image/PNG; charset=x"), Some("")), "image/png");
+        assert_eq!(effective_type(Some("application/octet-stream"), Some("gr2")), "application/octet-stream");
+        assert_eq!(effective_type(None, None), "");
+        // A useless type with no extension stays as normalised.
+        assert_eq!(effective_type(Some(" Binary/Octet-Stream "), None), "binary/octet-stream");
+    }
+
+    #[test]
+    fn gives_the_reported_avif_its_card_back() {
+        assert_eq!(media_kind(Some("application/octet-stream"), Some("avif")), MediaKind::Image);
+    }
+
+    #[test]
+    fn leaves_a_genuinely_unknown_binary_as_other() {
+        assert_eq!(media_kind(Some("application/octet-stream"), Some("gr2")), MediaKind::Other);
+    }
+
+    #[test]
+    fn kinds_serialize_lowercase() {
+        assert_eq!(serde_json::to_value(MediaKind::Pdf).unwrap(), "pdf");
+        assert_eq!(MediaKind::Archive.as_str(), "archive");
+    }
+}

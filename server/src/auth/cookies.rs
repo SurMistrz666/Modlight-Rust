@@ -85,6 +85,13 @@ impl AuthCookies {
         }
     }
 
+    /// `ctx.context.createAuthCookie(name, { maxAge })`: any other Better Auth
+    /// cookie (`two_factor`, `trust_device`, `admin_session`) with the same
+    /// prefix and attributes.
+    pub fn create(&self, base: &str, max_age: Option<i64>) -> AuthCookie {
+        AuthCookie::new(base, self.session_token.secure, max_age)
+    }
+
     /// Better Auth's `baseURL` is APP_URL's origin; https means `__Secure-`.
     pub fn for_config(config: &Config) -> AuthCookies {
         AuthCookies::new(config.secure_cookies(), config.auth.secret.clone())

@@ -128,3 +128,29 @@ mod tests {
         assert_eq!(quota_ratio(0.0, Some(1024)), Some(0.0));
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    #[test]
+    fn parses_like_upstream() {
+        assert_eq!(parse_quota("20G"), Some(21_474_836_480));
+        assert_eq!(parse_quota("512 MB"), Some(536_870_912));
+        assert_eq!(parse_quota("1,5G"), Some(1_610_612_736));
+        assert_eq!(parse_quota("1.5TiB"), Some(1_649_267_441_664));
+        assert_eq!(parse_quota("123"), Some(123));
+        assert_eq!(parse_quota(""), Some(-1));
+        assert_eq!(parse_quota(" Unlimited "), Some(-1));
+        assert_eq!(parse_quota("5 parsecs"), None);
+        assert_eq!(parse_quota("-5G"), None);
+        assert_eq!(format_quota_input(Some(21_474_836_480)), "20G");
+        assert_eq!(format_quota_input(Some(-1)), "");
+        assert_eq!(format_quota_input(Some(1000)), "1000");
+        assert!(is_unlimited(None));
+        assert!(is_unlimited(Some(-1)));
+        assert!(!is_unlimited(Some(0)));
+    }
+}
