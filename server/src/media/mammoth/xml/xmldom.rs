@@ -18,6 +18,12 @@
 //! Positions are byte offsets into the UTF-8 source where upstream counts
 //! UTF-16 units; every delimiter the scanner looks for is ASCII, so the two
 //! agree on what is found where.
+//!
+//! Two departures, neither visible in the result: the parse stops at the
+//! first report (upstream keeps going, and its error recovery is quadratic,
+//! so a part full of stray `<` never finishes), and the searches sax.js
+//! repeats are memoised ([`Scans`]), where upstream's are quadratic for some
+//! error-free inputs.
 
 use std::collections::HashMap;
 
@@ -586,23 +592,114 @@ struct StackEntry {
     ns: NsMap,
 }
 
-/// `fixSelfClosed`.
-fn fix_self_closed(source: &str, el_start_end: usize, tag_name: &str, close_map: &mut HashMap<String, isize>) -> bool {
-    // closeMap is a plain object: an inherited member is found as a
-    // function, and `function < number` is false.
-    if js::builtin(tag_name).is_some() {
-        return false;
-    }
-    let pos = *close_map.entry(tag_name.to_owned()).or_insert_with(|| {
-        let full = format!("</{tag_name}>");
-        let mut pos = source.rfind(&full).map_or(-1, |i| i as isize);
-        if pos < el_start_end as isize {
-            let prefix = format!("</{tag_name}");
-            pos = source.rfind(&prefix).map_or(-1, |i| i as isize);
+/// The forward and backward searches sax.js repeats, answered in amortised
+/// linear time with the same results. Upstream runs them naively, which is
+/// quadratic for some inputs that never produce an error (many unterminated
+/// `<?` or CDATA sections, many distinct element names each looked up with
+/// `lastIndexOf` over the whole part): it then never finishes.
+struct Scans<'s> {
+    source: &'s str,
+    /// `closeMap` of fixSelfClosed.
+    close_map: HashMap<String, isize>,
+    close_index: Option<CloseIndex<'s>>,
+    /// Per pattern: the last (from, found) of a forward search.
+    finds: HashMap<String, (usize, Option<usize>)>,
+}
+
+/// Every `</` in the source with the run of name characters after it.
+struct CloseIndex<'s> {
+    /// Last position of `</run>`.
+    exact: HashMap<&'s str, usize>,
+    /// Distinct runs, sorted, with the last position of `</run`.
+    runs: Vec<(&'s str, usize)>,
+}
+
+fn is_tag_name_char(c: char) -> bool {
+    is_name_char(c) || c == ':'
+}
+
+impl<'s> CloseIndex<'s> {
+    fn build(source: &'s str) -> CloseIndex<'s> {
+        let mut exact: HashMap<&'s str, usize> = HashMap::new();
+        let mut last: HashMap<&'s str, usize> = HashMap::new();
+        let bytes = source.as_bytes();
+        let mut i = 0;
+        while let Some(off) = bytes.get(i..).and_then(|b| b.windows(2).position(|w| w == b"</")) {
+            let p = i + off;
+            let rest = &source[p + 2..];
+            let len: usize = rest.chars().take_while(|c| is_tag_name_char(*c)).map(char::len_utf8).sum();
+            let run = &rest[..len];
+            last.insert(run, p);
+            if rest[len..].starts_with('>') {
+                exact.insert(run, p);
+            }
+            i = p + 2;
         }
-        pos
-    });
-    pos < el_start_end as isize
+        let mut runs: Vec<(&'s str, usize)> = last.into_iter().collect();
+        runs.sort_unstable();
+        CloseIndex { exact, runs }
+    }
+
+    /// `source.lastIndexOf('</' + name + '>')`.
+    fn last_exact(&self, name: &str) -> isize {
+        self.exact.get(name).map_or(-1, |p| *p as isize)
+    }
+
+    /// `source.lastIndexOf('</' + name)`: a tag name is made of name
+    /// characters, so `</` + name occurs exactly where the run after `</`
+    /// starts with the name. Each run is visited once per distinct name that
+    /// is a prefix of it, so all queries together stay linear in the source.
+    fn last_prefix(&self, name: &str) -> isize {
+        let from = self.runs.partition_point(|(run, _)| *run < name);
+        self.runs[from..]
+            .iter()
+            .take_while(|(run, _)| run.starts_with(name))
+            .map(|(_, p)| *p as isize)
+            .max()
+            .unwrap_or(-1)
+    }
+}
+
+impl<'s> Scans<'s> {
+    fn new(source: &'s str) -> Self {
+        Scans { source, close_map: HashMap::new(), close_index: None, finds: HashMap::new() }
+    }
+
+    /// `source.indexOf(pattern, from)`.
+    fn find(&mut self, pattern: &str, from: usize) -> Option<usize> {
+        if let Some(&(was_from, found)) = self.finds.get(pattern)
+            && was_from <= from
+        {
+            match found {
+                None => return None,
+                Some(f) if f >= from => return Some(f),
+                Some(_) => {}
+            }
+        }
+        let found = self.source.get(from..).and_then(|s| s.find(pattern)).map(|i| i + from);
+        self.finds.insert(pattern.to_owned(), (from, found));
+        found
+    }
+
+    /// `fixSelfClosed(source, elStartEnd, tagName, closeMap)`.
+    fn fix_self_closed(&mut self, el_start_end: usize, tag_name: &str) -> bool {
+        // closeMap is a plain object: an inherited member is found as a
+        // function, and `function < number` is false.
+        if js::builtin(tag_name).is_some() {
+            return false;
+        }
+        if let Some(pos) = self.close_map.get(tag_name) {
+            return *pos < el_start_end as isize;
+        }
+        let source = self.source;
+        let index = self.close_index.get_or_insert_with(|| CloseIndex::build(source));
+        let mut pos = index.last_exact(tag_name);
+        if pos < el_start_end as isize {
+            pos = index.last_prefix(tag_name);
+        }
+        self.close_map.insert(tag_name.to_owned(), pos);
+        pos < el_start_end as isize
+    }
 }
 
 /// JavaScript `substring(a, b)` (clamped, swapped when reversed).
@@ -619,11 +716,17 @@ fn js_substring(source: &str, a: isize, b: isize) -> &str {
 }
 
 /// `parseHtmlSpecialContent` (only for elements in the XHTML namespace).
-fn parse_html_special_content(source: &str, el_start_end: usize, tag_name: &str, builder: &mut Builder) -> R<isize> {
+fn parse_html_special_content(
+    scans: &mut Scans<'_>,
+    el_start_end: usize,
+    tag_name: &str,
+    builder: &mut Builder,
+) -> R<isize> {
+    let source = scans.source;
     let lower = tag_name.to_ascii_lowercase();
     if lower == "script" || lower == "textarea" {
         let close = format!("</{tag_name}>");
-        let el_end_start = source[el_start_end..].find(&close).map_or(-1, |i| (i + el_start_end) as isize);
+        let el_end_start = scans.find(&close, el_start_end).map_or(-1, |i| i as isize);
         let text = js_substring(source, el_start_end as isize + 1, el_end_start);
         if text.contains('&') || text.contains('<') {
             if lower == "script" {
@@ -706,7 +809,8 @@ fn split_tokens(source: &str, start: usize) -> Option<Vec<(usize, String, bool)>
 }
 
 /// `parseDCC` (`<!`): comments, CDATA sections, doctypes.
-fn parse_dcc(source: &str, start: usize, builder: &mut Builder) -> R<isize> {
+fn parse_dcc(scans: &mut Scans<'_>, start: usize, builder: &mut Builder) -> R<isize> {
+    let source = scans.source;
     let next = source.as_bytes().get(start + 2).copied();
     if next == Some(b'-') {
         if source.as_bytes().get(start + 3) == Some(&b'-') {
@@ -721,7 +825,7 @@ fn parse_dcc(source: &str, start: usize, builder: &mut Builder) -> R<isize> {
         return Ok(-1);
     }
     if source.get(start + 3..start + 9) == Some("CDATA[") {
-        let end = source.get(start + 9..).and_then(|s| s.find("]]>")).map(|i| i + start + 9);
+        let end = scans.find("]]>", start + 9);
         builder.in_cdata = true;
         if let Some(end) = end {
             let content = source[start + 9..end].to_owned();
@@ -742,11 +846,12 @@ fn parse_dcc(source: &str, start: usize, builder: &mut Builder) -> R<isize> {
 }
 
 /// `parseInstruction` (`<?`).
-fn parse_instruction(source: &str, start: usize, builder: &mut Builder) -> isize {
-    match source[start..].find("?>") {
+fn parse_instruction(scans: &mut Scans<'_>, start: usize, builder: &mut Builder) -> isize {
+    let source = scans.source;
+    match scans.find("?>", start) {
         Some(i) => {
             builder.other();
-            (start + i + 2) as isize
+            (i + 2) as isize
         }
         None => {
             // `if (end)` is true for -1: the regex then runs on
@@ -775,7 +880,7 @@ pub fn parse_from_string(source: &str, max_depth: usize) -> R<DomElement> {
     let mut base_ns: NsMap = HashMap::new();
     base_ns.insert("xml".into(), NS_XML.into());
     let mut parse_stack: Vec<StackEntry> = vec![StackEntry { tag_name: None, ns: base_ns }];
-    let mut close_map: HashMap<String, isize> = HashMap::new();
+    let mut scans = Scans::new(source);
     let mut start: usize = 0;
 
     let append_text = |builder: &mut Builder, start: &mut usize, end: usize| -> R<()> {
@@ -828,13 +933,13 @@ pub fn parse_from_string(source: &str, max_depth: usize) -> R<DomElement> {
                 }
                 gt as isize + 1
             }
-            Some(b'?') => parse_instruction(source, tag_start, &mut builder),
-            Some(b'!') => parse_dcc(source, tag_start, &mut builder)?,
+            Some(b'?') => parse_instruction(&mut scans, tag_start, &mut builder),
+            Some(b'!') => parse_dcc(&mut scans, tag_start, &mut builder)?,
             _ => {
                 let mut el = ElementAttributes::default();
                 let current_ns = parse_stack.last().expect("parse stack base").ns.clone();
                 let end = parse_element_start_part(source, tag_start, &mut el, &current_ns)?;
-                if !el.closed && fix_self_closed(source, end, &el.tag_name, &mut close_map) {
+                if !el.closed && scans.fix_self_closed(end, &el.tag_name) {
                     el.closed = true;
                     // `if (!entityMap.nbsp)`: always, with the XML entities.
                     return fail("unclosed xml attribute");
@@ -849,7 +954,7 @@ pub fn parse_from_string(source: &str, max_depth: usize) -> R<DomElement> {
                     parse_stack.push(StackEntry { tag_name: Some(tag_name.clone()), ns });
                 }
                 if el_ns_is_html && !el.closed {
-                    parse_html_special_content(source, end, &tag_name, &mut builder)?
+                    parse_html_special_content(&mut scans, end, &tag_name, &mut builder)?
                 } else {
                     end as isize + 1
                 }
@@ -940,6 +1045,53 @@ mod tests {
         assert_eq!(root.ns, NsValue::Undefined);
         let root = parse("<constructor:a/>").unwrap();
         assert_eq!(root.ns, NsValue::Builtin("constructor"));
+    }
+
+    #[test]
+    fn indexed_scans_answer_like_naive_ones() {
+        let source = "</a></ab ></a:b></a></abc></b x></a\u{e9}></ab";
+        let index = CloseIndex::build(source);
+        for name in ["a", "ab", "abc", "a:b", "b", "a\u{e9}", "zz", "a:"] {
+            let naive_exact = source.rfind(&format!("</{name}>")).map_or(-1, |i| i as isize);
+            let naive_prefix = source.rfind(&format!("</{name}")).map_or(-1, |i| i as isize);
+            assert_eq!(index.last_exact(name), naive_exact, "exact {name}");
+            assert_eq!(index.last_prefix(name), naive_prefix, "prefix {name}");
+        }
+        let mut scans = Scans::new("a?>b?>c");
+        assert_eq!(scans.find("?>", 0), Some(1));
+        assert_eq!(scans.find("?>", 1), Some(1));
+        assert_eq!(scans.find("?>", 2), Some(4));
+        assert_eq!(scans.find("?>", 5), None);
+        assert_eq!(scans.find("?>", 6), None);
+        assert_eq!(scans.find("?>", 0), Some(1));
+    }
+
+    /// Inputs upstream scans quadratically without ever reporting an error
+    /// finish in linear time here, with the same tree.
+    #[test]
+    fn quadratic_upstream_inputs_stay_linear() {
+        let n = 200_000;
+        let mut doc = String::from("<?xml version=\"1.0\"?><a>");
+        for _ in 0..n {
+            doc.push_str("<?x");
+        }
+        doc.push_str("</a>");
+        let started = std::time::Instant::now();
+        assert!(parse(&doc).is_ok());
+        let mut doc = String::from("<r>");
+        for i in 0..n {
+            doc.push_str(&format!("<e{i}></e{i} >"));
+        }
+        doc.push_str("</r>");
+        let root = parse(&doc).unwrap();
+        assert_eq!(root.children.len(), n);
+        let mut doc = String::from("<r>");
+        for _ in 0..n {
+            doc.push_str("<![CDATA[");
+        }
+        doc.push_str("</r>");
+        assert!(parse(&doc).is_ok());
+        assert!(started.elapsed() < std::time::Duration::from_secs(20), "{:?}", started.elapsed());
     }
 
     #[test]

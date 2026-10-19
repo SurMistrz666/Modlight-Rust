@@ -641,6 +641,11 @@ def image_docs():
                 f'<Override PartName="/word/document.xml" ContentType="x"/></Types>')})
     finally:
         shutil.rmtree(tmp)
+    return out
+
+
+def size_docs():
+    out = {}
     # MAX_HTML_BYTES is checked on `body.length`: UTF-16 code units.
     limit = 4 * 1024 * 1024
     one_para = lambda text: docx("", styles=False, document_xml=(
@@ -827,7 +832,14 @@ def iso_hang():
     # field is -6 (0xFFFFFFFA): the reader steps back to where it started.
     rec = struct.pack("<IQHHIIQQQQ", 0x06064B50, 44 + 6, 45, 45, 0, 0, 3, 3, 0, 0) + struct.pack("<HI", 1, 0xFFFFFFFA)
     loc = struct.pack("<IIQI", 0x07064B50, 0, len(z) - 22, 1)
-    return {"iso-hang-zip64-loop.docx": z[:-22] + rec + loc + z[-22:]}
+    out = {"iso-hang-zip64-loop.docx": z[:-22] + rec + loc + z[-22:]}
+    # Quadratic scans in xmldom that never report an error: one lastIndexOf
+    # over the part per distinct element name, one indexOf('?>') plus a regex
+    # over everything before it per unterminated `<?`.
+    names = "".join(f"<w:n{i}></w:n{i} >" for i in range(400_000))
+    out["iso-hang-many-names.docx"] = docx("", document_xml=document(p("many names") + "<w:p>" + names + "</w:p>"))
+    out["iso-hang-pi-flood.docx"] = docx("", document_xml=document("<w:p>" + "<?x" * 1_000_000 + r("pi flood") + "</w:p>"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -898,6 +910,9 @@ def xml_docs():
         f'<w:p><w:r><w:t>back</w:t></w:r></w:p></w:body></w:document>'))
     out["x-xml-prefix.docx"] = raw("x", doc(p(runs='<w:r><w:t xml:space="preserve" xml:lang="en"> xml attrs </w:t></w:r>')))
     out["x-unicode-names.docx"] = raw("x", doc('<w:p><w:r><w:t>x</w:t></w:r><w:é/><w:𝒳/></w:p>'))
+    out["x-many-names.docx"] = raw("x", doc("<w:p>" + "".join(f"<w:n{i}></w:n{i} >" for i in range(3000))
+                                       + r("3000 distinct names") + "</w:p>"))
+    out["x-pi-many.docx"] = raw("x", doc("<w:p>" + "<?x" * 3000 + r("3000 unterminated PIs") + "</w:p>"))
     out["x-deep-ok.docx"] = raw("x", doc("<w:p>" + "<w:x>" * 1898 + "</w:x>" * 1898 + "</w:p>"))
     out["x-deep-fail.docx"] = raw("x", doc("<w:p>" + "<w:x>" * 1899 + "</w:x>" * 1899 + "</w:p>"))
     out["x-deep-tables-400.docx"] = raw("x", doc("<w:tbl><w:tr><w:tc>" * 400 + p("deep") + "</w:tc></w:tr></w:tbl>" * 400))
@@ -1035,6 +1050,71 @@ def textutil_docs():
     return out
 
 
+def more_features():
+    out = {}
+    L = lambda rid, text, extra="": f'<w:hyperlink r:id="{rid}"{extra}><w:r><w:t>{text}</w:t></w:r></w:hyperlink>'
+    links = [("rA", "hyperlink", "http://a.example/", True), ("rB", "hyperlink", "http://b.example/", True)]
+    out["f-simplify.docx"] = docx(
+        p(runs=L("rA", "a1") + L("rA", "a2") + L("rB", "b") + L("rA", "a3") + L("rA", "t", ' w:tgtFrame="x"'))
+        + p(runs='<w:bookmarkStart w:id="1" w:name="only"/>') + p(runs='<w:r><w:t></w:t></w:r>')
+        + p(runs=r("x", "<w:b/>") + r("", "<w:b/>") + r("y", "<w:b/>") + r("z", "<w:i/>") + r("w", "<w:b/><w:i/>"))
+        + p(runs='<w:r><w:rPr><w:b/></w:rPr><w:tab/></w:r><w:r><w:rPr><w:b/></w:rPr><w:br/></w:r>')
+        + p(runs='<w:hyperlink r:id="rA"><w:r><w:t>with</w:t><w:br/><w:tab/><w:t>breaks</w:t></w:r></w:hyperlink>')
+        + p(runs='<w:hyperlink w:anchor=""><w:r><w:t>empty anchor</w:t></w:r></w:hyperlink>')
+        + p(runs='<w:ins><w:hyperlink r:id="rA"><w:r><w:t>ins link</w:t></w:r></w:hyperlink></w:ins>'
+                 '<w:moveTo><w:r><w:t>moved</w:t></w:r></w:moveTo><w:moveFrom><w:r><w:t>from</w:t></w:r></w:moveFrom>')
+        + '<w:ins>' + p("inserted paragraph") + '</w:ins>'
+        + p(runs=r("deleted with table after"), ppr="<w:rPr><w:del/></w:rPr>")
+        + '<w:tbl><w:tr><w:tc>' + p("cell after deleted") + '</w:tc></w:tr></w:tbl>' + p("receives deleted")
+        + '<w:p><w:r><w:t>outer</w:t></w:r><w:p><w:r><w:t>nested paragraph</w:t></w:r></w:p></w:p>'
+        + p(runs='<w:r><w:t>run with</w:t><w:p><w:r><w:t>paragraph inside run</w:t></w:r></w:p></w:r>'),
+        doc_rels=links)
+    out["f-notes-edges.docx"] = docx(
+        p(runs=r("a") + '<w:r><w:footnoteReference/></w:r>' + r("b") + '<w:r><w:footnoteReference w:id="5"/></w:r>'
+               + '<w:r><w:endnoteReference w:id="5"/></w:r>'),
+        parts={"word/footnotes.xml": part_xml("w:footnotes",
+                                              '<w:footnote><w:p><w:r><w:t>no id</w:t></w:r></w:p></w:footnote>'
+                                              '<w:footnote w:id="5"><w:p><w:r><w:t>first five</w:t></w:r></w:p></w:footnote>'
+                                              '<w:footnote w:id="5"><w:p><w:r><w:t>second five</w:t></w:r></w:p></w:footnote>'
+                                              '<w:footnote w:id="6"><w:pict><v:shape><v:textbox><w:txbxContent>'
+                                              + p("lost extra") + '</w:txbxContent></v:textbox></v:shape></w:pict></w:footnote>'),
+               "word/endnotes.xml": part_xml("w:endnotes", '<w:endnote w:id="5"><w:p><w:r><w:t>end five</w:t></w:r></w:p></w:endnote>')})
+    out["f-endnote-missing-part.docx"] = docx(p(runs='<w:r><w:endnoteReference w:id="1"/></w:r>'))
+    out["f-comments-twice.docx"] = docx(
+        p(runs='<w:r><w:commentReference w:id="0"/></w:r>' + r(" x ") + '<w:r><w:commentReference w:id="0"/></w:r>'
+               + '<w:r><w:footnoteReference w:id="1"/></w:r>'),
+        parts={"mammoth/style-map": "comment-reference => sup",
+               "word/comments.xml": part_xml("w:comments",
+                                             '<w:comment w:id="0" w:initials=" ZZ "><w:p><w:r><w:t>c0 </w:t></w:r>'
+                                             '<w:r><w:commentReference w:id="1"/></w:r></w:p></w:comment>'
+                                             '<w:comment w:id="1"><w:p><w:r><w:t>c1</w:t></w:r></w:p></w:comment>'),
+               "word/footnotes.xml": part_xml("w:footnotes", '<w:footnote w:id="1"><w:p><w:r><w:commentReference w:id="1"/>'
+                                                             '</w:r></w:p></w:footnote>')})
+    out["f-unicode-case.docx"] = docx(
+        p("ff ligature", "Lig") + p("dotted", "Dot") + p("sigma", "Sig") + p("long s", "LongS"),
+        styles=part_xml("w:styles",
+                        '<w:style w:type="paragraph" w:styleId="Lig"><w:name w:val="ﬀ"/></w:style>'
+                        '<w:style w:type="paragraph" w:styleId="Dot"><w:name w:val="İstanbul"/></w:style>'
+                        '<w:style w:type="paragraph" w:styleId="Sig"><w:name w:val="ΟΔΟΣ"/></w:style>'
+                        '<w:style w:type="paragraph" w:styleId="LongS"><w:name w:val="ſtyle"/></w:style>'),
+        parts={"mammoth/style-map": "p[style-name='FF'] => h1\np[style-name='i̇stanbul'] => h2\n"
+                                    "p[style-name^='οδος'] => h3\np[style-name='STYLE'] => h4"})
+    out["f-stylemap-tokens.docx"] = docx(
+        p("tabs", "Heading1") + p("quote", "Quote") + p("title", "Title") + p("body", "Body"),
+        parts={"mammoth/style-map": "\n".join([
+            "p.Heading1\t=>\th2.a\\.b",
+            "p[style-name='Quote\\'s'] => h3",
+            "p[style-name='Quote'] =>  h4",
+            "p.Title=>h5",
+            "p[style-name='Title'] => span:separator('\\n'):fresh",
+            "p[style-name='Title'] => span:fresh:separator('|')",
+            "p.Body => p.x.y.z[class='w'].v",
+            "p.Body => q",
+            "p[style-name='unterminated] => h6",
+        ])})
+    return out
+
+
 def mammoth_test_data():
     """mammoth's own test documents (written by Word and LibreOffice), from
     the package sources copied out of the reference image, when present."""
@@ -1068,7 +1148,7 @@ def main():
     os.makedirs(out_dir)
     random.seed(7)
     files = {}
-    for family in (features, style_map_docs, image_docs, hostile, iso_hang, xml_docs, proto_docs, textutil_docs,
+    for family in (features, more_features, size_docs, style_map_docs, image_docs, hostile, iso_hang, xml_docs, proto_docs, textutil_docs,
                    mammoth_test_data):
         files.update(family())
     for name, data in sorted(files.items()):
