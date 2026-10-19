@@ -91,16 +91,50 @@ impl ServerCall {
         }
     }
 
-    /// The cookies as Next's cookie store would end up holding them.
+    /// The cookies as Next's cookie store would end up holding them:
+    /// `parseSetCookieHeader` of better-call's serialisation (one entry per
+    /// name, first position, last value; a `__Secure-`/`__Host-` name was
+    /// written with `Secure`), then `cookies().set(name, value, options)`.
     pub fn next_cookies(&self) -> Vec<SetCookie> {
         let mut out: Vec<SetCookie> = Vec::new();
         for c in &self.cookies {
+            let mut c = c.clone();
+            if c.name.starts_with("__Secure-") || c.name.starts_with("__Host-") {
+                c.secure = true;
+            }
+            if let Some(m) = c.max_age
+                && m < 0
+            {
+                // better-call does not print a negative Max-Age.
+                c.max_age = None;
+            }
             match out.iter_mut().find(|x| x.name == c.name) {
-                Some(slot) => *slot = c.clone(),
-                None => out.push(c.clone()),
+                Some(slot) => *slot = c,
+                None => out.push(c),
             }
         }
         out
+    }
+
+    /// lib/auth.ts's `nextCookies()` plugin: the call's cookies become the
+    /// server action's own (which also marks the action as revalidating).
+    pub fn apply_cookies(&self, ctx: &crate::rpc::ActionCtx) {
+        for c in self.next_cookies() {
+            ctx.set_cookie(c);
+        }
+    }
+
+    /// `asResponse: true`: whether the Response would be `ok` (2xx).
+    pub fn response_ok(&self) -> bool {
+        self.result.is_ok()
+    }
+
+    /// The `code` of the APIError body, when the call failed with one.
+    pub fn error_code(&self) -> Option<String> {
+        match &self.result {
+            Err(EndpointError::Api(e)) => e.code().map(str::to_string),
+            _ => None,
+        }
     }
 }
 
