@@ -1,8 +1,9 @@
 # Handoff: web panel as an SPA (branch `web-spa`)
 
-Stopped on 2026-10-18 at the owner's request. Everything is committed on
-`web-spa` (never pushed). The code builds and its tests pass; only the
-documentation has unfinished parts (listed below).
+Stopped on 2026-10-18 at the owner's request; the two unfinished documentation
+items were finished on 2026-10-19 (both marked done below). Everything is
+committed on `web-spa` (never pushed). The code builds and its tests pass
+(`npm run verify`).
 
 ## What is done
 
@@ -37,14 +38,25 @@ documentation has unfinished parts (listed below).
 - Tests: 61 (42 smoke = every fixture mounts, 16 runtime = wire formats and
   navigation, 3 route-table = the SPA's table against
   `server/src/pages/table.rs` and the server's own matching tests).
-- `server/docs/CONTRACT.md`: sections 1 to 9 are current. Sections 5 and 6
-  (common page rules, the 3 layouts, the 27 pages) are merged from the
-  page-data work order a subagent wrote and verified against the reference.
-  Section 7 covers the 94 actions.
+- `server/docs/CONTRACT.md`: all twelve sections are current (10 to 12 were
+  finished on 2026-10-19). Sections 5 and 6 (common page rules, the 3 layouts,
+  the 27 pages) are merged from the page-data work order a subagent wrote and
+  verified against the reference. Section 7 covers the 94 actions.
 
-## In progress: exact state
+## Was in progress: both items done on 2026-10-19
 
-1. **CONTRACT.md sections 10, 11 and 12 are partly stale.**
+The instructions below are kept as they were written; they are what was done.
+
+1. **CONTRACT.md sections 10, 11 and 12 were partly stale. DONE (c1c2a1b).**
+   Every statement now in section 10 was checked against the code (the head
+   handling also with a throwaway test, not committed: the first payload keeps
+   the document's Open Graph / Twitter / canonical / alternate tags, a later
+   navigation or a refresh removes them and leaves the icons, a `null`
+   description or application name removes the meta). Section 12 has 23 items
+   exactly as planned; the references in sections 5 and 6 (12.5 in 5.3, 12.8 in
+   5.7, 12.7 in 5.11, 12.10 in 6.9) point at the right items, and sections 2.1,
+   2.2 and 7.1 now name 12.4, 12.2 / 12.1 and 12.3. The old items 3 to 10 are
+   carried over verbatim as 16 to 23 (the `OneClickShareX` bug is 12.18).
    - Section 10: "Translations. Bundled ..." is wrong now (they come from
      `layouts.root.messages`); "Head and `<html>` ... replaces the
      `data-ml-head` elements" is wrong (the SPA sets the title and the
@@ -71,22 +83,38 @@ documentation has unfinished parts (listed below).
      (shortener passthrough) are resolved by the skeleton: delete them. The
      Q texts are in `_scratch/web-spa/contract-pages.md` section 3; when
      copying, renumber their section references (1.N -> 5.(N+1), 2.N -> 6.N).
-2. **Fixture `meta` blocks** do not all match the per-route metadata of
-   CONTRACT.md section 6 (the page-data agent's Q10). To fix:
-   `dashboard-links` (`Short links - Modlight`), `dashboard-paste` and
-   `dashboard-upload` (their own descriptions, 6.16 and 6.17),
-   `dashboard-admin-user-files*` (`User files - Modlight`), `user-gallery`
-   (6.22), `album` (6.23), `shortlink-unlock*` (robots `noindex, nofollow`,
-   6.24), `media*` and `tagless-media` (6.27: absolute title, `description`
-   and `applicationName` null). Fixtures only feed fixture mode and the smoke
-   test; nothing breaks meanwhile.
+2. **Fixture `meta` blocks** did not all match the per-route metadata of
+   CONTRACT.md section 6 (the page-data agent's Q10). **DONE (884f28c).**
+   Fixed in 15 files: `dashboard-links` (`Short links - Modlight`),
+   `dashboard-paste` and `dashboard-upload` (their own descriptions, 6.16 and
+   6.17), `dashboard-admin-user-files*` (`User files - Modlight`),
+   `user-gallery` (6.22), `album` (6.23), `shortlink-unlock*` (robots
+   `noindex, nofollow`, 6.24), `media*` and `tagless-media` (6.27: absolute
+   title, `description` and `applicationName` null). Fixtures only feed
+   fixture mode and the smoke test; nothing broke meanwhile.
+   Choices made: the media titles use the brand of `fixtures/layouts.json`
+   (`embedBrand` = `example`): `screenshot-1.png · example`; the password gate
+   is `Modlight` with robots `noindex, nofollow` (6.27 F1); the encrypted view
+   has no filename in its props, so its title uses the URL's `sealed.mlenc`
+   (upstream shows the stored name, an opaque `<id>.mlenc`). A script check of
+   all 41 fixtures against the section 6 rules found no other mismatch
+   (`index.json` is the redirect page, which carries no metadata upstream, and
+   was left alone).
 
 ## What remains (besides the above)
 
-- Backend work requested in CONTRACT.md section 12 (config in the root
-  layout, owner skin/wallpaper in the shell, revalidate on cookie writes).
-- After the doc fixes: `npm run verify`, and `npm run size` if the bundle
-  changed (section 1.3 has the current numbers).
+- Backend work requested in CONTRACT.md section 12: 12.1 (`config` in the root
+  layout), 12.2 (the owner's skin and wallpaper in the document), 12.3
+  (`revalidate` on cookie writes); decisions 12.4 (200 or 307/404 under
+  `/dashboard`) and 12.5 (400 or 500 for malformed escapes); the page-data
+  questions 12.6 to 12.15 for whoever writes the page loaders.
+- Done: `npm run verify` after the doc fixes (passes, 61 tests). The bundle did
+  not change (docs and fixtures only), so `npm run size` was not rerun (section
+  1.3 has the numbers).
+- Stale elsewhere, not touched (outside the brief): PORT.md section 11 still
+  says the SPA bundles `messages/` (the server sends them now, CONTRACT.md 5.7
+  and 10), and the `web-spa` row of `docs/STAN.md` still lists sections 10 to 12
+  and the `meta` blocks as open.
 
 ## Build and verify
 
@@ -120,7 +148,7 @@ npm run size                    # first-load sizes vs the reference on :8420
 - `npm run size` measures dashboard rows only with `MODLIGHT_REF_COOKIE`
   set to a signed-in session of the reference; never print that value.
 - The smoke test allow-lists one upstream console error
-  (`OneClickShareX` passes a function as a message argument; CONTRACT.md 12).
+  (`OneClickShareX` passes a function as a message argument; CONTRACT.md 12.18).
 
 ## Outside the repository
 
@@ -137,11 +165,16 @@ npm run size                    # first-load sizes vs the reference on :8420
 - No containers. The Rust dev server, vite servers and stub servers I started
   are stopped; the reference stack (8420) and the shared dev Postgres (55421)
   were left running.
+- The 2026-10-19 session (docs and fixtures only) started no server and did not
+  touch the reference stack or the dev Postgres; it only read `_scratch/`.
 
 ## Commits on `web-spa` (newest last)
 
 - 9a7ce62 merge of main (Rust skeleton)
 - 48287b8 web: speak the Rust skeleton's /_page protocol
 - fa4b3f2 web: fall back to document loads where Next does
-- the commit adding this file: CONTRACT.md sections 1, 4, 5, 6, 7.1 updated
-  (WIP: sections 10 to 12 as described above)
+- 1145f1b WIP: docs: CONTRACT.md sections 1, 4, 5, 6, 7.1 updated, page data
+  merged, this note (sections 10 to 12 still to do)
+- c1c2a1b docs: CONTRACT.md sections 10 to 12 follow the skeleton
+- 884f28c web: fixture meta blocks follow CONTRACT.md section 6
+- the commit updating this note (both items marked done)
