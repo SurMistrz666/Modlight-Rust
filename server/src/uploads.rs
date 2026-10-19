@@ -348,8 +348,13 @@ pub fn parse_expiry(when: Option<&Value>) -> Result<Option<JsDate>, UploadOpErro
         Some(Value::Object(m)) if m.len() == 1 && m.contains_key("$date") => {
             m["$date"].as_str().and_then(crate::js_date::parse_js_date).map(Some).ok_or_else(invalid)
         }
-        // `new Date(true)` is 1 ms after the epoch; `new Date([])`, `new Date({})` are invalid.
+        // `new Date(true)` is 1 ms after the epoch.
         Some(Value::Bool(b)) => Ok(JsDate::from_millis(i64::from(*b))),
+        // An array is parsed from its `toString()` (`new Date([2030])` is
+        // 2030-01-01); any other object reads "[object Object]": invalid.
+        Some(v @ Value::Array(_)) => {
+            crate::js_date::parse_js_date(&crate::js_value::js_string(v)).map(Some).ok_or_else(invalid)
+        }
         Some(_) => Err(invalid()),
     }
 }
@@ -573,5 +578,10 @@ mod tests {
         );
         assert_eq!(parse_expiry(Some(&json!("garbage"))).unwrap_err().message, "Invalid date");
         assert_eq!(parse_expiry(Some(&json!(0))).unwrap().unwrap().millis(), 0);
+        // `new Date([2030])` parses "2030"; `new Date(true)` is 1 ms; objects are invalid.
+        assert_eq!(parse_expiry(Some(&json!([2030]))).unwrap().unwrap().to_iso_string(), "2030-01-01T00:00:00.000Z");
+        assert_eq!(parse_expiry(Some(&json!(true))).unwrap().unwrap().millis(), 1);
+        assert!(parse_expiry(Some(&json!({ "a": 1 }))).is_err());
+        assert!(parse_expiry(Some(&json!([]))).is_err());
     }
 }

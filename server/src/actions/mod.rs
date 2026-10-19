@@ -8,14 +8,21 @@
 
 pub mod account;
 pub mod admin;
+pub mod admin_library;
 pub mod authorize;
 pub mod avatar;
+pub mod duplicates;
+pub mod folders;
 pub mod invite;
 pub mod login_identifier;
 pub mod mail;
+pub mod pastes;
 pub mod registration;
 pub mod releases;
+pub mod shortlink_unlock;
+pub mod shortlinks;
 pub mod tokens;
+pub mod uploads;
 
 use crate::rpc::RpcRegistry;
 
@@ -31,4 +38,11 @@ pub fn register_all(reg: &mut RpcRegistry) {
     login_identifier::register(reg); // app/actions/login-identifier.ts
     avatar::register(reg); // app/actions/avatar.ts
     tokens::register(reg); // app/actions/tokens.ts
+    uploads::register(reg); // app/actions/uploads.ts
+    folders::register(reg); // app/actions/folders.ts
+    duplicates::register(reg); // app/actions/duplicates.ts
+    shortlinks::register(reg); // app/actions/shortlinks.ts
+    shortlink_unlock::register(reg); // app/actions/shortlink-unlock.ts
+    pastes::register(reg); // app/actions/pastes.ts
+    admin_library::register(reg); // app/actions/admin.ts (orphans, account deletion, maintenance)
 }

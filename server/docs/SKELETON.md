@@ -62,6 +62,9 @@ action errors), so upstream `.env` files keep their meaning.
 | `db/models.rs`, `db/types.rs` | `lib/db/schema/*.ts` + `drizzle/*.sql` | done (every table and column, checked against `information_schema`) |
 | `rpc/` | Next server actions | done (framework) |
 | `actions/tokens.rs` | `app/actions/tokens.ts` | done |
+| `actions/{uploads,folders,duplicates,shortlinks,shortlink_unlock,pastes}.rs` | `app/actions/` same names | done (parity: `tests/parity/library_actions.py`) |
+| `actions/admin_library.rs` | `app/actions/admin.ts` (loadOrphans, deleteOrphan, purgeAllOrphans, loadDeletionImpact, deleteUserAccount, recalculateEveryQuota, runStorageScan), `components/admin/confirm.ts` | done; registered as module `admin` beside the accounts port's own `actions/admin.rs` |
+| `js_value.rs` | (JavaScript operators on raw arguments) | done |
 | `actions/*` (others) | `app/actions/*.ts` | to do |
 | `pages/` | page data, SPA shell, metadata | done (framework + table of every page and route handler) |
 | `pages/root_layout.rs` | `app/layout.tsx` | done |
@@ -296,6 +299,21 @@ Deliberate, each for a reason:
     swallows every error like upstream, so `/api/health` reports `storage: ok`
     on an S3 install whose endpoint is down, as upstream did. The runtime image
     needs a CA bundle for HTTPS endpoints (rustls reads the system store).
+15. **`pastes.createPaste` languages**: `LANG_EXT[lang]` upstream also finds
+    what every JavaScript object inherits, so a `language` of `constructor` or
+    `__proto__` (the lower-cased names among them) took a function or an
+    object as the extension, wrote the bytes under `<code>.function Object()
+    { [native code] }` / `<code>.[object Object]` and then threw (verified on
+    a private reference). Here only the 28 listed languages map to an
+    extension; any other name is `txt`, and the paste is created.
+16. **`uploads.emptyTrash` with a storage driver that cannot be built** (an S3
+    install missing a variable) throws even for an empty trash; upstream's
+    `getStorage()` only ran once a batch had rows. Either way the install is
+    broken; the answer differs only for an empty trash.
+17. **`admin.deleteUserAccount`** runs better-auth's `removeUser` as the same
+    statements (sessions, then sessions, accounts and the user row) inside
+    `actions/admin_library.rs`, for the one caller; the accounts port carries
+    the whole endpoint and should replace it when the branches meet.
 
 ## 10. Verified on 2026-10-18
 
