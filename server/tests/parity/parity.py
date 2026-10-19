@@ -388,3 +388,230 @@ def signed_in(pair, ref_db, rust_db, user_id):
     """Give both browsers of `pair` a fresh session for the same user id."""
     pair.ref.cookies[SESSION_COOKIE] = ref_db.mint_session(user_id, ip=pair.ref.real_ip or "")
     pair.rust.cookies[SESSION_COOKIE] = rust_db.mint_session(user_id, ip=pair.rust.real_ip or "")
+
+
+# ── Server actions: Next's protocol on the reference, /_rpc on Rust ────────
+
+
+class Undefined(object):
+    """JavaScript `undefined` as an action argument or result."""
+
+    def __repr__(self):
+        return "undefined"
+
+    def __eq__(self, other):
+        return isinstance(other, Undefined)
+
+
+UNDEFINED = Undefined()
+
+
+class JsDate(object):
+    def __init__(self, iso):
+        self.iso = iso
+
+    def __eq__(self, other):
+        return isinstance(other, JsDate) and other.iso == self.iso
+
+
+class ActionIds(object):
+    """`(module, export) -> (action id, a page path whose bundle includes it)`
+    from the reference's `.next/server/server-reference-manifest.json`."""
+
+    def __init__(self, app_container):
+        out = subprocess.run(["docker", "exec", app_container, "cat",
+                              "/app/.next/server/server-reference-manifest.json"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        manifest = json.loads(out.stdout.decode("utf-8"))
+        self.ids = {}
+        for action_id, entry in manifest["node"].items():
+            workers = entry["workers"]
+            first = list(workers.values())[0]
+            module = first["filename"].rsplit("/", 1)[-1][:-3]
+            self.ids[(module, first["exportedName"])] = (action_id, self._page_path(list(workers.keys())[0]))
+
+    @staticmethod
+    def _page_path(worker):
+        parts = []
+        for seg in worker.split("/")[1:-1]:
+            if seg.startswith("(") and seg.endswith(")"):
+                continue
+            if seg.startswith("["):
+                seg = "x"
+            parts.append(seg)
+        return "/" + "/".join(parts)
+
+    def get(self, module, export):
+        return self.ids[(module, export)]
+
+
+def _encode_reply(v):
+    """React `encodeReply` for the JSON-like values actions take."""
+    if isinstance(v, Undefined):
+        return "$undefined"
+    if isinstance(v, JsDate):
+        return "$D" + v.iso
+    if isinstance(v, float) and v != v:
+        return "$NaN"
+    if v == float("inf"):
+        return "$Infinity"
+    if v == float("-inf"):
+        return "$-Infinity"
+    if isinstance(v, str):
+        return "$" + v if v.startswith("$") else v
+    if isinstance(v, list):
+        return [_encode_reply(x) for x in v]
+    if isinstance(v, dict):
+        return dict((k, _encode_reply(x)) for k, x in v.items())
+    return v
+
+
+def _encode_tagged(v):
+    """The SPA's tagged JSON (CONTRACT 3)."""
+    if isinstance(v, Undefined):
+        return {"$undefined": 1}
+    if isinstance(v, JsDate):
+        return {"$date": v.iso}
+    if isinstance(v, float) and v != v:
+        return {"$num": "NaN"}
+    if v == float("inf"):
+        return {"$num": "Infinity"}
+    if v == float("-inf"):
+        return {"$num": "-Infinity"}
+    if isinstance(v, list):
+        return [_encode_tagged(x) for x in v]
+    if isinstance(v, dict):
+        return dict((k, _encode_tagged(x)) for k, x in v.items())
+    return v
+
+
+def _decode_flight(v, rows):
+    if isinstance(v, str) and v.startswith("$"):
+        if v.startswith("$$"):
+            return v[1:]
+        if v == "$undefined":
+            return "<undefined>"
+        if v.startswith("$D"):
+            return "<date:%s>" % v[2:]
+        if v in ("$NaN", "$Infinity", "$-Infinity"):
+            return "<num:%s>" % v[1:]
+        if v.startswith("$n"):
+            return "<bigint:%s>" % v[2:]
+        if v.startswith("$@") or re.match(r"^\$[0-9a-f]+$", v):
+            key = v[2:] if v.startswith("$@") else v[1:]
+            return _decode_flight(rows.get(key), rows)
+        return v
+    if isinstance(v, list):
+        return [_decode_flight(x, rows) for x in v]
+    if isinstance(v, dict):
+        return dict((k, _decode_flight(x, rows)) for k, x in v.items())
+    return v
+
+
+def _decode_tagged(v):
+    if isinstance(v, dict) and len(v) == 1:
+        (k, x), = v.items()
+        if k == "$undefined":
+            return "<undefined>"
+        if k == "$date":
+            return "<date:%s>" % x
+        if k == "$num":
+            return "<num:%s>" % x
+        if k == "$bigint":
+            return "<bigint:%s>" % x
+    if isinstance(v, list):
+        return [_decode_tagged(x) for x in v]
+    if isinstance(v, dict):
+        return dict((k, _decode_tagged(x)) for k, x in v.items())
+    return v
+
+
+MASKED = "<masked error>"
+
+
+def next_action_envelope(res):
+    """A Next server-action response as the /_rpc envelope it corresponds to,
+    with dates as `<date:iso>`, undefined as `<undefined>`."""
+    env = {}
+    redirect = res.header("x-action-redirect")
+    if redirect:
+        env["redirect"] = redirect.split(";")[0]
+    elif res.header("content-type", ) and "text/x-component" in res.header("content-type"):
+        rows = {}
+        for line in res.text().split("\n"):
+            if ":" not in line:
+                continue
+            key, _, payload = line.partition(":")
+            if payload.startswith("E"):
+                rows[key] = ("error", json.loads(payload[1:]))
+            else:
+                try:
+                    rows[key] = json.loads(payload)
+                except ValueError:
+                    rows[key] = payload
+        head = rows.get("0", {})
+        ref = head.get("a") if isinstance(head, dict) else None
+        key = ref[2:] if isinstance(ref, str) and ref.startswith("$@") else None
+        value = rows.get(key) if key else None
+        if isinstance(value, tuple) and value[0] == "error":
+            env["error"] = MASKED
+        else:
+            plain = dict((k, v) for k, v in rows.items() if not isinstance(v, tuple))
+            env["ok"] = _decode_flight(value, plain)
+    else:
+        env["http"] = res.status
+    revalidated = res.header("x-action-revalidated")
+    if revalidated and revalidated not in ("[[],0,0]", "0"):
+        env["revalidate"] = True
+    return env
+
+
+def rpc_envelope(res):
+    """A Rust /_rpc response in the same normalised form."""
+    body = res.json()
+    if not isinstance(body, dict):
+        return {"http": res.status}
+    env = {}
+    if "redirect" in body:
+        env["redirect"] = body["redirect"]
+    elif "error" in body:
+        env["error"] = MASKED
+    elif "notFound" in body:
+        env["notFound"] = True
+    elif "ok" in body:
+        env["ok"] = _decode_tagged(body["ok"])
+    else:
+        env["http"] = res.status
+    if body.get("revalidate"):
+        env["revalidate"] = True
+    return env
+
+
+class Actions(object):
+    """Call the same server action on both servers and compare."""
+
+    def __init__(self, run, ref_app_container):
+        self.run = run
+        self.ids = ActionIds(ref_app_container)
+
+    def call_ref(self, browser, module, export, args):
+        action_id, page = self.ids.get(module, export)
+        body = json.dumps(_encode_reply(list(args)))
+        return browser.request("POST", page, raw=body, headers={
+            "Next-Action": action_id, "Content-Type": "text/plain;charset=UTF-8", "Accept": "text/x-component"})
+
+    def call_rust(self, browser, module, export, args):
+        return browser.rpc(module, export, _encode_tagged(list(args)))
+
+    def check(self, pair, name, module, export, args, ignore=(), redact=(), cookies=True):
+        a = self.call_ref(pair.ref, module, export, args)
+        b = self.call_rust(pair.rust, module, export, args)
+        ea = normalize_json(next_action_envelope(a), ignore, redact)
+        eb = normalize_json(rpc_envelope(b), ignore, redact)
+        if cookies:
+            ea["set-cookie"] = [(n, v, [x for x in attrs if not x.lower().startswith("expires")])
+                                for n, v, attrs in cookie_shape(a)]
+            eb["set-cookie"] = [(n, v, [x for x in attrs if not x.lower().startswith("expires")])
+                                for n, v, attrs in cookie_shape(b)]
+        self.run.compare(name, ea, eb)
+        return a, b
