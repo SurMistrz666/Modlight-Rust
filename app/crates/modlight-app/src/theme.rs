@@ -94,6 +94,8 @@ impl Colors {
         continue_background,
         continue_border,
         task_foreground,
+        checker_a,
+        checker_b,
     );
 
     /// `ShareX.Brush.Overlay.Modal`.

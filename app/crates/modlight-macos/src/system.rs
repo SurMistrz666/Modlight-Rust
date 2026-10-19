@@ -33,6 +33,19 @@ pub fn reveal_in_finder(path: &Path) -> bool {
         .is_ok()
 }
 
+/// Open a file or folder with its app (`FileHelpers.OpenFile`, `OpenFolder`). The path
+/// goes after `--`, so a name that starts with a dash is never read as an option.
+pub fn open_path(path: &Path) -> bool {
+    Command::new("/usr/bin/open")
+        .arg("--")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
 fn defaults_read(domain: &str, key: &str) -> Option<String> {
     let output = Command::new("/usr/bin/defaults")
         .args(["read", domain, key])

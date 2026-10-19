@@ -2,11 +2,23 @@
 //! settings, duplicates, confirm. Each is a state struct plus a `ui` function that draws
 //! it filling its window and returns what the person decided.
 
+pub mod after_upload;
+pub mod before_upload;
+pub mod chrome;
+pub mod clipboard_upload;
 pub mod confirm;
+pub mod drop_window;
 pub mod duplicates;
+pub mod file_exists;
 pub mod folder_delete;
 pub mod link_settings;
+pub mod message;
+pub mod paste;
 pub mod prompt;
+pub mod shorten_url;
+pub mod text_upload;
+pub mod upload_confirm;
+pub mod url_upload;
 
 use egui::{Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
 

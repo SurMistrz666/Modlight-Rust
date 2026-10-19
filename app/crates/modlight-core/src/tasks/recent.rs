@@ -66,6 +66,19 @@ impl RecentTask {
             .unwrap_or_default()
     }
 
+    /// `TrayMenuText`: "[HH:mm:ss] " and the text, its last 47 characters after "..."
+    /// when it is longer than 50.
+    pub fn tray_menu_text(&self) -> String {
+        let text: Vec<char> = self.text().chars().collect();
+        let text: String = if text.len() > 50 {
+            format!("...{}", text[text.len() - 47..].iter().collect::<String>())
+        } else {
+            text.into_iter().collect()
+        };
+        let time = self.time.with_timezone(&chrono::Local).format("%H:%M:%S");
+        format!("[{time}] {text}")
+    }
+
     /// The shortened URL, else the URL, else the file path.
     pub fn text(&self) -> &str {
         if !self.shortened_url.is_empty() {

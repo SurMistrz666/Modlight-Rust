@@ -57,6 +57,28 @@ pub enum Command {
     DeleteForever(Vec<String>),
     EmptyTrash,
     ScanDuplicates,
+
+    // Uploading (`MainMenuBuilder.BuildUploadMenu` and the Upload tab).
+    UploadFolder,
+    ClipboardUpload,
+    UploadText,
+    PasteText,
+    UploadUrl,
+    DragDropUpload,
+    ShortenUrl,
+    CancelTask(u64),
+    QueueSendNow(String),
+    QueueCancel(String),
+    RefreshUploadHistory,
+    CopyHistoryLink(u64),
+    OpenUrl(String),
+    RetryUpload(std::path::PathBuf),
+    ToggleAfterUploadTask(u32),
+    ToggleAfterCaptureTask(u32),
+    OpenScreenshotsFolder,
+    CopyText(String),
+    /// Open a file with its app (`FileHelpers.OpenFile`).
+    OpenFile(std::path::PathBuf),
 }
 
 impl AppState {
@@ -126,6 +148,25 @@ impl AppState {
             Command::DeleteForever(ids) => self.ask_trash(&ids, true),
             Command::EmptyTrash => self.empty_trash(),
             Command::ScanDuplicates => self.scan_duplicates(),
+            Command::UploadFolder => self.pick_folder_and_upload(),
+            Command::ClipboardUpload => self.clipboard_upload_main_window(),
+            Command::UploadText => self.open_text_upload(),
+            Command::PasteText => self.open_paste_window(),
+            Command::UploadUrl => self.open_url_upload(),
+            Command::DragDropUpload => self.open_drop_window(),
+            Command::ShortenUrl => self.open_shorten_url(),
+            Command::CancelTask(id) => self.cancel_task(id),
+            Command::QueueSendNow(id) => self.uploads.queue.send_now(&id),
+            Command::QueueCancel(id) => self.uploads.queue.cancel(&id),
+            Command::RefreshUploadHistory => self.refresh_upload_history(),
+            Command::CopyHistoryLink(key) => self.copy_history_link(key),
+            Command::OpenUrl(url) => self.open_url(&url),
+            Command::RetryUpload(path) => self.retry_upload(path),
+            Command::ToggleAfterUploadTask(bit) => self.toggle_after_upload_task(bit),
+            Command::ToggleAfterCaptureTask(bit) => self.toggle_after_capture_task(bit),
+            Command::OpenScreenshotsFolder => self.open_screenshots_folder(),
+            Command::CopyText(text) => self.copy_text(&text),
+            Command::OpenFile(path) => self.effects.push(crate::state::Effect::OpenFile(path)),
         }
     }
 

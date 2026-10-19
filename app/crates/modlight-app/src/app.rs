@@ -37,6 +37,9 @@ pub struct ModlightApp {
     system_dark: Option<bool>,
     /// The last thing copied, for headless checks.
     pub copied: Vec<String>,
+    tray_checked_at: f64,
+    /// The window title last given to the system.
+    window_title: String,
 }
 
 /// The app icon (`ShareX/Modlight_Icon.ico`), decoded at its largest.
@@ -48,8 +51,9 @@ pub fn app_icon() -> Option<image::RgbaImage> {
 }
 
 impl ModlightApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, state: AppState, mode: Mode) -> ModlightApp {
+    pub fn new(cc: &eframe::CreationContext<'_>, mut state: AppState, mode: Mode) -> ModlightApp {
         let ctx = &cc.egui_ctx;
+        state.mode = mode;
         ctx.set_fonts(crate::theme::fonts());
         state.rt.attach(ctx);
         crate::theme::apply_style(ctx, &state.colors);
@@ -69,9 +73,14 @@ impl ModlightApp {
             focused: true,
             system_dark: None,
             copied: Vec::new(),
+            tray_checked_at: f64::NEG_INFINITY,
+            window_title: modlight_core::title(),
         };
         if mode != Mode::Shot {
             app.start(ctx);
+        }
+        if matches!(mode, Mode::Normal | Mode::Qa) {
+            modlight_macos::keys::install();
         }
         if mode == Mode::Normal && app.state.config.show_tray() {
             app.tray = crate::tray::Tray::new(ctx, &app.state);
@@ -87,6 +96,7 @@ impl ModlightApp {
         state.request_avatar(ctx);
         state.space_refresh_account();
         state.sync_skin();
+        state.start_uploads();
     }
 
     /// Everything that is not drawing, before the frame.
@@ -95,6 +105,9 @@ impl ModlightApp {
         state.time = ctx.input(|i| i.time);
         for completion in state.rt.drain() {
             completion(state, ctx);
+        }
+        if self.mode != Mode::Shot {
+            state.pump_uploads(ctx);
         }
         // The system appearance, when following it.
         let system = ctx
@@ -122,11 +135,25 @@ impl ModlightApp {
             .filter(|p| !p.as_os_str().is_empty())
             .collect();
         if !paths.is_empty() && self.mode != Mode::Shot {
-            let folder = state.space.current_folder.clone();
-            state.upload_paths(paths, folder);
+            // `DragDropUpload`: the default settings; the open folder is the ambient
+            // target the task picks up.
+            state.drop_on_window(paths);
         }
-        if state.tab == crate::state::Tab::MySpace && !state.windows.modal_open() {
+        let modal = state.windows.modal_open() || state.uploads.modal_open();
+        if state.tab == crate::state::Tab::MySpace && !modal {
             state.my_space_keys(ctx);
+        }
+        // Cmd+V outside a text field uploads the clipboard (`ClipboardUploadMainWindow`).
+        if !modal && !ctx.egui_wants_keyboard_input() && self.mode != Mode::Shot {
+            let main_focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+            let pasted = if modlight_macos::keys::monitoring() {
+                modlight_macos::keys::take_command_v()
+            } else {
+                ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
+            };
+            if pasted && main_focused {
+                state.push(crate::commands::Command::ClipboardUpload);
+            }
         }
         state.details_tick(ctx);
         state.tick_motion(ctx);
@@ -134,7 +161,11 @@ impl ModlightApp {
             state.tick_settings_sync(ctx);
         }
         if let Some(tray) = &mut self.tray {
-            tray.update(&self.state);
+            // The menu is rebuilt from the settings at most twice a second.
+            if self.state.time - self.tray_checked_at >= 0.5 {
+                self.tray_checked_at = self.state.time;
+                tray.update(&self.state);
+            }
             for command in tray.commands() {
                 self.state.push(command);
             }
@@ -171,27 +202,7 @@ impl ModlightApp {
             self.state.run(command, ctx);
         }
         for effect in std::mem::take(&mut self.state.effects) {
-            match effect {
-                Effect::OpenUrl(url) => {
-                    if self.mode == Mode::Normal {
-                        modlight_macos::system::open_url(&url);
-                    } else {
-                        log::info!("QA mode: not opening {url}");
-                    }
-                }
-                Effect::CopyText(text) => {
-                    self.copied.push(text.clone());
-                    if matches!(self.mode, Mode::Normal | Mode::Qa) {
-                        let clipboard = self.clipboard.get_or_insert_with(|| {
-                            arboard::Clipboard::new().expect("the clipboard opens")
-                        });
-                        if let Err(error) = clipboard.set_text(text) {
-                            log::warn!("Modlight: the clipboard refused the text: {error}");
-                        }
-                    }
-                }
-                Effect::Quit => self.state.quit_requested = true,
-            }
+            self.perform(effect);
         }
         if self.state.quit_requested {
             self.state.quit_requested = false;
@@ -199,6 +210,91 @@ impl ModlightApp {
             self.allow_close = true;
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
+    }
+
+    /// One platform effect. Only the real app opens, reveals or plays anything; the QA
+    /// window also writes the clipboard (writing asks no permission), headless runs
+    /// only record what they would have done.
+    fn perform(&mut self, effect: Effect) {
+        let real = self.mode == Mode::Normal;
+        let writes_clipboard = matches!(self.mode, Mode::Normal | Mode::Qa);
+        match effect {
+            Effect::OpenUrl(url) => {
+                if real {
+                    modlight_macos::system::open_url(&url);
+                } else {
+                    log::info!("QA mode: not opening {url}");
+                }
+            }
+            Effect::CopyText(text) => {
+                self.copied.push(text.clone());
+                if writes_clipboard
+                    && let Some(clipboard) = self.clipboard()
+                    && let Err(error) = clipboard.set_text(text)
+                {
+                    log::warn!("Modlight: the clipboard refused the text: {error}");
+                }
+            }
+            Effect::CopyImage(image) => {
+                self.copied
+                    .push(format!("<image {}x{}>", image.width(), image.height()));
+                if writes_clipboard && let Some(clipboard) = self.clipboard() {
+                    let data = arboard::ImageData {
+                        width: image.width() as usize,
+                        height: image.height() as usize,
+                        bytes: std::borrow::Cow::Borrowed(image.as_raw()),
+                    };
+                    if let Err(error) = clipboard.set_image(data) {
+                        log::warn!("Modlight: the clipboard refused the image: {error}");
+                    }
+                }
+            }
+            Effect::CopyFiles(files) => {
+                self.copied
+                    .extend(files.iter().map(|f| f.display().to_string()));
+                if writes_clipboard
+                    && let Some(clipboard) = self.clipboard()
+                    && let Err(error) = clipboard.set().file_list(&files)
+                {
+                    log::warn!("Modlight: the clipboard refused the files: {error}");
+                }
+            }
+            Effect::ClearClipboard => {
+                if writes_clipboard && let Some(clipboard) = self.clipboard() {
+                    let _ = clipboard.clear();
+                }
+            }
+            Effect::Reveal(path) => {
+                if real {
+                    modlight_macos::system::reveal_in_finder(&path);
+                } else {
+                    log::info!("QA mode: not revealing {}", path.display());
+                }
+            }
+            Effect::OpenFile(path) => {
+                if real {
+                    modlight_macos::system::open_path(&path);
+                } else {
+                    log::info!("QA mode: not opening {}", path.display());
+                }
+            }
+            Effect::PlaySound(sound, custom) => {
+                if real {
+                    AppState::play_sound(sound, custom);
+                }
+            }
+            Effect::Quit => self.state.quit_requested = true,
+        }
+    }
+
+    fn clipboard(&mut self) -> Option<&mut arboard::Clipboard> {
+        if self.clipboard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(clipboard) => self.clipboard = Some(clipboard),
+                Err(error) => log::warn!("Modlight: the clipboard cannot be opened: {error}"),
+            }
+        }
+        self.clipboard.as_mut()
     }
 
     /// The secondary windows, each its own native window.
@@ -342,8 +438,278 @@ impl ModlightApp {
             }
         }
 
-        if state.windows.notification.is_some() {
+        self.upload_viewports(ctx, main);
+
+        if self.state.windows.notification.is_some() {
             self.notification(ctx);
+        }
+        if self.state.uploads.windows.drop_window.is_some() {
+            self.drop_window(ctx);
+        }
+    }
+
+    /// The upload flow's windows (`TaskHelpers`, `UploadManager`, the task questions).
+    fn upload_viewports(&mut self, ctx: &egui::Context, main: Option<Rect>) {
+        use crate::dialogs::{
+            after_upload, before_upload, clipboard_upload, file_exists, message, paste,
+            shorten_url, text_upload, upload_confirm, url_upload,
+        };
+        let state = &mut self.state;
+        let colors = state.colors.clone();
+
+        if let Some(window) = state.uploads.windows.messages.front_mut() {
+            let title = window.title.clone();
+            let (closed, close) = dialog(
+                ctx,
+                "message",
+                &title,
+                vec2(message::WIDTH, window.content_height),
+                main,
+                true,
+                |ui| window.ui(ui, &colors).then_some(()),
+            );
+            if closed.is_some() || close {
+                state.uploads.windows.messages.pop_front();
+            }
+        }
+
+        if let Some((window, _)) = state.uploads.windows.multi_upload.as_mut() {
+            let title = window.title();
+            let (outcome, close) = dialog(
+                ctx,
+                "multi-upload",
+                title,
+                vec2(upload_confirm::WIDTH, window.content_height),
+                main,
+                true,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(outcome) = outcome {
+                state.multi_upload_finished(outcome);
+            } else if close {
+                state.multi_upload_finished(upload_confirm::UploadConfirmOutcome {
+                    go_on: false,
+                    dont_show_again: false,
+                });
+            }
+        }
+
+        if let Some(window) = state.uploads.windows.large_file.as_mut() {
+            let title = window.title();
+            let (outcome, close) = dialog(
+                ctx,
+                "large-file",
+                title,
+                vec2(upload_confirm::WIDTH, window.content_height),
+                main,
+                true,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(outcome) = outcome {
+                state.large_file_finished(outcome);
+            } else if close {
+                state.large_file_finished(upload_confirm::UploadConfirmOutcome {
+                    go_on: false,
+                    dont_show_again: false,
+                });
+            }
+        }
+
+        if let Some(window) = state.uploads.windows.file_exists.as_mut() {
+            let (outcome, close) = dialog(
+                ctx,
+                "file-exists",
+                t(s::FileExistWindow_Title),
+                vec2(file_exists::WIDTH, window.content_height),
+                main,
+                true,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(path) = outcome {
+                state.file_exists_finished(path);
+            } else if close {
+                let path = window.closed();
+                state.file_exists_finished(path);
+            }
+        }
+
+        if let Some(window) = state.uploads.windows.before_upload.as_mut() {
+            let (outcome, close) = dialog_resizable(
+                ctx,
+                "before-upload",
+                t(s::BeforeUploadWindow_Title),
+                vec2(before_upload::WIDTH, before_upload::HEIGHT),
+                vec2(before_upload::MIN_WIDTH, before_upload::MIN_HEIGHT),
+                main,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(outcome) = outcome {
+                state.before_upload_finished(outcome);
+            } else if close {
+                state.before_upload_finished(before_upload::BeforeUploadOutcome::Cancel);
+            }
+        }
+
+        let now = state.time;
+        let mut actions = Vec::new();
+        let mut previews = Vec::new();
+        for window in state.uploads.windows.after_uploads.iter_mut() {
+            if let Some(url) = window.wants_remote_preview() {
+                previews.push((window.key, url));
+            }
+            let title = window.title();
+            let key = window.key;
+            let (action, close) = dialog_resizable(
+                ctx,
+                &format!("after-upload-{key}"),
+                &title,
+                vec2(after_upload::WIDTH, after_upload::HEIGHT),
+                vec2(after_upload::MIN_WIDTH, after_upload::MIN_HEIGHT),
+                main,
+                |ui| window.ui(ui, &colors, now),
+            );
+            if let Some(action) = action {
+                actions.push((key, action));
+            } else if close {
+                actions.push((key, after_upload::AfterUploadAction::Close));
+            }
+        }
+        for (key, url) in previews {
+            state.load_after_upload_preview(key, url);
+        }
+        for (key, action) in actions {
+            state.after_upload_action(key, action);
+        }
+
+        if let Some(window) = state.uploads.windows.paste.as_mut() {
+            let (outcome, close) = dialog_resizable(
+                ctx,
+                "paste",
+                t(s::Paste_WindowTitle),
+                vec2(paste::WIDTH, paste::HEIGHT),
+                vec2(paste::MIN_WIDTH, paste::MIN_HEIGHT),
+                main,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(outcome) = outcome {
+                state.paste_finished(outcome);
+            } else if close {
+                state.paste_finished(paste::PasteOutcome::Cancel);
+            }
+        }
+
+        if let Some(window) = state.uploads.windows.text_upload.as_mut() {
+            let (outcome, close) = dialog_resizable(
+                ctx,
+                "text-upload",
+                text_upload::TextUpload::title(),
+                vec2(text_upload::WIDTH, text_upload::HEIGHT),
+                vec2(text_upload::MIN_WIDTH, text_upload::MIN_HEIGHT),
+                main,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(text) = outcome {
+                state.text_upload_finished(text);
+            } else if close {
+                state.text_upload_finished(None);
+            }
+        }
+
+        if let Some(window) = state.uploads.windows.shorten_url.as_mut() {
+            let (outcome, close) = dialog(
+                ctx,
+                "shorten-url",
+                t(s::ShortenURLWindow_Title),
+                vec2(shorten_url::WIDTH, window.content_height),
+                main,
+                false,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(request) = outcome {
+                state.shorten_url_finished(request);
+            } else if close {
+                state.shorten_url_finished(None);
+            }
+        }
+
+        if let Some(window) = state.uploads.windows.url_upload.as_mut() {
+            let (outcome, close) = dialog(
+                ctx,
+                "url-upload",
+                t(s::URLUploadWindow_Title),
+                vec2(url_upload::WIDTH, window.content_height),
+                main,
+                false,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(url) = outcome {
+                state.url_upload_finished(url);
+            } else if close {
+                state.url_upload_finished(None);
+            }
+        }
+
+        if let Some((window, _)) = state.uploads.windows.clipboard_upload.as_mut() {
+            let (outcome, close) = dialog_resizable(
+                ctx,
+                "clipboard-upload",
+                &clipboard_upload::ClipboardUpload::title(),
+                vec2(clipboard_upload::WIDTH, clipboard_upload::HEIGHT),
+                vec2(clipboard_upload::MIN_WIDTH, clipboard_upload::MIN_HEIGHT),
+                main,
+                |ui| window.ui(ui, &colors),
+            );
+            if let Some(outcome) = outcome {
+                state.clipboard_viewer_finished(outcome);
+            } else if close {
+                state.clipboard_viewer_finished(clipboard_upload::ClipboardOutcome::Cancel);
+            }
+        }
+    }
+
+    /// The drag-and-drop target: undecorated, topmost, at a corner of the screen.
+    fn drop_window(&mut self, ctx: &egui::Context) {
+        let state = &mut self.state;
+        let Some(window) = state.uploads.windows.drop_window.as_mut() else {
+            return;
+        };
+        let area = modlight_macos::system::visible_frame()
+            .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h)))
+            .unwrap_or_else(|| Rect::from_min_size(pos2(0.0, 25.0), vec2(1440.0, 850.0)));
+        let builder = ViewportBuilder::default()
+            .with_title(t(s::DragDropUploadWindow_DropHere))
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_resizable(false)
+            .with_always_on_top()
+            .with_taskbar(false)
+            .with_inner_size(window.window_size())
+            .with_position(window.position(area));
+        let colors = state.colors.clone();
+        let outcome = ctx.show_viewport_immediate(
+            ViewportId::from_hash_of("drop-window"),
+            builder,
+            |ui, _| {
+                let (hovering, dropped) = ui.ctx().input(|i| {
+                    (
+                        !i.raw.hovered_files.is_empty(),
+                        i.raw
+                            .dropped_files
+                            .iter()
+                            .map(|f| f.path().to_path_buf())
+                            .filter(|p| !p.as_os_str().is_empty())
+                            .collect::<Vec<_>>(),
+                    )
+                });
+                let outcome = window.ui(ui, &colors, hovering, dropped);
+                if outcome == Some(crate::dialogs::drop_window::DropOutcome::StartDrag) {
+                    ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+                }
+                outcome
+            },
+        );
+        if let Some(outcome) = outcome {
+            state.drop_window_outcome(outcome);
         }
     }
 
@@ -431,11 +797,17 @@ impl ModlightApp {
         crate::shell::ui(ui, &mut self.state, self.logo.as_ref());
         self.state.update_drag(&ctx);
         self.state.paint_drag_ghost(&ctx);
-        if self.state.windows.modal_open() {
+        if self.state.windows.modal_open() || self.state.uploads.modal_open() {
             crate::shell::block_input(&ctx, ui.max_rect());
         }
         if matches!(self.mode, Mode::Normal | Mode::Qa) {
             self.viewports(&ctx);
+            // `UpdateMainWindowTitle`: the system's title follows the progress too.
+            let title = self.state.uploads.tasks.title();
+            if title != self.window_title {
+                ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
+                self.window_title = title;
+            }
         }
         self.after(&ctx);
     }

@@ -1,106 +1,230 @@
 //! The menu bar icon and its menu (`TrayIconService`, `MainMenuBuilder.BuildTrayMenu`).
 //!
-//! Only in the real app: QA runs never create it. The menu carries what exists after
-//! phase 1, in upstream's order: the account (sign in, or "Signed in as" with its
-//! submenu), Settings, Show Modlight, Exit. Capture, upload and the task menus join it
-//! with the phases that build them.
+//! Only in the real app: QA runs never create it. The menu is built from the same
+//! [`Entry`] lists the window's menus use, in upstream's order, with what exists so far:
+//! the account, Upload, the after-capture and after-upload tasks, Settings, the
+//! screenshots folder, recent items, Show Modlight, Exit. Capture, Tools and the hotkey
+//! switch join it with phase 3.
 
 use std::sync::mpsc::{Receiver, channel};
 
+use modlight_core::icons;
 use modlight_core::l10n::{Arg, format, s, t};
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
+use tray_icon::menu::{
+    CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu,
+};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::commands::Command;
+use crate::menus::{Entry, Toggle};
 use crate::state::AppState;
 
-const SIGN_IN: &str = "sign-in";
-const ACCOUNT_SETTINGS: &str = "account-settings";
-const MODLIGHT_ACCOUNT: &str = "modlight-account";
-const SIGN_OUT: &str = "sign-out";
-const SETTINGS: &str = "settings";
-const SHOW: &str = "show";
 const EXIT: &str = "exit";
+/// Ids of entries that bring the app forward (they open a window) start with this;
+/// the rest ("q") act quietly, without showing hidden windows.
+const SHOWS: &str = "w";
+const QUIET: &str = "q";
 
 pub struct Tray {
     icon: TrayIcon,
-    /// The account line the menu was built for; a change rebuilds it.
-    built_for: String,
+    /// What the menu was built from; a change rebuilds it.
+    built_for: Vec<Entry>,
+    /// The command behind each id, by index.
+    commands: Vec<Command>,
     events: Receiver<String>,
 }
 
-fn build_menu(state: &AppState) -> Menu {
-    let menu = Menu::new();
-    let result = (|| -> Result<(), tray_icon::menu::Error> {
-        if state.account.is_signed_in() {
-            let label = format(
+/// `BuildTrayMenu`, as entries.
+pub fn tray_entries(state: &AppState) -> Vec<Entry> {
+    let uploads = !state.app_upload_settings().disable_upload;
+    let defaults = state.default_task_settings();
+    let mut entries = Vec::new();
+    if state.account.is_signed_in() {
+        entries.push(Entry::submenu(
+            format(
                 t(s::MainMenuBuilder_SignedInAs),
                 &[Arg::from(state.account_label())],
-            );
-            let account = Submenu::new(label, true);
-            account.append(&MenuItem::with_id(
-                ACCOUNT_SETTINGS,
-                t(s::MainMenuBuilder_AccountSettings),
-                true,
-                None,
-            ))?;
-            account.append(&MenuItem::with_id(
-                MODLIGHT_ACCOUNT,
-                t(s::MainMenuBuilder_ModlightAccount),
-                true,
-                None,
-            ))?;
-            account.append(&PredefinedMenuItem::separator())?;
-            account.append(&MenuItem::with_id(
-                SIGN_OUT,
-                t(s::MainMenuBuilder_SignOut),
-                true,
-                None,
-            ))?;
-            menu.append(&account)?;
-        } else {
-            menu.append(&MenuItem::with_id(
-                SIGN_IN,
-                t(s::MainMenuBuilder_SignIn),
-                true,
-                None,
-            ))?;
-        }
-        menu.append(&PredefinedMenuItem::separator())?;
-        menu.append(&MenuItem::with_id(
-            SETTINGS,
-            t(s::SettingsWindow_WindowTitle),
+            ),
+            icons::CIRCLE_USER,
             true,
-            None,
-        ))?;
-        menu.append(&PredefinedMenuItem::separator())?;
-        menu.append(&MenuItem::with_id(
-            SHOW,
-            t(s::MainMenuBuilder_ShowShareX),
-            true,
-            None,
-        ))?;
-        menu.append(&MenuItem::with_id(
-            EXIT,
-            t(s::MainMenuBuilder_Exit),
-            true,
-            None,
-        ))?;
-        Ok(())
-    })();
-    if let Err(error) = result {
-        log::warn!("Modlight: the tray menu could not be built: {error}");
+            vec![
+                Entry::item(
+                    t(s::MainMenuBuilder_AccountSettings),
+                    icons::CIRCLE_USER,
+                    Command::ShowSettings(Some(crate::settings::ACCOUNT_SECTION)),
+                ),
+                Entry::item(
+                    t(s::MainMenuBuilder_ModlightAccount),
+                    icons::CIRCLE_USER,
+                    Command::ShowSignIn,
+                ),
+                Entry::Separator,
+                Entry::item(
+                    t(s::MainMenuBuilder_SignOut),
+                    icons::LOG_OUT,
+                    Command::SignOut,
+                ),
+            ],
+        ));
+    } else {
+        entries.push(Entry::item(
+            t(s::MainMenuBuilder_SignIn),
+            icons::LOG_IN,
+            Command::ShowSignIn,
+        ));
     }
-    menu
+    entries.push(Entry::Separator);
+    entries.push(Entry::submenu(
+        t(s::MainMenuBuilder_Upload),
+        icons::UPLOAD,
+        uploads,
+        crate::uploads::upload_menu(),
+    ));
+    entries.push(Entry::Separator);
+    entries.push(Entry::submenu(
+        t(s::MainMenuBuilder_AfterCaptureTasks),
+        icons::IMAGE_UP,
+        true,
+        crate::uploads::after_capture_menu(defaults.after_capture_job),
+    ));
+    entries.push(Entry::submenu(
+        t(s::MainMenuBuilder_AfterUploadTasks),
+        icons::CLOUD_UPLOAD,
+        uploads,
+        crate::uploads::after_upload_menu(defaults.after_upload_job),
+    ));
+    entries.push(Entry::Separator);
+    entries.push(Entry::item(
+        t(s::SettingsWindow_WindowTitle),
+        icons::SETTINGS,
+        Command::ShowSettings(None),
+    ));
+    entries.push(Entry::Separator);
+    entries.push(Entry::item(
+        t(s::MainMenuBuilder_ScreenshotsFolder),
+        icons::FOLDER_OPEN,
+        Command::OpenScreenshotsFolder,
+    ));
+    entries.push(Entry::Separator);
+    let settings = state.app_upload_settings();
+    let recent = &state.uploads.tasks.recent.tasks;
+    if settings.recent_tasks_save && settings.recent_tasks_show_in_tray_menu && !recent.is_empty() {
+        let mut tasks: Vec<_> = recent.iter().collect();
+        if settings.recent_tasks_tray_menu_most_recent_first {
+            tasks.reverse();
+        }
+        let children = tasks
+            .into_iter()
+            .map(|task| {
+                let open = if !task.shortened_url.is_empty() {
+                    Command::OpenUrl(task.shortened_url.clone())
+                } else if !task.url.is_empty() {
+                    Command::OpenUrl(task.url.clone())
+                } else {
+                    Command::OpenFile(task.file_path.clone().into())
+                };
+                Entry::submenu(
+                    task.tray_menu_text(),
+                    icons::LINK,
+                    true,
+                    vec![
+                        Entry::item(
+                            t(s::MainMenuBuilder_Copy),
+                            icons::COPY,
+                            Command::CopyText(task.text().to_string()),
+                        ),
+                        Entry::item(t(s::MainMenuBuilder_Open), icons::EXTERNAL_LINK, open),
+                    ],
+                )
+            })
+            .collect();
+        entries.push(Entry::submenu(
+            t(s::MainMenuBuilder_RecentItems),
+            icons::CLIPBOARD_LIST,
+            true,
+            children,
+        ));
+    }
+    entries.push(Entry::item(
+        t(s::MainMenuBuilder_ShowShareX),
+        icons::MAXIMIZE,
+        Command::ShowMainWindow,
+    ));
+    entries.push(Entry::item(
+        t(s::MainMenuBuilder_Exit),
+        icons::LOG_OUT,
+        Command::Quit,
+    ));
+    entries
 }
 
-fn signature(state: &AppState) -> String {
-    format!(
-        "{}|{}|{:?}",
-        state.account.is_signed_in(),
-        state.account_label(),
-        state.language
+/// Whether choosing this brings the app's windows forward.
+fn shows_windows(command: &Command) -> bool {
+    !matches!(
+        command,
+        Command::SignOut
+            | Command::ToggleAfterUploadTask(_)
+            | Command::ToggleAfterCaptureTask(_)
+            | Command::CopyText(_)
+            | Command::OpenUrl(_)
+            | Command::OpenFile(_)
+            | Command::OpenScreenshotsFolder
     )
+}
+
+fn append(
+    target: &dyn Fn(&dyn IsMenuItem) -> Result<(), tray_icon::menu::Error>,
+    entries: &[Entry],
+    commands: &mut Vec<Command>,
+) -> Result<(), tray_icon::menu::Error> {
+    for entry in entries {
+        match entry {
+            Entry::Separator => target(&PredefinedMenuItem::separator())?,
+            Entry::Item {
+                label,
+                enabled,
+                toggle,
+                command,
+                ..
+            } => {
+                let id = match command {
+                    Some(Command::Quit) => EXIT.to_string(),
+                    Some(command) => {
+                        commands.push(command.clone());
+                        let kind = if shows_windows(command) { SHOWS } else { QUIET };
+                        format!("{kind}{}", commands.len() - 1)
+                    }
+                    None => String::new(),
+                };
+                match toggle {
+                    Toggle::Check(checked) | Toggle::Radio(checked) => {
+                        target(&CheckMenuItem::with_id(id, label, *enabled, *checked, None))?
+                    }
+                    Toggle::None => target(&MenuItem::with_id(id, label, *enabled, None))?,
+                }
+            }
+            Entry::Submenu {
+                label,
+                enabled,
+                children,
+                ..
+            } => {
+                let submenu = Submenu::new(label, *enabled);
+                append(&|item| submenu.append(item), children, commands)?;
+                target(&submenu)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn build_menu(entries: &[Entry]) -> (Menu, Vec<Command>) {
+    let menu = Menu::new();
+    let mut commands = Vec::new();
+    if let Err(error) = append(&|item| menu.append(item), entries, &mut commands) {
+        log::warn!("Modlight: the tray menu could not be built: {error}");
+    }
+    (menu, commands)
 }
 
 impl Tray {
@@ -119,32 +243,37 @@ impl Tray {
                 // are saved as they change, so there is nothing left to write.
                 std::process::exit(0);
             }
-            if id != SIGN_OUT {
+            if id.starts_with(SHOWS) {
                 modlight_macos::system::show_app_windows();
             }
             let _ = sender.send(id);
             wake.request_repaint();
         }));
+        let entries = tray_entries(state);
+        let (menu, commands) = build_menu(&entries);
         let tray = TrayIconBuilder::new()
             .with_icon(icon)
             .with_tooltip(modlight_core::APP_NAME)
-            .with_menu(Box::new(build_menu(state)))
+            .with_menu(Box::new(menu))
             .build()
             .map_err(|error| log::warn!("Modlight: the tray icon could not be created: {error}"))
             .ok()?;
         Some(Tray {
             icon: tray,
-            built_for: signature(state),
+            built_for: entries,
+            commands,
             events,
         })
     }
 
-    /// Rebuild the menu when the account or the language changed.
+    /// Rebuild the menu when anything it shows changed.
     pub fn update(&mut self, state: &AppState) {
-        let now = signature(state);
-        if now != self.built_for {
-            self.built_for = now;
-            self.icon.set_menu(Some(Box::new(build_menu(state))));
+        let entries = tray_entries(state);
+        if entries != self.built_for {
+            let (menu, commands) = build_menu(&entries);
+            self.icon.set_menu(Some(Box::new(menu)));
+            self.commands = commands;
+            self.built_for = entries;
         }
     }
 
@@ -152,15 +281,9 @@ impl Tray {
     pub fn commands(&self) -> Vec<Command> {
         self.events
             .try_iter()
-            .filter_map(|id| match id.as_str() {
-                SIGN_IN | MODLIGHT_ACCOUNT => Some(Command::ShowSignIn),
-                ACCOUNT_SETTINGS => Some(Command::ShowSettings(Some(
-                    crate::settings::ACCOUNT_SECTION,
-                ))),
-                SIGN_OUT => Some(Command::SignOut),
-                SETTINGS => Some(Command::ShowSettings(None)),
-                SHOW => Some(Command::ShowMainWindow),
-                _ => None,
+            .filter_map(|id| {
+                let index: usize = id.get(1..)?.parse().ok()?;
+                self.commands.get(index).cloned()
             })
             .collect()
     }

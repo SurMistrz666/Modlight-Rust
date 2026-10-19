@@ -2,8 +2,8 @@
 //! closure to run on the next frame.
 
 use std::future::Future;
-use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 
 use crate::state::AppState;
 
@@ -14,7 +14,7 @@ pub struct Runtime {
     runtime: Option<tokio::runtime::Runtime>,
     sender: Sender<Completion>,
     receiver: Receiver<Completion>,
-    ctx: Mutex<Option<egui::Context>>,
+    ctx: Arc<Mutex<Option<egui::Context>>>,
 }
 
 impl Runtime {
@@ -30,7 +30,7 @@ impl Runtime {
             runtime,
             sender,
             receiver,
-            ctx: Mutex::new(None),
+            ctx: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -77,6 +77,24 @@ impl Runtime {
                 ctx.request_repaint();
             }
         });
+    }
+
+    /// The runtime's handle, for work that keeps running on its own (the queue, tasks).
+    pub fn handle(&self) -> tokio::runtime::Handle {
+        self.runtime
+            .as_ref()
+            .map(|runtime| runtime.handle().clone())
+            .expect("the background runtime starts")
+    }
+
+    /// A function that repaints the window from any thread, once one is attached.
+    pub fn waker(&self) -> Arc<dyn Fn() + Send + Sync> {
+        let ctx = self.ctx.clone();
+        Arc::new(move || {
+            if let Some(ctx) = ctx.lock().ok().and_then(|c| c.clone()) {
+                ctx.request_repaint();
+            }
+        })
     }
 
     /// The completions that arrived since the last frame.

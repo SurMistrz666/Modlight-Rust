@@ -2659,6 +2659,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tray-icon",
+ "url",
 ]
 
 [[package]]
@@ -2688,6 +2689,7 @@ dependencies = [
 name = "modlight-macos"
 version = "0.7.7"
 dependencies = [
+ "block2 0.6.2",
  "hex",
  "libc",
  "log",

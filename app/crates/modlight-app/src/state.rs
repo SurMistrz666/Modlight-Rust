@@ -122,6 +122,17 @@ pub struct AppState {
     pub drop_hover: bool,
     /// The details drawer was the last thing clicked: arrows and Escape go to it.
     pub drawer_has_keys: bool,
+    /// How the app was started (set by the window).
+    pub mode: crate::app::Mode,
+    /// Tasks, the offline queue and the upload windows.
+    pub uploads: crate::uploads::Uploads,
+    /// The Upload tab's rows.
+    pub upload_tab: crate::upload_tab::UploadTab,
+    /// The queue as last read, and when (UI seconds).
+    pub queue_snapshot: Vec<modlight_core::upload::QueueItem>,
+    pub queue_snapshot_at: f64,
+    /// What "the clipboard" holds in QA and headless runs (the real one is never read).
+    pub qa_clipboard: Option<modlight_core::tasks::upload_manager::ClipboardContent>,
 }
 
 /// A request to the platform layer, handled after the frame is drawn.
@@ -129,6 +140,17 @@ pub struct AppState {
 pub enum Effect {
     OpenUrl(String),
     CopyText(String),
+    CopyImage(std::sync::Arc<image::RgbaImage>),
+    CopyFiles(Vec<PathBuf>),
+    ClearClipboard,
+    /// Show a file in Finder.
+    Reveal(PathBuf),
+    /// Open a file or folder with its app.
+    OpenFile(PathBuf),
+    PlaySound(
+        modlight_core::tasks::host::NotificationSound,
+        Option<String>,
+    ),
     Quit,
 }
 
@@ -144,13 +166,22 @@ impl AppState {
             page_size: modlight_core::library::pager::clamp_page_size(config.page_size()),
             ..MySpace::default()
         };
+        let rt = Runtime::new();
+        let api = Api::new(env!("CARGO_PKG_VERSION")).expect("the HTTP client starts");
+        let uploads = crate::uploads::Uploads::new(
+            api.clone(),
+            rt.handle(),
+            &env.profile,
+            modlight_core::tasks::settings::AppUploadSettings::from_config(&config),
+            rt.waker(),
+        );
         AppState {
             library_panel: config.library_panel(),
             folders_section: config.folders_section(),
             files_section: config.files_section(),
             env,
-            rt: Runtime::new(),
-            api: Api::new(env!("CARGO_PKG_VERSION")).expect("the HTTP client starts"),
+            rt,
+            api,
             config,
             account,
             admin: AdminFlag::default(),
@@ -183,6 +214,12 @@ impl AppState {
             scroll_to_top: false,
             drop_hover: false,
             drawer_has_keys: false,
+            mode: crate::app::Mode::Normal,
+            uploads,
+            upload_tab: crate::upload_tab::UploadTab::default(),
+            queue_snapshot: Vec::new(),
+            queue_snapshot_at: f64::NEG_INFINITY,
+            qa_clipboard: None,
         }
     }
 

@@ -17,8 +17,8 @@ use crate::commands::Command;
 use crate::state::AppState;
 use crate::theme::{Colors, Weight};
 use crate::widgets::{
-    Content, Field, Look, button, button_width, checkbox, icon_galley, job, layout, paint_icon,
-    trimmed, wrapped,
+    Content, Field, Look, button, button_width, checkbox, combo, icon_galley, job, layout,
+    paint_icon, trimmed, wrapped,
 };
 
 pub const ACCOUNT_SECTION: &str = "account.profile";
@@ -1352,94 +1352,6 @@ fn storage_page(ui: &mut Ui, colors: &Colors) {
         ui.add_space(8.0);
         hint(ui, colors, t(s::TaskSettingsWindow_ModlightFolderHint));
     });
-}
-
-/// A drop-down of `Button` look: the current choice and a chevron; a menu of options.
-fn combo<T: Clone + PartialEq>(
-    ui: &mut Ui,
-    colors: &Colors,
-    id: &str,
-    width: f32,
-    current: &T,
-    options: &[(T, String)],
-) -> Option<T> {
-    let label = options
-        .iter()
-        .find(|(v, _)| v == current)
-        .map(|(_, l)| l.clone())
-        .unwrap_or_default();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 32.0), Sense::click());
-    let painter = ui.painter();
-    painter.rect_filled(
-        rect,
-        6.0,
-        if response.hovered() {
-            colors.control_background_hover()
-        } else {
-            colors.control_background()
-        },
-    );
-    painter.rect_stroke(
-        rect,
-        6.0,
-        Stroke::new(1.0, colors.border()),
-        StrokeKind::Inside,
-    );
-    let text = layout(
-        ui,
-        trimmed(&label, 13.0, Weight::Normal, colors.text(), width - 40.0, 1),
-    );
-    painter.galley(
-        pos2(rect.left() + 8.0, rect.center().y - text.size().y / 2.0),
-        text,
-        colors.text(),
-    );
-    paint_icon(
-        ui,
-        painter,
-        pos2(rect.right() - 16.0, rect.center().y),
-        icons::CHEVRON_DOWN,
-        13.0,
-        colors.text_secondary(),
-    );
-    let mut picked = None;
-    egui::Popup::menu(&response)
-        .id(Id::new(("settings-combo", id)))
-        .frame(crate::menus::frame(colors))
-        .align(egui::RectAlign::BOTTOM_START)
-        .gap(2.0)
-        .show(|ui| {
-            ui.set_min_width(width - 12.0);
-            for (value, label) in options {
-                let selected = value == current;
-                let (r, row) = ui.allocate_exact_size(vec2(width - 12.0, 30.0), Sense::click());
-                if selected || row.hovered() {
-                    ui.painter()
-                        .rect_filled(r, 4.0, colors.control_background_hover());
-                }
-                let g = layout(
-                    ui,
-                    trimmed(
-                        label,
-                        13.0,
-                        Weight::Normal,
-                        colors.text(),
-                        r.width() - 16.0,
-                        1,
-                    ),
-                );
-                ui.painter().galley(
-                    pos2(r.left() + 8.0, r.center().y - g.size().y / 2.0),
-                    g,
-                    colors.text(),
-                );
-                if row.clicked() {
-                    picked = Some(value.clone());
-                    ui.close();
-                }
-            }
-        });
-    picked
 }
 
 fn label_row(ui: &mut Ui, colors: &Colors, label: &str, add: impl FnOnce(&mut Ui)) {

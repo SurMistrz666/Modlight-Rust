@@ -698,6 +698,18 @@ pub fn checkbox(
     label: Option<&str>,
     enabled: bool,
 ) -> Response {
+    checkbox_weighted(ui, colors, checked, label, enabled, Weight::SemiBold)
+}
+
+/// A checkbox whose label has its own weight (`FontWeight="Normal"` in a window's XAML).
+pub fn checkbox_weighted(
+    ui: &mut Ui,
+    colors: &Colors,
+    checked: &mut bool,
+    label: Option<&str>,
+    enabled: bool,
+    weight: Weight,
+) -> Response {
     let box_size = 20.0;
     let label_galley = label.map(|text| {
         layout(
@@ -705,7 +717,7 @@ pub fn checkbox(
             job(
                 text,
                 13.0,
-                Weight::SemiBold,
+                weight,
                 if enabled {
                     colors.text()
                 } else {
@@ -913,4 +925,152 @@ pub fn paint_text(
     let out = Rect::from_min_size(pos, galley.size());
     painter.galley(pos, galley, color);
     out
+}
+
+/// A drop-down of `Button` look: the current choice and a chevron; a menu of options.
+pub fn combo<T: Clone + PartialEq>(
+    ui: &mut Ui,
+    colors: &Colors,
+    id: &str,
+    width: f32,
+    current: &T,
+    options: &[(T, String)],
+) -> Option<T> {
+    combo_sized(ui, colors, id, width, 32.0, current, options)
+}
+
+/// [`combo`] at a given height (`MinHeight` of the window's own ComboBox).
+pub fn combo_sized<T: Clone + PartialEq>(
+    ui: &mut Ui,
+    colors: &Colors,
+    id: &str,
+    width: f32,
+    height: f32,
+    current: &T,
+    options: &[(T, String)],
+) -> Option<T> {
+    let label = options
+        .iter()
+        .find(|(v, _)| v == current)
+        .map(|(_, l)| l.clone())
+        .unwrap_or_default();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    let painter = ui.painter();
+    painter.rect_filled(
+        rect,
+        6.0,
+        if response.hovered() {
+            colors.control_background_hover()
+        } else {
+            colors.control_background()
+        },
+    );
+    painter.rect_stroke(
+        rect,
+        6.0,
+        Stroke::new(1.0, colors.border()),
+        StrokeKind::Inside,
+    );
+    let text = layout(
+        ui,
+        trimmed(&label, 13.0, Weight::Normal, colors.text(), width - 40.0, 1),
+    );
+    painter.galley(
+        pos2(rect.left() + 8.0, rect.center().y - text.size().y / 2.0),
+        text,
+        colors.text(),
+    );
+    paint_icon(
+        ui,
+        painter,
+        pos2(rect.right() - 16.0, rect.center().y),
+        modlight_core::icons::CHEVRON_DOWN,
+        13.0,
+        colors.text_secondary(),
+    );
+    let mut picked = None;
+    egui::Popup::menu(&response)
+        .id(egui::Id::new(("settings-combo", id)))
+        .frame(crate::menus::frame(colors))
+        .align(egui::RectAlign::BOTTOM_START)
+        .gap(2.0)
+        .show(|ui| {
+            ui.set_min_width(width - 12.0);
+            for (value, label) in options {
+                let selected = value == current;
+                let (r, row) = ui.allocate_exact_size(vec2(width - 12.0, 30.0), Sense::click());
+                if selected || row.hovered() {
+                    ui.painter()
+                        .rect_filled(r, 4.0, colors.control_background_hover());
+                }
+                let g = layout(
+                    ui,
+                    trimmed(
+                        label,
+                        13.0,
+                        Weight::Normal,
+                        colors.text(),
+                        r.width() - 16.0,
+                        1,
+                    ),
+                );
+                ui.painter().galley(
+                    pos2(r.left() + 8.0, r.center().y - g.size().y / 2.0),
+                    g,
+                    colors.text(),
+                );
+                if row.clicked() {
+                    picked = Some(value.clone());
+                    ui.close();
+                }
+            }
+        });
+    picked
+}
+
+/// `ShareX.Brush.Checkered.Small`: 8 px tiles of the skin's two checker colours, the
+/// background under pictures that may be transparent. Drawn as one repeating texture.
+pub fn paint_checkered(ui: &Ui, colors: &Colors, rect: Rect, radius: f32) {
+    let (a, b) = (colors.checker_a(), colors.checker_b());
+    let id = egui::Id::new(("checkered-small", a.to_array(), b.to_array()));
+    let texture = ui
+        .ctx()
+        .memory_mut(|m| m.data.get_temp::<egui::TextureHandle>(id));
+    let texture = match texture {
+        Some(texture) => texture,
+        None => {
+            let mut image = egui::ColorImage::filled([8, 8], a);
+            for y in 0..8 {
+                for x in 0..8 {
+                    if (x < 4) == (y < 4) {
+                        image.pixels[y * 8 + x] = b;
+                    }
+                }
+            }
+            let options = egui::TextureOptions {
+                wrap_mode: egui::TextureWrapMode::Repeat,
+                ..egui::TextureOptions::NEAREST
+            };
+            let texture = ui.ctx().load_texture("checkered-small", image, options);
+            ui.ctx()
+                .memory_mut(|m| m.data.insert_temp(id, texture.clone()));
+            texture
+        }
+    };
+    let uv = Rect::from_min_max(
+        pos2(0.0, 0.0),
+        pos2(rect.width() / 8.0, rect.height() / 8.0),
+    );
+    if radius > 0.0 {
+        // Round the corners by painting the plain colour first and the tiles inset.
+        ui.painter().rect_filled(rect, radius, a);
+        let inner = rect.shrink(radius * 0.3);
+        let uv = Rect::from_min_max(
+            pos2(0.0, 0.0),
+            pos2(inner.width() / 8.0, inner.height() / 8.0),
+        );
+        ui.painter().image(texture.id(), inner, uv, Color32::WHITE);
+    } else {
+        ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+    }
 }

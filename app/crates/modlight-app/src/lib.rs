@@ -20,4 +20,6 @@ pub mod strip;
 pub mod sync;
 pub mod theme;
 pub mod tray;
+pub mod upload_tab;
+pub mod uploads;
 pub mod widgets;
