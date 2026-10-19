@@ -506,23 +506,27 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
         "my-space" | "toasts" => {
             load_library(state, ctx, files(), 9);
             if screen == "toasts" {
+                use modlight_core::l10n::{Arg, format, s, t, uploaders};
                 state.time = 0.0;
                 state.toast_upload(
-                    "Uploaded to Design",
+                    &format(t(s::MainWindow_ToastUploadedTo), &[Arg::from("Design")]),
                     "mountain-sunset.jpg",
                     "https://files.example.com/alex/q8",
                     false,
                 );
                 state.notice(
                     modlight_core::icons::FOLDER_INPUT,
-                    "Moved 2 files to Screenshots",
+                    &format(
+                        t(s::MySpace_MovedToast),
+                        &[Arg::from(2usize), Arg::from("Screenshots")],
+                    ),
                     "",
                     false,
                 );
                 state.toast_upload(
-                    "Upload failed",
+                    t(s::MainWindow_ToastFailed),
                     "huge-video.mov",
-                    "The file is larger than your account allows.",
+                    t(uploaders::Modlight_File_too_large),
                     true,
                 );
             }

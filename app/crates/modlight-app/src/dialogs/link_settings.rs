@@ -186,7 +186,14 @@ impl LinkSettings {
             }
             x += w + 7.0;
         }
-        child.allocate_exact_size(vec2(width, row_y - row_top + 47.0), Sense::hover());
+        // The chips were allocated where they stand, which already moved the cursor
+        // below them; only the wrap panel's bottom margin (7) may still be missing.
+        let bottom = row_y + 40.0 + 7.0;
+        let cursor = child.cursor().top();
+        if bottom > cursor {
+            child.add_space(bottom - cursor);
+        }
+        let _ = row_top;
         state_text(&mut child, colors, &self.expiry_state());
         child.add_space(14.0);
         crate::widgets::rule(&mut child, colors.border(), 0.0, 0.0);
