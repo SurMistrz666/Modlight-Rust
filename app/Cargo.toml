@@ -44,6 +44,9 @@ dirs = "6"
 tempfile = "3"
 roxmltree = "0.20"
 log = "0.4"
+base64 = "0.22"
+rusqlite = { version = "0.40", features = ["bundled"] }
+notify = { version = "8.2", default-features = false, features = ["macos_fsevent"] }
 
 [profile.release]
 opt-level = 3

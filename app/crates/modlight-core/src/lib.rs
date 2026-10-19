@@ -5,10 +5,12 @@ pub mod account;
 pub mod config;
 pub mod culture;
 pub mod format;
+pub mod history;
 pub mod icons;
 pub mod l10n;
 pub mod library;
 pub mod messages;
+pub mod names;
 pub mod sync;
 pub mod theme;
 
