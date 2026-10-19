@@ -299,6 +299,54 @@ def tus(run, lib):
     lib.compare_rows("tus: quota", 'SELECT used_quota FROM "user" WHERE id = %s' % parity.sql_quote(owner))
 
 
+# ── Media metadata at finalize (libvips, ffprobe) ───────────────────────────
+
+SCRATCH = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../../_scratch/srv-library"))
+MEDIA_FILES = [
+    ("media/corpus/anim.gif", "image/gif"), ("media/corpus/anim.webp", "image/webp"),
+    ("media/corpus/eagle.jpg", "image/jpeg"), ("media/corpus/parrot.png", "image/png"),
+    ("media/corpus/parrot.avif", "image/avif"), ("media/corpus/tiny.png", None),
+    ("media/corpus/landscape_o6.jpg", "image/jpeg"), ("media/corpus/cactus.heic", "image/heic"),
+    ("media/corpus/earth.tiff", "image/tiff"), ("media/corpus/eagle_grey.jpg", "application/octet-stream"),
+    ("fixtures/clip.mp4", "video/mp4"), ("fixtures/tone.mp3", "audio/mpeg"),
+]
+
+
+def media_meta(run, lib):
+    owner, tag = lib.seed_user("mm", naming_scheme="filename")
+    token = lib.seed_token(owner, "upload")
+    pair = run.pair()
+    for rel, ctype in MEDIA_FILES:
+        path = os.path.join(SCRATCH, rel)
+        with open(path, "rb") as f:
+            data = f.read()
+        ct, body = multipart(files=[("file", os.path.basename(rel), ctype, data)])
+        a, b = pair.both("POST", "/upload", headers={"x-api-key": token, "Content-Type": ct}, raw=body, origin=False)
+        shape = lambda r: {"status": r.status, "body": norm_upload_body(r)}
+        run.compare("media meta: upload " + os.path.basename(rel), shape(a), shape(b))
+    # One more through tus (finalize from the tus file).
+    with open(os.path.join(SCRATCH, "media/corpus/eagle.webp"), "rb") as f:
+        data = f.read()
+    statuses = []
+    for br in (pair.ref, pair.rust):
+        meta = "filename %s,filetype %s" % (b64("eagle-tus.webp"), b64("image/webp"))
+        res = br.request("POST", "/api/files", headers={"Tus-Resumable": "1.0.0", "x-api-key": token,
+                                                         "Upload-Length": str(len(data)), "Upload-Metadata": meta,
+                                                         "Content-Type": "application/offset+octet-stream"},
+                         raw=data, origin=False)
+        # Finished at creation: finalized, then answered like an unknown id
+        # (the same upstream quirk as a zero-length upload).
+        statuses.append(res.status)
+    run.compare("media meta: tus creation-with-upload status", statuses[0], statuses[1])
+    # Durations are rounded to 0.1 s: ffprobe 5.1 (the reference image, Debian
+    # 12) counts an MP3's encoder padding and ffprobe 9 (Homebrew) does not.
+    lib.compare_rows(
+        "media meta: rows",
+        'SELECT filename, ext, kind, mime_type, size, width, height, blurhash, frames, '
+        'round(duration_seconds::numeric, 1), fps FROM uploads WHERE owner_id = %s ORDER BY filename'
+        % parity.sql_quote(owner))
+
+
 # ── /api/uploads (GET, PATCH, DELETE) ──────────────────────────────────────
 
 
@@ -537,7 +585,7 @@ def main():
     ref_db = parity.Db(rc, rd, parity.read_env_file(a.ref_env)["AUTH_SECRET"])
     rust_db = parity.Db(uc, ud, parity.read_env_file(a.rust_env)["AUTH_SECRET"])
     lib = Library(run, ref_db, rust_db)
-    for name, fn in [("sharex", sharex), ("tus", tus), ("uploads_api", uploads_api)]:
+    for name, fn in [("sharex", sharex), ("tus", tus), ("uploads_api", uploads_api), ("media_meta", media_meta)]:
         if a.only and a.only != name:
             continue
         fn(run, lib)
