@@ -152,8 +152,8 @@ use std::sync::OnceLock;
 pub use image::{Blob, Image};
 pub use operation::{Arg, Operation};
 pub use sharp::{
-    FailOn, Fit, GifOptions, HeifOptions, JpegOptions, Kernel, Metadata, OutputInfo, PngOptions, Position, Region,
-    Resize, Sharp, WebpOptions,
+    CompositeLayer, FailOn, Fit, GifOptions, HeifOptions, JpegOptions, Kernel, Metadata, OutputInfo, PngOptions,
+    Position, Region, Resize, Sharp, TextInput, WebpOptions,
 };
 
 /// What went wrong inside libvips (or before reaching it, for invalid

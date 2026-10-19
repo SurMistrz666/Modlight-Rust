@@ -1,10 +1,6 @@
 //! Port of `lib/media/playback-health.ts`: "Will this video actually play
 //! well for the people I send it to?"
 //!
-//! PARTIAL: everything except `diagnosePlayback`, which starts with
-//! `mediaKind()` from `lib/media/mime.ts` (ported on the srv-library branch);
-//! it is a dozen lines over the pieces below and lands with the merge.
-//!
 //! Answered from the upload row alone - width, height, size, and a frame total
 //! from `frames` or from duration and rate - so it costs nothing to ask and can
 //! be asked at the moment the owner is looking at the file, which is the only
@@ -135,7 +131,8 @@ pub struct PlaybackSource {
     pub fps: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PlaybackFault {
     /// Wider than any hardware decoder will take.
     Oversized,
@@ -152,7 +149,10 @@ impl PlaybackFault {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Serialises as the object `diagnosePlayback` returns (the media page hands
+/// it to the client as `playback`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlaybackDiagnosis {
     /// Ordered, never empty. `oversized` first: it is the one with a repair.
     pub faults: Vec<PlaybackFault>,
@@ -237,6 +237,59 @@ pub fn longest_edge(size: &AvSourceSize) -> f64 {
     size.width.unwrap_or(0.0).max(size.height.unwrap_or(0.0))
 }
 
+impl From<&crate::db::models::Upload> for PlaybackSource {
+    fn from(u: &crate::db::models::Upload) -> Self {
+        PlaybackSource {
+            mime_type: Some(u.mime_type.clone()),
+            ext: Some(u.ext.clone()),
+            size: Some(u.size as f64),
+            width: u.width.map(f64::from),
+            height: u.height.map(f64::from),
+            frames: u.frames.map(f64::from),
+            duration_seconds: u.duration_seconds,
+            fps: u.fps,
+        }
+    }
+}
+
+/// What is wrong with this video's shape, or `None` when nothing is.
+///
+/// `None` is the answer for everything that is not a measured video, which is
+/// the overwhelming majority of rows: a picture, an audio file, a paste, and
+/// every video whose dimensions nobody ever filled in.
+pub fn diagnose_playback(source: &PlaybackSource) -> Option<PlaybackDiagnosis> {
+    use crate::media::mime::{MediaKind, media_kind};
+    if media_kind(source.mime_type.as_deref(), source.ext.as_deref()) != MediaKind::Video {
+        return None;
+    }
+    let size = AvSourceSize { width: source.width, height: source.height };
+    let edge = longest_edge(&size);
+    if edge <= 0.0 || edge.is_nan() {
+        return None;
+    }
+
+    let mut faults = Vec::new();
+    if edge > HARDWARE_DECODER_MAX_EDGE {
+        faults.push(PlaybackFault::Oversized);
+    }
+    let bpp = bits_per_pixel(source);
+    let starved = bpp.is_some_and(|b| b > 0.0 && b < STARVED_BITS_PER_PIXEL);
+    if starved {
+        faults.push(PlaybackFault::Starved);
+    }
+    if faults.is_empty() {
+        return None;
+    }
+    Some(PlaybackDiagnosis {
+        faults,
+        edge,
+        bits_per_pixel: bpp,
+        starvation_factor: if starved { bpp.map(|b| js_round(TYPICAL_BITS_PER_PIXEL / b)) } else { None },
+        repairable: crate::media::av_targets::needs_web_rescue(Some(&size)),
+        repair_edge: crate::media::av_targets::WEB_MAX_EDGE,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     //! tests/unit/playback-health.test.ts, the parts that do not need
@@ -262,6 +315,20 @@ mod tests {
     /// The same owner, the same capture rig, a recording nobody has complained about.
     fn healthy_wide() -> PlaybackSource {
         PlaybackSource { size: Some(16_134_048.0), frames: Some(218.0), duration_seconds: Some(7.267), ..reported() }
+    }
+
+    /// An ordinary 1080p clip. Nothing about its shape is remarkable.
+    fn ordinary() -> PlaybackSource {
+        PlaybackSource {
+            mime_type: Some("video/mp4".into()),
+            ext: Some("mp4".into()),
+            size: Some(2_061_014.0),
+            width: Some(1280.0),
+            height: Some(720.0),
+            frames: Some(395.0),
+            duration_seconds: Some(13.19),
+            fps: Some(30.0),
+        }
     }
 
     fn source(frames: Option<f64>, duration: Option<f64>, fps: Option<f64>) -> PlaybackSource {
@@ -360,5 +427,129 @@ mod tests {
         assert_eq!(bits_per_pixel(&s(1000.0, None, None, Some(10.0))), None);
         assert_eq!(bits_per_pixel(&s(0.0, Some(100.0), Some(100.0), Some(10.0))), None);
         assert_eq!(bits_per_pixel(&s(1000.0, Some(100.0), Some(100.0), None)), None);
+    }
+
+    // describe("diagnosePlayback")
+
+    fn video(size: f64, w: Option<f64>, h: Option<f64>, frames: Option<f64>) -> PlaybackSource {
+        PlaybackSource {
+            mime_type: Some("video/mp4".into()),
+            ext: Some("mp4".into()),
+            size: Some(size),
+            width: w,
+            height: h,
+            frames,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn names_both_faults_on_the_recording_that_started_this() {
+        let d = diagnose_playback(&reported()).unwrap();
+        assert_eq!(d.faults, [PlaybackFault::Oversized, PlaybackFault::Starved]);
+        assert_eq!(d.edge, 5056.0);
+        assert!(d.repairable);
+        assert_eq!(d.repair_edge, WEB_MAX_EDGE);
+        assert_eq!(d.starvation_factor, Some(15.0));
+        let d = diagnose_playback(&healthy_wide()).unwrap();
+        assert_eq!(d.faults, [PlaybackFault::Oversized]);
+        assert!(d.repairable);
+        assert_eq!(d.starvation_factor, None);
+        assert_eq!(diagnose_playback(&ordinary()), None);
+    }
+
+    #[test]
+    fn leaves_the_file_just_above_the_line_alone() {
+        // 0.00805 bits per pixel, 2.06 bits per macroblock: the margin.
+        let just_above = PlaybackSource {
+            size: Some(7_549_000.0),
+            width: Some(1080.0),
+            height: Some(1920.0),
+            frames: Some(3619.0),
+            duration_seconds: Some(120.6),
+            fps: Some(30.0),
+            ..ordinary()
+        };
+        assert!(bits_per_pixel(&just_above).unwrap() * MACROBLOCK_PIXELS > MIN_BITS_PER_MACROBLOCK);
+        assert_eq!(diagnose_playback(&just_above), None);
+    }
+
+    #[test]
+    fn fires_exactly_at_the_wall_and_judges_the_longest_edge() {
+        let at = |w: f64| PlaybackSource {
+            width: Some(w),
+            height: Some(1000.0),
+            frames: Some(1.0),
+            size: Some(50_000_000.0),
+            ..ordinary()
+        };
+        assert_eq!(diagnose_playback(&at(HARDWARE_DECODER_MAX_EDGE)), None);
+        assert_eq!(diagnose_playback(&at(HARDWARE_DECODER_MAX_EDGE + 1.0)).unwrap().faults, [PlaybackFault::Oversized]);
+        let tall = PlaybackSource {
+            width: Some(2160.0),
+            height: Some(4320.0),
+            size: Some(400_000_000.0),
+            frames: Some(100.0),
+            ..ordinary()
+        };
+        let d = diagnose_playback(&tall).unwrap();
+        assert_eq!(d.faults, [PlaybackFault::Oversized]);
+        assert_eq!(d.edge, 4320.0);
+    }
+
+    #[test]
+    fn fails_closed_on_a_row_nobody_has_measured() {
+        assert_eq!(diagnose_playback(&video(900.0, None, None, None)), None);
+        let no_frames = diagnose_playback(&video(900.0, Some(5056.0), Some(1924.0), None)).unwrap();
+        assert_eq!(no_frames.faults, [PlaybackFault::Oversized]);
+        assert_eq!(no_frames.bits_per_pixel, None);
+        assert_eq!(no_frames.starvation_factor, None);
+    }
+
+    #[test]
+    fn is_about_video_and_nothing_else() {
+        for (mime, ext) in
+            [("image/png", "png"), ("image/gif", "gif"), ("audio/mpeg", "mp3"), ("application/pdf", "pdf")]
+        {
+            let s = PlaybackSource {
+                mime_type: Some(mime.into()),
+                ext: Some(ext.into()),
+                ..video(400.0, Some(8000.0), Some(8000.0), Some(1.0))
+            };
+            assert_eq!(diagnose_playback(&s), None, "{mime}");
+        }
+        let octet = PlaybackSource { mime_type: Some("application/octet-stream".into()), ..reported() };
+        assert_eq!(diagnose_playback(&octet).unwrap().faults, [PlaybackFault::Oversized, PlaybackFault::Starved]);
+    }
+
+    #[test]
+    fn offers_no_repair_for_a_starved_file_that_is_already_small() {
+        let small = PlaybackSource {
+            size: Some(460_000.0),
+            width: Some(1624.0),
+            height: Some(916.0),
+            frames: Some(480.0),
+            duration_seconds: Some(16.0),
+            fps: Some(30.0),
+            ..ordinary()
+        };
+        let d = diagnose_playback(&small).unwrap();
+        assert_eq!(d.faults, [PlaybackFault::Starved]);
+        assert!(!d.repairable);
+        for edge in [WEB_MAX_EDGE - 1.0, WEB_MAX_EDGE, WEB_MAX_EDGE + 1.0, 5056.0] {
+            if let Some(d) = diagnose_playback(&video(1000.0, Some(edge), Some(400.0), Some(500.0))) {
+                assert_eq!(d.repairable, edge > WEB_MAX_EDGE);
+            }
+        }
+    }
+
+    #[test]
+    fn serialises_like_the_upstream_object() {
+        let v = serde_json::to_value(diagnose_playback(&healthy_wide()).unwrap()).unwrap();
+        assert_eq!(
+            v.as_object().unwrap().keys().collect::<Vec<_>>(),
+            ["faults", "edge", "bitsPerPixel", "starvationFactor", "repairable", "repairEdge"]
+        );
+        assert_eq!(v["faults"], serde_json::json!(["oversized"]));
     }
 }

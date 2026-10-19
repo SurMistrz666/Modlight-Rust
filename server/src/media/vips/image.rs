@@ -435,6 +435,86 @@ impl Image {
         Operation::new("arrayjoin")?.set("in", Arg::Images(images)).set("across", across).call()?.image("out")
     }
 
+    /// `vips_arrayjoin(images, across, shim, background, halign, valign)`:
+    /// every argument sharp's join passes (`halign`/`valign` as nicks).
+    pub fn arrayjoin_with(
+        images: &[Image],
+        across: i32,
+        shim: i32,
+        background: &[f64],
+        halign: &str,
+        valign: &str,
+    ) -> Result<Image, VipsError> {
+        Operation::new("arrayjoin")?
+            .set("in", Arg::Images(images))
+            .set("across", across)
+            .set("shim", shim)
+            .set("background", background)
+            .set("halign", Arg::Nick(halign))
+            .set("valign", Arg::Nick(valign))
+            .call()?
+            .image("out")
+    }
+
+    /// `vips_flatten(in, background)`: alpha composited over a solid colour.
+    pub fn flatten(&self, background: &[f64]) -> Result<Image, VipsError> {
+        Operation::new("flatten")?.set("in", self).set("background", background).call()?.image("out")
+    }
+
+    /// `vips_composite(images, modes, x, y, compositing_space)`: `images[0]`
+    /// is the base; every other image is blended over it with its mode
+    /// (`VipsBlendMode` values) at its offset.
+    pub fn composite(
+        images: &[Image],
+        modes: &[i32],
+        x: &[i32],
+        y: &[i32],
+        compositing_space: &str,
+    ) -> Result<Image, VipsError> {
+        Operation::new("composite")?
+            .set("in", Arg::Images(images))
+            .set("mode", Arg::Ints(modes))
+            .set("compositing_space", Arg::Nick(compositing_space))
+            .set("x", Arg::Ints(x))
+            .set("y", Arg::Ints(y))
+            .call()?
+            .image("out")
+    }
+
+    /// `vips_text(text, ...)`: Pango markup rendered to an image (`rgba` for
+    /// colour, else a one-band mask). `font` and `fontfile` as sharp's text
+    /// input passes them; `width`/`height`/`autofit_dpi` are not used here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn text(
+        text: &str,
+        font: Option<&str>,
+        fontfile: Option<&str>,
+        rgba: bool,
+        align: &str,
+        justify: bool,
+        spacing: i32,
+        wrap: &str,
+        dpi: Option<i32>,
+    ) -> Result<Image, VipsError> {
+        let mut op = Operation::new("text")?
+            .set("text", Arg::Str(text))
+            .set("align", Arg::Nick(align))
+            .set("justify", justify)
+            .set("rgba", rgba)
+            .set("spacing", spacing)
+            .set("wrap", Arg::Nick(wrap));
+        if let Some(d) = dpi {
+            op = op.set("dpi", d);
+        }
+        if let Some(f) = font {
+            op = op.set("font", Arg::Str(f));
+        }
+        if let Some(f) = fontfile {
+            op = op.set("fontfile", Arg::Str(f));
+        }
+        op.call()?.image("out")
+    }
+
     /// Raw pixels out (`vips_image_write_to_memory`). Evaluates the pipeline.
     pub fn write_to_memory(&self) -> Result<Vec<u8>, VipsError> {
         super::init()?;
