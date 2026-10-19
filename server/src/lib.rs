@@ -18,6 +18,7 @@ pub mod auth_helpers;
 pub mod avatar;
 pub mod background;
 pub mod config;
+pub mod data;
 pub mod db;
 pub mod error;
 pub mod format;
