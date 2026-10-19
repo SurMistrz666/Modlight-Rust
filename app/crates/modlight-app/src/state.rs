@@ -137,6 +137,12 @@ pub struct AppState {
     pub captures: crate::capture_flow::Captures,
     /// The scrolling capture window.
     pub scrolling: Option<crate::scrolling::ScrollingWindow>,
+    /// The Download tab (phase 3, media).
+    pub downloads: crate::download_tab::DownloadTab,
+    /// The components list and its window (phase 3, media).
+    pub components: crate::components_window::Components,
+    /// The app's own update check and its windows (phase 3, media).
+    pub updates: crate::update_window::Updates,
 }
 
 /// A request to the platform layer, handled after the frame is drawn.
@@ -228,6 +234,9 @@ impl AppState {
             qa_clipboard: None,
             captures: crate::capture_flow::Captures::new(&env_profile, env_qa),
             scrolling: None,
+            downloads: Default::default(),
+            components: Default::default(),
+            updates: Default::default(),
         }
     }
 

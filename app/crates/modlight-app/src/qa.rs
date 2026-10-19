@@ -76,6 +76,15 @@ pub const SCREENS: &[&str] = &[
     "quick-task-editor",
     "scrolling-capture",
     "my-space-wide",
+    // Phase 3, media (`qa_media::SCREENS`).
+    "tab-download",
+    "tab-download-busy",
+    "tab-download-missing",
+    "download-youtube",
+    "components",
+    "settings-components",
+    "update-available",
+    "update-download",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.
@@ -538,6 +547,9 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
     if let Some(size) = crate::qa_capture::prepare(screen, state) {
         return size;
     }
+    if let Some(size) = crate::qa_media::prepare(screen, state) {
+        return size;
+    }
     match screen {
         "my-space" | "toasts" | "my-space-wide" => {
             load_library(state, ctx, files(), 9);
@@ -762,6 +774,7 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
 pub fn is_main_window(screen: &str) -> bool {
     !crate::qa_uploads::is_dialog(screen)
         && !crate::qa_capture::is_dialog(screen)
+        && !crate::qa_media::is_dialog(screen)
         && !matches!(
             screen,
             "sign-in"
@@ -813,6 +826,10 @@ impl eframe::App for ShotApp {
             return;
         }
         if let Some(wanted) = crate::qa_capture::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
+        if let Some(wanted) = crate::qa_media::draw(&self.screen, ui, state) {
             self.wanted = wanted;
             return;
         }

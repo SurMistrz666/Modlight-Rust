@@ -20,6 +20,10 @@ pub mod tasks;
 pub mod theme;
 pub mod upload;
 pub mod watch;
+// Phase 3, media: components, the Download tab, the app's own updates.
+pub mod components;
+pub mod download;
+pub mod update;
 
 /// The product's name, as upstream's `Program.AppName`.
 pub const APP_NAME: &str = "Modlight";

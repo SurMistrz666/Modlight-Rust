@@ -45,14 +45,7 @@ pub fn ui(ui: &mut Ui, state: &mut AppState, logo: Option<&egui::TextureHandle>)
     match state.tab {
         Tab::MySpace => crate::myspace::view::ui(&mut child, state),
         Tab::Upload => crate::upload_tab::ui(&mut child, state, content),
-        Tab::Download => plan_tab(
-            &mut child,
-            state,
-            icons::DOWNLOAD,
-            s::MainWindow_DownloadTitle,
-            s::MainWindow_DownloadBody,
-            None,
-        ),
+        Tab::Download => crate::download_tab::ui(&mut child, state, content),
         Tab::Create => capture_tab(&mut child, state),
         Tab::Tools => tools_tab(&mut child, state),
         Tab::Admin => plan_tab(
