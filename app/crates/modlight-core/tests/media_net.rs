@@ -36,11 +36,14 @@ enum Answer {
     Status(u16),
 }
 
+/// The requests seen: path and Range header.
+type Hits = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
 #[derive(Clone)]
 struct Stub {
     origin: String,
     routes: Arc<Mutex<HashMap<String, Answer>>>,
-    hits: Arc<Mutex<Vec<(String, Option<String>)>>>,
+    hits: Hits,
 }
 
 impl Stub {
