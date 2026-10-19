@@ -27,6 +27,7 @@ pub mod http;
 pub mod i18n;
 pub mod ids;
 pub mod jobs;
+pub mod js_date;
 pub mod mail;
 pub mod mail_settings;
 pub mod mail_templates;
@@ -50,6 +51,7 @@ pub mod storage;
 pub mod theme_cookies;
 pub mod themes;
 pub mod upload;
+pub mod uploads;
 
 pub use config::Config;
 pub use error::{AppError, AppResult};

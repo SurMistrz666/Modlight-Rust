@@ -5,4 +5,6 @@
 //! verbatim because the library code reads the same preferences.
 
 pub mod folders;
+pub mod upload_query;
+pub mod uploads;
 pub mod user_prefs;
