@@ -79,10 +79,22 @@ pub fn tray_entries(state: &AppState) -> Vec<Entry> {
     }
     entries.push(Entry::Separator);
     entries.push(Entry::submenu(
+        t(s::MainMenuBuilder_Capture),
+        icons::CAMERA,
+        true,
+        crate::capture_flow::capture_menu(state, true),
+    ));
+    entries.push(Entry::submenu(
         t(s::MainMenuBuilder_Upload),
         icons::UPLOAD,
         uploads,
         crate::uploads::upload_menu(),
+    ));
+    entries.push(Entry::submenu(
+        t(s::MainMenuBuilder_Tools),
+        icons::WRENCH,
+        true,
+        crate::capture_flow::tools_menu(),
     ));
     entries.push(Entry::Separator);
     entries.push(Entry::submenu(
@@ -102,6 +114,20 @@ pub fn tray_entries(state: &AppState) -> Vec<Entry> {
         t(s::SettingsWindow_WindowTitle),
         icons::SETTINGS,
         Command::ShowSettings(None),
+    ));
+    let disabled = state.captures.hotkeys.disabled;
+    entries.push(Entry::item(
+        if disabled {
+            t(s::MainMenuBuilder_EnableHotkeys)
+        } else {
+            t(s::MainMenuBuilder_DisableHotkeys)
+        },
+        if disabled {
+            icons::KEYBOARD
+        } else {
+            icons::KEYBOARD_OFF
+        },
+        Command::ToggleHotkeys,
     ));
     entries.push(Entry::Separator);
     entries.push(Entry::item(
@@ -173,6 +199,11 @@ fn shows_windows(command: &Command) -> bool {
             | Command::OpenUrl(_)
             | Command::OpenFile(_)
             | Command::OpenScreenshotsFolder
+            | Command::Capture(..)
+            | Command::StartRecording(..)
+            | Command::ToggleHotkeys
+            | Command::ToggleShowCursor
+            | Command::SetScreenshotDelay(_)
     )
 }
 
