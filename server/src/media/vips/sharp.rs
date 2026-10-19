@@ -715,7 +715,9 @@ impl Sharp {
     /// `.extract(region)`: before the resize when no resize has been asked
     /// for yet, after it otherwise (sharp decides by call order too).
     pub fn extract(mut self, region: Region) -> Sharp {
-        if self.resize.is_some() || self.extract_pre.is_some() {
+        // isResizeExpected(...) || widthPre !== -1
+        let resize_expected = self.resize.is_some_and(|r| r.width.is_some() || r.height.is_some());
+        if resize_expected || self.extract_pre.is_some() {
             self.extract_post = Some(region);
         } else {
             self.extract_pre = Some(region);
@@ -1781,7 +1783,7 @@ fn webp_save(o: &WebpOptions) -> Result<Operation, VipsError> {
         .set("lossless", o.lossless)
         .set("near_lossless", o.near_lossless)
         .set("smart_subsample", o.smart_subsample)
-        // `smart_deblock` arrived in libvips 8.15.2; older releases never
+        // `smart_deblock` arrived in libvips 8.16; older releases never
         // deblocked smartly, which is what `false` asks for.
         .set_if_known("smart_deblock", o.smart_deblock)
         .set("preset", Arg::Nick(o.preset.nick()))

@@ -69,10 +69,12 @@
 //!    `VipsForeignLoad` class (ImageMagick, PDF, JPEG XL, Ultra HDR, FITS,
 //!    ...) that a Homebrew or Debian libvips may carry, so a file production
 //!    refuses ("unsupported image format") is refused here too, and the
-//!    larger decoder attack surface of those builds is unreachable. One
-//!    difference cannot be blocked from here: Debian's and Homebrew's libheif
-//!    can decode HEVC (`.heic`) pixels, which sharp-libvips cannot (it reads
-//!    the header and fails on decode).
+//!    larger decoder attack surface of those builds is unreachable. Their
+//!    libheif can also decode HEVC (`.heic`) pixels, which sharp-libvips
+//!    cannot: it reads the header and fails on the pixels, and so does this
+//!    binding while [`sharp::HEVC_DECODE`] is off. Loads are always
+//!    sequential, as in sharp 0.34.5 (its `sequentialRead: false` never
+//!    reaches the C++ side, which looks for an `access` key).
 //! 7. **Timeouts.** [`Image::set_timeout`] is sharp's `.timeout({seconds})`:
 //!    an `eval` signal handler that kills the evaluation once it has run that
 //!    long. libvips only checks between progress updates, so an encoder that
@@ -110,13 +112,32 @@
 //! the arguments from sharp's `src/pipeline.cc` into `vips/sharp.rs`; the
 //! reference sources are in `_scratch/srv-library/ref-src/sharp@0.34.5`.
 //!
-//! # Not ported (no upstream server code uses them)
+//! # Parity, measured
 //!
-//! `fit: contain` (embed on a background), `rotate(angle)`, `flip`, `flop`,
-//! `flatten`, `composite`, `join`, `create`, `text`, `trim`, `extend`,
-//! colour operations, TIFF/JP2/JXL output, and file input/output. The
-//! media agent adds what `convert.ts`, `motion.ts` and `card-render.ts`
-//! need (`flatten`, `join`, `composite`, `text`) following the recipe above.
+//! Checked on 2026-10-19 against the reference container (sharp 0.34.5 on
+//! libvips 8.17.3, linux-arm64) with a corpus of 20 files: JPEG (EXIF-rotated,
+//! ICC-tagged, greyscale, CMYK, a 2400 px one on the shrink-on-load path),
+//! PNG with alpha, WebP, GIF and WebP animations, TIFF, AVIF, an AVIF with the
+//! `avis` brand, HEIC, 1x1 and 3x2 pictures. `imageMetaFromBuffer` (size,
+//! frames, blurhash), `makeThumbnail` and `encodeAvatar` gave byte-identical
+//! results through this binding on Homebrew's libvips 8.18, except CMYK input:
+//! a small colour shift from the ICC engine build (mean 3/255 per channel, two
+//! blurhash digits). On Debian 13's libvips 8.16.1 (the same tests all pass)
+//! CMYK matches too, but two of the 20 blurhashes differ in one digit (the
+//! 32 px reduce of an older libvips) and one WebP differs by a few bytes
+//! (older libwebp): an image built on libvips 8.17 or newer is the closest
+//! match. The blurhash encoder matches the npm package on 580 reference
+//! vectors (`tests/fixtures/blurhash_vectors.json`), with macOS's and glibc's
+//! libm alike.
+//!
+//! # Not ported yet
+//!
+//! Used by upstream modules outside this port and left for the media agent:
+//! `flatten` (convert.ts, the PDF path), `join: { animated }` (motion.ts),
+//! `composite` and `text` input (card-render.ts; SVG input itself is here).
+//! Used nowhere upstream: `fit: contain`, `rotate(angle)`, `flip`, `flop`,
+//! `trim`, `extend`, colour operations, TIFF/JP2/JXL output, file input and
+//! output.
 
 mod ffi;
 pub mod image;
