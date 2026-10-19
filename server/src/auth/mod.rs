@@ -8,15 +8,25 @@
 //!
 //! Module map:
 //!
-//! | Module | Status | Upstream |
-//! |---|---|---|
-//! | [`cookies`] | done | cookie names, attributes, signed values (`cookies/index.mjs`, better-call `crypto.mjs`) |
-//! | [`session`] | done | `getSession` incl. refresh and expiry (`api/routes/session.mjs`, `db/internal-adapter.mjs`) |
-//! | [`api`] | layout only | the `/api/auth/*` endpoints (`app/api/auth/[...all]/route.ts`) |
-//! | [`password`] | layout only | scrypt hashes + legacy bcrypt (`lib/auth.ts` `verifyUserPassword`) |
-//! | [`two_factor`] | layout only | TOTP, backup codes, trusted devices (`plugins/two-factor/`) |
-//! | [`admin`] | layout only | admin plugin endpoints and server calls (`plugins/admin/`) |
-//! | [`email`] | layout only | e-mail verification JWT, reset-password tokens |
+//! | Module | Upstream |
+//! |---|---|
+//! | [`api`] | `app/api/auth/[...all]/route.ts`, better-call `router.mjs`, better-auth `api/index.mjs` |
+//! | [`endpoint`] | `api/to-auth-endpoints.mjs`, better-call `endpoint.mjs` / `context.mjs` (the call pipeline, hooks) |
+//! | [`routes`] | `api/routes/*.mjs` (core endpoints) |
+//! | [`two_factor`] | `plugins/two-factor/` |
+//! | [`admin`] | `plugins/admin/` |
+//! | [`server`] | the `auth.api.*` calls server code makes |
+//! | [`adapter`] | `db/internal-adapter.mjs` + the drizzle adapter + database hooks |
+//! | [`validate`] | better-call `runValidation` over zod 4 schemas |
+//! | [`origin`] | `api/middlewares/origin-check.mjs` |
+//! | [`rate_limit`] | `api/rate-limiter/index.mjs` |
+//! | [`ip`] | `utils/get-request-ip.mjs`, core `utils/ip.mjs` |
+//! | [`cookies`] | cookie names, attributes, signed values |
+//! | [`session`] | `getSession` incl. refresh and expiry |
+//! | [`email`] | verification tokens and lib/auth.ts's mail callbacks |
+//! | [`password`] | scrypt hashes + legacy bcrypt (`lib/auth.ts` `verifyUserPassword`) |
+//! | [`crypto`] | ids, symmetric encryption, JWT, TOTP |
+//! | [`error`] | `APIError` and the error-code tables |
 //!
 //! `lib/auth-helpers.ts` (`getSession`, `requireUser`, `requireAdmin`) lives in
 //! [`crate::auth_helpers`]; API tokens are not Better Auth and live in
@@ -40,15 +50,27 @@
 //!   `maxQuota = DEFAULT_USER_QUOTA`;
 //! - plugins: `admin()`, `twoFactor({ issuer: APP_NAME })`, `nextCookies()`.
 
+// Endpoints answer with `APIError`s that carry a status, a JSON body and
+// headers; returning them by value keeps the ports readable, and none of this
+// is on a hot path.
+#![allow(clippy::result_large_err)]
+
+pub mod adapter;
 pub mod admin;
 pub mod api;
 pub mod cookies;
 pub mod crypto;
 pub mod email;
+pub mod endpoint;
 pub mod error;
+pub mod ip;
+pub mod origin;
 pub mod password;
+pub mod rate_limit;
+pub mod routes;
 pub mod server;
 pub mod session;
 pub mod two_factor;
+pub mod validate;
 
 pub use session::{AuthSession, RefreshPolicy, SessionLookup, SessionOutput};

@@ -27,6 +27,7 @@ const fn ec(code: &'static str, message: &'static str) -> ErrorCode {
 pub mod base {
     use super::{ErrorCode, ec};
     pub const USER_NOT_FOUND: ErrorCode = ec("USER_NOT_FOUND", "User not found");
+    pub const PROVIDER_NOT_FOUND: ErrorCode = ec("PROVIDER_NOT_FOUND", "Provider not found");
     pub const FAILED_TO_CREATE_USER: ErrorCode = ec("FAILED_TO_CREATE_USER", "Failed to create user");
     pub const FAILED_TO_CREATE_SESSION: ErrorCode = ec("FAILED_TO_CREATE_SESSION", "Failed to create session");
     pub const FAILED_TO_GET_SESSION: ErrorCode = ec("FAILED_TO_GET_SESSION", "Failed to get session");
@@ -87,6 +88,8 @@ pub mod two_factor {
     pub const INVALID_BACKUP_CODE: ErrorCode = ec("INVALID_BACKUP_CODE", "Invalid backup code");
     pub const INVALID_CODE: ErrorCode = ec("INVALID_CODE", "Invalid code");
     pub const INVALID_TWO_FACTOR_COOKIE: ErrorCode = ec("INVALID_TWO_FACTOR_COOKIE", "Invalid two factor cookie");
+    pub const TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE: ErrorCode =
+        ec("TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE", "Too many attempts. Please request a new code.");
 }
 
 /// `ADMIN_ERROR_CODES`.
