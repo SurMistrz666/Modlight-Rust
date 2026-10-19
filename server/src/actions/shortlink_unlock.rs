@@ -34,11 +34,11 @@ async fn verify_shortlink_password(ctx: ActionCtx) -> ActionResult {
         return Ok(json!({ "ok": false, "error": "rate-limited" }));
     }
 
-    // `code` is the stored code, possibly scoped as `tag/leaf`. A number is
-    // bound as its text, as the driver sends it; nothing else can match a
-    // varchar.
+    // `code` is the stored code, possibly scoped as `tag/leaf`. node-postgres
+    // sends a number or a boolean as its text (`true` can be a code); arrays
+    // and objects become literals no stored code equals.
     let link: Option<(uuid::Uuid, Option<String>)> = match code {
-        Value::String(_) | Value::Number(_) => {
+        Value::String(_) | Value::Number(_) | Value::Bool(_) => {
             sqlx::query_as(r#"select "id", "password_hash" from "short_links" where "short_links"."code" = $1 limit 1"#)
                 .bind(js_string(code))
                 .fetch_optional(&ctx.state.db)

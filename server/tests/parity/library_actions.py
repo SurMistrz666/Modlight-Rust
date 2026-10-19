@@ -554,6 +554,7 @@ def folders():
     call("not an array", "moveUploadsToFolder", "abc", projects)
     call("empty-string folder", "moveUploadsToFolder", [up["d"]], "")
     call("missing folder argument", "moveUploadsToFolder", [up["e"]])
+    call("missing folder argument keeps a filed upload where it is", "moveUploadsToFolder", [up["a"], up["c"]])
     folder_rows("after moveUploadsToFolder")
 
     # countUnfiledUploads and moveFolder have no action id on the reference: no
@@ -774,6 +775,10 @@ def shortlinks():
     act(pair, "delete unknown", "shortlinks", "deleteShortLink", [str(uuid.uuid4())])
     act(pair, "delete non-uuid", "shortlinks", "deleteShortLink", ["abc"])
     act(pair, "delete null", "shortlinks", "deleteShortLink", [None])
+    act(pair, "delete without an id", "shortlinks", "deleteShortLink", [])
+    act(pair, "undefined id", "shortlinks", "retargetShortLink", [UNDEFINED, "example.net"])
+    act(pair, "boolean id", "shortlinks", "deleteShortLink", [True])
+    sl("a code spelled true", {"target": "example.com/t", "customCode": "true"})
     two("delete own", "deleteShortLink", [a_ids], [u_ids])
     link_rows("after retarget and delete")
     act(pair, "own links after", "shortlinks", "listShortLinks", [], post=redact_hash)
@@ -1147,6 +1152,15 @@ def instance():
         lock_dir(locked, False)
     act(pair, "purge once storage gives it up", "admin", "purgeAllOrphans", ["1"])
     files("after the purge", skeys)
+
+    # Any disposition but "delete" leaves the files (as "keep" does), but only
+    # "keep" reports them as orphaned: upstream answers `orphaned: failed` (0).
+    odd, _ = lib.seed_user("ino")
+    NAMES.add(odd, "odd")
+    seed_upload(lib, odd, "o1" + SFX, created_at=t(30), size=5)
+    act(pair, "an unknown disposition", "admin", "deleteUserAccount", [odd, "bogus"])
+    act(pair, "missing disposition", "admin", "loadOrphans", [])
+    act(pair, "purge them", "admin", "purgeAllOrphans", ["1"])
     rows("orphan rows at the end", 'SELECT count(*) FROM uploads WHERE owner_id IS NULL')
 
 

@@ -566,6 +566,17 @@ async fn folder_actions_move_count_and_list() {
         .await
         .unwrap();
     assert_eq!(parent.to_string(), c_id);
+    // An undefined parent writes only the bare base slug (drizzle drops the
+    // undefined column; freeSlug compared `parent_id = NULL`, no clash ever).
+    h.rpc(Some(&me), "folders", "moveFolder", json!([b_id, c_id])).await;
+    let out = h.rpc(Some(&me), "folders", "moveFolder", json!([b_id])).await;
+    assert_eq!(out, json!({ "ok": { "$undefined": 1 }, "revalidate": true }));
+    let (slug, parent): (String, Uuid) =
+        sqlx::query_as(&format!(r#"select "slug", "parent_id" from "folders" where "id" = '{b_id}'"#))
+            .fetch_one(&h.pool)
+            .await
+            .unwrap();
+    assert_eq!((slug.as_str(), parent.to_string()), ("b", c_id.clone()));
 
     h.upload(Some("me"), "u1", 1, "").await;
     h.upload(Some("me"), "u2", 1, "").await;

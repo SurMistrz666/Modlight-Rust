@@ -53,13 +53,13 @@ fn target_arg(v: Option<&Value>) -> Result<Option<String>, ActionError> {
     }
 }
 
-/// A short-link id bound to the uuid column as drizzle would bind it: a
-/// string as is (Postgres refuses a malformed one), null as NULL (matches
-/// nothing), anything else refused by Postgres too.
+/// A short-link id bound to the uuid column as node-postgres binds it: a
+/// string as is (Postgres refuses a malformed one), null and undefined as
+/// NULL (matches nothing), anything else as text no uuid parses.
 fn id_arg(v: Option<&Value>) -> Result<Option<String>, ActionError> {
     match v {
+        _ if is_nullish(v) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
-        Some(Value::Null) => Ok(None),
         Some(Value::Number(n)) => Ok(Some(n.to_string())),
         _ => Err(ActionError::thrown("invalid input syntax for type uuid")),
     }
