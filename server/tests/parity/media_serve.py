@@ -260,9 +260,13 @@ def area_fix1(ctx, f, tag):
         ("download ?w=1", "download", {}, "?w=1"),
         ("raw ?w=64 falling back to the original", "raw", {}, "?w=64"),
         ("raw ?h=1 falling back to the original", "raw", {}, "?h=1"),
+        ("raw ?w=1200 resized still of a capped picture", "raw", {}, "?w=1200"),
+        ("raw ?w=64 Sec-Fetch-Dest image tile of a capped picture", "raw", {"Sec-Fetch-Dest": "image"}, "?w=64"),
     ]
     for i, (label, action, hdr, q) in enumerate(bypasses):
         info = f["fix1_%d" % i]
+        if "picture" in label:
+            action = action.replace("raw.txt", "raw")
         seed.set_cols(info["id"], max_views=1)
         path = "/%s/%s/%s%s" % (tag, info["code"], action, q)
         refs, rusts = [], []
@@ -831,6 +835,8 @@ def main():
     f["gate_expired"] = up("png", "gexp")
     for i in range(9):
         f["fix1_%d" % i] = up("txt", "fx%d" % i)
+    for i in (9, 10):
+        f["fix1_%d" % i] = up("jpg", "fx%d" % i)
     f["fix1_page_text"] = up("txt", "fxpt")
     f["fix1_page_image"] = up("png", "fxpi")
     f["fix1_encrypted"] = up("mlenc", "fxen")
