@@ -133,6 +133,12 @@ pub struct AppState {
     pub queue_snapshot_at: f64,
     /// What "the clipboard" holds in QA and headless runs (the real one is never read).
     pub qa_clipboard: Option<modlight_core::tasks::upload_manager::ClipboardContent>,
+    /// The Download tab (phase 3, media).
+    pub downloads: crate::download_tab::DownloadTab,
+    /// The components list and its window (phase 3, media).
+    pub components: crate::components_window::Components,
+    /// The app's own update check and its windows (phase 3, media).
+    pub updates: crate::update_window::Updates,
 }
 
 /// A request to the platform layer, handled after the frame is drawn.
@@ -220,6 +226,9 @@ impl AppState {
             queue_snapshot: Vec::new(),
             queue_snapshot_at: f64::NEG_INFINITY,
             qa_clipboard: None,
+            downloads: Default::default(),
+            components: Default::default(),
+            updates: Default::default(),
         }
     }
 

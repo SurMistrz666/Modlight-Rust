@@ -974,6 +974,7 @@ fn page(
         "account.storage" => storage_page(ui, colors),
         "application.theme" => theme_page(ui, state, colors),
         "application.general" => general_page(ui, state, colors),
+        "application.components" => crate::components_window::settings_page(ui, state, colors),
         _ => {}
     }
 }

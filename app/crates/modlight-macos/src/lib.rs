@@ -11,5 +11,7 @@ pub mod network;
 pub mod sound;
 pub mod system;
 pub mod windows;
+// Phase 3, media: the YouTube sign-in window.
+pub mod webview;
 
 pub use keychain::KeychainStore;

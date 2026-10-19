@@ -87,7 +87,7 @@ pub fn latest_known(component: &Component) -> String {
         .unwrap_or_default()
 }
 
-fn remember_latest(component: &Component, version: &str) {
+pub fn remember_latest(component: &Component, version: &str) {
     if let Ok(mut map) = LATEST.lock() {
         map.get_or_insert_with(HashMap::new)
             .insert(component.id.to_string(), version.to_string());
