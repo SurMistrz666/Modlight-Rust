@@ -203,6 +203,31 @@ class Pages(object):
         self.compare(name + " (title)", title_of(doc), (rust.get("meta") or {}).get("title"))
 
 
+def ref_app_layout(flight):
+    """The (app) layout's data as the reference rendered it (srv-auth's panel.py)."""
+    applier = flight.one("ThemeApplier")
+    transfers = flight.one("TransfersProvider")
+    shell = flight.one("AppShell")
+    reminders = flight.elements("DuplicateReminder")
+    return {
+        "theme": applier.get("theme") if isinstance(applier, dict) else applier,
+        "background": applier.get("background") if isinstance(applier, dict) else None,
+        "transferFolders": transfers.get("folders") if isinstance(transfers, dict) else transfers,
+        "defaultFolderId": transfers.get("defaultFolderId") if isinstance(transfers, dict) else None,
+        "user": shell.get("user") if isinstance(shell, dict) else shell,
+        "sidebar": shell.get("sidebar") if isinstance(shell, dict) else None,
+        "defaultCollapsed": shell.get("defaultCollapsed") if isinstance(shell, dict) else None,
+        "duplicateReminder": reminders[0] if reminders else None,
+    }
+
+
+def app_layout(pages, name, doc, rust):
+    """The panel shell around a library page: folder tree, kind counts, stats,
+    wallpaper, avatar and the duplicate reminder, all from the library's data
+    functions."""
+    pages.compare(name + " ((app) layout)", ref_app_layout(Flight(doc)), (rust.get("layouts") or {}).get("(app)"))
+
+
 def dashboard(pages, owner_id, tag, query, name):
     doc, rust = pages.outcome("dashboard " + name, "/dashboard", query)
     if "props" not in rust:
@@ -210,6 +235,8 @@ def dashboard(pages, owner_id, tag, query, name):
     f = Flight(doc)
     p = rust["props"]
     pages.title("dashboard " + name, doc, rust)
+    if name in ("all", "folder with sub"):
+        app_layout(pages, "dashboard " + name, doc, rust)
     toolbar = f.one("Toolbar")
     pages.compare("dashboard %s (toolbar)" % name, toolbar, {
         "search": p.get("search") or "", "sort": p["sort"], "view": p["view"], "kind": p.get("kind") or "",
@@ -305,6 +332,33 @@ def main():
                     ("empty folder", "folder=%s&kind=audio" % fc)]:
         dashboard(pages, owner, tag, q, name)
     pages.outcome("dashboard non-uuid folder (error)", "/dashboard", "folder=abc")
+
+    # The shell of a fuller account: wallpaper, avatar, default folder, a quota
+    # and a duplicate reminder that is due (more than 10 redundant copies).
+    rich, rich_tag = lib.seed_user("pr", max_quota=5000000, background_dim=33, theme="midnight",
+                                   image="avatars/%s-0123456789abcdef.webp" % ("libpr" + sfx),
+                                   background_key="backgrounds/x-fedcba9876543210.webp")
+    rf = seed_folder(lib, rich, "Inbox")
+    lib.both_sql('UPDATE "user" SET default_folder_id = %s WHERE id = %s' % (parity.sql_quote(rf), parity.sql_quote(rich)))
+    for n in range(12):
+        seed_upload(lib, rich, "prd%d%s" % (n, sfx), size=1000 + n, checksum="e" * 64,
+                    created_at="2026-05-01T00:00:%02d.000Z" % n, folder_id=rf if n % 2 else None)
+    rpair = run.pair()
+    parity.signed_in(rpair, ref_db, rust_db, rich)
+    rpages = Pages(run, lib, rpair)
+    doc, rust = rpages.outcome("rich account folders", "/dashboard/folders")
+    if "props" in rust:
+        app_layout(rpages, "rich account folders", doc, rust)
+        shell = rust["layouts"]["(app)"]
+        run.compare("pages: rich account (the seed reaches every branch)",
+                    [True, True, True, True],
+                    [shell["duplicateReminder"] is not None, shell["background"] is not None,
+                     shell["user"]["image"] is not None, shell["defaultFolderId"] is not None])
+    rpair.ref.cookies["ml_dupes_snooze"] = rpair.rust.cookies["ml_dupes_snooze"] = str(10 ** 13)
+    rpair.ref.cookies["ml_sidebar"] = rpair.rust.cookies["ml_sidebar"] = "collapsed"
+    doc, rust = rpages.outcome("rich account, snoozed and collapsed", "/dashboard/folders")
+    if "props" in rust:
+        app_layout(rpages, "rich account, snoozed and collapsed", doc, rust)
 
     # /dashboard/folders
     for name, q in [("root", ""), ("alpha", "folder=" + fa), ("gamma", "folder=" + fc),
