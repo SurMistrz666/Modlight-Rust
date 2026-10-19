@@ -1,0 +1,32 @@
+[package]
+name = "modlight-core"
+description = "Modlight App without windows: texts, formats, skins, settings and their sync, the account, the library's logic."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+modlight-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+hex.workspace = true
+log.workspace = true
+rand.workspace = true
+rusqlite.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+url.workspace = true
+notify.workspace = true
+image.workspace = true
+regex = "1"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[build-dependencies]
+roxmltree.workspace = true
+serde_json.workspace = true
