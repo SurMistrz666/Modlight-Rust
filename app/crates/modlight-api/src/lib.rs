@@ -30,5 +30,15 @@ pub use library::{
     MAX_DELETE_IDS, MAX_MOTION_BYTES, MAX_THUMBNAIL_BYTES, ROOT_FOLDER, THUMBNAIL_TIMEOUT,
     UploadQuery,
 };
+pub use mime::{
+    DEFAULT_MIME_TYPE, is_image_mime_type, mime_type_from_extension, mime_type_from_file_name,
+};
 pub use models::*;
 pub use signin::{SignInFailure, SignedIn, display_name};
+pub use tus::{
+    TransferOutcome, TransferReason, TransferResult, TusClient, TusFile, TusSession, TusTimings,
+};
+pub use upload::{
+    DEFAULT_BUFFER_SIZE, LiveOutcome, LiveUpload, ServerAnswer, UploadRefusal, UploadSource,
+    buffer_size_for_power,
+};
