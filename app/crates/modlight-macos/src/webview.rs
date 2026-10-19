@@ -147,6 +147,9 @@ mod mac {
     /// How long YouTube is given to settle before the jar is read.
     const SETTLE_SECONDS: f64 = 0.8;
 
+    /// The tail of Safari's user agent.
+    const SAFARI_PRODUCT: &str = "Version/26.0 Safari/605.1.15";
+
     struct Session {
         window: Retained<NSWindow>,
         web_view: Retained<WKWebView>,
@@ -374,6 +377,11 @@ mod mac {
             let configuration = WKWebViewConfiguration::new(mtm);
             // Nothing of this browser outlives the window.
             configuration.setWebsiteDataStore(&WKWebsiteDataStore::nonPersistentDataStore(mtm));
+            // WebKit's bare user agent names no browser, and Google's sign-in refuses
+            // what it cannot recognise; this appends Safari's product token, as Safari's
+            // own user agent ends.
+            configuration
+                .setApplicationNameForUserAgent(Some(&NSString::from_str(SAFARI_PRODUCT)));
             WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &configuration)
         };
         let delegate = Delegate::new(mtm);
