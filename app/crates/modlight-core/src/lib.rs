@@ -2,16 +2,19 @@
 //! formats, skins, icons, settings and their sync, the account, and the library's logic.
 
 pub mod account;
+pub mod capture;
 pub mod config;
 pub mod culture;
 pub mod dotnet;
 pub mod format;
 pub mod history;
+pub mod hotkeys;
 pub mod icons;
 pub mod l10n;
 pub mod library;
 pub mod messages;
 pub mod names;
+pub mod recording;
 pub mod sync;
 pub mod tasks;
 pub mod theme;

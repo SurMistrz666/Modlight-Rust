@@ -133,6 +133,21 @@ pub fn lookup(name: &str) -> Option<Key> {
     generated::NAMES.iter().position(|n| *n == name).map(Key)
 }
 
+/// `EnumExtensions.GetLocalizedDescription`: the `{Type}_{Value}` text of
+/// ShareX.HelpersLib's table when there is one, else the `[Description]` upstream gives
+/// the value (`description`), else the value's name.
+pub fn enum_text(type_name: &str, value: &str, description: Option<&'static str>) -> String {
+    for project in ["ShareX.HelpersLib", "ShareX.ScreenCaptureLib", "ShareX"] {
+        if let Some(key) = lookup(&format!("{project}:{type_name}_{value}")) {
+            let text = t(key);
+            if !text.is_empty() {
+                return text.to_string();
+            }
+        }
+    }
+    description.unwrap_or(value).to_string()
+}
+
 /// How many strings the tables hold.
 pub fn count() -> usize {
     generated::COUNT
