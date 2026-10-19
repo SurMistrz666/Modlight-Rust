@@ -372,6 +372,24 @@ pub async fn warm_mail_settings(state: &AppState) {
 
 // ── Writing ─────────────────────────────────────────────────────────────────
 
+/// What `patch.password` asks for.
+///
+/// Empty/undefined means "leave the stored password alone": a blank field in
+/// a form is how a browser renders "we are not showing you this", so treating
+/// it as "clear the password" would wipe the credential every time somebody
+/// changed the port. Clearing is a separate, explicit act.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasswordPatch {
+    /// No password, or one `patch.password.length > 0` does not hold for.
+    Keep,
+    /// A non-empty string: encrypted and stored.
+    Set(String),
+    /// A non-string value with a positive `length` (an array, an object
+    /// carrying one): upstream's `encryptSecret` throws a TypeError on it,
+    /// after the six plain keys were written.
+    Unencryptable,
+}
+
 /// `MailSettingsPatch`.
 #[derive(Debug, Clone)]
 pub struct MailSettingsPatch {
@@ -379,8 +397,7 @@ pub struct MailSettingsPatch {
     pub port: f64,
     pub security: String,
     pub user: String,
-    /// Empty/absent means "leave the stored password alone".
-    pub password: Option<String>,
+    pub password: PasswordPatch,
     pub from: String,
     pub from_name: String,
 }
@@ -407,11 +424,14 @@ pub async fn save_mail_settings(state: &AppState, patch: &MailSettingsPatch) -> 
         set_setting(&state.db, key, Some(value)).await?;
     }
 
-    let password_changed = patch.password.as_deref().is_some_and(|p| !p.is_empty());
-    if password_changed {
-        let boxed =
-            encrypt_secret(&state.config.auth.secret, patch.password.as_deref().unwrap_or(""), SecretPurpose::Smtp)?;
+    let password_changed = patch.password != PasswordPatch::Keep;
+    if let PasswordPatch::Set(password) = &patch.password {
+        let boxed = encrypt_secret(&state.config.auth.secret, password, SecretPurpose::Smtp)?;
         set_setting(&state.db, keys::SMTP_PASSWORD_ENC, Some(&boxed)).await?;
+    } else if patch.password == PasswordPatch::Unencryptable {
+        anyhow::bail!(
+            "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView."
+        );
     } else if before.get(keys::SMTP_HOST).map(String::as_str).unwrap_or("") != js_trim(&patch.host)
         || before.get(keys::SMTP_USER).map(String::as_str).unwrap_or("") != js_trim(&patch.user)
     {
