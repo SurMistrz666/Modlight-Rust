@@ -1016,8 +1016,9 @@ def instance():
         if not isinstance(ok, dict) or "sample" not in ok:
             return
         mine = [s for s in ok["sample"] if "<dtag>" in s.get("key", "") or "<ktag>" in s.get("key", "")]
+        # Filtered, not sorted: the walk order (depth first, names sorted) is compared too.
         env["ok"] = {"supported": ok["supported"], "driver": ok["driver"], "truncated": ok["truncated"],
-                     "mine": sorted(mine, key=lambda s: s["key"])}
+                     "mine": mine}
 
     act(pair, "scan (this run's objects)", "admin", "runStorageScan", [], post=scan_view)
 
