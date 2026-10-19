@@ -257,7 +257,7 @@ async fn dispatch(
 
     match action_kind(action) {
         ActionKind::Download => {
-            if !gate.admit_stored_bytes(true).await? {
+            if !gate.admit_content(true).await? {
                 return Ok(not_found());
             }
             Ok(stream_media(state, media, range.as_deref(), true).await)
@@ -266,7 +266,16 @@ async fn dispatch(
         // fetched by the player while the page is loading or while a pointer is
         // moving over the bar.
         ActionKind::Timeline if action == TIMELINE_TRACK_ACTION => Ok(timeline_track_action(state, media, ask).await),
-        ActionKind::Timeline => Ok(timeline_sheet_action(state, media, ask).await),
+        ActionKind::Timeline => {
+            let res = timeline_sheet_action(state, media, ask).await;
+            // Upstream counts no timeline request; for a capped file the sheet
+            // (frames of the video) needs the grant or a view (security fix 1).
+            let sheet_gate = Gate { should_count: false, ..gate };
+            if res.status() == StatusCode::OK && !sheet_gate.admit_content(false).await? {
+                return Ok(not_found());
+            }
+            Ok(res)
+        }
         ActionKind::Raw => raw_action(&gate, ask, range.as_deref()).await,
         // On-the-fly conversion / "download as…". The set of targets depends
         // entirely on the file: media::download_menu is what the UI renders.
@@ -311,7 +320,8 @@ fn unlocked(state: &AppState, ask: &Ask, media: &Upload) -> bool {
     )
 }
 
-/// Who pays for a response that carries the stored bytes.
+/// Who pays for a response that carries the file's content.
+#[derive(Clone, Copy)]
 struct Gate<'a> {
     state: &'a AppState,
     media: &'a Upload,
@@ -336,8 +346,10 @@ impl Gate<'_> {
         self.consume(download).await
     }
 
-    /// Security fix 1 at the moment the stored bytes are about to go out.
-    async fn admit_stored_bytes(&self, download: bool) -> anyhow::Result<bool> {
+    /// Security fix 1 at the moment the file's content is about to go out: its
+    /// stored bytes, or a picture made of them (a resized still, a moving tile,
+    /// a timeline sprite sheet).
+    async fn admit_content(&self, download: bool) -> anyhow::Result<bool> {
         match view_budget(self.media, self.privileged, self.should_count, self.grant) {
             ViewBudget::Free | ViewBudget::Granted => Ok(true),
             ViewBudget::Consume => self.consume(download).await,
@@ -390,7 +402,12 @@ async fn raw_action(gate: &Gate<'_>, ask: &Ask, range: Option<&str>) -> AppResul
             height,
             inside,
         };
-        return Ok(motion_action(state, media, opts, ask).await);
+        let res = motion_action(state, media, opts, ask).await;
+        // A moving tile is the file's pictures (security fix 1).
+        if res.status() == StatusCode::OK && !counted_upfront && !gate.admit_content(false).await? {
+            return Ok(not_found());
+        }
+        return Ok(res);
     }
 
     if (width.is_some() || height.is_some()) && thumbnailable {
@@ -422,6 +439,11 @@ async fn raw_action(gate: &Gate<'_>, ask: &Ask, range: Option<&str>) -> AppResul
             },
         };
         if let Some(thumb) = thumb {
+            // A resized still is the picture, at up to 1200 px; for anything
+            // smaller than that it is the whole of it (security fix 1).
+            if !counted_upfront && !gate.admit_content(false).await? {
+                return Ok(not_found());
+            }
             let mut res = Response::new(Body::from(thumb));
             put_headers(
                 &mut res,
@@ -443,7 +465,7 @@ async fn raw_action(gate: &Gate<'_>, ask: &Ask, range: Option<&str>) -> AppResul
 
     // The stored bytes. A request upstream counted has paid already; one it
     // exempted pays now unless it carries the view grant (security fix 1).
-    if !counted_upfront && !gate.admit_stored_bytes(false).await? {
+    if !counted_upfront && !gate.admit_content(false).await? {
         return Ok(not_found());
     }
     Ok(stream_media(state, media, range, false).await)

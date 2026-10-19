@@ -392,6 +392,15 @@ async fn fix1_every_bypass_of_the_audit_is_closed() {
         }
         assert_eq!(w.views(id).await.0, 1, "{url}");
     }
+    // A resized still is the picture: a capped image's thumbnail pays too.
+    let png = std::fs::read(Paths::crate_dir().public.join("apple-icon.png")).unwrap();
+    let id = w.file("fx", "pic", "p.png", "image/png", &png).await;
+    w.set(id, r#""max_views" = 1"#).await;
+    let first = w.get("/fx/pic/raw?w=1200", &[]).await;
+    assert_eq!(first.header("content-type").as_deref(), Some("image/webp"));
+    assert_eq!(w.get("/fx/pic/raw?w=1200", &[]).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(w.get("/fx/pic/raw?w=64&h=64", &[("sec-fetch-dest", "image")]).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(w.views(id).await.0, 1);
     w.drop().await;
 }
 

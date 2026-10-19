@@ -303,14 +303,17 @@ pub fn has_view_grant(secret: &str, headers: &HeaderMap, media_id: &str) -> bool
 ///    bot counts too, as upstream already did for capped files) consumes a
 ///    view, or is refused with 404 when none is left - unchanged;
 /// 2. a request upstream did NOT count (a seek, an embedded subresource, a
-///    thumbnail request) is served without consuming only when it carries the
-///    view grant of this file, and even when that grant's view was the last
-///    one (`views == max_views`); without the grant it consumes a view exactly
-///    like case 1. This applies whenever the response carries bytes of the
-///    stored file (`/raw`, `/raw.<ext>`, `/download`, whole or ranged, and a
-///    thumbnail request that falls back to the original); a derived preview
-///    (a resized still, a motion tile, a timeline) is not the file and keeps
-///    upstream's exemption;
+///    thumbnail or moving-tile request, a timeline sprite sheet) is served
+///    without consuming only when it carries the view grant of this file, and
+///    even when that grant's view was the last one (`views == max_views`);
+///    without the grant it consumes a view exactly like case 1. This applies
+///    whenever the response carries the file's content: its stored bytes
+///    (`/raw`, `/raw.<ext>`, `/download`, whole or ranged, a thumbnail request
+///    falling back to the original) or a picture made of them (a resized still,
+///    which at up to 1200 px is the whole of most screenshots, a moving tile,
+///    a timeline sprite sheet). A refusal (415/413/503) carries nothing
+///    and spends nothing; the timeline's cue track (`timeline.vtt`, times and
+///    rectangles, no pixels) keeps upstream's exemption;
 /// 3. every view counted under 1 or 2 mints a grant for this file
 ///    (`ml_view_<id>`, [`VIEW_GRANT_TTL`]), and so does the preview page's
 ///    counted view, which is what keeps the page's own `<img>`/`<video>`, a
