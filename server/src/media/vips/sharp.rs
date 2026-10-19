@@ -135,8 +135,50 @@ pub const DEFAULT_LIMIT_INPUT_PIXELS: u64 = 0x3FFF * 0x3FFF;
 #[derive(Clone)]
 enum Source {
     Buffer(Bytes),
-    Raw { data: Bytes, width: u32, height: u32, channels: u32, page_height: u32 },
+    Raw {
+        data: Bytes,
+        width: u32,
+        height: u32,
+        channels: u32,
+        page_height: u32,
+    },
+    /// `sharp([a, b, ...], { join: { across, animated } })`. Every item is its
+    /// own input descriptor built with NO options (sharp maps the array
+    /// through `_createInputDescriptor(i)`), so each is opened with the
+    /// defaults (`failOn: 'warning'`, the default pixel limit, one page).
+    Join {
+        items: Vec<Bytes>,
+        across: i32,
+        animated: bool,
+    },
+    /// `sharp({ text: { ... } })`.
+    Text(TextInput),
 }
+
+/// `sharp({ text: { text, font, fontfile, rgba } })` (the options the server
+/// uses; the rest keep sharp's defaults: align left, no justify, spacing 0,
+/// wrap word, dpi 72).
+#[derive(Debug, Clone, Default)]
+pub struct TextInput {
+    /// Pango markup.
+    pub text: String,
+    pub font: Option<String>,
+    pub fontfile: Option<String>,
+    pub rgba: bool,
+}
+
+/// One `.composite([{ input, left, top }])` layer, blended `over` the image
+/// at that offset. The input is a compressed buffer opened with default
+/// options, as sharp opens it.
+#[derive(Debug, Clone)]
+pub struct CompositeLayer {
+    pub input: Bytes,
+    pub left: i32,
+    pub top: i32,
+}
+
+/// `VIPS_BLEND_MODE_OVER`, sharp's default `blend`.
+const BLEND_MODE_OVER: i32 = 2;
 
 /// sharp's `InputDescriptor` (the options this port supports).
 #[derive(Clone)]
@@ -151,6 +193,23 @@ struct InputDescriptor {
     auto_orient: bool,
     density: f64,
     ignore_icc: bool,
+}
+
+impl InputDescriptor {
+    /// `_createInputDescriptor(input)` with no options: what sharp builds for
+    /// each joined image and each composite layer.
+    fn defaults(source: Source) -> InputDescriptor {
+        InputDescriptor {
+            source,
+            fail_on: FailOn::Warning,
+            limit_input_pixels: DEFAULT_LIMIT_INPUT_PIXELS,
+            pages: 1,
+            page: 0,
+            auto_orient: false,
+            density: 72.0,
+            ignore_icc: false,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +648,8 @@ pub struct Sharp {
     loop_count: i32,
     delay: Vec<i32>,
     format_out: FormatOut,
+    flatten: Option<[f64; 3]>,
+    composite: Vec<CompositeLayer>,
     invalid: Option<String>,
 }
 
@@ -610,18 +671,35 @@ impl Sharp {
         Sharp::with_source(Source::Raw { data, width, height, channels, page_height: 0 })
     }
 
+    /// `sharp([buffers], { join: { across, animated } })`: the images stacked
+    /// into one, `across` per row; `animated` makes the stack the pages of an
+    /// animation (page height = joined height / count).
+    pub fn join(items: Vec<Bytes>, across: u32, animated: bool) -> Sharp {
+        let count = items.len();
+        let s = Sharp::with_source(Source::Join { items, across: across as i32, animated });
+        if count < 2 {
+            return s.invalid("Expected at least two images to join".into());
+        }
+        if !(1..=1_000_000).contains(&across) {
+            return s.invalid(format!(
+                "Expected integer between 1 and 100000 for join.across but received {across} of type number"
+            ));
+        }
+        s
+    }
+
+    /// `sharp({ text: { ... } })`: an image made of Pango markup.
+    pub fn text(text: TextInput) -> Sharp {
+        if text.text.is_empty() {
+            return Sharp::with_source(Source::Text(text))
+                .invalid("Expected a valid string to create an image with text.".into());
+        }
+        Sharp::with_source(Source::Text(text))
+    }
+
     fn with_source(source: Source) -> Sharp {
         Sharp {
-            input: InputDescriptor {
-                source,
-                fail_on: FailOn::Warning,
-                limit_input_pixels: DEFAULT_LIMIT_INPUT_PIXELS,
-                pages: 1,
-                page: 0,
-                auto_orient: false,
-                density: 72.0,
-                ignore_icc: false,
-            },
+            input: InputDescriptor::defaults(source),
             resize: None,
             extract_pre: None,
             extract_post: None,
@@ -632,6 +710,8 @@ impl Sharp {
             loop_count: -1,
             delay: Vec::new(),
             format_out: FormatOut::Input,
+            flatten: None,
+            composite: Vec::new(),
             invalid: None,
         }
     }
@@ -725,6 +805,20 @@ impl Sharp {
         if self.input.auto_orient {
             self.orient_before = true;
         }
+        self
+    }
+
+    /// `.flatten({ background })`: merge the alpha channel onto a solid colour
+    /// (`[r, g, b]`, 0-255; `#ffffff` is `[255.0, 255.0, 255.0]`).
+    pub fn flatten(mut self, background: [f64; 3]) -> Sharp {
+        self.flatten = Some(background);
+        self
+    }
+
+    /// `.composite([{ input, left, top }, ...])`: layers blended `over` the
+    /// image, each at its offset.
+    pub fn composite(mut self, layers: Vec<CompositeLayer>) -> Sharp {
+        self.composite = layers;
         self
     }
 
@@ -1152,7 +1246,20 @@ impl Sharp {
             image = image.icc_transform_from(processing_profile, "cmyk")?;
         }
 
+        // Flatten image to remove alpha channel
+        if let Some(bg) = self.flatten
+            && image.has_alpha()
+        {
+            let multiplier = if is_16bit(image.interpretation()) { 256.0 } else { 1.0 };
+            image = image.flatten(&[bg[0] * multiplier, bg[1] * multiplier, bg[2] * multiplier])?;
+        }
+
         let should_resize = hshrink != 1.0 || vshrink != 1.0;
+        let should_composite = !self.composite.is_empty();
+
+        if should_composite && !image.has_alpha() {
+            image = ensure_alpha(image, 1.0)?;
+        }
 
         let premultiply_format = image.format();
         let should_premultiply_alpha = image.has_alpha() && should_resize;
@@ -1225,6 +1332,29 @@ impl Sharp {
         // Reverse premultiplication after all transformations
         if should_premultiply_alpha {
             image = image.unpremultiply()?.cast(premultiply_format)?;
+        }
+
+        // Composite
+        if should_composite {
+            let mut images = vec![image.clone()];
+            let (mut modes, mut xs, mut ys) = (Vec::new(), Vec::new(), Vec::new());
+            for layer in &self.composite {
+                let mut composite_image =
+                    open_input(&InputDescriptor::defaults(Source::Buffer(layer.input.clone())))?.image;
+                // Verify within current dimensions
+                if composite_image.width() > image.width() || composite_image.height() > image.height() {
+                    return Err(VipsError::new("Image to composite must have same dimensions or smaller"));
+                }
+                // Ensure image to composite is with unpremultiplied alpha
+                composite_image = ensure_alpha(composite_image, 1.0)?;
+                images.push(composite_image);
+                modes.push(BLEND_MODE_OVER);
+                xs.push(layer.left);
+                ys.push(layer.top);
+            }
+            image = Image::composite(&images, &modes, &xs, &ys, "srgb")?;
+            // RemoveGifPalette
+            image = image.mutate(|m| m.remove("gif-palette"))?;
         }
 
         // Remove alpha channel, if any
@@ -1389,6 +1519,49 @@ fn open_input(descriptor: &InputDescriptor) -> Result<Opened, VipsError> {
                     m.set_int(META_PAGE_HEIGHT, ph);
                     m.set_int(META_N_PAGES, pages);
                 })?;
+            }
+            (image, ImageType::Raw, None)
+        }
+        Source::Join { items, across, animated } => {
+            let mut images = Vec::with_capacity(items.len());
+            let mut has_alpha = false;
+            for item in items {
+                let image = open_input(&InputDescriptor::defaults(Source::Buffer(item.clone())))?.image;
+                has_alpha |= image.has_alpha();
+                images.push(image);
+            }
+            let mut background = vec![0.0, 0.0, 0.0, 255.0];
+            if has_alpha {
+                images = images.into_iter().map(|i| ensure_alpha(i, 1.0)).collect::<Result<_, _>>()?;
+            } else {
+                background.pop();
+            }
+            let mut image = Image::arrayjoin_with(&images, *across, 0, &background, "low", "low")?;
+            if *animated {
+                let (pages, height) = (images.len() as i32, image.height());
+                image = image.mutate(|m| {
+                    m.set_int(META_N_PAGES, pages);
+                    m.set_int(META_PAGE_HEIGHT, height / pages);
+                })?;
+            }
+            // The joined image is not checked against this descriptor's pixel
+            // limit: upstream never passes it through OpenInput.
+            return Ok(Opened { image, image_type: ImageType::Png, blob: None });
+        }
+        Source::Text(t) => {
+            let mut image = Image::text(
+                &t.text,
+                t.font.as_deref(),
+                t.fontfile.as_deref(),
+                t.rgba,
+                "low",
+                false,
+                0,
+                "word",
+                Some(72),
+            )?;
+            if !t.rgba {
+                image = image.copy_with_interpretation("b-w")?;
             }
             (image, ImageType::Raw, None)
         }
@@ -1836,7 +2009,7 @@ fn metadata(descriptor: &InputDescriptor) -> Result<Metadata, VipsError> {
         format: opened.image_type.id(),
         size: match &descriptor.source {
             Source::Buffer(b) => Some(b.len()),
-            Source::Raw { .. } => None,
+            Source::Raw { .. } | Source::Join { .. } | Source::Text(_) => None,
         },
         width: image.width() as u32,
         height: image.height() as u32,
