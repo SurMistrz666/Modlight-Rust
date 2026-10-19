@@ -83,7 +83,7 @@ pub fn nonce_equals(received: Option<&str>, expected: &str) -> bool {
     difference == 0
 }
 
-/// What the account's token list will call this machine: "Modlight on <machine>",
+/// What the account's token list will call this machine: "Modlight on `<machine>`",
 /// clipped to the 64 characters the server is willing to show.
 pub fn client_name(app_name: &str, machine: &str) -> String {
     let name = format!("{app_name} on {machine}");

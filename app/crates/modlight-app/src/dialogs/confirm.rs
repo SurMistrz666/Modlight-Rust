@@ -21,7 +21,7 @@ pub enum ConfirmAction {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Confirm {
-    /// The window title: "Modlight - <title>".
+    /// The window title: "Modlight - `<title>`".
     pub title: String,
     pub text: String,
     pub action: ConfirmAction,

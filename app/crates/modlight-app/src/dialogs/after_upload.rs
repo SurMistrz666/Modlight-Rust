@@ -208,7 +208,7 @@ impl AfterUpload {
         }
     }
 
-    /// The window title: "Modlight - After upload - <file>".
+    /// The window title: "Modlight - After upload - `<file>`".
     pub fn title(&self) -> String {
         let path = self.info.file_path();
         let name = if !path.is_empty() && Path::new(path).is_file() {
