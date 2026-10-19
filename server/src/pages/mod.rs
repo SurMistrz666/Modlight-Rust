@@ -31,9 +31,17 @@
 //! upstream) and does not refresh at all.
 
 pub mod authorize;
+pub mod dashboard;
 pub mod dashboard_admin;
+pub mod dashboard_admin_user_files;
+pub mod dashboard_duplicates;
+pub mod dashboard_folders;
+pub mod dashboard_links;
+pub mod dashboard_paste;
 pub mod dashboard_profile;
 pub mod dashboard_tokens;
+pub mod dashboard_trash;
+pub mod dashboard_upload;
 pub mod download;
 pub mod forgot;
 pub mod invite;
@@ -46,6 +54,7 @@ pub mod reset;
 pub mod root_layout;
 pub mod root_page;
 pub mod shell;
+pub mod shortlink_unlock;
 pub mod table;
 pub mod two_factor;
 pub mod welcome;
@@ -369,6 +378,16 @@ pub fn register_all(reg: &mut PageRegistry) {
     reg.page("/reset", reset::load); // app/(auth)/reset/page.tsx
     reg.page("/2fa", two_factor::load); // app/(auth)/2fa/page.tsx
     reg.page("/invite/[token]", invite::load); // app/(auth)/invite/[token]/page.tsx
+    reg.page("/dashboard", dashboard::load); // app/(app)/dashboard/page.tsx
+    reg.page("/dashboard/folders", dashboard_folders::load); // app/(app)/dashboard/folders/page.tsx
+    reg.page("/dashboard/trash", dashboard_trash::load); // app/(app)/dashboard/trash/page.tsx
+    reg.page("/dashboard/duplicates", dashboard_duplicates::load); // app/(app)/dashboard/duplicates/page.tsx
+    reg.page("/dashboard/links", dashboard_links::load); // app/(app)/dashboard/links/page.tsx
+    reg.page("/dashboard/paste", dashboard_paste::load); // app/(app)/dashboard/paste/page.tsx
+    reg.page("/dashboard/upload", dashboard_upload::load); // app/(app)/dashboard/upload/page.tsx
+    reg.page("/dashboard/admin/users/[id]/files", dashboard_admin_user_files::load); // app/(app)/dashboard/admin/users/[id]/files/page.tsx
+    reg.page("/s/[code]/unlock", shortlink_unlock::load); // app/s/[code]/unlock/page.tsx
+    reg.page("/s/[code]/[name]/unlock", shortlink_unlock::load_scoped); // app/s/[code]/[name]/unlock/page.tsx
 }
 
 // ── Pipeline ────────────────────────────────────────────────────────────────

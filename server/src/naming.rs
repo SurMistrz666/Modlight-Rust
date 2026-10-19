@@ -1,14 +1,124 @@
-//! Port of `lib/naming.ts`: tags (the first URL segment) and the naming-scheme
-//! parameters. Only the account-side helpers live here so far; the code
-//! generators (`buildCodeBase` and friends) belong to the upload port.
+//! Port of `lib/naming.ts`: per-user URL naming.
+//!
+//! Every public file lives at  /{tag}/{code}.{ext}  where:
+//!   - `tag`  is `user.userCode` - user-editable, previous values kept alive in
+//!     `user_code_aliases` so links already in circulation never break.
+//!   - `code` is generated per upload according to `user.namingScheme`.
+//!
+//! Changing a scheme only affects NEW uploads: `code` is stored on the row, so
+//! the links already shared keep resolving byte-for-byte as before.
+//!
+//! Dates in patterns are the server's LOCAL time, as upstream's `Date` getters
+//! are (`TZ`, UTC in the container): callers pass `chrono::Local::now()`.
 
-use crate::config::js_round;
+use chrono::{Datelike, NaiveDateTime, Timelike};
+use rand::Rng;
+use rand::rngs::OsRng;
+use unicode_normalization::UnicodeNormalization;
 
-/// Every top-level path segment the app uses or may use. A tag equal to one of
-/// these would be shadowed by the route (Next prefers static routes), and the
-/// reservation also covers routes that do not exist *yet*. Case-insensitive,
-/// exact segments only: a tag `apis` or a file `login-screen.png` is fine.
-const RESERVED_TAGS: &[&str] = &[
+use crate::ids::human_code;
+use crate::naming_words::{ADJECTIVES, NOUNS, UNAMBIGUOUS_ALPHABET};
+
+// ---------------------------------------------------------------------------
+// Slugification
+// ---------------------------------------------------------------------------
+
+/// Latin characters that don't decompose under NFD and would otherwise be
+/// dropped entirely (turning "łotego.gif" into "otego").
+fn transliterate(ch: char) -> Option<&'static str> {
+    Some(match ch {
+        'ł' | 'Ł' => "l",
+        'đ' | 'Đ' => "d",
+        'ø' | 'Ø' => "o",
+        'æ' | 'Æ' => "ae",
+        'œ' | 'Œ' => "oe",
+        'ß' => "ss",
+        'þ' | 'Þ' => "th",
+        'ð' | 'Ð' => "d",
+        _ => return None,
+    })
+}
+
+/// TRANSLITERATE, then NFD with the combining accents (U+0300-U+036F) removed.
+fn fold_latin(input: &str) -> String {
+    let mapped: String =
+        input.chars().map(|ch| transliterate(ch).map(str::to_string).unwrap_or_else(|| ch.to_string())).collect();
+    mapped.nfd().filter(|c| !('\u{0300}'..='\u{036f}').contains(c)).collect()
+}
+
+/// Replace every run of characters failing `keep` with one dash.
+fn collapse_runs(s: &str, keep: impl Fn(char) -> bool) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_run = false;
+    for c in s.chars() {
+        if keep(c) {
+            out.push(c);
+            in_run = false;
+        } else if !in_run {
+            out.push('-');
+            in_run = true;
+        }
+    }
+    out
+}
+
+/// The first `n` UTF-16 code units (`String.prototype.slice(0, n)`), never
+/// splitting a surrogate pair worth of char.
+pub fn js_slice(s: &str, n: usize) -> &str {
+    let mut units = 0;
+    for (i, c) in s.char_indices() {
+        units += c.len_utf16();
+        if units > n {
+            return &s[..i];
+        }
+    }
+    s
+}
+
+/// `s.slice(0, n)` as it reaches UTF-8 (Postgres, a response body): when the
+/// cut falls inside a surrogate pair, JavaScript keeps the lone high half,
+/// which every UTF-8 encoder (node-postgres included) writes as U+FFFD.
+pub fn js_slice_utf8(s: &str, n: usize) -> String {
+    let mut units = 0;
+    for (i, c) in s.char_indices() {
+        let width = c.len_utf16();
+        if units + width > n {
+            let mut out = s[..i].to_string();
+            if units < n {
+                out.push('\u{FFFD}');
+            }
+            return out;
+        }
+        units += width;
+    }
+    s.to_string()
+}
+
+/// Filename -> URL-safe slug, preserving meaning across diacritics.
+/// "Źródła wiedzy.docx" -> "zrodla-wiedzy"
+pub fn slugify_name(input: &str) -> String {
+    let lowered = fold_latin(input).to_lowercase();
+    let collapsed = collapse_runs(&lowered, |c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    js_slice(collapsed.trim_matches('-'), 80).to_string()
+}
+
+/// Strip the extension from a filename before slugifying.
+pub fn base_name(filename: &str) -> &str {
+    match filename.rfind('.') {
+        Some(i) if i > 0 => &filename[..i],
+        _ => filename,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tags (the first URL segment)
+// ---------------------------------------------------------------------------
+
+/// Names that may never be claimed as the FIRST path segment: a tag must not
+/// shadow a top-level route, and with `user.skipTagInUrl` an upload code itself
+/// becomes a first segment. Matching is case-insensitive; only exact segments
+/// count.
+pub const RESERVED_TAGS: &[&str] = &[
     // routes that exist today
     "api",
     "_next",
@@ -90,14 +200,12 @@ const RESERVED_TAGS: &[&str] = &[
     "static-assets",
 ];
 
-/// Is this segment reserved by the application? Used both when validating a
-/// tag and when resolving a tagless (root-level) media link.
+/// Is this segment reserved by the application?
 pub fn is_reserved_tag(segment: &str) -> bool {
-    let lower = segment.to_lowercase();
-    RESERVED_TAGS.contains(&lower.as_str())
+    RESERVED_TAGS.contains(&segment.to_lowercase().as_str())
 }
 
-/// Why a tag was refused (`TagCheck.reason`).
+/// `TagCheck.reason` (named `TagProblem` as in the srv-auth branch).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagProblem {
     TooShort,
@@ -105,6 +213,9 @@ pub enum TagProblem {
     Charset,
     Reserved,
 }
+
+/// Former name of [`TagProblem`].
+pub type TagIssue = TagProblem;
 
 impl TagProblem {
     pub fn as_str(self) -> &'static str {
@@ -117,9 +228,7 @@ impl TagProblem {
     }
 }
 
-/// `checkTag(tag)`: permissive on length (legacy tags of 3-12 chars exist),
-/// strict on charset so it stays a clean, unambiguous path segment. Lengths
-/// are UTF-16 code units, like JavaScript's `.length`.
+/// `checkTag(tag)`: `Ok(())` or the reason. Lengths are UTF-16 units.
 pub fn check_tag(tag: &str) -> Result<(), TagProblem> {
     let len = tag.encode_utf16().count();
     if len < 2 {
@@ -139,7 +248,44 @@ pub fn check_tag(tag: &str) -> Result<(), TagProblem> {
     Ok(())
 }
 
-/// The second URL segment's naming schemes, in upstream order.
+/// Path of a public file. `tag` is `None` for owners who opted out of the tag
+/// segment.
+pub fn media_path(tag: Option<&str>, code: &str, ext: &str) -> String {
+    let leaf = if ext.is_empty() { code.to_string() } else { format!("{code}.{ext}") };
+    match tag.filter(|t| !t.is_empty()) {
+        Some(t) => format!("/{t}/{leaf}"),
+        None => format!("/{leaf}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Short links
+// ---------------------------------------------------------------------------
+
+/// short_links.code is varchar(64) - the scoped form has to fit inside it.
+pub const SHORT_CODE_MAX: usize = 64;
+
+/// Short links are namespaced by storing the owner's tag INSIDE the code:
+/// `alicja/test` serves /s/alicja/test. `tag = None` keeps the legacy root form.
+pub fn scoped_short_code(tag: Option<&str>, code: &str) -> String {
+    match tag.filter(|t| !t.is_empty()) {
+        Some(t) => format!("{t}/{code}"),
+        None => code.to_string(),
+    }
+}
+
+/// Split a stored short code back into its scope and leaf.
+pub fn split_short_code(stored: &str) -> (Option<&str>, &str) {
+    match stored.find('/') {
+        Some(i) => (Some(&stored[..i]), &stored[i + 1..]),
+        None => (None, stored),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Naming schemes (the second URL segment)
+// ---------------------------------------------------------------------------
+
 pub const NAMING_SCHEMES: &[&str] =
     &["random", "words", "random-chars", "filename", "filename-random", "date-filename", "custom"];
 
@@ -157,9 +303,8 @@ pub const RANDOM_LENGTH_MIN: f64 = 5.0;
 pub const RANDOM_LENGTH_MAX: f64 = 32.0;
 pub const RANDOM_LENGTH_DEFAULT: i32 = 6;
 
-/// `clamp(value, min, max, fallback)`: `null` is caught BEFORE the numeric
-/// coercion (`Number(null)` is 0, which would clamp to the minimum instead of
-/// falling back to the documented default).
+/// `clamp(value, min, max, fallback)`: `null` falls back BEFORE the numeric
+/// coercion (`Number(null)` is 0, which would clamp to the minimum).
 fn clamp(value: Option<f64>, min: f64, max: f64, fallback: i32) -> i32 {
     let Some(n) = value else {
         return fallback;
@@ -170,8 +315,11 @@ fn clamp(value: Option<f64>, min: f64, max: f64, fallback: i32) -> i32 {
     js_round(n).clamp(min, max) as i32
 }
 
-/// `clampWordCount(v)`; `v` is the number as JavaScript would see it
-/// (`Number(v)` already applied by the caller for non-numbers).
+/// `Math.round`: half rounds towards +infinity.
+pub fn js_round(n: f64) -> f64 {
+    (n + 0.5).floor()
+}
+
 pub fn clamp_word_count(v: Option<f64>) -> i32 {
     clamp(v, WORD_COUNT_MIN, WORD_COUNT_MAX, WORD_COUNT_DEFAULT)
 }
@@ -180,8 +328,540 @@ pub fn clamp_random_length(v: Option<f64>) -> i32 {
     clamp(v, RANDOM_LENGTH_MIN, RANDOM_LENGTH_MAX, RANDOM_LENGTH_DEFAULT)
 }
 
+fn sample<'a>(list: &[&'a str]) -> &'a str {
+    list[OsRng.gen_range(0..list.len())]
+}
+
+/// Gyazo-style readable code: `funny-cat`, `misty-golden-otter`. The LAST word
+/// is always the noun; adjectives are drawn without replacement.
+pub fn word_code(count: f64) -> String {
+    let n = clamp_word_count(Some(count)) as usize;
+    let mut adjectives: Vec<&str> = Vec::new();
+    let mut guard = 0;
+    while adjectives.len() < n - 1 && guard < 100 {
+        let word = sample(ADJECTIVES);
+        if !adjectives.contains(&word) {
+            adjectives.push(word);
+        }
+        guard += 1;
+    }
+    adjectives.push(sample(NOUNS));
+    adjectives.join("-")
+}
+
+/// Random code over `UNAMBIGUOUS_ALPHABET` - no 0/O/o and no 1/l/I. CSPRNG.
+pub fn random_char_code(length: f64) -> String {
+    let n = clamp(Some(length), 1.0, 128.0, RANDOM_LENGTH_DEFAULT) as usize;
+    let alphabet = UNAMBIGUOUS_ALPHABET.as_bytes();
+    (0..n).map(|_| alphabet[OsRng.gen_range(0..alphabet.len())] as char).collect()
+}
+
+/// Short random suffix used to de-collide readable codes.
+fn short_random(n: usize) -> String {
+    human_code(n).to_lowercase()
+}
+
+fn two(n: u32) -> String {
+    format!("{n:02}")
+}
+
+/// Sanitizer for custom patterns. Unlike [`slugify_name`] it preserves case and
+/// the underscore; everything outside `[A-Za-z0-9._-]` still collapses to a
+/// dash, so the result is always a safe path segment.
+fn sanitize_code(input: &str) -> String {
+    let folded = fold_latin(input);
+    let collapsed = collapse_runs(&folded, |c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    // .replace(/-{2,}/g, "-")
+    let mut deduped = String::with_capacity(collapsed.len());
+    for c in collapsed.chars() {
+        if c == '-' && deduped.ends_with('-') {
+            continue;
+        }
+        deduped.push(c);
+    }
+    // .replace(/^[-.]+|[-.]+$/g, "")
+    let trimmed = deduped.trim_matches(|c| c == '-' || c == '.');
+    js_slice(trimmed, 100).to_string()
+}
+
+/// `filename.match(/\.([a-z0-9]+)$/i)?.[1].toLowerCase()`
+fn pattern_ext(filename: &str) -> String {
+    crate::media::sniff::ext_of_name(Some(filename))
+}
+
+/// Expand a custom pattern. Unknown tokens are left alone (then sanitized
+/// away), so a malformed pattern degrades to something usable instead of
+/// throwing.
+///
+/// Tokens: {name} {ext} {date} {time} {year} {month} {day}, {random}
+/// {random:N}, {words} {wordsN}, {rand} {randN}.
+pub fn expand_pattern(pattern: &str, filename: &str, now: NaiveDateTime) -> String {
+    // /\{(\w+)(?::(\d+))?\}/g  (\w is [A-Za-z0-9_])
+    let re = regex::Regex::new(r"\{([A-Za-z0-9_]+)(?::([0-9]+))?\}").expect("static regex");
+    let name = slugify_name(base_name(filename));
+    let ext = pattern_ext(filename);
+    re.replace_all(pattern, |caps: &regex::Captures<'_>| {
+        let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+        let token = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let arg = caps.get(2).map(|m| m.as_str());
+        let num = |s: &str| crate::config::js_number(s);
+        // {words3} / {rand5}: the count rides on the token itself.
+        for (prefix, words) in [("words", true), ("rand", false)] {
+            if let Some(digits) = token.strip_prefix(prefix)
+                && !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+            {
+                let n = num(digits);
+                return if words { word_code(n) } else { random_char_code(n) };
+            }
+        }
+        match token {
+            "name" => name.clone(),
+            "ext" => ext.clone(),
+            "date" => format!("{}-{}-{}", now.year(), two(now.month()), two(now.day())),
+            "time" => format!("{}{}{}", two(now.hour()), two(now.minute()), two(now.second())),
+            "year" => now.year().to_string(),
+            "month" => two(now.month()),
+            "day" => two(now.day()),
+            "words" => word_code(arg.map(num).unwrap_or(WORD_COUNT_DEFAULT as f64)),
+            "rand" => random_char_code(arg.map(num).unwrap_or(RANDOM_LENGTH_DEFAULT as f64)),
+            "random" => {
+                let n = match arg {
+                    Some(a) => num(a).clamp(1.0, 16.0) as usize,
+                    None => 6,
+                };
+                short_random(n)
+            }
+            _ => whole.to_string(),
+        }
+    })
+    .into_owned()
+}
+
+/// `CodeBaseInput`
+#[derive(Debug, Clone)]
+pub struct CodeBaseInput<'a> {
+    pub scheme: &'a str,
+    pub pattern: Option<&'a str>,
+    pub filename: &'a str,
+    /// Local wall time (`new Date()` read through local getters).
+    pub now: NaiveDateTime,
+    /// Words per code for the `words` scheme (2-4).
+    pub word_count: Option<f64>,
+    /// Characters per code for the `random-chars` scheme (5-32).
+    pub random_length: Option<f64>,
+}
+
+/// The server's local wall time (`new Date()` read through local getters).
+pub fn local_now() -> NaiveDateTime {
+    chrono::Local::now().naive_local()
+}
+
+/// Build the *preferred* code for an upload. The result is a candidate only -
+/// [`allocate_code`] resolves collisions against the unique index on
+/// uploads.code.
+pub fn build_code_base(input: &CodeBaseInput<'_>) -> String {
+    let now = input.now;
+    let date = || format!("{}-{}-{}", now.year(), two(now.month()), two(now.day()));
+    match input.scheme {
+        "words" => word_code(clamp_word_count(input.word_count) as f64),
+        "random-chars" => random_char_code(clamp_random_length(input.random_length) as f64),
+        "filename" => {
+            let slug = slugify_name(base_name(input.filename));
+            if slug.is_empty() { human_code(10) } else { slug }
+        }
+        "filename-random" => {
+            let slug = slugify_name(base_name(input.filename));
+            if slug.is_empty() { human_code(10) } else { format!("{slug}-{}", short_random(4)) }
+        }
+        "date-filename" => {
+            let slug = slugify_name(base_name(input.filename));
+            if slug.is_empty() { format!("{}-{}", date(), short_random(4)) } else { format!("{}-{slug}", date()) }
+        }
+        "custom" => {
+            let expanded = match input.pattern.filter(|p| !p.is_empty()) {
+                Some(p) => sanitize_code(&expand_pattern(p, input.filename, now)),
+                None => String::new(),
+            };
+            if expanded.is_empty() { human_code(10) } else { expanded }
+        }
+        _ => human_code(10),
+    }
+}
+
+/// A fresh candidate for collision attempt `n` (1-based).
+pub type Regenerate = Box<dyn Fn(u32) -> String + Send + Sync>;
+
+/// A code candidate plus, for the randomised schemes, how to produce a fresh
+/// one. Appending `-2` to a *name* is right; appending it to a *random* code
+/// leaks the collision and does nothing about its cause, while rolling a
+/// longer code does.
+pub struct CodePlan {
+    pub base: String,
+    pub regenerate: Option<Regenerate>,
+}
+
+/// How many re-rolls at one width before the generator widens the namespace.
+const WORD_REROLLS_PER_WIDTH: u32 = 4;
+
+/// Build the code candidate together with its collision strategy.
+pub fn plan_code(input: &CodeBaseInput<'_>) -> CodePlan {
+    let base = build_code_base(input);
+    if input.scheme == "random-chars" {
+        let length = clamp_random_length(input.random_length);
+        // One extra character per collision.
+        return CodePlan {
+            base,
+            regenerate: Some(Box::new(move |n| random_char_code(f64::from(length) + f64::from(n)))),
+        };
+    }
+    if input.scheme == "words" {
+        let count = clamp_word_count(input.word_count);
+        return CodePlan {
+            base,
+            // Re-roll a few times first, then add a word.
+            regenerate: Some(Box::new(move |n| {
+                word_code(f64::from(count) + f64::from((n - 1) / WORD_REROLLS_PER_WIDTH))
+            })),
+        };
+    }
+    CodePlan { base, regenerate: None }
+}
+
+/// True when the scheme produces guessable URLs.
+pub fn is_guessable(scheme: &str) -> bool {
+    matches!(scheme, "filename" | "date-filename" | "custom")
+}
+
+/// Resolve a base into a code that is free, given a predicate that reports
+/// whether a candidate is already taken. With `regenerate` (random schemes):
+/// keep drawing fresh, wider codes; without it (name-derived schemes): exact
+/// base, then -2..-20, then a random suffix.
+pub async fn allocate_code<F, Fut>(
+    base: &str,
+    mut is_taken: F,
+    regenerate: Option<&Regenerate>,
+) -> anyhow::Result<String>
+where
+    F: FnMut(String) -> Fut,
+    Fut: Future<Output = anyhow::Result<bool>>,
+{
+    let sliced = js_slice(base, 100);
+    let clean = if sliced.is_empty() { human_code(10) } else { sliced.to_string() };
+
+    if !is_taken(clean.clone()).await? {
+        return Ok(clean);
+    }
+    if let Some(regenerate) = regenerate {
+        for i in 1..=24 {
+            let candidate = js_slice(&regenerate(i), 100).to_string();
+            if !candidate.is_empty() && !is_taken(candidate.clone()).await? {
+                return Ok(candidate);
+            }
+        }
+        anyhow::bail!("Could not allocate a unique code for \"{clean}\"");
+    }
+    for i in 2..=20 {
+        let candidate = format!("{clean}-{i}");
+        if !is_taken(candidate.clone()).await? {
+            return Ok(candidate);
+        }
+    }
+    for _ in 0..20 {
+        let candidate = format!("{clean}-{}", short_random(5));
+        if !is_taken(candidate.clone()).await? {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("Could not allocate a unique code for \"{clean}\"")
+}
+
 #[cfg(test)]
 mod tests {
+
+    //! tests/unit/naming.test.ts, tests/unit/naming-schemes.test.ts
+    use std::collections::HashSet;
+
+    use super::*;
+
+    fn now() -> NaiveDateTime {
+        chrono::NaiveDate::from_ymd_opt(2026, 7, 30).unwrap().and_hms_opt(14, 5, 9).unwrap()
+    }
+
+    fn input<'a>(scheme: &'a str, filename: &'a str) -> CodeBaseInput<'a> {
+        CodeBaseInput { scheme, pattern: None, filename, now: now(), word_count: None, random_length: None }
+    }
+
+    fn re(p: &str) -> regex::Regex {
+        regex::Regex::new(p).unwrap()
+    }
+
+    const CONFUSABLE: &str = "[0O1lIo]";
+
+    #[test]
+    fn slugify_name_transliterates_and_collapses() {
+        assert_eq!(slugify_name("Źródła wiedzy"), "zrodla-wiedzy");
+        assert_eq!(
+            slugify_name("Major Suchodolski to robot borzy - PRZERÓBKA"),
+            "major-suchodolski-to-robot-borzy-przerobka"
+        );
+        assert_eq!(slugify_name("Zarządzanie projektami informatycznymi"), "zarzadzanie-projektami-informatycznymi");
+        assert_eq!(slugify_name("moment michała"), "moment-michala");
+        assert_eq!(slugify_name("łotego"), "lotego");
+        assert_eq!(slugify_name("UTOPIASZ - Małpy"), "utopiasz-malpy");
+        assert_eq!(
+            slugify_name("AZ-900 Exam – Free Actual Q&As, Page 1 _ ExamTopics"),
+            "az-900-exam-free-actual-q-as-page-1-examtopics"
+        );
+        assert_eq!(slugify_name("   ...hello!!!   "), "hello");
+        assert_eq!(slugify_name("日本語"), "");
+        assert_eq!(slugify_name(""), "");
+        assert_eq!(slugify_name(&"a".repeat(300)).len(), 80);
+    }
+
+    #[test]
+    fn base_name_strips_only_the_final_extension() {
+        assert_eq!(base_name("archive.tar.gz"), "archive.tar");
+        assert_eq!(base_name("Źródła wiedzy.docx"), "Źródła wiedzy");
+        assert_eq!(base_name(".htaccess"), ".htaccess");
+    }
+
+    #[test]
+    fn check_tag_rules() {
+        for tag in ["alicja", "bobby", "root", "hIto3", "kiNo4", "PaLU8", "wIke5"] {
+            assert_eq!(check_tag(tag), Ok(()), "{tag}");
+        }
+        assert_eq!(check_tag("dashboard"), Err(TagProblem::Reserved));
+        assert_eq!(check_tag("api"), Err(TagProblem::Reserved));
+        assert_eq!(check_tag("Login"), Err(TagProblem::Reserved));
+        assert_eq!(check_tag("s"), Err(TagProblem::TooShort));
+        assert_eq!(check_tag("a/b"), Err(TagProblem::Charset));
+        assert_eq!(check_tag(".."), Err(TagProblem::Charset));
+        assert_eq!(check_tag("a b"), Err(TagProblem::Charset));
+        assert_eq!(check_tag("-lead"), Err(TagProblem::Charset));
+        assert_eq!(check_tag("x"), Err(TagProblem::TooShort));
+        assert_eq!(check_tag(&"x".repeat(33)), Err(TagProblem::TooLong));
+        assert_eq!(check_tag(&"x".repeat(32)), Ok(()));
+    }
+
+    #[test]
+    fn build_code_base_schemes() {
+        assert_eq!(build_code_base(&input("filename", "Źródła wiedzy.docx")), "zrodla-wiedzy");
+        assert!(re("^raport-[a-z0-9]{4}$").is_match(&build_code_base(&input("filename-random", "raport.pdf"))));
+        assert!(re(r"^\d{4}-\d{2}-\d{2}-raport$").is_match(&build_code_base(&input("date-filename", "raport.pdf"))));
+        assert!(re(r"^[a-zA-Z]{8}\d{2}$").is_match(&build_code_base(&input("random", "raport.pdf"))));
+        assert!(re(r"^[a-zA-Z]{8}\d{2}$").is_match(&build_code_base(&input("filename", "日本語.png"))));
+        let custom = CodeBaseInput { pattern: Some("{year}/{month}-{name}"), ..input("custom", "Raport Roczny.pdf") };
+        assert_eq!(build_code_base(&custom), "2026-07-raport-roczny");
+        assert!(re("^[a-z]+-[a-z]+$").is_match(&build_code_base(&input("words", "a.png"))));
+        let chars = CodeBaseInput { random_length: Some(9.0), ..input("random-chars", "a.png") };
+        let code = build_code_base(&chars);
+        assert_eq!(code.len(), 9);
+        assert!(!re(CONFUSABLE).is_match(&code));
+        assert_eq!(build_code_base(&input("random-chars", "a.png")).len(), 6);
+    }
+
+    #[test]
+    fn expand_pattern_tokens() {
+        assert_eq!(expand_pattern("{nope}-{name}", "a.png", now()), "{nope}-a");
+        assert!(re("^[a-z0-9]{3}$").is_match(&expand_pattern("{random:3}", "a.png", now())));
+        assert_eq!(expand_pattern("{year}-{month}-{day}", "a.png", now()), "2026-07-30");
+        assert_eq!(expand_pattern("{name}.{ext}", "Raport Roczny.pdf", now()), "raport-roczny.pdf");
+        assert_eq!(expand_pattern("{words4}", "a.png", now()).split('-').count(), 4);
+        assert_eq!(expand_pattern("{words3}", "a.png", now()).split('-').count(), 3);
+        assert_eq!(expand_pattern("{words}", "a.png", now()).split('-').count(), 2);
+        assert_eq!(expand_pattern("{rand}", "a.png", now()).len(), 6);
+        assert_eq!(expand_pattern("{time}", "a.png", now()), "140509");
+        let out = expand_pattern("{words2}_{rand5}", "a.png", now());
+        assert!(re("^[a-z]+-[a-z]+_.{5}$").is_match(&out), "{out}");
+        assert!(!re(CONFUSABLE).is_match(out.split('_').nth(1).unwrap()));
+    }
+
+    #[test]
+    fn custom_patterns_keep_case_and_underscores() {
+        let custom = CodeBaseInput { pattern: Some("{words2}_{rand5}"), ..input("custom", "a.png") };
+        let code = build_code_base(&custom);
+        assert!(re("^[a-z]+-[a-z]+_[A-Za-z2-9]{5}$").is_match(&code), "{code}");
+        let unsafe_chars =
+            CodeBaseInput { pattern: Some("{year}/{month} {name}"), ..input("custom", "Raport Roczny.pdf") };
+        assert_eq!(build_code_base(&unsafe_chars), "2026-07-raport-roczny");
+    }
+
+    #[test]
+    fn word_and_random_codes() {
+        assert!(!re(CONFUSABLE).is_match(UNAMBIGUOUS_ALPHABET));
+        assert_eq!(UNAMBIGUOUS_ALPHABET.chars().collect::<HashSet<_>>().len(), UNAMBIGUOUS_ALPHABET.len());
+        for n in [1usize, 5, 12, 32] {
+            assert_eq!(random_char_code(n as f64).len(), n);
+        }
+        for n in 2..=4 {
+            assert_eq!(word_code(n as f64).split('-').count(), n);
+        }
+        for _ in 0..50 {
+            let parts: Vec<String> = word_code(4.0).split('-').map(str::to_string).collect();
+            assert!(NOUNS.contains(&parts[3].as_str()));
+            let adj: HashSet<&String> = parts[..3].iter().collect();
+            assert_eq!(adj.len(), 3);
+            assert!(parts[..3].iter().all(|a| ADJECTIVES.contains(&a.as_str())));
+        }
+        assert_eq!(word_code(1.0).split('-').count(), 2);
+        assert_eq!(word_code(99.0).split('-').count(), 4);
+        assert_eq!(clamp_random_length(Some(1.0)), 5);
+        assert_eq!(clamp_random_length(Some(0.0)), 5);
+        assert_eq!(clamp_random_length(Some(-3.0)), 5);
+        assert_eq!(clamp_random_length(None), 6);
+        assert_eq!(clamp_random_length(Some(999.0)), 32);
+        assert_eq!(clamp_random_length(Some(7.0)), 7);
+        assert_eq!(clamp_word_count(Some(0.0)), 2);
+        assert_eq!(clamp_word_count(None), 2);
+        assert_eq!(clamp_word_count(Some(9.0)), 4);
+        assert_eq!(clamp_word_count(Some(3.0)), 3);
+        assert!(is_naming_scheme(Some("words")));
+        assert!(is_naming_scheme(Some("random-chars")));
+        assert!(!is_naming_scheme(Some("nonsense")));
+        assert!(!is_guessable("words"));
+        assert!(!is_guessable("random-chars"));
+        assert!(is_guessable("filename"));
+        assert!(is_guessable("date-filename"));
+        assert!(is_guessable("custom"));
+        assert!(!is_guessable("random"));
+        assert!(!is_guessable("filename-random"));
+        assert_eq!(crate::naming_words::pool_size(5), 56f64.powi(5));
+    }
+
+    #[tokio::test]
+    async fn allocate_code_strategies() {
+        assert_eq!(allocate_code("raport", |_| async { Ok(false) }, None).await.unwrap(), "raport");
+        let taken: HashSet<String> = ["raport", "raport-2", "raport-3"].iter().map(|s| s.to_string()).collect();
+        let t = taken.clone();
+        assert_eq!(
+            allocate_code(
+                "raport",
+                move |c| {
+                    let t = t.clone();
+                    async move { Ok(t.contains(&c)) }
+                },
+                None
+            )
+            .await
+            .unwrap(),
+            "raport-4"
+        );
+        let mut ladder: HashSet<String> = (2..=20).map(|i| format!("raport-{i}")).collect();
+        ladder.insert("raport".into());
+        let code = allocate_code(
+            "raport",
+            move |c| {
+                let l = ladder.clone();
+                async move { Ok(l.contains(&c)) }
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(re("^raport-[a-z0-9]{5}$").is_match(&code), "{code}");
+        assert!(re(r"^[a-zA-Z]{8}\d{2}$").is_match(&allocate_code("", |_| async { Ok(false) }, None).await.unwrap()));
+        let err = allocate_code("x", |_| async { Ok(true) }, None).await.unwrap_err();
+        assert!(err.to_string().contains("unique code"));
+
+        // Random schemes widen instead of appending -2.
+        let plan = plan_code(&CodeBaseInput { random_length: Some(5.0), ..input("random-chars", "a.png") });
+        let base = plan.base.clone();
+        let code = allocate_code(
+            &plan.base,
+            move |c| {
+                let b = base.clone();
+                async move { Ok(c == b) }
+            },
+            plan.regenerate.as_ref(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(code.len(), 6);
+        assert!(!re(r"-\d+$").is_match(&code));
+        let plan = plan_code(&CodeBaseInput { random_length: Some(5.0), ..input("random-chars", "a.png") });
+        let code =
+            allocate_code(&plan.base, |c| async move { Ok(c.len() < 8) }, plan.regenerate.as_ref()).await.unwrap();
+        assert_eq!(code.len(), 8);
+        let plan = plan_code(&input("words", "a.png"));
+        let code = allocate_code(&plan.base, |c| async move { Ok(c.split('-').count() < 3) }, plan.regenerate.as_ref())
+            .await
+            .unwrap();
+        assert!(code.split('-').count() >= 3);
+        let plan = plan_code(&input("filename", "raport.pdf"));
+        assert!(plan.regenerate.is_none());
+        let code = allocate_code(&plan.base, |c| async move { Ok(c == "raport") }, None).await.unwrap();
+        assert_eq!(code, "raport-2");
+        let plan = plan_code(&input("random-chars", "a.png"));
+        assert!(allocate_code(&plan.base, |_| async { Ok(true) }, plan.regenerate.as_ref()).await.is_err());
+    }
+
+    #[test]
+    fn short_codes() {
+        assert_eq!(scoped_short_code(Some("alicja"), "test"), "alicja/test");
+        assert_eq!(scoped_short_code(None, "test"), "test");
+        assert_eq!(split_short_code("alicja/test"), (Some("alicja"), "test"));
+        assert_eq!(split_short_code("test"), (None, "test"));
+        assert_eq!(media_path(Some("t"), "c", "png"), "/t/c.png");
+        assert_eq!(media_path(None, "c", ""), "/c");
+    }
+
+    #[test]
+    fn slicing_through_a_surrogate_pair_leaves_a_replacement_character() {
+        assert_eq!(js_slice_utf8("abc", 2), "ab");
+        assert_eq!(js_slice_utf8("abc", 5), "abc");
+        assert_eq!(js_slice_utf8("a\u{1F600}b", 2), "a\u{FFFD}");
+        assert_eq!(js_slice_utf8("a\u{1F600}b", 3), "a\u{1F600}");
+        assert_eq!(js_slice_utf8("a\u{1F600}b", 1), "a");
+        assert_eq!(js_slice_utf8("ś", 0), "");
+    }
+}
+#[cfg(test)]
+mod url_tests {
+    //! tests/unit/naming-urls.test.ts
+    use super::*;
+
+    #[test]
+    fn reserved_tags() {
+        for name in ["login", "dashboard", "api", "s", "u", "a", "welcome", "trash"] {
+            assert!(is_reserved_tag(name), "{name}");
+        }
+        assert!(is_reserved_tag("Login"));
+        assert!(is_reserved_tag("DASHBOARD"));
+        assert!(!is_reserved_tag("login-screen"));
+        assert!(!is_reserved_tag("apis"));
+        assert!(!is_reserved_tag("alicja"));
+        for tag in ["alicja", "bobby", "root", "hIto3", "kiNo4"] {
+            assert_eq!(check_tag(tag), Ok(()), "{tag}");
+        }
+    }
+
+    #[test]
+    fn media_paths() {
+        assert_eq!(media_path(Some("alicja"), "screenshot", "png"), "/alicja/screenshot.png");
+        assert_eq!(media_path(None, "screenshot", "png"), "/screenshot.png");
+        assert_eq!(media_path(Some("alicja"), "notes", ""), "/alicja/notes");
+        assert_eq!(media_path(None, "notes", ""), "/notes");
+    }
+
+    #[test]
+    fn short_link_codes() {
+        assert_eq!(scoped_short_code(Some("alicja"), "test"), "alicja/test");
+        assert_eq!(scoped_short_code(None, "test"), "test");
+        assert_eq!(split_short_code(&scoped_short_code(Some("alicja"), "test")), (Some("alicja"), "test"));
+        assert_eq!(split_short_code(&scoped_short_code(None, "test")), (None, "test"));
+        assert_eq!(split_short_code("alicja/a/b"), (Some("alicja"), "a/b"));
+        assert_ne!(scoped_short_code(Some("alicja"), "test"), scoped_short_code(Some("bobby"), "test"));
+        let tag = "x".repeat(32);
+        assert_eq!(scoped_short_code(Some(&tag), &"y".repeat(31)).len(), SHORT_CODE_MAX);
+        assert!(scoped_short_code(Some(&tag), &"y".repeat(32)).len() > SHORT_CODE_MAX);
+    }
+}
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
     use super::*;
 
     // tests/unit/naming.test.ts (checkTag) and naming-schemes.test.ts (clamps)

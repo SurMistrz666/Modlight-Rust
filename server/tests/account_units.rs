@@ -175,13 +175,14 @@ mod media_urls_owner {
 
     use super::{HOST, config};
 
-    fn links(owner: LinkOwner<'_>, code: &str, ext: &str) -> (String, String) {
-        media_urls(&config(&[("APP_URL", HOST)]), &owner, code, ext)
+    fn links(owner: LinkOwner, code: &str, ext: &str) -> (String, String) {
+        let urls = media_urls(&config(&[("APP_URL", HOST)]), &owner, code, ext);
+        (urls.url, urls.raw_url)
     }
 
     #[test]
     fn puts_the_tag_in_both_links_by_default() {
-        let owner = LinkOwner { user_code: Some("ToqOse"), ..Default::default() };
+        let owner = LinkOwner { user_code: Some("ToqOse".into()), ..Default::default() };
         assert_eq!(
             links(owner, "abc12", "png"),
             (format!("{HOST}/ToqOse/abc12.png"), format!("{HOST}/ToqOse/abc12/raw.png"))
@@ -190,14 +191,14 @@ mod media_urls_owner {
 
     #[test]
     fn drops_the_tag_from_both_links_when_the_account_opted_out() {
-        let owner = LinkOwner { user_code: Some("ToqOse"), skip_tag_in_url: Some(true), ..Default::default() };
+        let owner = LinkOwner { user_code: Some("ToqOse".into()), skip_tag_in_url: Some(true), ..Default::default() };
         assert_eq!(links(owner, "abc12", "png"), (format!("{HOST}/abc12.png"), format!("{HOST}/abc12/raw.png")));
     }
 
     #[test]
     fn treats_a_missing_skip_tag_in_url_as_off() {
         for skip in [None, Some(false)] {
-            let owner = LinkOwner { user_code: Some("ToqOse"), skip_tag_in_url: skip, ..Default::default() };
+            let owner = LinkOwner { user_code: Some("ToqOse".into()), skip_tag_in_url: skip, ..Default::default() };
             assert_eq!(links(owner, "abc12", "png").0, format!("{HOST}/ToqOse/abc12.png"));
         }
     }
@@ -209,15 +210,15 @@ mod media_urls_owner {
 
     #[test]
     fn handles_a_file_with_no_extension() {
-        let owner = LinkOwner { user_code: Some("ToqOse"), ..Default::default() };
+        let owner = LinkOwner { user_code: Some("ToqOse".into()), ..Default::default() };
         assert_eq!(links(owner, "abc12", ""), (format!("{HOST}/ToqOse/abc12"), format!("{HOST}/ToqOse/abc12/raw")));
     }
 
     #[test]
     fn ignores_a_preferred_domain_the_operator_never_configured() {
         let owner = LinkOwner {
-            user_code: Some("ToqOse"),
-            preferred_domain: Some("https://evil.example"),
+            user_code: Some("ToqOse".into()),
+            preferred_domain: Some("https://evil.example".into()),
             ..Default::default()
         };
         assert_eq!(

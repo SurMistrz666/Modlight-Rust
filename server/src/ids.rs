@@ -90,6 +90,20 @@ mod tests {
         assert_eq!(slugify("---"), "");
     }
 
+    // tests/unit/ids.test.ts
+    #[test]
+    fn ids_like_upstream() {
+        let c = human_code(10);
+        assert_eq!(c.len(), 10);
+        assert!(!c.contains('.'));
+        assert!(c[8..].chars().all(|ch| ch.is_ascii_digit()));
+        let set: std::collections::HashSet<String> = (0..500).map(|_| human_code(10)).collect();
+        assert!(set.len() > 495);
+        assert_eq!(slugify("Hello World!!"), "hello-world");
+        assert_eq!(slugify("  a__b  "), "a-b");
+        assert_eq!(slugify("Łódź 2024"), "d-2024");
+    }
+
     #[test]
     fn secure_token_is_base64url() {
         let t = secure_token(24);
