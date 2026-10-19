@@ -7,4 +7,5 @@
 //! behaviour is what Uppy and the desktop apps' resumable uploader talk to,
 //! so it is ported as faithfully as the Modlight code itself.
 
+pub mod s3_store;
 pub mod store;
