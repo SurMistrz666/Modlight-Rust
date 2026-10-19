@@ -82,6 +82,8 @@ dotenvy = "0.15"
 
 [dev-dependencies]
 tempfile = "3"
+# A bare HTTP client for fetching presigned URLs in the S3 tests.
+hyper = { version = "1", features = ["client", "http1"] }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
