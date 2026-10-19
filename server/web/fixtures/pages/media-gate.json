@@ -15,9 +15,10 @@
       "onDefaultPassword": true
     },
     "meta": {
-      "title": "Protected file - Modlight",
-      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
-      "applicationName": "Modlight"
+      "title": "Modlight",
+      "description": null,
+      "applicationName": null,
+      "robots": "noindex, nofollow"
     }
   }
 }

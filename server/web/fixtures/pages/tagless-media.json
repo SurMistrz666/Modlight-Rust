@@ -39,9 +39,10 @@
       }
     },
     "meta": {
-      "title": "screenshot-1.png - Modlight",
-      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
-      "applicationName": "Modlight"
+      "title": "screenshot-1.png · example",
+      "description": null,
+      "applicationName": null,
+      "robots": null
     }
   }
 }
