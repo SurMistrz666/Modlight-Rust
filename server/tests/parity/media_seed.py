@@ -63,6 +63,7 @@ class Seeder(object):
         self.ref_url = ref_url
         self.rust_url = rust_url
         self.suffix = "%05d" % random.randint(0, 99999)
+        self.uploaded = 0
 
     def both_sql(self, statement):
         return self.ref_db.sql(statement), self.rust_db.sql(statement)
@@ -100,8 +101,11 @@ class Seeder(object):
             ids.append(row)
         ref_id, rust_id = ids
         code = ("c%s%s" % (label, self.suffix)).replace("-", "")[:40]
+        # Distinct creation times: galleries order by created_at, and ties come
+        # back in plan order (CONTRACT 12.14).
+        self.uploaded += 1
         common = {"code": code, "delete_token": "dt" + parity.random_id(20),
-                  "created_at": "2026-02-03T04:05:06.789Z"}
+                  "created_at": "2026-02-03T%02d:%02d:06.789Z" % (self.uploaded // 60, self.uploaded % 60)}
         common.update(cols)
         sets = ", ".join('"%s" = %s' % (k, Q(v)) for k, v in common.items())
         self.ref_db.sql('UPDATE uploads SET %s WHERE id = %s' % (sets, Q(ref_id)))
