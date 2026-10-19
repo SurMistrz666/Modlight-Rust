@@ -32,7 +32,7 @@ pub fn signed_in_as(name: &str) -> String {
     format(t(s::ModlightSignIn_SignedInAs), &[Arg::from(name)])
 }
 
-/// "Could not reach http://...: <reason>".
+/// "Could not reach http://...: `<reason>`".
 pub fn unreachable(host: &str, message: &str) -> String {
     format(
         t(s::ModlightSignIn_Unreachable),

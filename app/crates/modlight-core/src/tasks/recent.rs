@@ -66,7 +66,7 @@ impl RecentTask {
             .unwrap_or_default()
     }
 
-    /// `TrayMenuText`: "[HH:mm:ss] " and the text, its last 47 characters after "..."
+    /// `TrayMenuText`: `"[HH:mm:ss] "` and the text, its last 47 characters after "..."
     /// when it is longer than 50.
     pub fn tray_menu_text(&self) -> String {
         let text: Vec<char> = self.text().chars().collect();

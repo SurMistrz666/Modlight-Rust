@@ -61,7 +61,7 @@ fn defaults_read(domain: &str, key: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-/// The machine's name, for the token list ("Modlight on <name>").
+/// The machine's name, for the token list ("Modlight on `<name>`").
 pub fn machine_name() -> String {
     if let Ok(output) = Command::new("/usr/sbin/scutil")
         .args(["--get", "ComputerName"])
