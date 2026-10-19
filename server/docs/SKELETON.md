@@ -65,22 +65,35 @@ action errors), so upstream `.env` files keep their meaning.
 | `actions/{uploads,folders,duplicates,shortlinks,shortlink_unlock,pastes}.rs` | `app/actions/` same names | done (parity: `tests/parity/library_actions.py`) |
 | `actions/admin_library.rs` | `app/actions/admin.ts` (loadOrphans, deleteOrphan, purgeAllOrphans, loadDeletionImpact, deleteUserAccount, recalculateEveryQuota, runStorageScan), `components/admin/confirm.ts` | done; registered as module `admin` beside the accounts port's own `actions/admin.rs` |
 | `js_value.rs` | (JavaScript operators on raw arguments) | done |
-| `actions/*` (others) | `app/actions/*.ts` | to do |
+| `actions/avatar.rs` | `app/actions/avatar.ts` | done (`myAvatar` is in CONTRACT 7.3 but unreachable on the reference build: no client component imports it) |
+| `actions/*` (others) | `app/actions/*.ts` | to do: `unlock.ts`, `convert.ts` (media serving) |
 | `pages/` | page data, SPA shell, metadata | done (framework + table of every page and route handler) |
 | `pages/root_layout.rs` | `app/layout.tsx` | done |
-| `(app)`, `(auth)` layouts and every page loader | `app/**/layout.tsx`, `app/**/page.tsx` | to do (501 until registered) |
+| `pages/layout_app.rs`, `pages/layout_auth.rs`, account pages | `app/(app)/layout.tsx`, `app/(auth)/layout.tsx`, `/`, `/welcome`, `/download`, auth pages, `/dashboard/{profile,tokens,admin}` | done (accounts port; the `(app)` layout reads the library's data functions) |
+| `pages/dashboard*.rs`, `pages/shortlink_unlock.rs` | `/dashboard`, `/dashboard/{folders,trash,duplicates,links,paste,upload}`, `/dashboard/admin/users/[id]/files`, `/s/[code]/unlock`, `/s/[code]/[name]/unlock` | done (parity: `tests/parity/library_pages.py`) |
+| public page loaders | `/u/..`, `/a/..`, `/[userCode]..` | to do (media serving; 501 until registered) |
 | `i18n/` | `i18n/request.ts`, next-intl formatting | done (locale, messages, ICU subset used by the dictionaries) |
 | `themes.rs`, `theme_cookies.rs` | `lib/themes.ts`, `lib/theme-cookies.ts` | done |
 | `auth/cookies.rs`, `auth/session.rs` | better-auth 1.6.13 cookies + `getSession` | done |
 | `auth_helpers.rs` | `lib/auth-helpers.ts` | done (functions + axum extractors) |
 | `auth/api.rs`, `auth/password.rs`, `auth/two_factor.rs`, `auth/admin.rs`, `auth/email.rs` | `/api/auth/*`, better-auth plugins | layout + docs only (auth agent) |
 | `api_scopes.rs`, `api_token.rs`, `api_caller.rs` | `lib/api-scopes.ts`, `lib/api-token.ts`, `lib/api-caller.ts` | done |
-| `password.rs` | `lib/password.ts` | `client_ip` only |
+| `password.rs` | `lib/password.ts` | done: `client_ip`, rate limiter, file-password hashing (accounts port); unlock tokens and cookies, owner-scoped consent (library port) |
 | `ids.rs`, `audit.rs` | `lib/ids.ts`, `lib/audit.ts` | done |
 | `storage/` | `lib/storage/*` | done: local driver; S3 driver on `aws-sdk-s3` with ports of lib-storage `Upload` (`s3/lib_storage.rs`) and s3-request-presigner (`s3/presigner.rs`, URLs byte-identical to the JS SDK's); `is_not_found` |
 | `upload/tus_server/s3_store.rs` | `@tus/s3-store` 2.0.4 | done (`S3Store::from_env` = `makeDatastore()` for S3); keys, `.info` JSON, metadata and tags as the TS store, uploads resume across the two |
 | `routes/api/health.rs` | `app/api/health/route.ts` | done |
-| `jobs.rs` | timers in `server.ts` | done; the work functions are stubs in `upload/tus.rs`, `maintenance/trash.rs`, `mail_settings.rs` |
+| `jobs.rs` | timers in `server.ts` | done: tus sweep (`upload/tus.rs`), trash purge (`maintenance/trash.rs`), mail settings (accounts port) |
+| `upload/sharex.rs`, `upload/busboy.rs` | `lib/upload/sharex.ts` + busboy 1.6's part rules | done (security fix 2; parity `library.py --only sharex`) |
+| `upload/tus.rs`, `upload/tus_server/{server,store,file_store}.rs` | `lib/upload/tus.ts`, `@tus/server` 2.4.1, `@tus/utils` 0.7.0, `@tus/file-store` 2.1.0 | done (records interchangeable with the TS store; tus-js-client 4.3.1 resumes across both; `tests/parity/tus_client.cjs`) |
+| `upload/{finalize,disk,folder_target,duplicate_lookup,duplicate_check}.rs` | `lib/upload/*` | done |
+| `media/{sniff,mime,urls,paths,paste_type,actions,derived_cache,convert_targets,av_targets}.rs` | `lib/media/*` same names | done (`derived_cache`: keys, purge, `mayCacheDerived`; reading and writing cached conversions belongs to the media serving port) |
+| `media/motion_preview.rs`, `media/serve.rs` | `lib/media/motion-preview.ts`, `lib/media/serve.ts` | partial: the row-level policy (`canMotionPreview`, `clampMotionEdge`) and the pure reads (`getMedia`, `cacheHeadersFor`); clip planning and streaming are the media serving port's |
+| `media/vips.rs` + `media/vips/*`, `media/{image,probe,avif_brand,blurhash,sharp_runtime,transform_cost,transform_queue,avatar,abort}.rs` | sharp 0.34.5 / libvips 8.17, `lib/media/{image,probe,avif-brand,sharp-runtime,transform-cost,transform-queue,avatar}.ts`, blurhash 2.0.5 | done (section 11) |
+| `media/{ffmpeg,av_probe,av_cost,av_workspace,av_meta,playback_health}.rs` | `lib/media/*` same names | done (`playback_health`: all but `diagnosePlayback`) |
+| `naming.rs`, `naming_words.rs`, `folders.rs`, `uploads.rs`, `shortlinks.rs`, `quota.rs`, `format.rs`, `avatar.rs`, `avatar_store.rs`, `background.rs`, `paste_languages.rs`, `js_date.rs`, `link_info/parse.rs`, `maintenance/trash.rs` | `lib/` same names (`js_date.rs`: V8's `new Date(string)`) | done |
+| `data/{uploads,upload_query,folders,duplicates,admin_files}.rs` | `lib/data/` same names | done |
+| `routes/api/{uploads,uploads_check,folders,duplicates,shortlinks,link_info,avatar,background,admin_disk}.rs`, `routes/{avatar,s_code,s_code_name}.rs` | `app/api/{uploads,uploads/check,folders,duplicates,shortlinks,link-info,avatar,background,admin/disk}`, `app/avatar/[userCode]`, `app/bg/[userCode]`, `app/s/[code]`, `app/s/[code]/[name]` | done (parity: `library.py`, `library_routes.py`) |
 | `runtime/limits.rs` | `lib/runtime/limits.ts` | done |
 
 Reference sources (read-only, never executed) of the exact library versions
@@ -310,10 +323,48 @@ Deliberate, each for a reason:
     install missing a variable) throws even for an empty trash; upstream's
     `getStorage()` only ran once a batch had rows. Either way the install is
     broken; the answer differs only for an empty trash.
-17. **`admin.deleteUserAccount`** runs better-auth's `removeUser` as the same
-    statements (sessions, then sessions, accounts and the user row) inside
-    `actions/admin_library.rs`, for the one caller; the accounts port carries
-    the whole endpoint and should replace it when the branches meet.
+17. **ShareX (security fix 2)**: the header token is authenticated before a
+    byte of the body is read; a request that names no header token may still
+    carry a legacy `token` field, but its body is capped at 8 MiB
+    (`LEGACY_UPLOAD_MAX_SIZE` overrides; 413 with the upstream wording); quota
+    and free space are re-checked every 8 MiB while a chunked body streams
+    (507 "User disk quota exceeded." / the low-disk message), instead of after
+    the whole file landed on disk.
+18. **tus wire details**: the status line carries a reason phrase, empty
+    bodies go out with `Content-Length: 0` (Node chunked them), and there is no
+    `Connection: keep-alive` header. Kept from upstream: an upload finished at
+    creation (zero length, or creation-with-upload of the whole body) is
+    finalized, and its URL answers 404 afterwards.
+19. **`DELETE /api/uploads`** reads at most 1 MiB of body (upstream:
+    `req.json()` without a limit); 500 ids need about 20 KB.
+20. **libvips**: only the loaders sharp-libvips 1.2.4 ships may run (Homebrew's
+    ImageMagick loader would accept BMP and the `avis` AVIF production
+    refuses); HEVC pixels are refused (`HEVC_DECODE = false`) as production
+    cannot decode them. Built against libvips 8.18, image metadata, thumbnails
+    and avatars are byte-identical to production's 8.17.3 except CMYK input
+    (mean 3/255 colour shift); on Debian 13's 8.16.1, 2 of 20 blurhashes differ
+    by a digit. The runtime image should carry libvips 8.17 or newer.
+21. **ffprobe**: durations come from whatever ffprobe the host has. The
+    reference image (Debian 12, ffmpeg 5.1) counts an MP3's encoder padding
+    (1.541224 s) where ffmpeg 9 does not (1.5 s); ship the reference's ffmpeg
+    major for identical numbers.
+22. **`GET /api/link-info`** sends the handler's own `Vary: Authorization,
+    Cookie` (Next replaces it with its `rsc, ...` list on every route handler;
+    see 11).
+23. **Kept on purpose (upstream behaviour worth knowing)**: replacing or
+    removing an avatar or a wallpaper never deletes the previous object
+    (`UPDATE ... RETURNING` reads the NEW key, so `discard(old, key)` is a
+    no-op; confirmed on the reference); on S3 a finished tus upload stays
+    downloadable at its tus URL (`GET /api/files/<id>`), whatever the file's
+    later privacy or view limit, until the file is deleted; `listFolders`
+    always reports `count: 0` (the subquery compares `uploads` with itself).
+24. **A thrown error in a route handler** answers 500 with
+    `{"message":"Internal server error"}` (section 3); Next sends an empty
+    500. Seen on `/api/duplicates` with an out-of-range count and on `/s/%00`.
+25. **`read_json_object`** replaces lone surrogate escapes with U+FFFD before
+    parsing (JSON.parse accepted them); a number beyond the f64 range
+    (`1e400`) or nesting deeper than 128 levels is still refused with 400
+    where upstream judged the fields.
 
 ## 10. Verified on 2026-10-18
 
@@ -336,3 +387,48 @@ To repeat the session check: sign in on 8420 (QA credentials in
 database on 55421, run the server against it with the reference AUTH_SECRET,
 and send the cookie to `/_page?path=/login` (the root layout's `theme` comes
 from the session user) or to `POST /_rpc/tokens/myTokens`.
+
+## 11. The libvips binding (`src/media/vips.rs`)
+
+Upstream does all image work with sharp 0.34.5, a thin C++ layer over libvips
+(8.17.3 in production). Calling libvips with the same operations and
+arguments gives the same pixels, so the port binds libvips directly:
+hand-written `extern "C"` declarations in `vips/ffi.rs` (no bindgen, no extra
+crates); `build.rs` links what `pkg-config --libs vips` names (libvips 8.15 or
+newer; `brew install vips` on macOS, `libvips-dev` in the image).
+
+Layers: `ffi.rs` (raw declarations, `GValue`, `VipsProgress`) ->
+`operation.rs` (`Operation`: any libvips operation by nickname, like vips8's
+`VImage::call`) -> `image.rs` (`Image`: one owned reference, `Blob`, typed
+wrappers, the timeout) -> `sharp.rs` (`Sharp`: sharp's `pipeline.cc` and
+`metadata()` for the options the server uses).
+
+Rules:
+
+1. `init()` runs `vips_init` once with sharp-runtime's settings (threads from
+   `effective_cpu_count()`, cache 32 MB / 10 files / 50 operations).
+2. Everything is blocking: use the async methods or `run_blocking` (tokio's
+   blocking pool, then `vips_thread_shutdown`). Expensive work goes through
+   `transform_queue::image_transforms()` like upstream's `imageTransforms`.
+3. `Image` holds one GObject reference, `Send` but not `Sync`; metadata is
+   written only through `Image::mutate` on an uncached private copy.
+4. Inputs are copied into `vips_tracked_malloc` memory so the 32 MB cache
+   ceiling bounds what cached operations can pin.
+5. Errors take and clear the process-wide error buffer (concurrent failures
+   can mix messages); VIPS warnings go to tracing at debug level.
+6. Loaders: JPEG, PNG, WebP, GIF, TIFF, HEIF/AVIF and SVG only (section 9,
+   item 20); loads are sequential, as in sharp 0.34.5.
+7. `Image::set_timeout` is sharp's `.timeout()` (an `eval` handler that kills
+   the evaluation); encoders that never report progress run to the end.
+8. Argument names and types are checked against the operation's own
+   declarations before anything reaches GObject.
+
+Adding an operation needs no new FFI: `Operation::new("flatten")?.set("in",
+self).set("background", background).call()?.image("out")`. Scalars are
+`i32`/`f64`/`bool`/`Arg::Str`, enums and flags `Arg::Nick`; arguments only
+newer libvips releases have go through `set_if_known` with a comment naming the
+release; encoders are `*save_buffer` operations passed to `Image::save_buffer`.
+Copy the order and arguments from sharp's `pipeline.cc` (sources in
+`_scratch/srv-library/ref-src/sharp@0.34.5`). Not ported yet (for convert,
+motion and card rendering): `flatten`, `join: { animated }`, `composite`, text
+input.
