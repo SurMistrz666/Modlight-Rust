@@ -58,6 +58,8 @@ impl std::fmt::Debug for Credential {
 #[derive(Clone)]
 pub struct Api {
     http: reqwest::Client,
+    /// The live upload's client: see [`transfer_client`].
+    transfer: reqwest::Client,
 }
 
 impl Api {
@@ -65,9 +67,7 @@ impl Api {
     pub fn new(version: &str) -> ApiResult<Api> {
         let mut headers = HeaderMap::new();
         headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-        let agent = HeaderValue::from_str(&format!("Modlight/{version}"))
-            .unwrap_or(HeaderValue::from_static("Modlight"));
-        headers.insert(USER_AGENT, agent);
+        headers.insert(USER_AGENT, user_agent(version));
 
         let http = reqwest::Client::builder()
             .default_headers(headers)
@@ -76,7 +76,15 @@ impl Api {
             .build()
             .map_err(ApiError::from_reqwest)?;
 
-        Ok(Api { http })
+        Ok(Api {
+            http,
+            transfer: transfer_client(version)?,
+        })
+    }
+
+    /// The client the live upload goes through.
+    pub(crate) fn transfer(&self) -> &reqwest::Client {
+        &self.transfer
     }
 
     /// A request to `url` carrying the credential in the header and nowhere else.
@@ -192,6 +200,32 @@ impl Api {
         }
         Ok(Some(bytes))
     }
+}
+
+/// `ShareXResources.UserAgent`: `Modlight/<version>`, or bare `Modlight` when the
+/// version is not something a header can carry.
+pub(crate) fn user_agent(version: &str) -> HeaderValue {
+    HeaderValue::from_str(&format!("Modlight/{version}"))
+        .unwrap_or(HeaderValue::from_static("Modlight"))
+}
+
+/// A client for moving files: the User-Agent and nothing else by default, no deadline of
+/// any kind, redirects never followed.
+///
+/// Separate from the JSON client for the reasons upstream kept its transfers apart from
+/// `HttpClientFactory`. That client carries `Cache-Control: no-cache`, which neither
+/// `HttpWebRequest` (the live upload) nor the queue's own `HttpClient` (tus) sends, and
+/// a connect timeout neither of them has. A transfer gets no overall timeout because a
+/// four-gigabyte upload legitimately takes hours; what stops a dead one is the caller's
+/// cancellation, and for tus the stall watch.
+pub(crate) fn transfer_client(version: &str) -> ApiResult<reqwest::Client> {
+    let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, user_agent(version));
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(ApiError::from_reqwest)
 }
 
 pub(crate) fn absolute(path_or_url: &str, credential: &Credential) -> String {
