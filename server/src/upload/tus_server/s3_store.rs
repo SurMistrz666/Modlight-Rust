@@ -249,8 +249,10 @@ impl PartUploader {
 }
 
 /// A chunk being written by the splitter (`fileHandle`, `currentChunkPath`).
+/// The file is removed when the chunk is dropped, also when `write` itself
+/// is dropped midway.
 struct Chunk {
-    path: PathBuf,
+    temp: TempFile,
     file: tokio::fs::File,
     size: u64,
     permit: OwnedSemaphorePermit,
@@ -285,7 +287,7 @@ impl Splitter<'_> {
         let permit = self.store.part_upload_semaphore.clone().acquire_owned().await?;
         let path = self.store.tmp_dir.join(format!("{}-{}", self.filename_template, self.part));
         let file = tokio::fs::File::create(&path).await?;
-        self.current = Some(Chunk { path, file, size: 0, permit });
+        self.current = Some(Chunk { temp: TempFile(path), file, size: 0, permit });
         Ok(())
     }
 
@@ -321,15 +323,10 @@ impl Splitter<'_> {
         if self.current.is_some() { self.finish_chunk().await } else { Ok(()) }
     }
 
-    /// `_handleError()` plus `uploadParts`' cleanup of the pending chunk.
-    async fn abandon(&mut self) {
-        if let Some(chunk) = self.current.take() {
-            drop(chunk.file);
-            drop(chunk.permit);
-            if tokio::fs::remove_file(&chunk.path).await.is_err() {
-                tracing::debug!("[{}] failed to remove chunk {}", self.uploader.id, chunk.path.display());
-            }
-        }
+    /// `_handleError()` plus `uploadParts`' cleanup of the pending chunk
+    /// (the file goes with the chunk).
+    fn abandon(&mut self) {
+        self.current = None;
     }
 
     /// `_finishChunk()` and the `chunkFinished` handler of `uploadParts`.
@@ -348,10 +345,10 @@ impl Splitter<'_> {
 
         let uploader = self.uploader.clone();
         let state = self.state.clone();
-        let (path, permit) = (chunk.path, chunk.permit);
+        let (temp, permit) = (chunk.temp, chunk.permit);
         self.tasks.push(tokio::spawn(async move {
             let result = async {
-                let body = SdkStream::from_path(&path).await?;
+                let body = SdkStream::from_path(&temp.0).await?;
                 if as_part {
                     uploader.upload_part(body, part_number).await?;
                 } else {
@@ -360,7 +357,7 @@ impl Splitter<'_> {
                 anyhow::Ok(())
             }
             .await;
-            let _ = tokio::fs::remove_file(&path).await;
+            drop(temp);
             drop(permit);
             match result {
                 Ok(()) => {
@@ -612,7 +609,7 @@ impl S3Store {
             }
         }
         // A destroyed splitter (failed part, body error) drops its open chunk.
-        splitter.abandon().await;
+        splitter.abandon();
         drop(src);
 
         // Wait for all part uploads, then fail with the first failure, in
