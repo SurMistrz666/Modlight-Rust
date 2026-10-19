@@ -1,0 +1,20 @@
+{
+  "url": "/register",
+  "payload": {
+    "route": "/register",
+    "params": {},
+    "layouts": "$auth",
+    "props": {
+      "state": {
+        "open": false,
+        "bootstrap": false,
+        "keyRequired": false
+      }
+    },
+    "meta": {
+      "title": "Create account - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

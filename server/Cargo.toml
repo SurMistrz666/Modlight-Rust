@@ -1,0 +1,84 @@
+[package]
+name = "modlight-server"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Rust port of the Modlight server (self-hosted file and screenshot host)"
+publish = false
+default-run = "modlight-server"
+
+[lib]
+name = "modlight_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "modlight-server"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP stack (PORT.md section 4)
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["multipart", "macros"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "catch-panic", "trace"] }
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-graceful", "http1", "service"] }
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+multer = "3"
+
+# Database
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "uuid", "json", "macros", "migrate"] }
+
+# Data and encoding
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+indexmap = { version = "2", features = ["serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+url = "2"
+form_urlencoded = "1"
+percent-encoding = "2"
+regex = "1"
+
+# Crypto (PORT.md section 4: the auth agent builds password hashing, 2FA and
+# verification tokens on these; pinned here so every branch agrees on versions)
+rand = "0.8"
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+hex = "0.4"
+subtle = "2"
+scrypt = { version = "0.11", default-features = false, features = ["std"] }
+bcrypt = "0.17"
+chacha20poly1305 = "0.10"
+jsonwebtoken = "9"
+# Auth port: lib/secret-box.ts (AES-256-GCM over an HKDF key), Better Auth's
+# NFKC password normalisation, lib/mail.ts (nodemailer -> lettre, rustls).
+aes-gcm = "0.10"
+sha1 = "0.10"
+hkdf = "0.12"
+unicode-normalization = "0.1"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "hostname", "tokio1-rustls-tls"] }
+
+# Errors and logging
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Misc
+dotenvy = "0.15"
+
+[dev-dependencies]
+tempfile = "3"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+
+[profile.dev]
+# Dependencies are rebuilt rarely and run a lot (sqlx, crypto): optimise them.
+[profile.dev.package."*"]
+opt-level = 2

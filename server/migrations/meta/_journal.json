@@ -1,0 +1,104 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785441450828,
+      "tag": "0000_init_folders_naming",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785445905541,
+      "tag": "0001_username_login",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785449477895,
+      "tag": "0002_user_flags_and_default_folder",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785452452055,
+      "tag": "0003_naming_domain_orphans",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785503270640,
+      "tag": "0004_password_and_wallpaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786394180186,
+      "tag": "0005_upload_frames",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786415258455,
+      "tag": "0006_convert_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786471380811,
+      "tag": "0007_email_verified_amnesty",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786998654346,
+      "tag": "0008_client_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787026943607,
+      "tag": "0009_default_theme_late_night",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787042580233,
+      "tag": "0010_upload_checksum_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787127348991,
+      "tag": "0011_duplicate_dismissals",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787134155660,
+      "tag": "0012_api_token_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790604868738,
+      "tag": "0013_upload_av_metadata",
+      "breakpoints": true
+    }
+  ]
+}

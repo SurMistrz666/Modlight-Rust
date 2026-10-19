@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowJs": false,
+    "types": ["vite/client"],
+    "paths": {
+      "@/app/actions/*": ["./src/rpc/actions/*"],
+      "@/*": ["./src/overrides/*", "./*"],
+      "next/link": ["./src/shims/next/link.tsx"],
+      "next/navigation": ["./src/shims/next/navigation.ts"],
+      "next/dynamic": ["./src/shims/next/dynamic.tsx"],
+      "next-intl": ["./src/shims/next-intl.tsx"],
+      "client-only": ["./src/shims/empty.ts"],
+      "geist/font/sans": ["./src/shims/geist/font.ts"],
+      "geist/font/mono": ["./src/shims/geist/font.ts"]
+    }
+  },
+  "include": ["src", "components", "hooks", "types", "lib", "app", "tests"],
+  "exclude": ["node_modules", "dist"]
+}

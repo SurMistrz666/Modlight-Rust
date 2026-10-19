@@ -1,0 +1,465 @@
+{
+  "pageTitle": "Profile",
+  "pageIntro": "Manage your account, upload defaults, and security settings.",
+  "groups": {
+    "account": "Account & storage",
+    "links": "Links & naming",
+    "personal": "Appearance & security"
+  },
+  "permissions": {
+    "rootLinksAlwaysAdmin": "Administrators always hold this permission, so it can't be switched off here. It can only be granted or revoked for regular accounts."
+  },
+  "appearance": "Appearance",
+  "language": "Language",
+  "auto": "Auto (system)",
+  "theme": "Theme",
+  "themeNote": "Your theme is also shown to anyone who opens your links.",
+  "themes": {
+    "default": {
+      "name": "Classic",
+      "desc": "Clean, violet-accented and quiet. The original Modlight look."
+    },
+    "glass": {
+      "name": "Liquid Glass",
+      "desc": "Neutral translucent panels with a lit edge, floating over soft light."
+    },
+    "synthwave": {
+      "name": "Synthwave",
+      "desc": "Neon pink and cyan on deep purple."
+    },
+    "terminal": {
+      "name": "Terminal",
+      "desc": "Green on black console, monospace throughout."
+    },
+    "paper": {
+      "name": "Paper",
+      "desc": "Warm serif stationery, like a good notebook."
+    },
+    "win98": {
+      "name": "Windows 98",
+      "desc": "Beveled grey chrome on a teal desktop."
+    },
+    "nebula": {
+      "name": "Nebula",
+      "desc": "A real starfield under nebula light, panels lit along one edge."
+    },
+    "grimoire": {
+      "name": "Grimoire",
+      "desc": "Parchment and gilt. Old style serif, framed panels, candlelit after dark."
+    },
+    "cartoon": {
+      "name": "Cartoon",
+      "desc": "Ink outlines, flat colour, hard shadows and buttons that bounce."
+    },
+    "mono": {
+      "name": "Monochrome",
+      "desc": "Black, white and one red. Grid, hairlines and typography do the rest."
+    },
+    "deco": {
+      "name": "Art Deco",
+      "desc": "Gold on navy, a sunburst on the wall, capitals set wide."
+    },
+    "riso": {
+      "name": "Riso Press",
+      "desc": "Duplicator print: halftone screen, paper grain, ink that lands off register."
+    },
+    "discord": {
+      "name": "Late Night",
+      "desc": "Deep blue-slate in layers, one indigo accent, everything softly rounded."
+    },
+    "spotify": {
+      "name": "Night Player",
+      "desc": "Near-black with lifted cards and a single vivid green doing all the work."
+    }
+  },
+  "appearanceDesc": "Pick a theme and language for your panel.",
+  "languageHelp": "Choose Auto to follow your system language.",
+  "themeUpdated": "Theme updated.",
+  "themeError": "Couldn't change your theme. Try again.",
+  "languageUpdated": "Language updated.",
+  "languageError": "Couldn't change your language. Try again.",
+  "storage": {
+    "title": "Storage",
+    "desc": "How much of your allowance you're using.",
+    "used": "Used",
+    "unlimited": "Unlimited",
+    "of": "of {amount}",
+    "files": "Files",
+    "totalViews": "Total views",
+    "stored": "Stored"
+  },
+  "account": {
+    "title": "Account",
+    "desc": "Your public identity and upload defaults.",
+    "displayName": "Display name",
+    "namePlaceholder": "Your name",
+    "email": "Email",
+    "userCode": "User code",
+    "copyUserCode": "Copy user code",
+    "userCodeHint": "The prefix in every share link:",
+    "userCodeCopied": "User code copied.",
+    "copyError": "Couldn't copy to clipboard.",
+    "uploadDefaults": "Upload defaults",
+    "privateByDefault": "Private by default",
+    "privateByDefaultHelp": "New uploads start unlisted - only people with the link can view them.",
+    "copyRaw": "Copy raw URL",
+    "copyRawHelp": "After uploading, copy the direct file link instead of the viewer page.",
+    "nameEmpty": "Display name can't be empty.",
+    "saved": "Profile saved.",
+    "saveError": "Couldn't save your profile. Try again.",
+    "discard": "Discard",
+    "saveChanges": "Save changes"
+  },
+  "tag": {
+    "title": "Your tag",
+    "desc": "The first part of every link you share. Change it whenever you like.",
+    "label": "Tag",
+    "checking": "Checking availability…",
+    "available": "\"{tag}\" is available.",
+    "unchanged": "This is your current tag.",
+    "previewLabel": "Your links will look like this",
+    "previewFallback": "your-tag",
+    "aliasTitle": "Links you already shared keep working",
+    "aliasBody": "Your old tag is kept forever and still resolves, so every link already out there - in Discord, in documents, in bookmarks - carries on working. Nobody else can ever claim it.",
+    "skipLabel": "Drop the tag from new links",
+    "skipHelp": "New uploads get links like host/screenshot.png instead of host/tag/screenshot.png.",
+    "skipWarning": "Admins only. Tagless links live in the same namespace as the app's own pages, so reserved names (/login, /dashboard, …) stay off limits. Files uploaded earlier keep their current links.",
+    "skipEnabled": "New links will skip the tag.",
+    "skipDisabled": "New links will include the tag.",
+    "skipError": "Couldn't change that. Try again.",
+    "saved": "Tag updated.",
+    "discard": "Discard",
+    "save": "Save tag",
+    "issue": {
+      "too-short": "Tags need at least 2 characters.",
+      "too-long": "Tags can be at most 32 characters.",
+      "charset": "Use letters, digits, dashes and underscores only, starting with a letter or digit.",
+      "reserved": "That name is reserved by the app.",
+      "taken": "That tag is already taken.",
+      "retired": "That tag belonged to another account and can't be reused.",
+      "error": "Couldn't save your tag. Try again."
+    }
+  },
+  "naming": {
+    "title": "How new files are named",
+    "desc": "The second part of your links. Applies to new uploads only - files you have already shared keep the name they were given.",
+    "label": "Naming style",
+    "previewLabel": "A new upload would look like this",
+    "reroll": "Roll again",
+    "existingSafe": "Changing this never touches a link you have already shared: every file stores the name it was created with.",
+    "saved": "Naming style updated.",
+    "error": "Couldn't save your naming style. Try again.",
+    "discard": "Discard",
+    "save": "Save",
+    "scheme": {
+      "random": {
+        "name": "Random code",
+        "hint": "Bocugavi42 - pronounceable, unguessable"
+      },
+      "words": {
+        "name": "Words",
+        "hint": "funny-cat, ineffable-guitar - easy to say out loud"
+      },
+      "random-chars": {
+        "name": "Random characters",
+        "hint": "fJ4as - short, no look-alike characters"
+      },
+      "filename": {
+        "name": "Original filename",
+        "hint": "holiday-photo.jpg - readable, but guessable"
+      },
+      "filename-random": {
+        "name": "Filename + suffix",
+        "hint": "holiday-photo-k3xz.jpg - readable and safe"
+      },
+      "date-filename": {
+        "name": "Date + filename",
+        "hint": "2026-07-31-holiday-photo.jpg"
+      },
+      "custom": {
+        "name": "Custom pattern",
+        "hint": "Build your own from the tokens below"
+      }
+    },
+    "words": {
+      "label": "How many words",
+      "count": "{count} words",
+      "pool": "About {pool} different names at this setting."
+    },
+    "chars": {
+      "label": "How many characters",
+      "pool": "{length} characters → about {pool} different codes.",
+      "unambiguousTitle": "No characters that look alike",
+      "unambiguousBody": "0, O and o are left out, and so are 1, l and I - the pairs people actually get wrong when reading a link off a screen or repeating it over the phone.",
+      "growWarning": "If codes of this length ever run out, new uploads automatically get one character more. Nothing breaks and nothing is refused."
+    },
+    "custom": {
+      "label": "Pattern",
+      "tokensTitle": "Available tokens",
+      "token": {
+        "words2": "Two words - use words3 or words4 for more",
+        "rand5": "Five random characters - any length from 1 up",
+        "name": "Original filename, cleaned up",
+        "ext": "File extension",
+        "date": "Date, e.g. 2026-07-31",
+        "time": "Time, e.g. 140509",
+        "year": "Year",
+        "month": "Month",
+        "day": "Day",
+        "random": "Pronounceable suffix"
+      }
+    }
+  },
+  "domain": {
+    "title": "Link domain",
+    "desc": "Which address your links are built from. This app answers on all of them.",
+    "label": "Generate my links on",
+    "followDefault": "Use the default ({host})",
+    "previewLabel": "Your links will look like this",
+    "safeTitle": "Every link you have shared keeps working",
+    "safeBody": "All {count} addresses point at this same app and serve the same files, permanently. Switching only changes what NEW links say - nothing already out there stops working, now or ever.",
+    "sharexTitle": "Download a new ShareX config",
+    "sharexBody": "ShareX stores the address inside its config file, so it will not pick this up on its own. Grab a fresh one from <link>ShareX and API</link> after changing this.",
+    "saved": "Link domain updated.",
+    "error": "Couldn't change the link domain. Try again."
+  },
+  "uploadFolder": {
+    "title": "Default folder",
+    "desc": "Where new uploads land when you don't pick a folder yourself.",
+    "label": "New uploads go to",
+    "none": "No folder",
+    "help": "Applies to web uploads and ShareX alike. You can still move files afterwards.",
+    "emptyHelp": "Create a folder first and it will show up here.",
+    "saved": "Default folder updated.",
+    "error": "Couldn't change the default folder. Try again."
+  },
+  "security": {
+    "title": "Security",
+    "desc": "Keep your account locked down.",
+    "password": "Password",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "newPasswordPlaceholder": "At least 8 characters",
+    "confirmPassword": "Confirm new password",
+    "passwordSignOutNote": "Changing your password signs out all other devices.",
+    "updatePassword": "Update password",
+    "passwordTooShort": "New password must be at least 8 characters.",
+    "passwordMismatch": "New passwords don't match.",
+    "passwordChangeError": "Couldn't change your password.",
+    "passwordChanged": "Password changed. Other sessions were signed out.",
+    "defaultPassword": {
+      "title": "Password-protect new files",
+      "desc": "Every file you upload from now on gets this password, from the panel and from ShareX alike.",
+      "newLabel": "Default password",
+      "placeholder": "At least 4 characters",
+      "save": "Save default password",
+      "saved": "Default password saved. New uploads will use it.",
+      "disabled": "Default password turned off. New uploads will be unprotected.",
+      "tooShort": "The default password needs at least 4 characters.",
+      "saveError": "Couldn't save the default password. Try again.",
+      "warningTitle": "Changing this password has two effects",
+      "warningBody": "Everything you share from now on asks for the new password, including from people who ticked \"remember me for 30 days\". Files you have already shared keep the password they were sent with, so those links carry on working exactly as before.",
+      "appliesNote": "A password you set on a single file is never touched by this.",
+      "applyExisting": "Also change the {count, plural, one {# file} other {# files}} already using it",
+      "applyExistingOn": "Those links stay the same but start asking for the new password. Anyone you sent them to needs to be told.",
+      "applyExistingOff": "Files already shared keep the password they were sent with, so those links carry on working exactly as before.",
+      "warningRewrite": "This rewrites the password on {count, plural, one {# file} other {# files}} you have already shared. Their links do not change, but the old password stops working everywhere, including for people who ticked \"remember me for 30 days\". It cannot be undone: to go back you would have to type the previous password in again from memory.",
+      "confirmRewrite": "Yes, change {count, plural, one {# file} other {# files}}",
+      "savedFiles": "Saved. {count, plural, one {# file} other {# files}} switched to the new password.",
+      "clearedFiles": "Default password turned off. {count, plural, one {# file is} other {# files are}} no longer protected.",
+      "offTitle": "What about the files already shared?",
+      "offBody": "{count, plural, one {# file is} other {# files are}} protected with your default password. Turning the setting off always stops NEW uploads being protected. Choose what happens to those.",
+      "offKeep": "Keep them protected",
+      "offStrip": "Unprotect {count, plural, one {# file} other {# files}}",
+      "embedTitle": "Discord will not turn these links into pictures",
+      "embedBody": "A protected file shows no preview in Discord, Twitter or Telegram, and that is the point: Discord copies previews onto its own servers and re-hosts them publicly, so an embed would hand out the file to everyone in the channel without the password. Files you leave unprotected still preview normally."
+    },
+    "twoFactor": "Two-factor authentication",
+    "on": "On",
+    "off": "Off",
+    "twoFactorDesc": "Require a one-time code from an authenticator app when you sign in.",
+    "disable": "Disable",
+    "enable": "Enable",
+    "verifyEmailFirst": "Verify your email first",
+    "verifyEmailDesc": "We recommend confirming your email before enabling 2FA so you can recover access.",
+    "scanTitle": "1. Scan this QR with your authenticator",
+    "scanDesc": "Open Google Authenticator, 1Password, Authy, or similar and scan the code below. Can't scan? Enter the setup key manually instead.",
+    "qrLabel": "Two-factor setup QR code",
+    "qrAlt": "QR code for two-factor authenticator setup",
+    "setupKey": "Setup key",
+    "otpauthUri": "otpauth URI",
+    "openInApp": "Open in authenticator app",
+    "backupCodes": "Backup codes",
+    "saveBackupTitle": "Save these somewhere safe",
+    "saveBackupDesc": "Each code works once if you lose access to your authenticator.",
+    "copyAllCodes": "Copy all codes",
+    "backupCodesCopied": "Backup codes copied.",
+    "enterCodeTitle": "2. Enter the 6-digit code to confirm",
+    "enterCodeDesc": "Type the current code shown in your authenticator app.",
+    "verifyAndEnable": "Verify & enable",
+    "enterPasswordToContinue": "Enter your password to continue.",
+    "enableError": "Couldn't start 2FA setup. Check your password.",
+    "disableError": "Couldn't disable 2FA. Check your password.",
+    "twoFactorDisabled": "Two-factor authentication disabled.",
+    "twoFactorEnabled": "Two-factor authentication enabled.",
+    "enterSixDigit": "Enter the 6-digit code from your authenticator.",
+    "codeMismatch": "That code didn't match. Try the latest one.",
+    "copyLabelCopied": "{label} copied.",
+    "copyError": "Couldn't copy to clipboard.",
+    "protectedNote": "Your account is protected with an authenticator app.",
+    "confirmPasswordTitle": "Confirm your password",
+    "disableTitle": "Disable two-factor",
+    "confirmPasswordDesc": "Enter your password to begin setting up two-factor authentication.",
+    "disableDesc": "Enter your password to turn off two-factor authentication. Your account will be less secure.",
+    "passwordLabel": "Password",
+    "continue": "Continue",
+    "disable2fa": "Disable 2FA",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password"
+  },
+  "background": {
+    "title": "Wallpaper",
+    "desc": "Put an image behind your panel. Everyone opening your links sees it too, the same way they see your skin.",
+    "empty": "No wallpaper yet",
+    "sample": "Text stays this readable",
+    "choose": "Choose image",
+    "replace": "Replace image",
+    "remove": "Remove",
+    "dim": "Veil",
+    "dimHelp": "How far the skin covers the image. Higher means calmer background and sharper text.",
+    "note": "Up to 12 MB. The image is re-encoded to WebP on upload, which also strips its EXIF data, so a photo does not publish the place it was taken.",
+    "saved": "Wallpaper saved.",
+    "removed": "Wallpaper removed.",
+    "tooLarge": "That image is over 12 MB. Pick a smaller one.",
+    "badType": "That file is not an image we can use. Try PNG, JPEG, WebP or AVIF.",
+    "uploadError": "Could not save the wallpaper. Try again.",
+    "removeError": "Could not remove the wallpaper. Try again.",
+    "dimError": "Could not save the veil setting.",
+    "dimWarning": "At this setting text can be hard to read over a busy image. Raise the veil if the panel starts to feel noisy."
+  },
+  "avatar": {
+    "title": "Avatar",
+    "desc": "The picture shown next to your name, in your panel and wherever else your account appears. Animated GIFs stay animated.",
+    "sizesNote": "Drawn at these sizes in the sidebar and the top bar.",
+    "choose": "Upload image",
+    "replace": "Replace image",
+    "fromFiles": "Pick from my files",
+    "remove": "Remove",
+    "saved": "Avatar saved.",
+    "removed": "Avatar removed. Your initials are back.",
+    "note": "Up to 8 MB. The image is re-encoded to a 256 px square WebP, which also strips its EXIF data, so a photo does not publish the place it was taken.",
+    "visibility": "Your avatar is public: anyone who can see your links or your galleries can see it. Picking one of your files copies it into a small square, so the file itself stays exactly as private as it was.",
+    "tooLarge": "That image is over 8 MB. Pick a smaller one.",
+    "tooManyPixels": "That image declares more pixels than we will decode. Pick a smaller one.",
+    "badType": "That file is not an image we can use. Try PNG, JPEG, WebP, AVIF or GIF.",
+    "busy": "The server is busy converting images right now. Try again in a moment.",
+    "uploadError": "Could not save the avatar. Try again.",
+    "removeError": "Could not remove the avatar. Try again.",
+    "pickMissing": "That file is no longer available.",
+    "degradedFrames": "The animation was too long, so the avatar was saved as a still image.",
+    "degradedPixels": "The animation was too large to re-encode, so the avatar was saved as a still image.",
+    "degradedSize": "The animation came out too heavy for an avatar, so it was saved as a still image.",
+    "pickerTitle": "Pick from my files",
+    "pickerDesc": "Any image you have already uploaded. A small square copy is made, so deleting the file later will not remove your avatar.",
+    "pickerSearch": "Search by name or code",
+    "pickerEmpty": "No images found.",
+    "pickerTooLarge": "This file is too large to use as an avatar.",
+    "pickerPrivate": "This file is not public.",
+    "pickerPrivateNote": "A private file can be used. Only the small square becomes visible, never the file.",
+    "pickerPrev": "Previous page",
+    "pickerNext": "Next page"
+  },
+  "duplicates": {
+    "title": "Find duplicates",
+    "desc": "Look through the files you have already uploaded for copies of the very same file, and offer to clear them out.",
+    "byChecksumTitle": "Matched by checksum, never by name",
+    "byChecksumBody": "Two files count as copies only when their contents hash to the same sha256. Names are ignored, so twenty unrelated screenshots called image.png stay twenty files, while clip.mp4 next to clip (1).mp4 is found.",
+    "idle": "Nothing scanned yet. The scan only reads your library, it never removes anything on its own.",
+    "scanning": "Reading your library...",
+    "none": "No duplicates found. Every file you have is one of a kind.",
+    "scan": "Scan for duplicates",
+    "rescan": "Scan again",
+    "resetSelection": "Keep the oldest",
+    "trashSelected": "Move {count, plural, one {# copy} other {# copies}} to trash",
+    "trashNote": "Anything removed here goes to the trash, where it can be restored for 30 days.",
+    "stats": {
+      "groups": "Duplicate sets",
+      "files": "Files involved",
+      "reclaimable": "Space you can free"
+    },
+    "unchecksummed": "{count, plural, one {# file has} other {# files have}} no checksum stored, so this scan cannot see them. Large uploads get theirs the first time something reads the whole file, so this number falls on its own.",
+    "truncated": "Showing the {shown} biggest sets out of {total}. Clear these and scan again to see the rest.",
+    "selection": "{count, plural, one {# file} other {# files}} selected, {size}",
+    "emptiedWarning": "{count, plural, one {One set has} other {# sets have}} every copy selected, so nothing would be kept.",
+    "copies": "{count, plural, one {# copy} other {# copies}} of the same file",
+    "each": "{size} each",
+    "saves": "Frees {size}",
+    "oldest": "Oldest",
+    "removeAria": "Move {filename} to trash",
+    "openAria": "Open {filename} in a new tab",
+    "noCopyKept": "Every copy in this set is selected, so none will be left behind.",
+    "trashed": "{count, plural, one {# file} other {# files}} moved to the trash, {size}. The space comes back when the trash is emptied.",
+    "page": {
+      "metaTitle": "Duplicates",
+      "title": "Duplicate files",
+      "subtitle": "Copies of the very same file, found by checksum. Nothing leaves your library until you say so.",
+      "back": "Back to files"
+    },
+    "keepOnly": "Keep only this",
+    "keepOnlyAria": "Keep only {filename} and mark the other copies for the trash",
+    "keeping": "Keeping",
+    "keepSet": "I want these copies",
+    "keepAll": "I want every set listed",
+    "keptBadge": "Kept on purpose",
+    "keptHeading": "Sets you asked to keep",
+    "keptNote": "These stay exactly where they are and stop counting towards the reminder. The next count starts from what is left.",
+    "keptToast": "{count, plural, one {# set} other {# sets}} will not be counted or brought up again.",
+    "keptExcluded": "{count, plural, one {# set is} other {# sets are}} kept on purpose, so {size} is left out of the count.",
+    "countAgain": "Count this again",
+    "countAgainToast": "{count, plural, one {# set is} other {# sets are}} being counted again.",
+    "undo": "Undo",
+    "moreCopies": "Showing {shown} of {total} copies in this set. Clear these and scan again to see the rest.",
+    "reminder": {
+      "body": "You have {count, plural, one {# duplicate file} other {# duplicate files}} taking up {size}.",
+      "review": "Review",
+      "later": "Not now"
+    },
+    "error": {
+      "unauthorized": "Your session has expired. Sign in again.",
+      "failed": "That did not finish. Try again in a moment.",
+      "empty": "Nothing was selected.",
+      "malformed": "That selection is out of date. Scan again.",
+      "too-many": "Too many files in one go. Clear some of them first, then scan again."
+    }
+  },
+  "sessions": {
+    "title": "Devices and sessions",
+    "desc": "Everywhere your account is signed in right now. Sign out anything you do not recognise.",
+    "thisDevice": "This device",
+    "impersonated": "Opened by an administrator",
+    "unknownDevice": "Unrecognised device",
+    "signedIn": "Signed in {time}",
+    "renewed": "Renewed {time}",
+    "expires": "Expires {time}",
+    "ip": "IP {ip}",
+    "ipUnknown": "No IP recorded",
+    "uaLabel": "Reported by the browser",
+    "signOut": "Sign out",
+    "signingOut": "Signing out…",
+    "signOutAria": "Sign out {device}",
+    "currentHint": "This is the session you are using now. To end it, use Sign out in the account menu.",
+    "signOutOthers": "Sign out everywhere else",
+    "confirmTitle": "Sign out everywhere else?",
+    "confirmBody": "This ends {count, plural, one {# other session} other {# other sessions}}. Anyone signed in there, you on your other devices included, has to sign in again. The session you are using now stays open.",
+    "confirmCta": "Sign out {count, plural, one {# session} other {# sessions}}",
+    "notesTitle": "What these times mean",
+    "renewNote": "\"Renewed\" is not a last-seen time. A session stamps itself at most once a day, when it renews itself, and nothing here records individual requests.",
+    "ipNote": "The address is shown exactly as the server received it. We never look up a city or a country from it, so nothing on this screen is guessing where you were.",
+    "revoked": "That session was signed out.",
+    "revokedOthers": "{count, plural, one {# other session} other {# other sessions}} signed out.",
+    "revokeError": "Couldn't sign that session out. Try again.",
+    "currentRefused": "That is the session you are using. Use Sign out in the account menu to end it.",
+    "gone": "That session had already ended.",
+    "empty": "No active sessions."
+  }
+}

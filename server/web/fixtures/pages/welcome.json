@@ -1,0 +1,16 @@
+{
+  "url": "/welcome",
+  "payload": {
+    "route": "/welcome",
+    "params": {},
+    "layouts": "$root",
+    "props": {
+      "isAuthed": false
+    },
+    "meta": {
+      "title": "Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

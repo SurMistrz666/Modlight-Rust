@@ -1,0 +1,46 @@
+{
+  "library": "Library",
+  "create": "Create",
+  "account": "Account",
+  "files": "All files",
+  "folders": "Folders",
+  "trash": "Trash",
+  "duplicates": "Duplicates",
+  "foldersSection": "Your folders",
+  "upload": "Upload file",
+  "newPaste": "New paste",
+  "shortLinks": "New short link",
+  "sharexApi": "Integrations",
+  "profile": "Profile",
+  "admin": "Admin",
+  "signOut": "Sign out",
+  "mediaPanel": "Media panel",
+  "menu": "Menu",
+  "navigation": "Navigation",
+  "collapseSidebar": "Collapse sidebar",
+  "expandSidebar": "Expand sidebar",
+  "collapseSection": "Collapse {name}",
+  "expandSection": "Expand {name}",
+  "rowMenu": {
+    "open": "Open",
+    "openNewTab": "Open in new tab",
+    "copyLink": "Copy link",
+    "linkCopied": "Link copied",
+    "copyFailed": "Couldn't copy to clipboard"
+  },
+  "kind": {
+    "image": "Images",
+    "video": "Video",
+    "audio": "Audio",
+    "document": "Documents",
+    "archive": "Archives",
+    "paste": "Pastes",
+    "other": "Other"
+  },
+  "storage": {
+    "label": "Storage",
+    "used": "{used} used",
+    "ofQuota": "{used} of {total}",
+    "unlimited": "No quota limit"
+  }
+}

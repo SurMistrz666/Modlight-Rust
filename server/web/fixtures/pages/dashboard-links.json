@@ -1,0 +1,39 @@
+{
+  "url": "/dashboard/links",
+  "payload": {
+    "route": "/dashboard/links",
+    "params": {},
+    "layouts": "$app",
+    "props": {
+      "links": [
+        {
+          "id": "l1",
+          "code": "promo",
+          "target": "https://example.org/landing",
+          "clicks": 14,
+          "hasPassword": false,
+          "lastUsedAt": "2026-10-17T09:00:00.000Z",
+          "expiresAt": null,
+          "createdAt": "2026-10-01T09:00:00.000Z"
+        },
+        {
+          "id": "l2",
+          "code": "alicja/secret",
+          "target": "https://example.org/secret",
+          "clicks": 0,
+          "hasPassword": true,
+          "lastUsedAt": null,
+          "expiresAt": "2026-11-01T00:00:00.000Z",
+          "createdAt": "2026-10-02T09:00:00.000Z"
+        }
+      ],
+      "userCode": "alicja",
+      "canUseRoot": true
+    },
+    "meta": {
+      "title": "Short links - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

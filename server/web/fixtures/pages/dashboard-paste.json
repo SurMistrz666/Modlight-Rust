@@ -1,0 +1,14 @@
+{
+  "url": "/dashboard/paste",
+  "payload": {
+    "route": "/dashboard/paste",
+    "params": {},
+    "layouts": "$app",
+    "props": {},
+    "meta": {
+      "title": "New paste - Modlight",
+      "description": "Share code and text with syntax-aware links, expiry, view limits, and password protection.",
+      "applicationName": "Modlight"
+    }
+  }
+}

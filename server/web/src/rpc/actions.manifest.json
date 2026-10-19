@@ -1,0 +1,1352 @@
+[
+  {
+    "module": "account",
+    "name": "updatePreferences",
+    "path": "/_rpc/account/updatePreferences",
+    "params": [
+      {
+        "text": "input: {\n  name?: string;\n  hideUploads?: boolean;\n  copyRaw?: boolean;\n  theme?: string;\n  locale?: string | null;\n}",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<PreferencesResult>",
+    "upstream": "app/actions/account.ts:45"
+  },
+  {
+    "module": "account",
+    "name": "checkTagAvailability",
+    "path": "/_rpc/account/checkTagAvailability",
+    "params": [
+      {
+        "text": "tag: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<TagCheckResult>",
+    "upstream": "app/actions/account.ts:126"
+  },
+  {
+    "module": "account",
+    "name": "updateTag",
+    "path": "/_rpc/account/updateTag",
+    "params": [
+      {
+        "text": "tag: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ ok: true; tag: string } | { ok: false; reason: TagIssue }>",
+    "upstream": "app/actions/account.ts:166"
+  },
+  {
+    "module": "account",
+    "name": "updateSkipTagInUrl",
+    "path": "/_rpc/account/updateSkipTagInUrl",
+    "params": [
+      {
+        "text": "enabled: boolean",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/account.ts:231"
+  },
+  {
+    "module": "account",
+    "name": "setAllowRootShortLinks",
+    "path": "/_rpc/account/setAllowRootShortLinks",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "allowed: boolean",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/account.ts:242"
+  },
+  {
+    "module": "account",
+    "name": "updateDefaultFolder",
+    "path": "/_rpc/account/updateDefaultFolder",
+    "params": [
+      {
+        "text": "folderId: string | null",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ ok: boolean }>",
+    "upstream": "app/actions/account.ts:255"
+  },
+  {
+    "module": "account",
+    "name": "myUrlPrefs",
+    "path": "/_rpc/account/myUrlPrefs",
+    "params": [],
+    "returns": "Promise<UrlPrefs>",
+    "upstream": "app/actions/account.ts:294"
+  },
+  {
+    "module": "account",
+    "name": "updateNaming",
+    "path": "/_rpc/account/updateNaming",
+    "params": [
+      {
+        "text": "input: UpdateNamingInput",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/account.ts:338"
+  },
+  {
+    "module": "account",
+    "name": "updatePreferredDomain",
+    "path": "/_rpc/account/updatePreferredDomain",
+    "params": [
+      {
+        "text": "domain: string | null",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ ok: boolean; baseUrl: string }>",
+    "upstream": "app/actions/account.ts:379"
+  },
+  {
+    "module": "account",
+    "name": "myDefaultFilePassword",
+    "path": "/_rpc/account/myDefaultFilePassword",
+    "params": [],
+    "returns": "Promise<DefaultPasswordState>",
+    "upstream": "app/actions/account.ts:421"
+  },
+  {
+    "module": "account",
+    "name": "updateDefaultFilePassword",
+    "path": "/_rpc/account/updateDefaultFilePassword",
+    "params": [
+      {
+        "text": "password: string | null",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "applyToExisting?: boolean",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<DefaultPasswordResult>",
+    "upstream": "app/actions/account.ts:464"
+  },
+  {
+    "module": "account",
+    "name": "myBackground",
+    "path": "/_rpc/account/myBackground",
+    "params": [],
+    "returns": "Promise<BackgroundState>",
+    "upstream": "app/actions/account.ts:524"
+  },
+  {
+    "module": "account",
+    "name": "updateBackgroundDim",
+    "path": "/_rpc/account/updateBackgroundDim",
+    "params": [
+      {
+        "text": "dim: number",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ dim: number }>",
+    "upstream": "app/actions/account.ts:550"
+  },
+  {
+    "module": "account",
+    "name": "updatePublicProfile",
+    "path": "/_rpc/account/updatePublicProfile",
+    "params": [
+      {
+        "text": "enabled: boolean",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/account.ts:561"
+  },
+  {
+    "module": "account",
+    "name": "listAdminUsers",
+    "path": "/_rpc/account/listAdminUsers",
+    "params": [],
+    "returns": "Promise<AdminUserRow[]>",
+    "upstream": "app/actions/account.ts:593"
+  },
+  {
+    "module": "account",
+    "name": "setUserQuota",
+    "path": "/_rpc/account/setUserQuota",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "bytes: number",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ ok: boolean }>",
+    "upstream": "app/actions/account.ts:651"
+  },
+  {
+    "module": "account",
+    "name": "setUserTag",
+    "path": "/_rpc/account/setUserTag",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "tag: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ ok: true; tag: string } | { ok: false; reason: TagIssue }>",
+    "upstream": "app/actions/account.ts:671"
+  },
+  {
+    "module": "account",
+    "name": "recalculateUserQuota",
+    "path": "/_rpc/account/recalculateUserQuota",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ used: number }>",
+    "upstream": "app/actions/account.ts:734"
+  },
+  {
+    "module": "account",
+    "name": "revokeMySession",
+    "path": "/_rpc/account/revokeMySession",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ outcome: RevokeSessionOutcome }>",
+    "upstream": "app/actions/account.ts:770"
+  },
+  {
+    "module": "account",
+    "name": "revokeMyOtherSessions",
+    "path": "/_rpc/account/revokeMyOtherSessions",
+    "params": [],
+    "returns": "Promise<{ ok: boolean; revoked: number }>",
+    "upstream": "app/actions/account.ts:796"
+  },
+  {
+    "module": "admin",
+    "name": "loadOrphans",
+    "path": "/_rpc/admin/loadOrphans",
+    "params": [],
+    "returns": "Promise<OrphanOverview>",
+    "upstream": "app/actions/admin.ts:67"
+  },
+  {
+    "module": "admin",
+    "name": "deleteOrphan",
+    "path": "/_rpc/admin/deleteOrphan",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ ok: boolean }>",
+    "upstream": "app/actions/admin.ts:78"
+  },
+  {
+    "module": "admin",
+    "name": "purgeAllOrphans",
+    "path": "/_rpc/admin/purgeAllOrphans",
+    "params": [
+      {
+        "text": "confirmation: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<PurgeResult>",
+    "upstream": "app/actions/admin.ts:121"
+  },
+  {
+    "module": "admin",
+    "name": "loadUserDetail",
+    "path": "/_rpc/admin/loadUserDetail",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<AdminUserDetail | null>",
+    "upstream": "app/actions/admin.ts:185"
+  },
+  {
+    "module": "admin",
+    "name": "updateUserAccount",
+    "path": "/_rpc/admin/updateUserAccount",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "patch: UpdateUserPatch",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<UpdateUserResult>",
+    "upstream": "app/actions/admin.ts:331"
+  },
+  {
+    "module": "admin",
+    "name": "setUserRole",
+    "path": "/_rpc/admin/setUserRole",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "role: \"admin\" | \"user\"",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<UpdateUserResult>",
+    "upstream": "app/actions/admin.ts:560"
+  },
+  {
+    "module": "admin",
+    "name": "setUserBanned",
+    "path": "/_rpc/admin/setUserBanned",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "banned: boolean",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<UpdateUserResult>",
+    "upstream": "app/actions/admin.ts:571"
+  },
+  {
+    "module": "admin",
+    "name": "createAccount",
+    "path": "/_rpc/admin/createAccount",
+    "params": [
+      {
+        "text": "input: CreateAccountInput",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<CreateAccountResult>",
+    "upstream": "app/actions/admin.ts:622"
+  },
+  {
+    "module": "admin",
+    "name": "resendInvite",
+    "path": "/_rpc/admin/resendInvite",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<InviteActionResult>",
+    "upstream": "app/actions/admin.ts:716"
+  },
+  {
+    "module": "admin",
+    "name": "setUserEmailVerified",
+    "path": "/_rpc/admin/setUserEmailVerified",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "verified: boolean",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ ok: boolean }>",
+    "upstream": "app/actions/admin.ts:763"
+  },
+  {
+    "module": "admin",
+    "name": "sendVerificationLink",
+    "path": "/_rpc/admin/sendVerificationLink",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<InviteActionResult>",
+    "upstream": "app/actions/admin.ts:791"
+  },
+  {
+    "module": "admin",
+    "name": "loadDeletionImpact",
+    "path": "/_rpc/admin/loadDeletionImpact",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<UserDeletionImpact | null>",
+    "upstream": "app/actions/admin.ts:826"
+  },
+  {
+    "module": "admin",
+    "name": "deleteUserAccount",
+    "path": "/_rpc/admin/deleteUserAccount",
+    "params": [
+      {
+        "text": "userId: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "disposition: FileDisposition",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<DeleteAccountResult>",
+    "upstream": "app/actions/admin.ts:863"
+  },
+  {
+    "module": "admin",
+    "name": "recalculateEveryQuota",
+    "path": "/_rpc/admin/recalculateEveryQuota",
+    "params": [],
+    "returns": "Promise<QuotaRecalcResult>",
+    "upstream": "app/actions/admin.ts:948"
+  },
+  {
+    "module": "admin",
+    "name": "runStorageScan",
+    "path": "/_rpc/admin/runStorageScan",
+    "params": [],
+    "returns": "Promise<StorageScanResult>",
+    "upstream": "app/actions/admin.ts:956"
+  },
+  {
+    "module": "authorize",
+    "name": "approveDesktopClient",
+    "path": "/_rpc/authorize/approveDesktopClient",
+    "params": [
+      {
+        "text": "input: {\n  port: string;\n  state: string;\n  name: string;\n}",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<ApproveDesktopResult>",
+    "upstream": "app/actions/authorize.ts:45"
+  },
+  {
+    "module": "avatar",
+    "name": "listAvatarPicks",
+    "path": "/_rpc/avatar/listAvatarPicks",
+    "params": [
+      {
+        "text": "params?: {\n  page?: number;\n  search?: string;\n}",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<AvatarPickPage>",
+    "upstream": "app/actions/avatar.ts:71"
+  },
+  {
+    "module": "avatar",
+    "name": "setAvatarFromUpload",
+    "path": "/_rpc/avatar/setAvatarFromUpload",
+    "params": [
+      {
+        "text": "uploadId: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<AvatarActionResult>",
+    "upstream": "app/actions/avatar.ts:123"
+  },
+  {
+    "module": "avatar",
+    "name": "myAvatar",
+    "path": "/_rpc/avatar/myAvatar",
+    "params": [],
+    "returns": "Promise<{ url: string | null }>",
+    "upstream": "app/actions/avatar.ts:175"
+  },
+  {
+    "module": "convert",
+    "name": "convertTargetsForUpload",
+    "path": "/_rpc/convert/convertTargetsForUpload",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<DownloadOption[]>",
+    "upstream": "app/actions/convert.ts:48"
+  },
+  {
+    "module": "convert",
+    "name": "convertTargetsForSelection",
+    "path": "/_rpc/convert/convertTargetsForSelection",
+    "params": [
+      {
+        "text": "ids: string[]",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "mode?: ConvertMode",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<TargetSummary[]>",
+    "upstream": "app/actions/convert.ts:63"
+  },
+  {
+    "module": "convert",
+    "name": "convertUpload",
+    "path": "/_rpc/convert/convertUpload",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "to: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "mode: ConvertMode",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<ConvertOutcome>",
+    "upstream": "app/actions/convert.ts:76"
+  },
+  {
+    "module": "convert",
+    "name": "convertUploads",
+    "path": "/_rpc/convert/convertUploads",
+    "params": [
+      {
+        "text": "ids: string[]",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "to: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "mode: ConvertMode",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<ConvertReport>",
+    "upstream": "app/actions/convert.ts:109"
+  },
+  {
+    "module": "duplicates",
+    "name": "scanMyDuplicates",
+    "path": "/_rpc/duplicates/scanMyDuplicates",
+    "params": [],
+    "returns": "Promise<ScanResult>",
+    "upstream": "app/actions/duplicates.ts:42"
+  },
+  {
+    "module": "duplicates",
+    "name": "trashDuplicates",
+    "path": "/_rpc/duplicates/trashDuplicates",
+    "params": [
+      {
+        "text": "ids: string[]",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<TrashResult>",
+    "upstream": "app/actions/duplicates.ts:86"
+  },
+  {
+    "module": "duplicates",
+    "name": "keepDuplicateSets",
+    "path": "/_rpc/duplicates/keepDuplicateSets",
+    "params": [
+      {
+        "text": "sets: DismissalInput[]",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<KeepResult>",
+    "upstream": "app/actions/duplicates.ts:182"
+  },
+  {
+    "module": "duplicates",
+    "name": "countDuplicateSetsAgain",
+    "path": "/_rpc/duplicates/countDuplicateSetsAgain",
+    "params": [
+      {
+        "text": "checksums: string[]",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<CountAgainResult>",
+    "upstream": "app/actions/duplicates.ts:238"
+  },
+  {
+    "module": "folders",
+    "name": "createFolder",
+    "path": "/_rpc/folders/createFolder",
+    "params": [
+      {
+        "text": "name: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "parentId?: string | null",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<FolderRecord>",
+    "upstream": "app/actions/folders.ts:44"
+  },
+  {
+    "module": "folders",
+    "name": "renameFolder",
+    "path": "/_rpc/folders/renameFolder",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "name: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/folders.ts:51"
+  },
+  {
+    "module": "folders",
+    "name": "deleteFolder",
+    "path": "/_rpc/folders/deleteFolder",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "opts?: { withContents?: boolean }",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<DeleteFolderResult>",
+    "upstream": "app/actions/folders.ts:57"
+  },
+  {
+    "module": "folders",
+    "name": "moveFolder",
+    "path": "/_rpc/folders/moveFolder",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "newParentId: string | null",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/folders.ts:67"
+  },
+  {
+    "module": "folders",
+    "name": "setFolderVisibility",
+    "path": "/_rpc/folders/setFolderVisibility",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "isPublic: boolean",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/folders.ts:73"
+  },
+  {
+    "module": "folders",
+    "name": "moveUploadsToFolder",
+    "path": "/_rpc/folders/moveUploadsToFolder",
+    "params": [
+      {
+        "text": "uploadIds: string[]",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "folderId: string | null",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ moved: number }>",
+    "upstream": "app/actions/folders.ts:79"
+  },
+  {
+    "module": "folders",
+    "name": "countUnfiledUploads",
+    "path": "/_rpc/folders/countUnfiledUploads",
+    "params": [],
+    "returns": "Promise<number>",
+    "upstream": "app/actions/folders.ts:90"
+  },
+  {
+    "module": "folders",
+    "name": "moveUnfiledToFolder",
+    "path": "/_rpc/folders/moveUnfiledToFolder",
+    "params": [
+      {
+        "text": "folderName?: string",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ moved: number; folderId: string; folderName: string }>",
+    "upstream": "app/actions/folders.ts:95"
+  },
+  {
+    "module": "folders",
+    "name": "listFolders",
+    "path": "/_rpc/folders/listFolders",
+    "params": [],
+    "returns": "Promise<{ id: string; parentId: string | null; name: string; slug: string; isPublic: boolean; count: number }[]>",
+    "upstream": "app/actions/folders.ts:104"
+  },
+  {
+    "module": "invite",
+    "name": "previewInvite",
+    "path": "/_rpc/invite/previewInvite",
+    "params": [
+      {
+        "text": "token: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<InvitePreview | null>",
+    "upstream": "app/actions/invite.ts:25"
+  },
+  {
+    "module": "invite",
+    "name": "acceptInvitation",
+    "path": "/_rpc/invite/acceptInvitation",
+    "params": [
+      {
+        "text": "token: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "password: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<AcceptInvitationResult>",
+    "upstream": "app/actions/invite.ts:42"
+  },
+  {
+    "module": "invite",
+    "name": "resendVerification",
+    "path": "/_rpc/invite/resendVerification",
+    "params": [
+      {
+        "text": "email: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<ResendVerificationResult>",
+    "upstream": "app/actions/invite.ts:84"
+  },
+  {
+    "module": "login-identifier",
+    "name": "signInWithIdentifier",
+    "path": "/_rpc/login-identifier/signInWithIdentifier",
+    "params": [
+      {
+        "text": "identifier: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "password: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<SignInResult>",
+    "upstream": "app/actions/login-identifier.ts:101"
+  },
+  {
+    "module": "mail",
+    "name": "loadMailStatus",
+    "path": "/_rpc/mail/loadMailStatus",
+    "params": [],
+    "returns": "Promise<MailStatus>",
+    "upstream": "app/actions/mail.ts:41"
+  },
+  {
+    "module": "mail",
+    "name": "saveSmtpSettings",
+    "path": "/_rpc/mail/saveSmtpSettings",
+    "params": [
+      {
+        "text": "input: SaveMailInput",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<SaveMailResult>",
+    "upstream": "app/actions/mail.ts:68"
+  },
+  {
+    "module": "mail",
+    "name": "clearSmtpSettings",
+    "path": "/_rpc/mail/clearSmtpSettings",
+    "params": [],
+    "returns": "Promise<MailStatus>",
+    "upstream": "app/actions/mail.ts:124"
+  },
+  {
+    "module": "mail",
+    "name": "clearSmtpPassword",
+    "path": "/_rpc/mail/clearSmtpPassword",
+    "params": [],
+    "returns": "Promise<MailStatus>",
+    "upstream": "app/actions/mail.ts:136"
+  },
+  {
+    "module": "mail",
+    "name": "setVerificationRequired",
+    "path": "/_rpc/mail/setVerificationRequired",
+    "params": [
+      {
+        "text": "required: boolean",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<MailStatus>",
+    "upstream": "app/actions/mail.ts:148"
+  },
+  {
+    "module": "mail",
+    "name": "sendTestMail",
+    "path": "/_rpc/mail/sendTestMail",
+    "params": [
+      {
+        "text": "to?: string",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<MailTestResult>",
+    "upstream": "app/actions/mail.ts:203"
+  },
+  {
+    "module": "pastes",
+    "name": "createPaste",
+    "path": "/_rpc/pastes/createPaste",
+    "params": [
+      {
+        "text": "input: CreatePasteInput",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<PasteResult>",
+    "upstream": "app/actions/pastes.ts:75"
+  },
+  {
+    "module": "registration",
+    "name": "loadRegistrationSettings",
+    "path": "/_rpc/registration/loadRegistrationSettings",
+    "params": [],
+    "returns": "Promise<RegistrationSettings>",
+    "upstream": "app/actions/registration.ts:33"
+  },
+  {
+    "module": "registration",
+    "name": "setRegistrationEnabled",
+    "path": "/_rpc/registration/setRegistrationEnabled",
+    "params": [
+      {
+        "text": "enabled: boolean",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<RegistrationSettings>",
+    "upstream": "app/actions/registration.ts:39"
+  },
+  {
+    "module": "registration",
+    "name": "saveRegistrationKey",
+    "path": "/_rpc/registration/saveRegistrationKey",
+    "params": [
+      {
+        "text": "key: string | null",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<SaveRegistrationKeyResult>",
+    "upstream": "app/actions/registration.ts:58"
+  },
+  {
+    "module": "registration",
+    "name": "revealRegistrationKey",
+    "path": "/_rpc/registration/revealRegistrationKey",
+    "params": [],
+    "returns": "Promise<{ key: string | null }>",
+    "upstream": "app/actions/registration.ts:85"
+  },
+  {
+    "module": "releases",
+    "name": "loadRelease",
+    "path": "/_rpc/releases/loadRelease",
+    "params": [],
+    "returns": "Promise<ReleaseState>",
+    "upstream": "app/actions/releases.ts:33"
+  },
+  {
+    "module": "releases",
+    "name": "publishAppRelease",
+    "path": "/_rpc/releases/publishAppRelease",
+    "params": [
+      {
+        "text": "input: {\r\n  version: string;\r\n  code: string;\r\n  notes?: string;\r\n  /** Second click on \"publish anyway\" after the file name disagreed. */\r\n  allowVersionMismatch?: boolean;\r\n}",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<PublishOutcome>",
+    "upstream": "app/actions/releases.ts:50"
+  },
+  {
+    "module": "releases",
+    "name": "unpublishAppRelease",
+    "path": "/_rpc/releases/unpublishAppRelease",
+    "params": [],
+    "returns": "Promise<{ ok: true }>",
+    "upstream": "app/actions/releases.ts:78"
+  },
+  {
+    "module": "shortlink-unlock",
+    "name": "verifyShortlinkPassword",
+    "path": "/_rpc/shortlink-unlock/verifyShortlinkPassword",
+    "params": [
+      {
+        "text": "code: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "password: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<UnlockResult>",
+    "upstream": "app/actions/shortlink-unlock.ts:23"
+  },
+  {
+    "module": "shortlinks",
+    "name": "createShortLink",
+    "path": "/_rpc/shortlinks/createShortLink",
+    "params": [
+      {
+        "text": "input: CreateShortLinkInput",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<CreateShortLinkResult>",
+    "upstream": "app/actions/shortlinks.ts:25"
+  },
+  {
+    "module": "shortlinks",
+    "name": "retargetShortLink",
+    "path": "/_rpc/shortlinks/retargetShortLink",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "target: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<RetargetShortLinkResult>",
+    "upstream": "app/actions/shortlinks.ts:55"
+  },
+  {
+    "module": "shortlinks",
+    "name": "deleteShortLink",
+    "path": "/_rpc/shortlinks/deleteShortLink",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/shortlinks.ts:75"
+  },
+  {
+    "module": "shortlinks",
+    "name": "listShortLinks",
+    "path": "/_rpc/shortlinks/listShortLinks",
+    "params": [],
+    "returns": "Promise<ShortLinksRow[]>",
+    "upstream": "app/actions/shortlinks.ts:81"
+  },
+  {
+    "module": "tokens",
+    "name": "createUploadToken",
+    "path": "/_rpc/tokens/createUploadToken",
+    "params": [
+      {
+        "text": "name: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "scope?: string",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ token: string; scope: TokenScope }>",
+    "upstream": "app/actions/tokens.ts:33"
+  },
+  {
+    "module": "tokens",
+    "name": "revokeUploadToken",
+    "path": "/_rpc/tokens/revokeUploadToken",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/tokens.ts:44"
+  },
+  {
+    "module": "tokens",
+    "name": "narrowTokenScope",
+    "path": "/_rpc/tokens/narrowTokenScope",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "scope: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ ok: true; scope: TokenScope } | { ok: false; reason: string }>",
+    "upstream": "app/actions/tokens.ts:63"
+  },
+  {
+    "module": "tokens",
+    "name": "myTokens",
+    "path": "/_rpc/tokens/myTokens",
+    "params": [],
+    "returns": "Promise<ApiTokensRow[]>",
+    "upstream": "app/actions/tokens.ts:86"
+  },
+  {
+    "module": "unlock",
+    "name": "verifyMediaPassword",
+    "path": "/_rpc/unlock/verifyMediaPassword",
+    "params": [
+      {
+        "text": "mediaId: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "password: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "remember?: boolean",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<UnlockResult>",
+    "upstream": "app/actions/unlock.ts:41"
+  },
+  {
+    "module": "uploads",
+    "name": "togglePublish",
+    "path": "/_rpc/uploads/togglePublish",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ published: boolean }>",
+    "upstream": "app/actions/uploads.ts:85"
+  },
+  {
+    "module": "uploads",
+    "name": "trashUpload",
+    "path": "/_rpc/uploads/trashUpload",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/uploads.ts:95"
+  },
+  {
+    "module": "uploads",
+    "name": "restoreUpload",
+    "path": "/_rpc/uploads/restoreUpload",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/uploads.ts:103"
+  },
+  {
+    "module": "uploads",
+    "name": "deleteUploadForever",
+    "path": "/_rpc/uploads/deleteUploadForever",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/uploads.ts:112"
+  },
+  {
+    "module": "uploads",
+    "name": "trashSummary",
+    "path": "/_rpc/uploads/trashSummary",
+    "params": [
+      {
+        "text": "ownerTag?: string",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ files: number; bytes: number }>",
+    "upstream": "app/actions/uploads.ts:136"
+  },
+  {
+    "module": "uploads",
+    "name": "emptyTrash",
+    "path": "/_rpc/uploads/emptyTrash",
+    "params": [
+      {
+        "text": "ownerTag?: string",
+        "optional": true,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ deleted: number; bytes: number; failed: number }>",
+    "upstream": "app/actions/uploads.ts:158"
+  },
+  {
+    "module": "uploads",
+    "name": "setVanity",
+    "path": "/_rpc/uploads/setVanity",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "vanity: string",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<{ code: string }>",
+    "upstream": "app/actions/uploads.ts:171"
+  },
+  {
+    "module": "uploads",
+    "name": "setUploadExpiry",
+    "path": "/_rpc/uploads/setUploadExpiry",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "iso: string | null",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/uploads.ts:187"
+  },
+  {
+    "module": "uploads",
+    "name": "setUploadMaxViews",
+    "path": "/_rpc/uploads/setUploadMaxViews",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "maxViews: number | null",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/uploads.ts:194"
+  },
+  {
+    "module": "uploads",
+    "name": "setUploadPassword",
+    "path": "/_rpc/uploads/setUploadPassword",
+    "params": [
+      {
+        "text": "id: string",
+        "optional": false,
+        "rest": false
+      },
+      {
+        "text": "password: string | null",
+        "optional": false,
+        "rest": false
+      }
+    ],
+    "returns": "Promise<void>",
+    "upstream": "app/actions/uploads.ts:201"
+  }
+]

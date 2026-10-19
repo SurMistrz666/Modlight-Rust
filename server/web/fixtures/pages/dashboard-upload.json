@@ -1,0 +1,14 @@
+{
+  "url": "/dashboard/upload",
+  "payload": {
+    "route": "/dashboard/upload",
+    "params": {},
+    "layouts": "$app",
+    "props": {},
+    "meta": {
+      "title": "Upload - Modlight",
+      "description": "Drag, drop, or paste files. Resumable uploads built for multi-GB files.",
+      "applicationName": "Modlight"
+    }
+  }
+}

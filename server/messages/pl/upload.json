@@ -1,0 +1,140 @@
+{
+  "page": {
+    "title": "Wysyłanie",
+    "metaDescription": "Przeciągnij, upuść lub wklej pliki. Wznawialne wysyłanie stworzone dla plików wielogigabajtowych.",
+    "lead": "Przeciągnij pliki w dowolne miejsce panelu, a trafią do otwartego folderu. Wysyłanie wznawia się samo po zerwaniu połączenia, więc pliki wielogigabajtowe przetrwają słabe łącze."
+  },
+  "highlights": {
+    "resume": {
+      "title": "Wznawia po zerwaniu",
+      "body": "Połączenie padło w trakcie? Wysyłanie ruszy od ostatniej porcji, bez zaczynania od nowa."
+    },
+    "huge": {
+      "title": "Stworzone do wielkich plików",
+      "body": "Wielogigabajtowe filmy i archiwa lecą w porcjach, stabilnie od początku do końca."
+    },
+    "anywhere": {
+      "title": "Upuść gdziekolwiek",
+      "body": "Upuść pliki na dowolnej stronie panelu albo wklej zrzut ekranu prosto ze schowka."
+    }
+  },
+  "dashboardNote": "Przeciągnij, upuść lub wklej ze schowka. Dowolny rozmiar, dowolny typ, a wysyłanie wznawia się samo.",
+  "preparing": "Przygotowuję miejsce na pliki...",
+  "target": {
+    "folder": "Nowe pliki trafią do: {folder}",
+    "library": "Nowe pliki trafią do Twojej biblioteki",
+    "unsorted": "Nowe pliki trafią poza foldery",
+    "thisFolder": "ten folder"
+  },
+  "dropzone": {
+    "title": "Upuść, aby wysłać",
+    "toFolder": "do folderu {folder}",
+    "toLibrary": "do Twojej biblioteki",
+    "toUnsorted": "poza foldery",
+    "thisFolder": "ten folder",
+    "hint": "Puść, aby zacząć wysyłanie. Esc anuluje."
+  },
+  "duplicates": {
+    "checking": "Sprawdzam Twoją bibliotekę...",
+    "title": "{count, plural, one {Ten plik już tu jest} few {# z tych plików już tu są} many {# z tych plików już tu jest} other {# z tych plików już tu jest}}",
+    "body": "{count, plural, one {Plik o dokładnie takiej zawartości już jest w Twojej bibliotece.} few {# z wybranych plików mają dokładnie taką samą zawartość jak pliki, które już masz.} many {# z wybranych plików ma dokładnie taką samą zawartość jak pliki, które już masz.} other {# z wybranych plików ma dokładnie taką samą zawartość jak pliki, które już masz.}}",
+    "bodyPartial": "{count} z {total} wybranych plików ma dokładnie taką samą zawartość jak pliki, które już masz.",
+    "existing": "Już tu jest, {size}, wysłany {date}",
+    "inFolder": "w folderze {folder}",
+    "inLibrary": "poza folderami",
+    "copies": "{count, plural, one {# kopia} few {# kopie} many {# kopii} other {# kopii}}",
+    "copyExisting": "Kopiuj link do {name}",
+    "openExisting": "Otwórz {name} w nowej karcie",
+    "uncompared": "{count, plural, one {# pliku nie dało się porównać, więc też może być kopią.} few {# plików nie dało się porównać, więc też mogą być kopiami.} many {# plików nie dało się porównać, więc też mogą być kopiami.} other {# plików nie dało się porównać, więc też mogą być kopiami.}}",
+    "hint": "Nic nie zostanie usunięte. Pominięcie tylko wyłącza plik z tego wysyłania.",
+    "uploadAnyway": "{count, plural, one {Wyślij mimo to} other {Wyślij mimo to}}",
+    "skip": "{count, plural, one {Pomiń go} few {Pomiń te #} many {Pomiń te #} other {Pomiń te #}}",
+    "skipped": "{count, plural, one {# plik był już w Twojej bibliotece, więc go pominięto} few {# pliki były już w Twojej bibliotece, więc je pominięto} many {# plików było już w Twojej bibliotece, więc je pominięto} other {# plików było już w Twojej bibliotece, więc je pominięto}}"
+  },
+  "toast": {
+    "one": "Wysłano plik",
+    "copied": "Link skopiowany do schowka.",
+    "many": "Wysłano {count} plików",
+    "failed": "{count, plural, one {Jeden plik się nie wysłał} few {# pliki się nie wysłały} many {# plików się nie wysłało} other {# plików się nie wysłało}}",
+    "failedHint": "Postęp został zachowany. Ponów z panelu transferów."
+  },
+  "results": {
+    "title": "{count, plural, one {Wysłano plik} few {Wysłano # pliki} many {Wysłano # plików} other {Wysłano # plików}}",
+    "copyAll": "Kopiuj wszystkie",
+    "viewFiles": "Zobacz pliki",
+    "copyOne": "Kopiuj link do {name}",
+    "copyFailed": "Nie udało się skopiować do schowka",
+    "copiedAll": "Skopiowano {count} linków",
+    "failed": "{count, plural, one {Jeden plik się nie dokończył.} few {# pliki się nie dokończyły.} many {# plików się nie dokończyło.} other {# plików się nie dokończyło.}} Postęp został zapisany, więc możesz ponowić bez zaczynania od zera."
+  },
+  "dock": {
+    "uploading": "Wysyłanie",
+    "paused": "Wstrzymano",
+    "finished": "Wysyłanie zakończone",
+    "finishedWithErrors": "{count, plural, one {1 plik się nie wysłał} few {# pliki się nie wysłały} many {# plików się nie wysłało} other {# plików się nie wysłało}}",
+    "progress": "{done} z {total}",
+    "speed": "{speed}/s",
+    "average": "średnio {speed}/s",
+    "etaSeconds": "zostało {count} s",
+    "etaMinutes": "zostało {count} min",
+    "etaHours": "zostało {count} godz.",
+    "pauseAll": "Wstrzymaj wszystkie",
+    "resumeAll": "Wznów wszystkie",
+    "cancelAll": "Anuluj wszystkie",
+    "close": "Zamknij transfery",
+    "expand": "Pokaż transfery",
+    "collapse": "Ukryj listę",
+    "clearFinished": "Wyczyść zakończone",
+    "overallAria": "Łączny postęp wysyłania",
+    "fileAria": "Postęp wysyłania pliku {name}",
+    "live": "Wysyłanie, ukończono {done} z {total}.",
+    "liveDone": "{failed, plural, =0 {Zakończono wysyłanie {total} plików.} other {Wysyłanie zakończone, # nieudanych.}}",
+    "copy": "Kopiuj link",
+    "copied": "Link skopiowany",
+    "open": "Otwórz plik",
+    "retry": "Ponów",
+    "pause": "Wstrzymaj",
+    "resume": "Wznów",
+    "cancel": "Anuluj",
+    "remove": "Usuń z listy",
+    "noneAdded": "Nic nie dodano. Te pliki są już w kolejce.",
+    "status": {
+      "waiting": "Oczekuje",
+      "uploading": "Wysyłanie",
+      "paused": "Wstrzymane",
+      "done": "Gotowe",
+      "error": "Nieudane"
+    }
+  },
+  "modes": {
+    "label": "Tryb wysyłania",
+    "standard": {
+      "title": "Zwykłe wysyłanie",
+      "hint": "Wznawialne, z podglądem i konwersją. Serwer widzi zawartość pliku."
+    },
+    "encrypted": {
+      "title": "Szyfrowanie end-to-end",
+      "hint": "Szyfrowane w tej karcie, zanim cokolwiek z niej wyjdzie. Nie widzimy ani pliku, ani klucza."
+    }
+  },
+  "encrypted": {
+    "deal": {
+      "title": "Co dostajesz, a z czego rezygnujesz",
+      "link": "Klucz jedzie w samym linku, w części po znaku hash. Przeglądarki nigdy nie wysyłają tej części na serwer, więc do nas nie dociera.",
+      "lost": "Kto ma link, ten ma klucz. Zgubisz link i plik przepada: nie odzyskamy go dla Ciebie.",
+      "leaks": "Nadal widzimy rozmiar, czas i konto, do którego plik należy. Nazwa pliku i jego typ są zaszyfrowane razem z treścią.",
+      "noPreview": "Bez miniatur, bez ruchomych podglądów, bez konwersji formatu. Wszystko to wymaga pliku, a my go nie mamy.",
+      "tab": "Zostaw tę kartę otwartą do końca wysyłania. Klucz jest tylko tutaj, więc odświeżenie przerywa transfer."
+    },
+    "dashboardNote": "Szyfrowane w Twojej przeglądarce, zanim wyjdzie z niej choćby jeden bajt. Dowolny rozmiar, dowolny typ.",
+    "copyFailed": "Nie udało się skopiować do schowka",
+    "copiedAll": "Skopiowano {count} linków",
+    "results": {
+      "title": "{count, plural, one {Zaszyfrowano i wysłano plik} few {Zaszyfrowano i wysłano # pliki} many {Zaszyfrowano i wysłano # plików} other {Zaszyfrowano i wysłano # plików}}",
+      "copyAll": "Kopiuj wszystkie",
+      "viewFiles": "Zobacz pliki",
+      "copyOne": "Kopiuj link do {name}",
+      "warning": "Zapisz te linki teraz. Zawierają jedyną kopię kluczy, a nikt inny takiej nie ma, my również."
+    }
+  }
+}
