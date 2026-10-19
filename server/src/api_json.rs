@@ -67,6 +67,11 @@ pub fn is_json_content_type(value: &str) -> bool {
 /// unit is at most 3 bytes, so reading stops after `3 * max_bytes` bytes: past
 /// that point the decoded text is certainly over the limit, which keeps memory
 /// bounded without refusing anything upstream would accept.
+///
+/// Where `JSON.parse` and serde_json still part (known deviations): a number
+/// beyond the f64 range (`1e400`, which JSON.parse reads as Infinity) and
+/// nesting deeper than serde_json's 128 levels are refused here as "Body must
+/// be a JSON object." (400); upstream parsed them and judged the fields.
 pub async fn read_json_object(
     headers: &HeaderMap,
     body: Body,
