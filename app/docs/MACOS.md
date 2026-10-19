@@ -49,9 +49,13 @@ Everything not listed behaves as upstream does. The per-screen state is in
   heights that follow text are a few pixels shorter (a file card is 195 px instead of
   201 px) and lines run a little longer, so a header that fits one line in Segoe UI may
   wrap to two. Monospace is egui's Hack instead of Cascadia Mono / Consolas.
-- **Text colour.** Upstream's global `TextBlock` style colours every label
-  `Text.Secondary`, including the ones inside buttons; only `.active` buttons repaint
-  theirs. The port follows that rather than egui's defaults.
+- **Text colour and weight.** Upstream's global `TextBlock` style makes every
+  TextBlock SemiBold and `Text.Secondary` unless the element says otherwise, and as a
+  style setter it beats a colour inherited from a parent (a selected list row, a
+  hovered button). Labels the caller wrote into a button as TextBlocks follow it; a
+  button whose `Content` is a plain string draws its label in the button's own
+  Foreground (`Text`; Accent.Foreground on `.primary`), as the Windows screenshots
+  show. The port follows both rules rather than egui's defaults.
 - **Shadows.** egui has no negative spread; the notice's drop shadow approximates
   Avalonia's blur and alpha.
 - **Toasts** in the window corner stack newest first (upstream's `Insert(0)`); a notice

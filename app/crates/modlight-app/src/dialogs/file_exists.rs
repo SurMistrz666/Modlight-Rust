@@ -93,7 +93,7 @@ impl FileExists {
             trimmed(
                 t(s::FileExistWindow_Instruction),
                 13.0,
-                Weight::Normal,
+                Weight::SemiBold,
                 colors.text_secondary(),
                 width - 18.0 - 40.0 - 10.0 - 18.0,
                 1,
@@ -152,7 +152,7 @@ impl FileExists {
             let mut job = egui::text::LayoutJob::simple_singleline(
                 path_text.clone(),
                 egui::FontId::monospace(13.0),
-                colors.text(),
+                colors.text_secondary(),
             );
             job.wrap = egui::text::TextWrapping {
                 max_width: card.width() - 10.0 - 16.0 - 8.0 - 10.0,
@@ -167,7 +167,7 @@ impl FileExists {
             card.left() + 10.0 + 16.0 + 8.0,
             card.center().y,
             galley,
-            colors.text(),
+            colors.text_secondary(),
         );
         let path_hover = ui.interact(card, ui.id().with("path"), Sense::hover());
         path_hover.on_hover_text(&path_text);
@@ -214,10 +214,12 @@ impl FileExists {
 
         let mut choice = None;
         let new_file_name = self.new_file_name();
-        let actions: [(char, &str, Option<String>, bool, u8); 4] = [
+        // Each file line's tooltip: the new name, and the full paths for the others.
+        let actions: [ActionRow; 4] = [
             (
                 icons::PENCIL,
                 t(s::FileExistWindow_UseNewName),
+                Some(new_file_name.clone()),
                 Some(new_file_name),
                 self.new_name_allowed(),
                 0,
@@ -228,6 +230,7 @@ impl FileExists {
                 self.path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned()),
+                Some(self.path.to_string_lossy().into_owned()),
                 true,
                 1,
             ),
@@ -237,12 +240,13 @@ impl FileExists {
                 self.unique_path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned()),
+                Some(self.unique_path.to_string_lossy().into_owned()),
                 true,
                 2,
             ),
-            (icons::X, t(s::FileExistWindow_Cancel), None, true, 3),
+            (icons::X, t(s::FileExistWindow_Cancel), None, None, true, 3),
         ];
-        for (glyph, title, file, enabled, which) in actions {
+        for (glyph, title, file, tip, enabled, which) in actions {
             let rect = Rect::from_min_size(pos2(left, y), vec2(inner, 52.0));
             if action_button(
                 ui,
@@ -251,6 +255,7 @@ impl FileExists {
                 glyph,
                 title,
                 file.as_deref(),
+                tip.as_deref(),
                 enabled,
                 which == 3,
             ) {
@@ -296,6 +301,9 @@ impl FileExists {
     }
 }
 
+/// One action: icon, title, the file line, its tooltip, enabled, and which choice.
+type ActionRow<'a> = (char, &'a str, Option<String>, Option<String>, bool, u8);
+
 /// `Button.action-button`: 52 tall, the icon, a semibold title and the file it means.
 #[allow(clippy::too_many_arguments)]
 fn action_button(
@@ -305,6 +313,7 @@ fn action_button(
     glyph: char,
     title: &str,
     file: Option<&str>,
+    tip: Option<&str>,
     enabled: bool,
     plain_icon: bool,
 ) -> bool {
@@ -361,7 +370,7 @@ fn action_button(
                 trimmed(
                     file,
                     12.0,
-                    Weight::Normal,
+                    Weight::SemiBold,
                     colors.text_secondary(),
                     text_width,
                     1,
@@ -376,8 +385,8 @@ fn action_button(
                 file_galley,
                 colors.text_secondary(),
             );
-            if enabled {
-                response.clone().on_hover_text(file);
+            if enabled && let Some(tip) = tip {
+                response.clone().on_hover_text(tip);
             }
         }
         None => {

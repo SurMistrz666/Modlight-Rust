@@ -53,6 +53,7 @@ impl UrlUpload {
             19.0,
             Some(t(s::URLUploadWindow_Prompt)),
             6.0,
+            false,
         );
         let trimmed_url = self.url.trim().to_string();
         let valid = is_supported(&trimmed_url);
@@ -176,7 +177,7 @@ impl UrlUpload {
 
 /// `Button.compact` and `Button.compact.primary`: at least 96 wide, 14 px padding.
 pub fn compact_looks(colors: &Colors) -> (Look, Look) {
-    let mut plain = Look::button(colors);
+    let mut plain = Look::compact(colors);
     plain.min_width = 96.0;
     plain.padding_x = 14.0;
     let mut primary = Look::primary(colors);

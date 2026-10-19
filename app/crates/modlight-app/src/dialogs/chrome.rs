@@ -7,8 +7,9 @@ use crate::theme::{Colors, Weight};
 use crate::widgets::{layout, paint_icon, trimmed, wrapped};
 
 /// The header band (`Background.Toolbar`, padding 18,12): a 40 px tile with the icon in
-/// the accent colour, the heading (19 semibold, accent) and an optional line under it.
-/// Returns the band's rect.
+/// the accent colour, the heading (19 semibold, accent) and an optional line under it
+/// (an unstyled TextBlock: the global 13 px SemiBold Text.Secondary), wrapped where the
+/// window wraps it and kept to one line elsewhere. Returns the band's rect.
 #[allow(clippy::too_many_arguments)]
 pub fn header_band(
     ui: &Ui,
@@ -20,6 +21,7 @@ pub fn header_band(
     heading_size: f32,
     subtitle: Option<&str>,
     tile_radius: f32,
+    subtitle_wraps: bool,
 ) -> Rect {
     let text_width = (width - 18.0 - 40.0 - 10.0 - 18.0).max(40.0);
     let title = layout(
@@ -34,16 +36,25 @@ pub fn header_band(
         ),
     );
     let sub = subtitle.map(|text| {
-        layout(
-            ui,
+        let job = if subtitle_wraps {
             wrapped(
                 text,
                 13.0,
-                Weight::Normal,
+                Weight::SemiBold,
                 colors.text_secondary(),
                 text_width,
-            ),
-        )
+            )
+        } else {
+            trimmed(
+                text,
+                13.0,
+                Weight::SemiBold,
+                colors.text_secondary(),
+                text_width,
+                1,
+            )
+        };
+        layout(ui, job)
     });
     let text_height = title.size().y + sub.as_ref().map(|g| 2.0 + g.size().y).unwrap_or(0.0);
     let height = 12.0 + text_height.max(40.0) + 12.0;

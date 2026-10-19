@@ -11,6 +11,8 @@ use crate::theme::{Colors, Weight};
 use crate::widgets::{Content, Look, button_at, button_width, layout, paint_icon, wrapped};
 
 pub const WIDTH: f32 = 480.0;
+/// The message area's tallest height before it scrolls.
+const MAX_BODY_HEIGHT: f32 = 420.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MessageBox {
@@ -39,22 +41,33 @@ impl MessageBox {
             ui,
             wrapped(&self.text, 13.0, Weight::Normal, colors.text(), text_width),
         );
-        let body_height = galley.size().y.max(48.0) + 22.0 + 20.0;
+        // The message scrolls past 420 px (`ScrollViewer MaxHeight="420"`).
+        let full_height = galley.size().y.max(48.0) + 22.0 + 20.0;
+        let body_height = full_height.min(MAX_BODY_HEIGHT);
         let (body, _) = ui.allocate_exact_size(vec2(width, body_height), Sense::hover());
-        let painter = ui.painter();
-        let tile = Rect::from_min_size(
-            pos2(body.left() + 22.0, body.top() + 22.0),
-            vec2(48.0, 48.0),
-        );
-        painter.rect_filled(tile, 8.0, colors.background_panel());
         let (glyph, color) = match self.icon {
             MessageIcon::Error => (icons::CIRCLE_X, ERROR_COLOR),
             MessageIcon::Warning => (icons::TRIANGLE_ALERT, WARNING_COLOR),
             MessageIcon::Information => (icons::INFO, colors.accent_start()),
         };
-        paint_icon(ui, painter, tile.center(), glyph, 24.0, color);
-        let text_top = body.top() + 22.0 + (48.0 - galley.size().y).max(0.0) / 2.0;
-        painter.galley(pos2(tile.right() + 16.0, text_top), galley, colors.text());
+        let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body));
+        body_ui.set_clip_rect(body.intersect(ui.clip_rect()));
+        egui::ScrollArea::vertical()
+            .id_salt("message-box-body")
+            .max_height(body_height)
+            .auto_shrink([false, false])
+            .show(&mut body_ui, |ui| {
+                let (area, _) = ui.allocate_exact_size(vec2(width, full_height), Sense::hover());
+                let painter = ui.painter();
+                let tile = Rect::from_min_size(
+                    pos2(area.left() + 22.0, area.top() + 22.0),
+                    vec2(48.0, 48.0),
+                );
+                painter.rect_filled(tile, 8.0, colors.background_panel());
+                paint_icon(ui, painter, tile.center(), glyph, 24.0, color);
+                let text_top = area.top() + 22.0 + (48.0 - galley.size().y).max(0.0) / 2.0;
+                painter.galley(pos2(tile.right() + 16.0, text_top), galley, colors.text());
+            });
 
         let bar = footer(ui, colors, 60.0);
         let ok = t(avalonia::MessageBox_OK);

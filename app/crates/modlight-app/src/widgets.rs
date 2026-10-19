@@ -263,6 +263,10 @@ pub struct Look {
     pub hover_border: Option<Color32>,
     pub text: Color32,
     pub hover_text: Color32,
+    /// The colour of a label that is the button's own string `Content` (no TextBlock
+    /// of the caller's, so the global TextBlock style does not reach it): the button's
+    /// Foreground. `None` keeps `text`.
+    pub string_text: Option<Color32>,
     pub icon_color: Option<Color32>,
     pub font_size: f32,
     pub weight: Weight,
@@ -293,6 +297,7 @@ impl Look {
             // button too; only `.active` buttons repaint theirs.
             text: c.text_secondary(),
             hover_text: c.text_secondary(),
+            string_text: None,
             icon_color: None,
             font_size: 13.0,
             weight: Weight::Normal,
@@ -310,6 +315,8 @@ impl Look {
         Look {
             min_width: 96.0,
             padding_x: 14.0,
+            // Dialog footers say `Content="..."`: the label is the button's Text.
+            string_text: Some(c.text()),
             ..Look::button(c)
         }
     }
@@ -322,6 +329,7 @@ impl Look {
             pressed_fill: Fill::Accent,
             text: c.accent_foreground(),
             hover_text: c.accent_foreground(),
+            string_text: Some(c.accent_foreground()),
             ..Look::compact(c)
         }
     }
@@ -579,6 +587,10 @@ pub fn paint_button(
             look.icon_color.unwrap_or(text_color),
         )
     });
+    let label_color = match look.string_text {
+        Some(color) if content.icon.is_none() => color,
+        _ => text_color,
+    };
     let label = content.label.map(|text| {
         layout(
             ui,
@@ -586,7 +598,7 @@ pub fn paint_button(
                 text,
                 look.font_size,
                 look.weight,
-                text_color,
+                label_color,
                 (rect.width() - look.padding_x * 2.0).max(1.0),
                 1,
             ),
@@ -949,6 +961,21 @@ pub fn combo_sized<T: Clone + PartialEq>(
     current: &T,
     options: &[(T, String)],
 ) -> Option<T> {
+    combo_rounded(ui, colors, id, width, height, 6.0, current, options)
+}
+
+/// [`combo_sized`] with its own corner radius (the global ComboBox's is 8).
+#[allow(clippy::too_many_arguments)]
+pub fn combo_rounded<T: Clone + PartialEq>(
+    ui: &mut Ui,
+    colors: &Colors,
+    id: &str,
+    width: f32,
+    height: f32,
+    radius: f32,
+    current: &T,
+    options: &[(T, String)],
+) -> Option<T> {
     let label = options
         .iter()
         .find(|(v, _)| v == current)
@@ -958,7 +985,7 @@ pub fn combo_sized<T: Clone + PartialEq>(
     let painter = ui.painter();
     painter.rect_filled(
         rect,
-        6.0,
+        radius,
         if response.hovered() {
             colors.control_background_hover()
         } else {
@@ -967,7 +994,7 @@ pub fn combo_sized<T: Clone + PartialEq>(
     );
     painter.rect_stroke(
         rect,
-        6.0,
+        radius,
         Stroke::new(1.0, colors.border()),
         StrokeKind::Inside,
     );

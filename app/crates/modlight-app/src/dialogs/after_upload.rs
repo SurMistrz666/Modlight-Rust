@@ -17,8 +17,7 @@ use super::background;
 use super::chrome::header_band;
 use crate::theme::{Colors, Weight};
 use crate::widgets::{
-    Content, Look, button_at, button_width, layout, paint_checkered, paint_icon, paint_text,
-    trimmed,
+    Content, Look, button_at, button_width, layout, paint_icon, paint_text, trimmed,
 };
 
 pub const WIDTH: f32 = 940.0;
@@ -272,6 +271,7 @@ impl AfterUpload {
             19.0,
             Some(&result_text),
             6.0,
+            false,
         );
 
         // Body: margin 18,14,18,18; two columns (*, 380) 14 apart; buttons under both.
@@ -331,11 +331,9 @@ impl AfterUpload {
                     );
                     ui.add_space(1.0);
                     let selected = index == self.selected;
-                    let text_color = if selected {
-                        colors.accent_foreground()
-                    } else {
-                        colors.text_secondary()
-                    };
+                    // Unstyled TextBlocks in the item template: the global style
+                    // (SemiBold, Text.Secondary) beats the selected item's Foreground.
+                    let text_color = colors.text_secondary();
                     if selected {
                         crate::widgets::gradient_rect(
                             ui.painter(),
@@ -350,14 +348,14 @@ impl AfterUpload {
                     }
                     let group = layout(
                         ui,
-                        trimmed(&format.group, 11.0, Weight::Normal, text_color, 130.0, 1),
+                        trimmed(&format.group, 11.0, Weight::SemiBold, text_color, 130.0, 1),
                     );
                     let description = layout(
                         ui,
                         trimmed(
                             &format.description,
                             13.0,
-                            Weight::Normal,
+                            Weight::SemiBold,
                             text_color,
                             130.0,
                             1,
@@ -408,7 +406,8 @@ impl AfterUpload {
             });
 
         // The preview on a checkered surface, or the "no preview" note.
-        paint_checkered(ui, colors, preview, 6.0);
+        // `panel-card checkered-surface`: the window's panel-card background wins.
+        painter.rect_filled(preview, 6.0, colors.background_panel());
         painter.rect_stroke(
             preview,
             6.0,
@@ -441,7 +440,14 @@ impl AfterUpload {
             let badge_text = format!("{} × {}", image.width(), image.height());
             let galley = layout(
                 ui,
-                trimmed(&badge_text, 12.0, Weight::Normal, Color32::WHITE, 200.0, 1),
+                trimmed(
+                    &badge_text,
+                    12.0,
+                    Weight::SemiBold,
+                    Color32::WHITE,
+                    200.0,
+                    1,
+                ),
             );
             let badge = Rect::from_min_size(
                 pos2(
@@ -479,7 +485,7 @@ impl AfterUpload {
                 trimmed(
                     t(s::AfterUploadWindow_NoPreview),
                     13.0,
-                    Weight::Normal,
+                    Weight::SemiBold,
                     colors.text_secondary(),
                     preview.width() - 20.0,
                     1,
@@ -561,6 +567,7 @@ impl AfterUpload {
             x += 40.0 + 6.0;
         }
         let mut close_look = Look::button(colors);
+        close_look.string_text = Some(colors.text());
         close_look.min_width = 96.0;
         close_look.padding_x = 12.0;
         let close_label = t(s::AfterUploadWindow_Close);

@@ -54,6 +54,7 @@ impl TextUpload {
                 uploaders::TextUploadWindow_Enter_or_paste_the_text_you_want_to_upload,
             )),
             6.0,
+            false,
         );
         let footer_top = full.bottom() - 18.0 - 40.0;
         let card = Rect::from_min_max(
@@ -110,7 +111,7 @@ impl TextUpload {
             trimmed(
                 &format(template, &[Arg::from(length)]),
                 13.0,
-                Weight::Normal,
+                Weight::SemiBold,
                 colors.text_secondary(),
                 full.width() * 0.5,
                 1,

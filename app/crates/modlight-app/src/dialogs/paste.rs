@@ -461,8 +461,8 @@ impl PasteWindow {
                                 trimmed(
                                     language.name(),
                                     13.0,
-                                    Weight::Normal,
-                                    colors.text(),
+                                    Weight::SemiBold,
+                                    colors.text_secondary(),
                                     row.width() - 90.0,
                                     1,
                                 ),
@@ -472,7 +472,7 @@ impl PasteWindow {
                                 row.left() + 8.0,
                                 row.center().y,
                                 name,
-                                colors.text(),
+                                colors.text_secondary(),
                             );
                             let ext = ui.fonts_mut(|f| {
                                 f.layout_no_wrap(
