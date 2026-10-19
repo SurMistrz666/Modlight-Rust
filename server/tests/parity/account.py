@@ -345,6 +345,37 @@ SESSIONS = {
             "Mobile/15E148 Safari/604.1", None),
     "U11": (U_ID, "6 days 1 hour", "1 day", "203.0.113.11", "Modlight/1.4.2 (Windows NT 10.0)", None),  # refresh due
     "U12": (U_ID, "12 days", "-2 days", None, "okhttp/4.12.0", None),  # expired, used as a cookie
+    # More user agents for describeDevice (listed on the profile page).
+    "D1": (U_ID, "11 days", "3 days", None, "Mozilla/5.0 (Linux; Android 14; SAMSUNG SM-S918B) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) SamsungBrowser/25.0 Chrome/121.0.0.0 Mobile Safari/537.36", None),
+    "D2": (U_ID, "11 days 1 hour", "3 days", None, "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:115.0) "
+           "Gecko/20100101 Firefox/115.0", None),
+    "D3": (U_ID, "11 days 2 hours", "3 days", None, "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", None),
+    "D4": (U_ID, "11 days 3 hours", "3 days", None, "python-requests/2.32.3", None),
+    "D5": (U_ID, "11 days 4 hours", "3 days", None, "Go-http-client/1.1", None),
+    "D6": (U_ID, "11 days 5 hours", "3 days", None, "Mozilla/5.0 (Windows NT 10.0; Microsoft Windows 10.0.22631; "
+           "en-US) PowerShell/7.4.5", None),
+    "D7": (U_ID, "11 days 6 hours", "3 days", None, "insomnia/2023.5.8", None),
+    "D8": (U_ID, "11 days 7 hours", "3 days", None, "Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36 OPR/95.0.0.0", None),
+    "D9": (U_ID, "11 days 8 hours", "3 days", None, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Vivaldi/6.5", None),
+    "D10": (U_ID, "11 days 9 hours", "3 days", None, "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1", None),
+    "D11": (U_ID, "11 days 10 hours", "3 days", None, "Mozilla/5.0 (Android 14; Mobile; rv:121.0) Gecko/121.0 "
+            "Firefox/121.0", None),
+    "D12": (U_ID, "11 days 11 hours", "3 days", None, "Mozilla/5.0 (Windows NT 6.2; WOW64) Opera/9.80", None),
+    "D13": (U_ID, "11 days 12 hours", "3 days", None, "MODLIGHT/2.0", None),
+    "D14": (U_ID, "11 days 13 hours", "3 days", None, "sharex", None),
+    "D15": (U_ID, "11 days 14 hours", "3 days", None, "   ", None),
+    "D16": (U_ID, "11 days 15 hours", "3 days", None, "Android 9\u2028Mobile", None),
+    "D17": (U_ID, "11 days 16 hours", "3 days", None, "Mozilla/5.0 (Linux; Android 13; Tablet) okhttp/4.9 "
+            "Mobile", None),
+    "D18": (U_ID, "11 days 17 hours", "3 days", None, "Mozilla/5.0 (iPod touch; CPU iPhone OS 12_5 like Mac OS X) "
+            "Version/12.1.2 Safari/605.1", None),
+    "D19": (U_ID, "11 days 18 hours", "3 days", None, "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:131.0) "
+            "Gecko/20100101 Firefox/131.0 EdgA/131.0", None),
     "A0": (A_ID, "1 hour", "7 days - 1 hour", "203.0.113.20", CHROME_WIN, None),
     "V0": (V_ID, "1 hour", "7 days - 1 hour", "203.0.113.30", CHROME_WIN, None),
     "V1": (V_ID, "2 hours", "6 days", "203.0.113.31", "PostmanRuntime/7.39.0", None),
@@ -441,7 +472,7 @@ def components_from_page(props, config):
     }
 
 
-def check_profile_page(label, token, uid):
+def check_profile_page(label, token, uid, sessions):
     p = pair_with(token)
     ref = p.ref.request("GET", "/dashboard/profile", headers={"Accept": "text/html"}, origin=False)
     rust = p.rust.request("GET", "/_page?path=%2Fdashboard%2Fprofile", headers={"Accept": "application/json"},
@@ -456,6 +487,8 @@ def check_profile_page(label, token, uid):
     run.compare(label + " title", title.group(1) if title else None, data["meta"]["title"])
     expected = client_props(ref.text())
     got = components_from_page(data["props"], data["layouts"]["root"]["config"])
+    run.compare(label + " sessions listed (live, not impersonated)", sessions,
+                len((expected.get("SessionList") or {}).get("sessions") or []))
     for name in sorted(got):
         run.compare("%s %s props" % (label, name),
                     unorigin(parity.normalize_json(expected.get(name)), run.ref),
@@ -806,8 +839,9 @@ def main():
     seed()
     seed_sessions()
     print("seeded run %s" % R)
-    check_profile_page("profile page (seeded)", TOKEN["U0"], U_ID)
-    check_profile_page("profile page (admin)", TOKEN["A0"], A_ID)
+    live = [k for k, v in SESSIONS.items() if v[0] == U_ID and not v[2].startswith("-") and not v[5]]
+    check_profile_page("profile page (seeded)", TOKEN["U0"], U_ID, len(live))
+    check_profile_page("profile page (admin)", TOKEN["A0"], A_ID, 1)
     check_sessions_and_gates()
     check_reads()
     check_preferences()
@@ -819,9 +853,9 @@ def main():
     check_default_password()
     check_background_dim()
     check_admin_quota()
-    check_profile_page("profile page (after the actions)", TOKEN["U0"], U_ID)
+    check_profile_page("profile page (after the actions)", TOKEN["U0"], U_ID, len(live))
     check_session_actions()
-    check_profile_page("profile page (one session left)", TOKEN["U0"], U_ID)
+    check_profile_page("profile page (one session left)", TOKEN["U0"], U_ID, 1)
     if skipped:
         print("\nskipped:\n  " + "\n  ".join(skipped))
     run.finish()
