@@ -1807,8 +1807,18 @@ fn youtube_panel(
         .order(Order::Foreground)
         .fixed_pos(at)
         .show(ui.ctx(), |ui| {
-            crate::widgets::popup_frame(colors)
+            // `Border.popup-border`: control fill, border, 10 corners, a soft shadow.
+            egui::Frame::new()
+                .fill(colors.control_background())
+                .stroke(Stroke::new(1.0, colors.border()))
+                .corner_radius(10)
                 .inner_margin(egui::Margin::same(16))
+                .shadow(egui::Shadow {
+                    offset: [0, 4],
+                    blur: 16,
+                    spread: 0,
+                    color: Color32::from_black_alpha(0x40),
+                })
                 .show(ui, |ui| {
                     let inner_w = width - 32.0 - 2.0;
                     ui.set_width(inner_w);
