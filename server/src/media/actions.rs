@@ -50,11 +50,7 @@ const ROW_BATCH: usize = 500;
 
 /// Local ENOENT / S3 NoSuchKey: the object is already gone, which is success.
 pub fn is_missing_object_error(err: &anyhow::Error) -> bool {
-    if let Some(io) = err.downcast_ref::<std::io::Error>() {
-        return io.kind() == std::io::ErrorKind::NotFound;
-    }
-    let text = format!("{err:#}");
-    text.contains("NoSuchKey") || text.contains("NotFound")
+    crate::storage::is_not_found(err)
 }
 
 /// The refund statement: `used_quota = GREATEST(0, used_quota - amount)`

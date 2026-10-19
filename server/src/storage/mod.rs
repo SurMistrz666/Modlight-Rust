@@ -7,9 +7,9 @@
 //! - `ingest_local_file` finalizes a completed upload (e.g. a tus temp file)
 //!   into place without an extra full re-read where the backend can avoid it.
 //!
-//! Status: the local driver is complete; the S3 driver validates its
-//! configuration like upstream and its operations are not ported yet
-//! ([`s3`]).
+//! Both drivers are complete: [`local`] (lib/storage/local.ts) and [`s3`]
+//! (lib/storage/s3.ts, with the lib-storage multipart upload and the
+//! s3-request-presigner it uses).
 
 pub mod local;
 pub mod s3;
@@ -24,7 +24,7 @@ use futures_util::future::BoxFuture;
 
 use crate::config::Config;
 pub use local::LocalDriver;
-pub use s3::S3Driver;
+pub use s3::{S3Driver, is_not_found};
 
 /// A stream of file bytes.
 pub type ByteStream = Pin<Box<dyn Stream<Item = std::io::Result<Bytes>> + Send>>;

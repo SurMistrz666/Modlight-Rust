@@ -8,5 +8,6 @@
 //! so it is ported as faithfully as the Modlight code itself.
 
 pub mod file_store;
+pub mod s3_store;
 pub mod server;
 pub mod store;
