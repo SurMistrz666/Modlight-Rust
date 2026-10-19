@@ -12,7 +12,7 @@ use super::chrome::{header_band, input_card};
 use super::url_upload::{compact_looks, select_all};
 use crate::theme::{Colors, Weight};
 use crate::widgets::{
-    Content, Field, button_at, button_width, checkbox_weighted, combo_sized, layout, paint_text,
+    Content, Field, button_at, button_width, checkbox_weighted, combo_rounded, layout, paint_text,
     wrapped,
 };
 
@@ -80,6 +80,7 @@ impl ShortenUrl {
             19.0,
             None,
             6.0,
+            false,
         );
         let card_left = full.left() + 18.0;
         let card_width = full.width() - 36.0;
@@ -88,10 +89,11 @@ impl ShortenUrl {
         let hint = |ui: &Ui, text: &str| {
             layout(
                 ui,
+                // `TextBlock.hint` sets no weight: the global SemiBold stays.
                 wrapped(
                     text,
                     12.0,
-                    Weight::Normal,
+                    Weight::SemiBold,
                     colors.text_secondary(),
                     inner_width,
                 ),
@@ -222,12 +224,14 @@ impl ShortenUrl {
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_size(pos2(inner_left, y), vec2(half, 30.0))),
         );
-        if let Some(choice) = combo_sized(
+        // The global ComboBox: 8 px corners (the window does not override them).
+        if let Some(choice) = combo_rounded(
             &mut combo_ui,
             colors,
             "shorten-expiry",
             half,
             30.0,
+            8.0,
             &self.expiry,
             &choices,
         ) {
@@ -331,7 +335,9 @@ impl ShortenUrl {
     }
 }
 
-fn label(ui: &Ui, colors: &Colors, at: egui::Pos2, width: f32, text: &str, semibold: bool) {
+/// A caption: `TextBlock.field` and the unclassed ones alike are SemiBold (the global
+/// TextBlock style).
+fn label(ui: &Ui, colors: &Colors, at: egui::Pos2, width: f32, text: &str, _field: bool) {
     paint_text(
         ui,
         ui.painter(),
@@ -339,11 +345,7 @@ fn label(ui: &Ui, colors: &Colors, at: egui::Pos2, width: f32, text: &str, semib
         Align2::LEFT_CENTER,
         text,
         13.0,
-        if semibold {
-            Weight::SemiBold
-        } else {
-            Weight::Normal
-        },
+        Weight::SemiBold,
         colors.text_secondary(),
     );
 }

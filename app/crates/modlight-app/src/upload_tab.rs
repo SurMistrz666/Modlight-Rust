@@ -1187,7 +1187,9 @@ fn history_card(
 
 /// `Border.up-notice` with the error, and Refresh. True when Refresh was pressed.
 fn history_error(ui: &mut Ui, colors: &Colors, text: &str, width: f32) -> bool {
-    let look = quiet(colors);
+    let mut look = quiet(colors);
+    // `Content="Refresh"`: the button's own Text colour.
+    look.string_text = Some(colors.text());
     let refresh = t(s::Upload_Refresh);
     let refresh_w = button_width(ui, &look, Content::label(refresh));
     let text_width = width - 14.0 - 16.0 - 10.0 - 10.0 - refresh_w - 14.0;

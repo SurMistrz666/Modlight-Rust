@@ -19,8 +19,7 @@ use super::chrome::header_band;
 use super::url_upload::compact_looks;
 use crate::theme::{Colors, Weight};
 use crate::widgets::{
-    Content, button_at, button_width, layout, paint_checkered, paint_icon, paint_text, trimmed,
-    wrapped,
+    Content, button_at, button_width, layout, paint_icon, paint_text, trimmed, wrapped,
 };
 
 pub const WIDTH: f32 = 900.0;
@@ -170,6 +169,7 @@ impl BeforeUpload {
             19.0,
             Some(&prompt),
             6.0,
+            true,
         );
         let body = Rect::from_min_max(
             pos2(full.left() + 18.0, band.bottom() + 14.0),
@@ -276,7 +276,8 @@ impl BeforeUpload {
         }
 
         // The preview.
-        paint_checkered(ui, colors, preview, 6.0);
+        // `panel-card checkered-surface`: the window's panel-card background wins.
+        painter.rect_filled(preview, 6.0, colors.background_panel());
         painter.rect_stroke(
             preview,
             6.0,
@@ -308,7 +309,14 @@ impl BeforeUpload {
             let badge_text = format!("{} × {}", image.width(), image.height());
             let galley = layout(
                 ui,
-                trimmed(&badge_text, 12.0, Weight::Normal, Color32::WHITE, 200.0, 1),
+                trimmed(
+                    &badge_text,
+                    12.0,
+                    Weight::SemiBold,
+                    Color32::WHITE,
+                    200.0,
+                    1,
+                ),
             );
             let badge = Rect::from_min_size(
                 pos2(
@@ -350,7 +358,7 @@ impl BeforeUpload {
                 let mut job = wrapped(
                     &text,
                     13.0,
-                    Weight::Normal,
+                    Weight::SemiBold,
                     colors.text_secondary(),
                     320.0_f32.min(preview.width() - 20.0),
                 );

@@ -98,6 +98,7 @@ impl ClipboardUpload {
             19.0,
             Some(&summary),
             6.0,
+            false,
         );
         let footer_top = full.bottom() - 18.0 - 40.0;
         let card = Rect::from_min_max(
@@ -193,7 +194,7 @@ impl ClipboardUpload {
                     let mut job = wrapped(
                         &summary,
                         13.0,
-                        Weight::Normal,
+                        Weight::SemiBold,
                         colors.text_secondary(),
                         inner.width() - 48.0,
                     );

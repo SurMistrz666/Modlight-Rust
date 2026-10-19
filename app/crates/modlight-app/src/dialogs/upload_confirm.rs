@@ -86,7 +86,14 @@ impl UploadConfirm {
         let text_width = (panel_left + panel_width - 14.0 - text_left).max(60.0);
         let galley = layout(
             ui,
-            wrapped(&message, 15.0, Weight::Normal, colors.text(), text_width),
+            // `MessageText`: 15 px Normal, and the global TextBlock colour (Text.Secondary).
+            wrapped(
+                &message,
+                15.0,
+                Weight::Normal,
+                colors.text_secondary(),
+                text_width,
+            ),
         );
         let checkbox_height = 32.0;
         let inner_height = galley.size().y.max(icon_width) + 14.0 + checkbox_height;
@@ -120,7 +127,7 @@ impl UploadConfirm {
         let text_top = panel.top() + 14.0;
         let text_height = galley.size().y;
         let text_y = text_top + (icon_width - text_height).max(0.0) / 2.0;
-        painter.galley(pos2(text_left, text_y), galley, colors.text());
+        painter.galley(pos2(text_left, text_y), galley, colors.text_secondary());
         let check_top = text_top + text_height.max(icon_width) + 14.0;
         let mut check_ui = ui.new_child(
             egui::UiBuilder::new()
@@ -143,7 +150,7 @@ impl UploadConfirm {
         let mut primary = Look::primary(colors);
         primary.min_width = 96.0;
         primary.padding_x = 14.0;
-        let mut plain = Look::button(colors);
+        let mut plain = Look::compact(colors);
         plain.min_width = 96.0;
         plain.padding_x = 14.0;
         let top = panel.bottom() + 12.0;

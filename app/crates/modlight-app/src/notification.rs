@@ -367,10 +367,11 @@ impl Notification {
             )
         });
         let body = (!self.text.trim().is_empty()).then(|| {
+            // `BodyText` sets no weight: the global TextBlock style's SemiBold.
             let mut job = trimmed(
                 &self.text,
                 13.0,
-                Weight::Normal,
+                Weight::SemiBold,
                 colors.text_secondary(),
                 text_w,
                 6,
@@ -504,11 +505,10 @@ impl Notification {
                     ),
                     StrokeKind::Inside,
                 );
-                let color = if hot {
-                    colors.accent_foreground()
-                } else {
-                    colors.text()
-                };
+                // The icon TextBlock is built in code with no colour of its own, so
+                // the global style's Text.Secondary wins over the button's hover.
+                let _ = hot;
+                let color = colors.text_secondary();
                 let icon = icon_galley(ui, action.icon(), icon_size, color);
                 painter.galley(shown.center() - icon.size() / 2.0, icon, color);
                 if response.on_hover_text(action.label()).clicked() {
@@ -541,11 +541,8 @@ impl Notification {
             Stroke::new(1.0, colors.border()),
             StrokeKind::Inside,
         );
-        let x_color = if response.hovered() {
-            colors.text()
-        } else {
-            colors.text_secondary()
-        };
+        // The X is a TextBlock under the global style: Text.Secondary when hovered too.
+        let x_color = colors.text_secondary();
         paint_icon(ui, &painter, close.center(), icons::X, 13.0, x_color);
         if response.on_hover_text(t(s::Notification_Close)).clicked() {
             outcome = Some(NotificationOutcome::Close);
@@ -642,7 +639,7 @@ impl Notification {
                 let mut job = trimmed(
                     &self.text,
                     12.0,
-                    Weight::Normal,
+                    Weight::SemiBold,
                     colors.text_secondary(),
                     text_w,
                     2,
@@ -771,11 +768,9 @@ impl Notification {
                 ),
                 StrokeKind::Inside,
             );
-            let color = if hot {
-                colors.accent_foreground()
-            } else {
-                colors.text()
-            };
+            // As above: the global TextBlock colour in every state.
+            let _ = hot;
+            let color = colors.text_secondary();
             let icon = icon_galley(ui, action.icon(), icon_size, color);
             painter.galley(shown.center() - icon.size() / 2.0, icon, color);
             if response.on_hover_text(action.label()).clicked() {
@@ -816,11 +811,8 @@ impl Notification {
             Stroke::new(1.0, colors.border()),
             StrokeKind::Inside,
         );
-        let x_color = if response.hovered() {
-            colors.text()
-        } else {
-            colors.text_secondary()
-        };
+        // The X is a TextBlock under the global style: Text.Secondary when hovered too.
+        let x_color = colors.text_secondary();
         paint_icon(ui, painter, close.center(), icons::X, 13.0, x_color);
         response
             .on_hover_text(t(s::Notification_Close))
