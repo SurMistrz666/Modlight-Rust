@@ -236,6 +236,17 @@ pub trait DataStore: Send + Sync {
     fn delete_record<'a>(&'a self, _id: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async { Ok(()) })
     }
+
+    /// Whether the store can stream a finished upload back (`'read' in store`,
+    /// what `@tus/server`'s GET handler checks).
+    fn supports_read(&self) -> bool {
+        false
+    }
+
+    /// The upload's bytes, for the GET handler.
+    fn read<'a>(&'a self, _id: &'a str) -> BoxFuture<'a, Result<ByteStream, StoreError>> {
+        Box::pin(async { Err(errors::FILE_NOT_FOUND.into()) })
+    }
 }
 
 // ── Metadata (`@tus/utils/models/Metadata`) ─────────────────────────────────

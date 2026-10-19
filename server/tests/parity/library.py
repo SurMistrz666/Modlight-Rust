@@ -163,6 +163,149 @@ def sharex(run, lib):
     lib.compare_rows("sharex: quota after refusal", 'SELECT used_quota FROM "user" WHERE id = %s' % parity.sql_quote(owner))
 
 
+# ── tus (/api/files) ────────────────────────────────────────────────────────
+
+TUS_HEADERS = ("tus-resumable", "tus-version", "tus-extension", "tus-max-size", "upload-offset", "upload-length",
+               "upload-defer-length", "upload-metadata", "upload-expires", "location", "cache-control",
+               "content-type", "connection", "access-control-allow-origin", "access-control-expose-headers",
+               "access-control-allow-methods", "access-control-allow-headers", "access-control-max-age",
+               "x-media-url", "x-media-raw-url", "x-media-copy-url", "content-disposition")
+
+
+def tus_shape(res):
+    out = {"status": res.status}
+    for h in TUS_HEADERS:
+        v = res.header(h)
+        if v is None:
+            continue
+        if h == "connection" and v.lower() == "keep-alive":
+            continue  # Node's own keep-alive header, not the application's
+        v = re.sub(r"http://[^/\s]+/api/files/[0-9a-f]{32}", "<location>", v)
+        v = re.sub(ORIGIN_RE, "<origin>", v)
+        out[h] = parity.normalize_text(v)
+    out["body"] = res.text()
+    return out
+
+
+def b64(s):
+    import base64
+    return base64.b64encode(s.encode("utf-8")).decode()
+
+
+def tus(run, lib):
+    owner, tag = lib.seed_user("tus", naming_scheme="filename")
+    token = lib.seed_token(owner, "upload")
+    reader = lib.seed_token(owner, "read")
+    small, small_tag = lib.seed_user("tq", naming_scheme="filename", max_quota=10)
+    small_token = lib.seed_token(small, "upload")
+    pair = run.pair()
+    base = {"Tus-Resumable": "1.0.0"}
+
+    def step(name, method, path, headers=None, raw=None, which=None):
+        """Run on both servers; `path` may be a callable (browser -> path)."""
+        out = []
+        for br in (pair.ref, pair.rust):
+            p = path(br) if callable(path) else path
+            out.append(br.request(method, p, headers=headers, raw=raw, origin=False))
+        run.compare("tus: " + name, tus_shape(out[0]), tus_shape(out[1]))
+        return out
+
+    def h(**kw):
+        d = dict(base)
+        for k, v in kw.items():
+            d[k.replace("_", "-")] = v
+        return d
+
+    step("OPTIONS with origin", "OPTIONS", "/api/files", headers={"Origin": "http://example.test"})
+    step("OPTIONS without tus-resumable", "OPTIONS", "/api/files/abc")
+    step("POST without Tus-Resumable", "POST", "/api/files", headers={"Upload-Length": "5"})
+    step("POST bad version and length", "POST", "/api/files", headers={"Tus-Resumable": "0.2", "Upload-Length": "x"})
+    step("POST unauthenticated", "POST", "/api/files", headers=h(Upload_Length="5"))
+    step("POST unknown token", "POST", "/api/files", headers=h(Upload_Length="5", x_api_key="nope"))
+    step("POST read-scoped token", "POST", "/api/files", headers=h(Upload_Length="5", x_api_key=reader))
+    step("POST deferred length", "POST", "/api/files", headers=h(Upload_Defer_Length="1", x_api_key=token))
+    step("POST both lengths", "POST", "/api/files", headers=h(Upload_Defer_Length="1", Upload_Length="5", x_api_key=token))
+    step("POST no length", "POST", "/api/files", headers=h(x_api_key=token))
+    step("POST unknown folder", "POST", "/api/files",
+         headers=h(Upload_Length="5", x_api_key=token, Upload_Metadata="folderId " + b64(str(uuid.uuid4()))))
+    step("POST bad metadata", "POST", "/api/files", headers=h(Upload_Length="5", x_api_key=token, Upload_Metadata="a b c"))
+    step("POST concat", "POST", "/api/files", headers=h(Upload_Length="5", x_api_key=token, Upload_Concat="partial"))
+    step("POST over quota (maxSize)", "POST", "/api/files", headers=h(Upload_Length="50", x_api_key=small_token))
+    step("PUT method", "PUT", "/api/files/abc", headers=h())
+    step("HEAD unknown id", "HEAD", "/api/files/0123456789abcdef0123456789abcdef", headers=h())
+    step("HEAD the path itself", "HEAD", "/api/files", headers=h())
+    step("PATCH unknown id", "PATCH", "/api/files/0123456789abcdef0123456789abcdef",
+         headers=h(Upload_Offset="0", Content_Type="application/offset+octet-stream"), raw=b"x")
+    step("GET unknown id", "GET", "/api/files/0123456789abcdef0123456789abcdef")
+
+    # A complete upload: create, resume, finish.
+    locs = {}
+    meta = "filename %s,filetype %s,folderId %s" % (b64("tus notes.txt"), b64("text/plain"), b64("root"))
+    created = step("POST create", "POST", "/api/files", headers=h(Upload_Length="11", x_api_key=token, Upload_Metadata=meta))
+    for br, res in zip((pair.ref, pair.rust), created):
+        locs[br.base] = urllib_path(res.header("location"))
+    loc = lambda br: locs[br.base]
+    step("HEAD fresh", "HEAD", loc, headers=h())
+    step("PATCH first part", "PATCH", loc, headers=h(Upload_Offset="0", Content_Type="application/offset+octet-stream"),
+         raw=b"hello")
+    step("HEAD after part", "HEAD", loc, headers=h())
+    step("PATCH wrong offset", "PATCH", loc, headers=h(Upload_Offset="0", Content_Type="application/offset+octet-stream"),
+         raw=b"x")
+    step("PATCH without content type", "PATCH", loc, headers=h(Upload_Offset="5"), raw=b"x")
+    step("PATCH wrong content type", "PATCH", loc, headers=h(Upload_Offset="5", Content_Type="text/plain"), raw=b"x")
+    step("PATCH without offset", "PATCH", loc, headers=h(Content_Type="application/offset+octet-stream"), raw=b"x")
+    step("PATCH past the length", "PATCH", loc,
+         headers=h(Upload_Offset="5", Content_Type="application/offset+octet-stream"), raw=b"0123456789")
+    step("GET unfinished", "GET", loc)
+    step("PATCH rest (finish)", "PATCH", loc,
+         headers=h(Upload_Offset="5", Content_Type="application/offset+octet-stream"), raw=b" world")
+    step("HEAD finished", "HEAD", loc, headers=h())
+    step("DELETE finished", "DELETE", loc, headers=h())
+
+    # Termination of an unfinished upload.
+    created = step("POST create (to delete)", "POST", "/api/files",
+                   headers=h(Upload_Length="3", x_api_key=token, Upload_Metadata="filename " + b64("gone.bin")))
+    for br, res in zip((pair.ref, pair.rust), created):
+        locs[br.base] = urllib_path(res.header("location"))
+    step("DELETE unfinished", "DELETE", loc, headers=h())
+    step("HEAD deleted", "HEAD", loc, headers=h())
+
+    # creation-with-upload, partial body.
+    created = step("POST with data (partial)", "POST", "/api/files",
+                   headers=h(Upload_Length="6", x_api_key=token, Upload_Metadata="filename " + b64("cwu.txt"),
+                             Content_Type="application/offset+octet-stream"), raw=b"abc")
+    for br, res in zip((pair.ref, pair.rust), created):
+        locs[br.base] = urllib_path(res.header("location"))
+    step("PATCH finish creation-with-upload", "PATCH", loc,
+         headers=h(Upload_Offset="3", Content_Type="application/offset+octet-stream"), raw=b"def")
+
+    # Zero-byte upload: finalized at creation (the reference then 404s).
+    step("POST zero length", "POST", "/api/files",
+         headers=h(Upload_Length="0", x_api_key=token, Upload_Metadata="filename " + b64("empty.txt")))
+
+    # A browser session instead of a token.
+    parity.signed_in(pair, lib.ref_db, lib.rust_db, owner)
+    created = step("POST with a session", "POST", "/api/files",
+                   headers=h(Upload_Length="4", Upload_Metadata="filename %s,name %s" % (b64(""), b64("named.txt"))))
+    for br, res in zip((pair.ref, pair.rust), created):
+        locs[br.base] = urllib_path(res.header("location"))
+    step("PATCH session upload", "PATCH", loc,
+         headers=h(Upload_Offset="0", Content_Type="application/offset+octet-stream"), raw=b"data")
+
+    lib.compare_rows(
+        "tus: rows written",
+        'SELECT code, filename, ext, kind, mime_type, size, storage_key, checksum IS NULL, published, '
+        'folder_id IS NULL FROM uploads WHERE owner_id = %s ORDER BY created_at, code' % parity.sql_quote(owner))
+    lib.compare_rows("tus: quota", 'SELECT used_quota FROM "user" WHERE id = %s' % parity.sql_quote(owner))
+
+
+def urllib_path(location):
+    if not location:
+        return "/api/files/missing"
+    import urllib.parse
+    return urllib.parse.urlparse(location).path
+
+
 def main():
     p = argparse.ArgumentParser(allow_abbrev=False)
     p.add_argument("--ref-db", default="modlight-srvlib-ref-postgres-1:modlight")
@@ -177,7 +320,7 @@ def main():
     ref_db = parity.Db(rc, rd, parity.read_env_file(a.ref_env)["AUTH_SECRET"])
     rust_db = parity.Db(uc, ud, parity.read_env_file(a.rust_env)["AUTH_SECRET"])
     lib = Library(run, ref_db, rust_db)
-    for name, fn in [("sharex", sharex)]:
+    for name, fn in [("sharex", sharex), ("tus", tus)]:
         if a.only and a.only != name:
             continue
         fn(run, lib)

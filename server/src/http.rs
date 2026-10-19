@@ -80,17 +80,20 @@ pub fn router(state: &AppState) -> Router {
 pub fn raw_upload_router(state: &AppState) -> Router {
     Router::new()
         .merge(crate::upload::sharex::routes()) // lib/upload/sharex.ts: POST /upload, POST /api/upload
-        .fallback(raw_upload_not_ported)
+        .fallback(raw_upload_dispatch) // lib/upload/tus.ts: everything under /api/files
         .with_state(state.clone())
 }
 
-async fn raw_upload_not_ported(uri: Uri) -> Response {
-    let file = if uri.path().starts_with("/api/files") { "lib/upload/tus.ts" } else { "lib/upload/sharex.ts" };
-    crate::api_json::json_response(
-        StatusCode::NOT_IMPLEMENTED,
-        &serde_json::json!({ "message": "Not implemented in the Rust port yet.", "file": file }),
-        Some("no-store"),
-    )
+/// `/api/files*` (any method) goes to the tus server; the ShareX paths that
+/// reach this point are not routed by method and so cannot occur.
+async fn raw_upload_dispatch(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: Request<Body>,
+) -> Response {
+    if whatwg_pathname(req.uri()).starts_with("/api/files") {
+        return crate::upload::tus::handle(axum::extract::State(state), req).await;
+    }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 /// `pathname.startsWith("/api/files")` or `POST /upload | /api/upload`.
