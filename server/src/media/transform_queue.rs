@@ -142,7 +142,7 @@ pub fn create_limiter(opts: LimiterOptions) -> Limiter {
     Limiter { shared: Arc::new(Shared { limit: opts.limit, queue: opts.queue, state: Mutex::new(State::default()) }) }
 }
 
-fn as_error(reason: Option<AbortReason>) -> anyhow::Error {
+pub(crate) fn as_error(reason: Option<AbortReason>) -> anyhow::Error {
     match reason {
         Some(AbortReason::TimedOut { ms }) => TimeoutError { ms }.into(),
         _ => AbortedError.into(),

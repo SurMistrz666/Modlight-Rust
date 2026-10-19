@@ -237,6 +237,19 @@ pub fn init() -> Result<(), VipsError> {
 
 unsafe fn init_once() -> Result<(), String> {
     use crate::media::sharp_runtime;
+    // Text (the token on an embed card) must be laid out by Pango's
+    // fontconfig/FreeType backend, the only one production's Linux libvips
+    // has: that is the backend `fontfile` registers the font with. A macOS
+    // Pango otherwise picks its CoreText backend, which never sees the font
+    // file and silently draws a system face instead. Measured: with this set,
+    // Homebrew's libvips 8.18 renders the card token pixel for pixel like the
+    // reference container. Set once, before libvips starts and before any
+    // text is laid out; a value the operator chose is left alone.
+    if std::env::var_os("PANGOCAIRO_BACKEND").is_none() {
+        // SAFETY: runs once, inside the OnceLock that guards libvips start-up,
+        // before any libvips (and therefore Pango) thread exists.
+        unsafe { std::env::set_var("PANGOCAIRO_BACKEND", "fc") };
+    }
     // SAFETY: plain libvips/GLib calls with static C strings.
     unsafe {
         if ffi::vips_init(c"modlight".as_ptr()) != 0 {
