@@ -2,9 +2,10 @@
 //! password hashing (`hashPassword` / `verifyPassword`) and the in-memory
 //! attempt throttle (`checkRateLimit` / `resetRateLimit`).
 //!
-//! The unlock tokens and cookies of the same file are ported by the
-//! uploads/library agent, keeping upstream names: `mint_unlock_token`,
-//! `verify_unlock_token`, `is_media_unlocked`, `unlock_cookie_name`.
+//! The unlock tokens and their cookies (`mint_unlock_token`,
+//! `verify_unlock_token`, the owner-scoped "remember for 30 days" token,
+//! `is_media_unlocked`, `unlock_cookie_name`, `unlock_cookie_options`) were
+//! added by the uploads/library port.
 //!
 //! The auth agent added `hash_password`, `verify_password`,
 //! `check_rate_limit` and `reset_rate_limit` (account actions, the sign-in,
@@ -89,6 +90,194 @@ pub async fn verify_password(password: &str, stored: Option<&str>) -> bool {
         return false;
     };
     crate::auth::crypto::constant_time_eq(&expected, &dk)
+}
+
+// ── Unlock tokens ───────────────────────────────────────────────────────────
+
+/// What a token opens: `media` exactly one file, `shortlink` exactly one short
+/// link, `owner` every file of one owner that carries a given generation of
+/// that owner's DEFAULT password.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnlockScope {
+    Media,
+    Shortlink,
+    Owner,
+}
+
+impl UnlockScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UnlockScope::Media => "media",
+            UnlockScope::Shortlink => "shortlink",
+            UnlockScope::Owner => "owner",
+        }
+    }
+
+    /// How long a successful unlock stays valid (seconds).
+    pub fn ttl(self) -> i64 {
+        match self {
+            UnlockScope::Media => 60 * 60 * 24,
+            UnlockScope::Shortlink => 60 * 60,
+            UnlockScope::Owner => 60 * 60 * 24 * 30,
+        }
+    }
+}
+
+/// What "remember this" buys, whatever the scope: 30 days.
+pub const REMEMBER_TTL: i64 = 60 * 60 * 24 * 30;
+
+/// Proof of a successful unlock: `<expiry>.<HMAC-SHA256(secret, parts|expiry)>`.
+///
+/// The value MUST be unforgeable, because cookies are entirely
+/// client-controlled. Binding the signature to the resource id stops a token
+/// minted for one file from unlocking another, and to the scope so a
+/// short-link token can't unlock a file.
+pub fn mint_unlock_token(secret: &str, scope: UnlockScope, id: &str, ttl_seconds: Option<i64>) -> String {
+    mint_at(secret, &[scope.as_str(), id], ttl_seconds.unwrap_or(scope.ttl()), now_ms())
+}
+
+pub fn verify_unlock_token(secret: &str, token: Option<&str>, scope: UnlockScope, id: &str) -> bool {
+    verify_at(secret, token, &[scope.as_str(), id], now_ms())
+}
+
+/// A token that opens every file of `owner_id` carrying generation `version` of
+/// that owner's default file password. The generation is INSIDE the signature,
+/// which is what makes changing the default password revoke the remembered
+/// consent.
+pub fn mint_owner_unlock_token(
+    secret: &str,
+    owner_id: &str,
+    version: i64,
+    ttl_seconds: Option<i64>,
+) -> anyhow::Result<String> {
+    if !is_version(version as f64) {
+        anyhow::bail!("mintOwnerUnlockToken: invalid version");
+    }
+    let v = format!("v{version}");
+    Ok(mint_at(secret, &["owner", owner_id, &v], ttl_seconds.unwrap_or(UnlockScope::Owner.ttl()), now_ms()))
+}
+
+pub fn verify_owner_unlock_token(
+    secret: &str,
+    token: Option<&str>,
+    owner_id: Option<&str>,
+    version: Option<i64>,
+) -> bool {
+    let (Some(owner_id), Some(version)) = (owner_id.filter(|o| !o.is_empty()), version) else {
+        return false;
+    };
+    if !is_version(version as f64) {
+        return false;
+    }
+    let v = format!("v{version}");
+    verify_at(secret, token, &["owner", owner_id, &v], now_ms())
+}
+
+fn is_version(v: f64) -> bool {
+    v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0 && v >= 0.0
+}
+
+/// The bits of an upload the unlock decision depends on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaUnlockSubject {
+    /// uploads.id
+    pub media_id: String,
+    /// uploads.ownerId (None for an orphaned file).
+    pub owner_id: Option<String>,
+    /// uploads.passwordVersion: the generation of the owner's DEFAULT password
+    /// this file was created under, or None when its password was set by hand.
+    pub password_version: Option<i64>,
+}
+
+/// Has this visitor cleared the password gate for `subject`? A token minted for
+/// this exact file, or an owner-scoped token whose generation matches the one
+/// the file records.
+pub fn is_media_unlocked(secret: &str, subject: &MediaUnlockSubject, read: impl Fn(&str) -> Option<String>) -> bool {
+    let own = read(&unlock_cookie_name(UnlockScope::Media, &subject.media_id));
+    if verify_unlock_token(secret, own.as_deref(), UnlockScope::Media, &subject.media_id) {
+        return true;
+    }
+    // Hand-picked password, or an orphan with no owner to scope a token to.
+    let (Some(version), Some(owner)) =
+        (subject.password_version, subject.owner_id.as_deref().filter(|o| !o.is_empty()))
+    else {
+        return false;
+    };
+    verify_owner_unlock_token(secret, read(&owner_unlock_cookie_name(owner)).as_deref(), Some(owner), Some(version))
+}
+
+/// Cookie carrying the unlock token for a given resource.
+pub fn unlock_cookie_name(scope: UnlockScope, id: &str) -> String {
+    match scope {
+        UnlockScope::Media => format!("ml_unlock_{id}"),
+        UnlockScope::Shortlink => format!("ml_sl_{id}"),
+        UnlockScope::Owner => format!("ml_dpw_{id}"),
+    }
+}
+
+/// Cookie carrying the owner-scoped ("remember for 30 days") token.
+pub fn owner_unlock_cookie_name(owner_id: &str) -> String {
+    unlock_cookie_name(UnlockScope::Owner, owner_id)
+}
+
+/// `unlockCookieOptions(scope, ttl)` applied to a cookie: `httpOnly`, path
+/// `/`, `sameSite: lax`, `secure` in production, `maxAge` = the scope's TTL.
+pub fn unlock_cookie(
+    name: String,
+    value: String,
+    scope: UnlockScope,
+    ttl_seconds: Option<i64>,
+    is_prod: bool,
+) -> crate::http::set_cookie::SetCookie {
+    crate::http::set_cookie::SetCookie::new(name, value)
+        .http_only(true)
+        .path("/")
+        .same_site(crate::http::set_cookie::SameSite::Lax)
+        .secure(is_prod)
+        .max_age(ttl_seconds.unwrap_or(scope.ttl()))
+}
+
+fn now_ms() -> i64 {
+    crate::db::types::JsDate::now().millis()
+}
+
+fn mint_at(secret: &str, parts: &[&str], ttl_seconds: i64, now_ms: i64) -> String {
+    let exp = now_ms.div_euclid(1000) + ttl_seconds;
+    format!("{exp}.{}", sign(secret, parts, exp))
+}
+
+fn verify_at(secret: &str, token: Option<&str>, parts: &[&str], now_ms: i64) -> bool {
+    let Some(token) = token.filter(|t| !t.is_empty()) else {
+        return false;
+    };
+    let Some(dot) = token.find('.').filter(|d| *d > 0) else {
+        return false;
+    };
+    let exp = crate::config::js_number(&token[..dot]);
+    if !(exp.fract() == 0.0 && exp.abs() <= 9_007_199_254_740_991.0) || exp <= 0.0 {
+        return false;
+    }
+    if exp * 1000.0 <= now_ms as f64 {
+        return false;
+    }
+    let expected = sign(secret, parts, exp as i64);
+    crate::auth::crypto::constant_time_eq(&token.as_bytes()[dot + 1..], expected.as_bytes())
+}
+
+/// Each part is percent-encoded before being joined, so a value containing the
+/// separator cannot be split differently than it was signed.
+fn sign(secret: &str, parts: &[&str], exp: i64) -> String {
+    use hmac::Mac;
+    let exp = exp.to_string();
+    let message: Vec<String> = parts
+        .iter()
+        .copied()
+        .chain(std::iter::once(exp.as_str()))
+        .map(crate::http::cookies::encode_uri_component)
+        .collect();
+    let mut mac = <hmac::Hmac<sha2::Sha256> as Mac>::new_from_slice(secret.as_bytes()).expect("any key length");
+    mac.update(message.join("|").as_bytes());
+    URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
 }
 
 // ── Attempt throttling ──────────────────────────────────────────────────────
@@ -225,6 +414,78 @@ mod tests {
         assert!(!verify_password("x", None).await);
         assert!(!verify_password("x", Some("garbage")).await);
         assert!(!verify_password("x", Some("")).await);
+    }
+
+    // tests/unit/unlock-token.test.ts
+    const SECRET: &str = "test-secret-test-secret-test-secret";
+    const MEDIA: &str = "9d2e1a54-0000-4000-8000-000000000001";
+    const OTHER: &str = "9d2e1a54-0000-4000-8000-000000000002";
+
+    fn ok(token: Option<&str>, scope: UnlockScope, id: &str) -> bool {
+        verify_unlock_token(SECRET, token, scope, id)
+    }
+
+    #[test]
+    fn unlock_tokens() {
+        let token = mint_unlock_token(SECRET, UnlockScope::Media, MEDIA, None);
+        assert!(ok(Some(&token), UnlockScope::Media, MEDIA));
+        for flag in [Some("1"), Some(""), None] {
+            assert!(!ok(flag, UnlockScope::Media, MEDIA));
+        }
+        let (exp, sig) = token.split_once('.').unwrap();
+        let flipped = match sig.strip_prefix('A') {
+            Some(rest) => format!("B{rest}"),
+            None => format!("A{}", &sig[1..]),
+        };
+        assert!(!ok(Some(&format!("{exp}.{flipped}")), UnlockScope::Media, MEDIA));
+        assert!(!ok(Some(&format!("{exp}.{}", &sig[..sig.len() - 2])), UnlockScope::Media, MEDIA));
+        assert!(!ok(Some(&format!("{exp}.{sig}xx")), UnlockScope::Media, MEDIA));
+        assert!(!ok(Some(&format!("{exp}.")), UnlockScope::Media, MEDIA));
+        let far = now_ms() / 1000 + 60 * 60 * 24 * 365;
+        assert!(!ok(Some(&format!("{far}.{sig}")), UnlockScope::Media, MEDIA));
+        let expired = mint_unlock_token(SECRET, UnlockScope::Media, MEDIA, Some(-1));
+        assert!(!ok(Some(&expired), UnlockScope::Media, MEDIA));
+        let other = mint_unlock_token(SECRET, UnlockScope::Media, OTHER, None);
+        assert!(!ok(Some(&other), UnlockScope::Media, MEDIA));
+        let scoped = mint_unlock_token(SECRET, UnlockScope::Shortlink, MEDIA, None);
+        assert!(!ok(Some(&scoped), UnlockScope::Media, MEDIA));
+        for junk in ["garbage", ".", ".sig", "abc.def", "-1.sig", "NaN.sig", "1e9.sig"] {
+            assert!(!ok(Some(junk), UnlockScope::Media, MEDIA), "{junk}");
+        }
+        // A different secret never verifies.
+        assert!(!verify_unlock_token("other-secret", Some(&token), UnlockScope::Media, MEDIA));
+    }
+
+    #[test]
+    fn owner_tokens_carry_the_generation() {
+        let t = mint_owner_unlock_token(SECRET, "owner1", 3, None).unwrap();
+        assert!(verify_owner_unlock_token(SECRET, Some(&t), Some("owner1"), Some(3)));
+        assert!(!verify_owner_unlock_token(SECRET, Some(&t), Some("owner1"), Some(4)));
+        assert!(!verify_owner_unlock_token(SECRET, Some(&t), None, Some(3)));
+        assert!(mint_owner_unlock_token(SECRET, "owner1", -1, None).is_err());
+        let subject =
+            MediaUnlockSubject { media_id: MEDIA.into(), owner_id: Some("owner1".into()), password_version: Some(3) };
+        let cookie = |name: &str| (name == "ml_dpw_owner1").then(|| t.clone());
+        assert!(is_media_unlocked(SECRET, &subject, cookie));
+        let hand_picked = MediaUnlockSubject { password_version: None, ..subject.clone() };
+        assert!(!is_media_unlocked(SECRET, &hand_picked, |name| (name == "ml_dpw_owner1").then(|| t.clone())));
+        let own = mint_unlock_token(SECRET, UnlockScope::Media, MEDIA, None);
+        assert!(
+            is_media_unlocked(SECRET, &hand_picked, |name| (name == format!("ml_unlock_{MEDIA}")).then(|| own.clone()))
+        );
+    }
+
+    #[test]
+    fn unlock_cookies() {
+        assert_eq!(unlock_cookie_name(UnlockScope::Media, MEDIA), format!("ml_unlock_{MEDIA}"));
+        assert_eq!(unlock_cookie_name(UnlockScope::Shortlink, MEDIA), format!("ml_sl_{MEDIA}"));
+        assert_eq!(UnlockScope::Media.ttl(), 60 * 60 * 24);
+        assert_eq!(UnlockScope::Shortlink.ttl(), 60 * 60);
+        let c = unlock_cookie("ml_sl_x".into(), "v".into(), UnlockScope::Shortlink, None, false).to_next_string();
+        assert!(c.contains("Max-Age=3600"), "{c}");
+        assert!(c.contains("HttpOnly"), "{c}");
+        assert!(c.to_lowercase().contains("samesite=lax"), "{c}");
+        assert!(!c.contains("Secure"), "{c}");
     }
 
     #[test]
