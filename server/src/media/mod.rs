@@ -21,6 +21,7 @@ pub mod paste_type;
 pub mod paths;
 pub mod playback_health;
 pub mod probe;
+pub mod serve;
 pub mod sharp_runtime;
 pub mod sniff;
 pub mod transform_cost;

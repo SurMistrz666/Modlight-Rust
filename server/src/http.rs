@@ -68,6 +68,7 @@ pub fn router(state: &AppState) -> Router {
         .merge(crate::routes::api::uploads::routes()) // app/api/uploads/route.ts
         .merge(crate::routes::api::avatar::routes()) // app/api/avatar/route.ts
         .merge(crate::routes::api::background::routes()) // app/api/background/route.ts
+        .merge(crate::routes::api::link_info::routes()) // app/api/link-info/route.ts
         .merge(crate::routes::avatar::routes()) // app/avatar/[userCode]/route.ts, app/bg/[userCode]/route.ts
         // ── Frameworks ──
         .merge(crate::rpc::routes())

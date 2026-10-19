@@ -488,6 +488,143 @@ def avatars(run, lib):
     run.compare("pictures: action listAvatarPicks signed out", action_envelope_signed_out(a), parity.rpc_envelope(b))
 
 
+# ── /api/link-info ─────────────────────────────────────────────────────────
+
+def seed_short_link(lib, owner, code, target, **cols):
+    row = {"id": str(uuid.uuid4()), "owner_id": owner, "code": code, "target": target,
+           "created_at": "2026-01-02T00:00:00.000Z"}
+    row.update(cols)
+    names = ", ".join('"%s"' % k for k in row)
+    values = ", ".join(parity.sql_quote(v) for v in row.values())
+    lib.both_sql("INSERT INTO short_links (%s) VALUES (%s)" % (names, values))
+    return row["id"]
+
+
+def link_info(run, lib):
+    import urllib.parse as up
+    owner, tag = lib.seed_user("li")
+    other, other_tag = lib.seed_user("lo")
+    tagless, tagless_tag = lib.seed_user("lt", skip_tag_in_url=True)
+    admin, admin_tag = lib.seed_user("la", role="admin")
+    reader = lib.seed_token(owner, "read")
+    uploader = lib.seed_token(owner, "upload")
+    admin_token = lib.seed_token(admin, "read")
+    other_token = lib.seed_token(other, "read")
+    sfx = lib.suffix
+    c = lambda k: ("li%s%s" % (k, sfx))[:40]
+    seed_upload(lib, owner, c("png"), width=640, height=480, blurhash="LEHV6nWB2yk8", checksum="a" * 64,
+                created_at="2026-01-01T00:00:01.000Z")
+    seed_upload(lib, owner, c("gif"), filename="anim.gif", ext="gif", mime_type="image/gif", frames=12, size=3000)
+    seed_upload(lib, owner, c("mp4"), filename="clip.mp4", ext="mp4", mime_type="video/mp4", size=5000000,
+                width=5056, height=1924, checksum="b" * 64, converted_at="2026-01-05T00:00:00.000Z")
+    seed_upload(lib, owner, c("mov"), filename="clip.mov", ext="mov", mime_type="video/quicktime", size=7000)
+    seed_upload(lib, owner, c("mp3"), filename="tone.mp3", ext="mp3", mime_type="audio/mpeg", size=12000)
+    seed_upload(lib, owner, c("txt"), filename="notes.txt", ext="txt", mime_type="text/plain", size=600000)
+    seed_upload(lib, owner, c("paste"), filename="x.ts", ext="ts", kind="paste", language="typescript",
+                mime_type="text/plain", size=200)
+    seed_upload(lib, owner, c("svg"), filename="logo.svg", ext="svg", mime_type="image/svg+xml", size=50)
+    seed_upload(lib, owner, c("html"), filename="page.html", ext="html", mime_type="text/html", size=50)
+    seed_upload(lib, owner, c("pw"), filename="secret-report.xlsx", ext="xlsx",
+                mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", password_hash="x:y")
+    seed_upload(lib, owner, c("unl"), published=False)
+    seed_upload(lib, owner, c("exp"), expires_at="2020-01-01T00:00:00.000Z")
+    seed_upload(lib, owner, c("fut"), expires_at="2099-01-01T00:00:00.000Z", checksum="c" * 64)
+    seed_upload(lib, owner, c("spent"), max_views=2, views=2)
+    seed_upload(lib, owner, c("cap"), max_views=5, views=1)
+    seed_upload(lib, owner, c("trash"), deleted_at="2026-02-01T00:00:00.000Z")
+    seed_upload(lib, owner, c("avif"), filename="pic.avif", ext="avif", mime_type="application/octet-stream")
+    seed_upload(lib, tagless, c("tl"), filename="t.png")
+    seed_upload(lib, owner, "raw" + sfx, filename="raw.png")
+    lib.both_sql("INSERT INTO user_code_aliases (code, user_id) VALUES (%s, %s)" % (
+        parity.sql_quote("old" + tag), parity.sql_quote(owner)))
+    seed_short_link(lib, owner, "lis" + sfx, "/%s/%s.png" % (tag, c("png")))
+    seed_short_link(lib, owner, "%s/lit%s" % (tag, sfx), "https://example.org/somewhere")
+    seed_short_link(lib, owner, "lip" + sfx, "https://example.org/x", password_hash="x:y")
+    seed_short_link(lib, owner, "lie" + sfx, "https://example.org/y", expires_at="2020-01-01T00:00:00.000Z",
+                    last_used_at="2020-01-01T00:00:00.000Z", clicks=4)
+    seed_short_link(lib, owner, "lix" + sfx, "/%s/%s" % (tag, c("pw")))
+    seed_short_link(lib, owner, "lib" + sfx, "/%%E0%%A4%%A")
+
+    pair = run.pair()
+
+    def shape(r):
+        text = r.text()
+        text = re.sub(ORIGIN_RE, "<origin>", text)
+        text = re.sub(r"localhost%3A\d+", "localhost%3A<port>", text)
+        text = text.replace(sfx, "<sfx>")
+        if r.status == 500:
+            # An uncaught error: Next answers with an empty body, the Rust
+            # framework with {"message":"Internal server error"} (SKELETON).
+            return {"status": 500}
+        return {"status": r.status, "content-type": r.header("content-type"),
+                "cache-control": r.header("cache-control"), "body": parity.normalize_text(text)}
+
+    def li(name, url, token=None, full=False):
+        out = []
+        for br in (pair.ref, pair.rust):
+            u = (br.base + url) if full else url
+            q = "" if u is None else "?url=" + up.quote(u, safe="")
+            h = {"x-api-key": token} if token else {}
+            out.append(br.request("GET", "/api/link-info" + q, headers=h, origin=False))
+        run.compare("link-info: " + name, shape(out[0]), shape(out[1]))
+        # Next replaces the handler's Vary with its own `rsc, ...` list on
+        # every route handler; the port sends what the handler set (SKELETON
+        # deviation 11: no Next Vary).
+        if out[1].status != 500:
+            run.compare("link-info: %s (Rust Vary)" % name, "Authorization, Cookie", out[1].header("vary"))
+
+    li("no url", None)
+    li("blank url", "   ")
+    for name, u in [("png", "/%s/%s.png" % (tag, c("png"))), ("png any ext", "/%s/%s.zzz" % (tag, c("png"))),
+                    ("png raw", "/%s/%s/raw.png" % (tag, c("png"))), ("gif", "/%s/%s" % (tag, c("gif"))),
+                    ("mp4 big (web rescue)", "/%s/%s/download" % (tag, c("mp4"))),
+                    ("mov", "/%s/%s/convert?to=mp4" % (tag, c("mov"))), ("mp3", "/%s/%s" % (tag, c("mp3"))),
+                    ("txt over inline limit", "/%s/%s" % (tag, c("txt"))),
+                    ("paste", "/%s/%s" % (tag, c("paste"))), ("svg", "/%s/%s" % (tag, c("svg"))),
+                    ("html", "/%s/%s/render" % (tag, c("html"))),
+                    ("password", "/%s/%s.xlsx" % (tag, c("pw"))), ("unlisted", "/%s/%s" % (tag, c("unl"))),
+                    ("expired", "/%s/%s" % (tag, c("exp"))), ("expiring", "/%s/%s" % (tag, c("fut"))),
+                    ("spent", "/%s/%s" % (tag, c("spent"))), ("capped", "/%s/%s" % (tag, c("cap"))),
+                    ("trashed", "/%s/%s" % (tag, c("trash"))), ("avif octet", "/%s/%s" % (tag, c("avif"))),
+                    ("alias tag", "/old%s/%s" % (tag, c("png"))), ("wrong tag", "/%s/%s" % (other_tag, c("png"))),
+                    ("tagless account", "/%s.png" % c("tl")), ("tagless of a tagged account", "/%s" % c("png")),
+                    ("tagless raw fallback", "/%s/raw.png" % c("tl")),
+                    ("code named raw", "/%s/raw%s" % (tag, sfx)), ("unknown", "/%s/nope%s" % (tag, sfx)),
+                    ("short link to a file", "/s/lis" + sfx), ("scoped short link", "/s/%s/lit%s" % (tag, sfx)),
+                    ("short link unlock gate", "/s/%s/lit%s/unlock" % (tag, sfx)),
+                    ("password short link", "/s/lip" + sfx), ("expired short link", "/s/lie" + sfx),
+                    ("short link to a gated file", "/s/lix" + sfx), ("unknown short link", "/s/nope" + sfx),
+                    ("folder gallery", "/a/%s/wakacje" % tag), ("profile", "/u/%s" % tag),
+                    ("app route", "/dashboard/files"), ("root", "/"), ("download page", "/download/app"),
+                    ("deletion link", "/%s/%s/delete/tok" % (tag, c("png"))), ("deep", "/a1/b/c/d/e"),
+                    ("bad action", "/%s/%s/thumbnail" % (tag, c("png"))), ("reserved code", "/login.png"),
+                    ("foreign host", "https://evil.example.com/x/y"), ("javascript scheme", "javascript:alert(1)"),
+                    ("scheme-less foreign", "evil.example.com/x/y"), ("relative", "%s/%s" % (tag, c("png"))),
+                    ("s without code", "/s"), ("a without slug", "/a/x"), ("u without tag", "/u"),
+                    ("dot segment", "/.%s" % c("png")), ("too long", "/" + "a" * 2100)]:
+        li(name, u)
+    li("full url on own origin", "/%s/%s.png" % (tag, c("png")), full=True)
+    li("owner token", "/%s/%s.png" % (tag, c("png")), token=reader)
+    li("owner token, unlisted", "/%s/%s" % (tag, c("unl")), token=reader)
+    li("owner token, password", "/%s/%s" % (tag, c("pw")), token=reader)
+    li("owner token, expiring (checksum from row)", "/%s/%s" % (tag, c("fut")), token=reader)
+    li("owner token, short link", "/s/lis" + sfx, token=reader)
+    li("owner token, password short link", "/s/lip" + sfx, token=reader)
+    li("upload-only token degrades to anonymous", "/%s/%s" % (tag, c("unl")), token=uploader)
+    li("unknown token degrades to anonymous", "/%s/%s" % (tag, c("png")), token="nope")
+    li("admin token", "/%s/%s" % (tag, c("unl")), token=admin_token)
+    li("other account's token", "/%s/%s" % (tag, c("unl")), token=other_token)
+    li("short link with a malformed target", "/s/lib" + sfx)
+    parity.signed_in(pair, lib.ref_db, lib.rust_db, owner)
+    li("owner session", "/%s/%s.png" % (tag, c("png")))
+    lib.compare_rows("link-info: nothing counted",
+                     "SELECT code, views, downloads, last_accessed_at FROM uploads WHERE owner_id = %s ORDER BY code"
+                     % parity.sql_quote(owner))
+    lib.compare_rows("link-info: no click counted",
+                     "SELECT code, clicks, last_used_at FROM short_links WHERE owner_id = %s ORDER BY code"
+                     % parity.sql_quote(owner))
+
+
 # ── /api/uploads (GET, PATCH, DELETE) ──────────────────────────────────────
 
 
@@ -726,7 +863,7 @@ def main():
     ref_db = parity.Db(rc, rd, parity.read_env_file(a.ref_env)["AUTH_SECRET"])
     rust_db = parity.Db(uc, ud, parity.read_env_file(a.rust_env)["AUTH_SECRET"])
     lib = Library(run, ref_db, rust_db)
-    for name, fn in [("sharex", sharex), ("tus", tus), ("uploads_api", uploads_api), ("media_meta", media_meta), ("avatars", avatars)]:
+    for name, fn in [("sharex", sharex), ("tus", tus), ("uploads_api", uploads_api), ("media_meta", media_meta), ("avatars", avatars), ("link_info", link_info)]:
         if a.only and a.only != name:
             continue
         fn(run, lib)

@@ -29,6 +29,7 @@ pub mod i18n;
 pub mod ids;
 pub mod jobs;
 pub mod js_date;
+pub mod link_info;
 pub mod mail;
 pub mod mail_settings;
 pub mod mail_templates;
