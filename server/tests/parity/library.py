@@ -299,6 +299,223 @@ def tus(run, lib):
     lib.compare_rows("tus: quota", 'SELECT used_quota FROM "user" WHERE id = %s' % parity.sql_quote(owner))
 
 
+# ── /api/uploads (GET, PATCH, DELETE) ──────────────────────────────────────
+
+
+def seed_upload(lib, owner, code, **cols):
+    """The same upload row (same id) on both servers; returns its id."""
+    row = {
+        "id": str(uuid.uuid4()), "owner_id": owner, "code": code, "filename": code + ".png", "ext": "png",
+        "kind": "file", "mime_type": "image/png", "size": 1000, "storage_key": "%s/%s.png" % (owner, code),
+        "delete_token": "tok-" + code, "created_at": "2026-01-01T00:00:00.000Z",
+    }
+    row.update(cols)
+    names = ", ".join('"%s"' % k for k in row)
+    values = ", ".join(parity.sql_quote(v) for v in row.values())
+    lib.both_sql('INSERT INTO uploads (%s) VALUES (%s)' % (names, values))
+    return row["id"]
+
+
+def seed_folder(lib, owner, name, parent=None):
+    fid = str(uuid.uuid4())
+    lib.both_sql('INSERT INTO folders (id, owner_id, parent_id, name, slug) VALUES (%s, %s, %s, %s, %s)' % (
+        parity.sql_quote(fid), parity.sql_quote(owner), parity.sql_quote(parent), parity.sql_quote(name),
+        parity.sql_quote(name.lower())))
+    return fid
+
+
+def uploads_api(run, lib):
+    pair = run.pair()
+    owner, tag = lib.seed_user("ua")
+    full = lib.seed_token(owner, "full")
+    reader = lib.seed_token(owner, "read")
+    uploader = lib.seed_token(owner, "upload")
+    other, other_tag = lib.seed_user("ub", copy_raw=True, skip_tag_in_url=True)
+    other_full = lib.seed_token(other, "full")
+    sfx = lib.suffix
+    folder = seed_folder(lib, owner, "Shots")
+    foreign_folder = seed_folder(lib, other, "Theirs")
+    t = lambda n: "2026-01-01T00:00:%02d.000Z" % n
+    ids = {}
+    ids["png"] = seed_upload(lib, owner, "pa" + sfx, created_at=t(1), width=640, height=480, blurhash="LEHV6nWB2yk8")
+    ids["gif"] = seed_upload(lib, owner, "pb" + sfx, filename="anim.gif", ext="gif", mime_type="image/gif",
+                             frames=12, size=3000, created_at=t(2), folder_id=folder)
+    ids["mp4"] = seed_upload(lib, owner, "pc" + sfx, filename="clip.mp4", ext="mp4", mime_type="video/mp4",
+                             size=5000000, created_at=t(3), duration_seconds=4.5, fps=30)
+    ids["svg"] = seed_upload(lib, owner, "pd" + sfx, filename="logo.svg", ext="svg", mime_type="image/svg+xml",
+                             created_at=t(4))
+    ids["txt"] = seed_upload(lib, owner, "pe" + sfx, filename="notes.txt", ext="txt", mime_type="text/plain",
+                             created_at=t(5), expires_at="2030-01-01T00:00:00.000Z", max_views=3,
+                             password_hash="x:y")
+    ids["big"] = seed_upload(lib, owner, "pf" + sfx, filename="huge.jpg", ext="jpg", mime_type="image/jpeg",
+                             size=40 * 1024 * 1024, created_at=t(6))
+    ids["oct"] = seed_upload(lib, owner, "pg" + sfx, filename="pic.avif", ext="avif",
+                             mime_type="application/octet-stream", created_at=t(7), folder_id=folder)
+    ids["trash"] = seed_upload(lib, owner, "ph" + sfx, created_at=t(8), deleted_at="2026-02-01T00:00:00.000Z")
+    ids["trash2"] = seed_upload(lib, owner, "pi" + sfx, created_at=t(9), deleted_at="2026-02-02T00:00:00.000Z")
+    ids["theirs"] = seed_upload(lib, other, "pj" + sfx, created_at=t(10))
+    ids["theirs_trash"] = seed_upload(lib, other, "pk" + sfx, created_at=t(11), deleted_at="2026-02-01T00:00:00.000Z")
+    ids["lone"] = seed_upload(lib, owner, "pl" + sfx, created_at=t(12))
+
+    names = dict((v, "<%s>" % k) for k, v in ids.items())
+    names[folder] = "<folder>"
+    names[foreign_folder] = "<foreign-folder>"
+
+    def label(v):
+        """Seeded ids by name, then the usual normalisation."""
+        text = json.dumps(v, ensure_ascii=False)
+        for uid, name in names.items():
+            text = text.replace(uid, name)
+        text = re.sub(ORIGIN_RE, "<origin>", text)
+        text = text.replace(sfx, "<sfx>")
+        return parity.normalize_json(json.loads(text))
+
+    def shape(r, unordered=False):
+        body = r.json()
+        if unordered and isinstance(body, dict) and isinstance(body.get("items"), list):
+            # actionableUploads has no ORDER BY: rows come back in whatever
+            # order Postgres finds them, which differs between two databases.
+            body["items"] = sorted(body["items"], key=lambda i: i.get("id") or "")
+        return {"status": r.status, "content-type": r.header("content-type"),
+                "cache-control": r.header("cache-control"), "retry-after": r.header("retry-after"),
+                "body": label(body) if body is not None else parity.normalize_text(r.text())}
+
+    def call(name, method, path, token=full, body=None, raw=None, ctype=None):
+        h = {}
+        if token:
+            h["x-api-key"] = token
+        if ctype:
+            h["Content-Type"] = ctype
+        kw = {"headers": h, "origin": False}
+        if body is not None:
+            kw["json_body"] = body
+        elif raw is not None:
+            kw["raw"] = raw
+        a, b = pair.both(method, path, **kw)
+        run.compare("uploads api: " + name, shape(a, method == "PATCH"), shape(b, method == "PATCH"))
+        return a, b
+
+    def rows(name):
+        lib.compare_rows(
+            "uploads api rows: " + name,
+            'SELECT code, published, folder_id IS NULL, expires_at, max_views, password_hash IS NULL, '
+            'password_version, deleted_at IS NULL FROM uploads WHERE owner_id IN (%s, %s) ORDER BY created_at'
+            % (parity.sql_quote(owner), parity.sql_quote(other)))
+
+    # GET
+    call("GET without auth", "GET", "/api/uploads", token=None)
+    call("GET unknown token", "GET", "/api/uploads", token="nope")
+    call("GET upload-scoped token", "GET", "/api/uploads", token=uploader)
+    call("GET read token", "GET", "/api/uploads", token=reader)
+    for q in ("?perPage=2&page=2", "?sort=oldest", "?sort=largest&perPage=3", "?sort=name", "?kind=image",
+              "?kind=video", "?search=clip", "?trashed=1", "?trashed=true", "?folder=root", "?folder=" + folder,
+              "?folder=" + foreign_folder, "?folder=" + str(uuid.uuid4()), "?folder=nope", "?folder=",
+              "?page=0&perPage=-5", "?page=abc", "?perPage=1000", "?sort=bogus&kind=bogus", "?q=x&search=%20%20",
+              "?search=NOTES", "?folder=ROOT", "?folder=" + folder.upper()):
+        call("GET " + q.replace(folder, "<folder>").replace(foreign_folder, "<foreign>"), "GET", "/api/uploads" + q)
+    call("GET as the other account (copy_raw, tagless)", "GET", "/api/uploads", token=other_full)
+    call("POST is not a method", "POST", "/api/uploads", body={})
+
+    # PATCH: refusals
+    call("PATCH without auth", "PATCH", "/api/uploads", token=None, body={"ids": [ids["png"]], "published": False})
+    call("PATCH read token", "PATCH", "/api/uploads", token=reader, body={"ids": [ids["png"]], "published": False})
+    call("PATCH text/plain", "PATCH", "/api/uploads", raw=b'{"ids":[]}', ctype="text/plain")
+    call("PATCH array body", "PATCH", "/api/uploads", raw=b'[1]', ctype="application/json")
+    call("PATCH broken json", "PATCH", "/api/uploads", raw=b'{"ids":', ctype="application/json")
+    call("PATCH no ids", "PATCH", "/api/uploads", body={"published": False})
+    call("PATCH empty-string ids", "PATCH", "/api/uploads", body={"ids": ["", 5, None], "published": False})
+    call("PATCH too many ids", "PATCH", "/api/uploads", body={"ids": ["x%d" % i for i in range(501)],
+                                                              "published": False})
+    call("PATCH nothing to change", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "name": "x"})
+    call("PATCH folderId number", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "folderId": 5})
+    call("PATCH published string", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "published": "yes"})
+    call("PATCH code number", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "code": 5})
+    call("PATCH code with two ids", "PATCH", "/api/uploads", body={"ids": [ids["png"], ids["gif"]], "code": "x"})
+    call("PATCH expiresAt number", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "expiresAt": 5})
+    call("PATCH maxViews string", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "maxViews": "5"})
+    call("PATCH password number", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "password": 5})
+    call("PATCH later field malformed writes nothing", "PATCH", "/api/uploads",
+         body={"ids": [ids["png"]], "published": False, "password": 5})
+    rows("after refusals")
+
+    # PATCH: writes
+    call("PATCH unpublish two", "PATCH", "/api/uploads", body={"ids": [ids["png"], ids["gif"]], "published": False})
+    call("PATCH publish again", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "published": True})
+    call("PATCH move to folder", "PATCH", "/api/uploads", body={"ids": [ids["png"], ids["mp4"]], "folderId": folder})
+    call("PATCH move to root", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "folderId": "root"})
+    call("PATCH move to empty string", "PATCH", "/api/uploads", body={"ids": [ids["mp4"]], "folderId": ""})
+    call("PATCH move to null", "PATCH", "/api/uploads", body={"ids": [ids["gif"]], "folderId": None})
+    call("PATCH move to foreign folder", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "folderId": foreign_folder})
+    call("PATCH move to non-uuid folder", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "folderId": "abc"})
+    call("PATCH move non-uuid ids to bad folder", "PATCH", "/api/uploads", body={"ids": ["zzz"], "folderId": "abc"})
+    call("PATCH expiry", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "expiresAt": "2031-05-06T07:08:09Z"})
+    call("PATCH expiry unreadable", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "expiresAt": "soon"})
+    call("PATCH expiry date only", "PATCH", "/api/uploads", body={"ids": [ids["gif"]], "expiresAt": "2031-05-06"})
+    call("PATCH expiry cleared", "PATCH", "/api/uploads", body={"ids": [ids["gif"]], "expiresAt": None})
+    call("PATCH view cap", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "maxViews": 7.9})
+    call("PATCH view cap floored at one", "PATCH", "/api/uploads", body={"ids": [ids["gif"]], "maxViews": -3})
+    call("PATCH view cap cleared", "PATCH", "/api/uploads", body={"ids": [ids["txt"]], "maxViews": None})
+    call("PATCH password set", "PATCH", "/api/uploads", body={"ids": [ids["png"], ids["mp4"]], "password": "hunter2"})
+    call("PATCH password cleared", "PATCH", "/api/uploads", body={"ids": [ids["txt"]], "password": None})
+    call("PATCH password empty clears", "PATCH", "/api/uploads", body={"ids": [ids["mp4"]], "password": ""})
+    call("PATCH password too long", "PATCH", "/api/uploads", body={"ids": [ids["mp4"]], "password": "x" * 1025})
+    call("PATCH code", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "code": "My New Code " + sfx})
+    call("PATCH code it already has", "PATCH", "/api/uploads", body={"ids": [ids["png"]], "code": "my-new-code-" + sfx})
+    call("PATCH code taken by another account", "PATCH", "/api/uploads", body={"ids": [ids["gif"]], "code": "pj" + sfx})
+    call("PATCH code reserved", "PATCH", "/api/uploads", body={"ids": [ids["gif"]], "code": "login"})
+    call("PATCH code empty after slug", "PATCH", "/api/uploads", body={"ids": [ids["gif"]], "code": "!!!"})
+    call("PATCH code too long", "PATCH", "/api/uploads", body={"ids": [ids["gif"]], "code": "a" * 65})
+    call("PATCH code on a foreign file", "PATCH", "/api/uploads", body={"ids": [ids["theirs"]], "code": "x" + sfx})
+    call("PATCH code on an unknown id", "PATCH", "/api/uploads", body={"ids": [str(uuid.uuid4())], "code": "y" + sfx})
+    call("PATCH code on a non-uuid", "PATCH", "/api/uploads", body={"ids": ["nope"], "code": "z" + sfx})
+    call("PATCH foreign and non-uuid ids", "PATCH", "/api/uploads",
+         body={"ids": [ids["theirs"], "nope", ids["svg"]], "published": False})
+    call("PATCH trashed row (no links)", "PATCH", "/api/uploads", body={"ids": [ids["trash"]], "published": False})
+    call("PATCH combined", "PATCH", "/api/uploads",
+         body={"ids": [ids["oct"]], "published": False, "expiresAt": "2032-01-01T00:00:00.000Z", "maxViews": 2,
+               "password": "pw", "code": "Combined " + sfx, "folderId": "root"})
+    rows("after writes")
+
+    # DELETE
+    call("DELETE without auth", "DELETE", "/api/uploads", token=None, body={"ids": [ids["svg"]]})
+    call("DELETE read token", "DELETE", "/api/uploads", token=reader, body={"ids": [ids["svg"]]})
+    call("DELETE no body", "DELETE", "/api/uploads")
+    call("DELETE broken json", "DELETE", "/api/uploads", raw=b"{", ctype="application/json")
+    call("DELETE text body without content type", "DELETE", "/api/uploads", raw=('{"ids":["%s"],"mode":"bogus"}'
+                                                                                % ids["svg"]).encode())
+    rows("after a text-typed delete")
+    call("DELETE null body", "DELETE", "/api/uploads", raw=b"null", ctype="application/json")
+    call("DELETE number body", "DELETE", "/api/uploads", raw=b"5", ctype="application/json")
+    call("DELETE non-uuid ids", "DELETE", "/api/uploads", body={"ids": ["nope", 5]})
+    call("DELETE too many", "DELETE", "/api/uploads", body={"ids": [str(uuid.uuid4()) for _ in range(501)]})
+    call("DELETE trash already trashed", "DELETE", "/api/uploads", body={"ids": [ids["trash"]]})
+    call("DELETE restore live and trashed", "DELETE", "/api/uploads",
+         body={"ids": [ids["trash"], ids["lone"]], "mode": "restore"})
+    call("DELETE trash live", "DELETE", "/api/uploads", body={"ids": [ids["lone"], ids["lone"]], "mode": "trash"})
+    call("DELETE foreign", "DELETE", "/api/uploads",
+         body={"ids": [ids["theirs"], ids["theirs_trash"]], "mode": "permanent"})
+    call("DELETE permanent trashed", "DELETE", "/api/uploads", body={"ids": [ids["trash2"]], "mode": "permanent"})
+    call("DELETE permanent live (uppercase id)", "DELETE", "/api/uploads",
+         body={"ids": [ids["big"].upper()], "mode": "permanent"})
+    rows("after deletes")
+
+    # The password limiter: 30 per minute per account, then 429 with retry-after.
+    for i in range(31):
+        a, b = pair.both("PATCH", "/api/uploads", headers={"x-api-key": other_full}, origin=False,
+                         json_body={"ids": [ids["theirs"]], "password": "p%d" % i})
+    run.compare("uploads api: password limiter", shape(a), shape(b))
+
+    # A browser session instead of a token; a banned account's session.
+    parity.signed_in(pair, lib.ref_db, lib.rust_db, owner)
+    call("GET with a session", "GET", "/api/uploads?perPage=3", token=None)
+    call("PATCH with a session", "PATCH", "/api/uploads", token=None, body={"ids": [ids["svg"]], "published": True})
+    call("GET with a session and a bad token", "GET", "/api/uploads", token="nope")
+    lib.both_sql('UPDATE "user" SET banned = true WHERE id = %s' % parity.sql_quote(owner))
+    call("GET with a banned session", "GET", "/api/uploads", token=None)
+    call("GET with a banned account's token", "GET", "/api/uploads", token=full)
+    lib.both_sql('UPDATE "user" SET banned = false WHERE id = %s' % parity.sql_quote(owner))
+
+
 def urllib_path(location):
     if not location:
         return "/api/files/missing"
@@ -320,7 +537,7 @@ def main():
     ref_db = parity.Db(rc, rd, parity.read_env_file(a.ref_env)["AUTH_SECRET"])
     rust_db = parity.Db(uc, ud, parity.read_env_file(a.rust_env)["AUTH_SECRET"])
     lib = Library(run, ref_db, rust_db)
-    for name, fn in [("sharex", sharex), ("tus", tus)]:
+    for name, fn in [("sharex", sharex), ("tus", tus), ("uploads_api", uploads_api)]:
         if a.only and a.only != name:
             continue
         fn(run, lib)
