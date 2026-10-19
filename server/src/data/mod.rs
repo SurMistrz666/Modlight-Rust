@@ -9,5 +9,6 @@ pub mod admin;
 pub mod admin_disk;
 pub mod duplicates;
 pub mod folders;
+pub mod sessions;
 pub mod uploads;
 pub mod user_prefs;
