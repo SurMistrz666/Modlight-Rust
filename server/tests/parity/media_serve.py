@@ -747,6 +747,59 @@ def area_embed(ctx):
                     shape(b, "len", ("content-type", "cache-control", "content-disposition")), pending_a=ok)
 
 
+def area_extras(ctx, f, tag, owner, admin, dressed):
+    """What depends on the owner's account and on who is looking: skin and
+    wallpaper, copyRaw, the default password ("remember" across files), the
+    playback note, the sign-in link of a secondary hostname, an oversized still
+    handed to a media bot, and /_page agreeing with the document."""
+    seed = ctx.seed
+    d_owner, d_tag, d_files = dressed
+    anon = ctx.pair()
+    for key in ("png", "txt", "gate"):
+        info = d_files[key]
+        check_page(ctx, "dressed owner %s" % key, anon, "/%s/%s" % (d_tag, info["code"]))
+    check_page(ctx, "dressed gallery", anon, "/u/%s" % d_tag, props=False)
+    # The default password: a file stamped with the owner's current
+    # generation offers "remember", and remembering opens the owner's other
+    # stamped file too.
+    visitor = ctx.pair(ip="192.0.2.%d" % (hash(d_tag) % 200 + 20))
+    gate = d_files["gate"]
+    ctx.actions.check(visitor, "unlock default password, remember", "unlock", "verifyMediaPassword",
+                      [gate["id"], "defaultpw", True])
+    other = d_files["gate2"]
+    a, b = both(visitor, "GET", "/%s/%s/raw" % (d_tag, other["code"]))
+    ctx.compare("default password opens the sibling file", shape(a), shape(b))
+    # Playback note: an oversized, starved recording seen by its owner (and not
+    # by an administrator).
+    mp4 = f["playback"]
+    seed.set_cols(mp4["id"], width=5056, height=1924, frames=403, duration_seconds=13.433, fps=30)
+    for who, user in (("owner", owner), ("admin", admin)):
+        pair = ctx.pair()
+        parity.signed_in(pair, seed.ref_db, seed.rust_db, user)
+        check_page(ctx, "playback note %s" % who, pair, "/%s/%s" % (tag, mp4["code"]))
+    # A stranger on another hostname gets the sign-in link.
+    for host in ("other.example", "localhost"):
+        a = anon.ref.request("GET", "/%s/%s" % (tag, f["png"]["code"]), origin=False, headers={"Host": host})
+        b = anon.rust.request("GET", "/%s/%s" % (tag, f["png"]["code"]), origin=False, headers={"Host": host})
+        ra = (Flight(a.text()).one("MediaActions") or {}) if a.status == 200 else a.status
+        rb = ((rust_payload(b.text()) or {}).get("props") or {}).get("viewer") or b.status
+        ctx.compare("signInUrl on host %s" % host, undef(ra.get("signInUrl")) if isinstance(ra, dict) else ra,
+                    rb.get("signInUrl") if isinstance(rb, dict) else rb)
+    # An oversized still is handed to a media bot as a 1200px render.
+    big = f["bigstill"]
+    seed.set_cols(big["id"], size=9 * 1024 * 1024)
+    bot = ctx.pair(ua=BOTS["discord"])
+    check_page(ctx, "discord oversized still", bot, "/%s/%s.%s" % (tag, big["code"], big["ext"]))
+    # /_page carries the same props as the document (the SPA's own path).
+    for key in ("png", "txt", "mp4"):
+        info = f[key]
+        doc = anon.rust.request("GET", "/%s/%s" % (tag, info["code"]), origin=False).text()
+        nav = anon.rust.request("GET", "/_page?path=" + urllib.parse.quote("/%s/%s" % (tag, info["code"]), safe=""),
+                                origin=False).json()
+        strip = lambda p: dict((k, v) for k, v in ((p or {}).get("props") or {}).items() if k != "viewer")
+        ctx.compare("/_page and the document agree (%s)" % key, strip(rust_payload(doc)), strip(nav))
+
+
 def main():
     p = argparse.ArgumentParser(allow_abbrev=False)
     p.add_argument("--ref-db", default="modlight-srvmediab-ref-postgres-1:modlight")
@@ -804,6 +857,25 @@ def main():
     tl_owner, tl_tag = seed.seed_user("t", role="admin", skip_tag_in_url=True)
     tl_token = seed.seed_token(tl_owner)
     tf = seed.upload(tl_owner, tl_token, "png", "tagless")
+    f["playback"] = up("mp4", "pback")
+    f["bigstill"] = up("png", "bigst")
+    # An owner who dressed their links: a skin, a wallpaper, copyRaw, and a
+    # default file password stamped on two files.
+    d_owner, d_tag = seed.seed_user("d", theme="glass", copy_raw=True, background_dim=35,
+                                    background_key="backgrounds/msd%s-AbCdEf12.webp" % seed.suffix)
+    d_token = seed.seed_token(d_owner)
+    d_files = dict((k, seed.upload(d_owner, d_token, src, "d" + k)) for k, src in
+                   (("png", "png"), ("txt", "txt"), ("gate", "png"), ("gate2", "jpg")))
+    seed.both_sql('UPDATE "user" SET public_profile = true WHERE id = %s' % Q(d_owner))
+    own_rust = parity.Browser(run.rust, real_ip=run.real_ip, user_agent=BROWSER_UA)
+    own_rust.cookies[parity.SESSION_COOKIE] = seed.rust_db.mint_session(d_owner)
+    own_rust.rpc("account", "updateDefaultFilePassword", ["defaultpw"])
+    stored = seed.rust_db.sql('SELECT default_password_hash, default_password_version FROM "user" WHERE id = %s'
+                              % Q(d_owner)).strip().split("\t")
+    seed.ref_db.sql('UPDATE "user" SET default_password_hash = %s, default_password_version = %s WHERE id = %s'
+                    % (Q(stored[0]), stored[1], Q(d_owner)))
+    for k in ("gate", "gate2"):
+        seed.set_cols(d_files[k]["id"], password_hash=stored[0], password_version=int(stored[1]))
 
     areas = [
         ("raw", lambda: area_raw(ctx, dict((k, f[k]) for k in ("png", "mp4", "txt", "html", "svg", "zip", "mlenc",
@@ -819,6 +891,7 @@ def main():
         ("oembed", lambda: area_oembed(ctx, f, tag)),
         ("delete", lambda: area_delete(ctx, f, tag, owner)),
         ("embed", lambda: area_embed(ctx)),
+        ("extras", lambda: area_extras(ctx, f, tag, owner, admin, (d_owner, d_tag, d_files))),
         ("fix1", lambda: area_fix1(ctx, f, tag)),
     ]
     for name, fn in areas:
