@@ -1,105 +1,14 @@
-# srv-auth handoff (2026-10-18)
+# srv-auth handoff (2026-10-19)
 
-Branch `srv-auth`, worktree `_wt/srv-auth`. Task: port accounts, authentication
-and administration (Better Auth compatibility layer, lib modules, `/api/auth/*`,
-routes, actions, page loaders, mail warm-up job, tests, cross-compatibility proof).
-Work was stopped early on the owner's request; this file is the exact state.
+Branch `srv-auth`, worktree `_wt/srv-auth`. Task: port accounts,
+authentication and administration to Rust with 1:1 behaviour on the same
+schema: the Better Auth compatibility layer, the lib modules, `/api/auth/*`,
+the routes, the actions, the page loaders, the tests, the parity scripts and the
+cross-compatibility proof. Helpers worked on branches `srv-auth-{r,t,m,a,p,d,x}`
+(worktrees `_wt/srv-auth-*`) and were merged here. Their briefs are in
+`_scratch/srv-auth/briefs/`.
 
-## Done (committed, builds, `cargo fmt` / `clippy -D warnings` / 227 lib tests green)
-
-| Rust module | Upstream | Notes |
-|---|---|---|
-| `src/auth/crypto.rs` | better-auth `crypto/*`, `@better-auth/utils` random/otp/hmac, jose `jwtVerify` | `generate_id` (a-zA-Z0-9), `generate_random_string` (a-z0-9A-Z-_), `symmetric_encrypt/decrypt` (key = SHA-256(secret), XChaCha20-Poly1305, 24-byte nonce prepended, lower-case hex: the format of `two_factor.secret` and `backup_codes`), `sign_jwt`/`verify_jwt` (header exactly `{"alg":"HS256"}`, payload keys then `iat`, `exp`; Expired vs Invalid), TOTP (HMAC-SHA1 keyed by the secret STRING's UTF-8 bytes, 6 digits, 30 s, window ±1), `totp_uri` (`otpauth://totp/<enc issuer>:<enc email>?secret=<base32>&issuer=..&digits=6&period=30`). RFC 4226 vectors tested. `BETTER_AUTH_SECRETS` envelope not supported (Modlight never sets it). |
-| `src/auth/password.rs` | `@better-auth/utils` password.node + lib/auth.ts `verifyUserPassword` | `salt(hex 16B):key(hex 64B)`, scrypt N=16384 r=16 p=1, salt = the hex STRING, NFKC; legacy `$2a/$2b/$2y` bcrypt; blocking pool. |
-| `src/auth/error.rs` | better-call `APIError`, `BASE_ERROR_CODES`, two-factor and admin codes | Status + reason phrase = status NAME (`400 BAD_REQUEST`) or the number for validation errors (`400 400`); body `{"message","code"}`; redirect = 302 `FOUND` no body. Not used by an endpoint yet. |
-| `src/secret_box.rs` | lib/secret-box.ts | AES-256-GCM, HKDF-SHA256 (salt `modlight/secret-box/2026`, info `modlight:<purpose>:v1`), `v1.<iv>.<tag>.<ct>` base64url; `SETTINGS_ENCRYPTION_KEY` override; digest, redaction. Upstream tests ported. |
-| `src/settings.rs` | lib/settings.ts | get/set/get_settings/seed, `is_on`, `is_registration_enabled`. |
-| `src/registration.rs` | lib/registration.ts | `decide_sign_up` (+ all upstream gate tests), key set/read/state, `registration_page_state`, `evaluate_sign_up`. |
-| `src/mail_settings.rs` | lib/mail-settings.ts | block precedence, snapshot (30 s), `verification_required_sync`, save/clear, `warm_mail_settings` (the jobs.rs boot hook now really warms). Upstream tests ported. |
-| `src/mail_templates.rs` | lib/mail-templates.ts | identical HTML/text from `messages/*/mail.json`; logo by CID. Upstream tests ported. |
-| `src/mail.rs` | lib/mail.ts | lettre (rustls, Mozilla roots): `tls`=Wrapper, `starttls`=Required, `none`=Opportunistic; transport cached by fingerprint; dev logs instead of sending; errors redacted; `SmtpFailure` classified in nodemailer's vocabulary for `sendTestMail`. Not exercised against a server yet. |
-| `src/password.rs` | lib/password.ts | added `hash_password`/`verify_password` (scrypt$ F format) and `check_rate_limit`/`reset_rate_limit` (fixed window, insertion-order eviction). srv-library owns the rest of this file and may have its own copy: keep either, they are faithful ports. |
-
-New crates in `Cargo.toml`: `aes-gcm 0.10`, `sha1 0.10`, `hkdf 0.12`,
-`unicode-normalization 0.1`, `lettre 0.11` (default-features off; smtp-transport,
-builder, hostname, tokio1-rustls-tls).
-
-## Not started / remaining (in the order I planned)
-
-1. `auth/validate.rs`: zod-like body/query validation with the exact messages
-   (verified on the reference, see "Wire facts" below).
-2. `auth/adapter.rs` (internal adapter): find/create user (admin plugin default
-   role + lib/auth.ts user.create hook; FIX 3 = `BEGIN; SELECT
-   pg_advisory_xact_lock(..); count users; insert user; COMMIT`), accounts,
-   sessions (createSession with the admin ban check, ip/user-agent), verification
-   values (find deletes all expired rows first; consume), update_user (sets
-   `updated_at`). Bind the sign-up additional fields as text + casts so
-   `hideUploads:"zz"` fails in Postgres (422 FAILED_TO_CREATE_USER) as upstream.
-3. `auth/api.rs` router for `/api/auth/{*all}` (GET+POST only; HEAD answers 404;
-   other methods 405, OPTIONS 204 via the edge): better-call path rules,
-   rate limiter (memory; default rules sign-in/sign-up/change-password/change-email
-   10s/3, request-password-reset + send-verification-email 60s/3, plugin
-   `/two-factor/*` 10s/3, custom sign-in/email + sign-up/email 60s/30, else 60s/120;
-   429 `{"message":"Too many requests. Please try again later."}` + `X-Retry-After`;
-   counted in onResponse, checked before routing, key `ip|path`; FIX 7: ip from
-   X-Real-IP only with TRUST_PROXY, else the socket address), getBody media types
-   (415 messages), origin middleware (cookie => Origin/Referer must be APP_URL's
-   origin; callbackURL/redirectTo/errorCallbackURL/newUserCallbackURL checked,
-   relative paths regex; a truthy NON-string value crashes upstream = 500 empty),
-   formCsrf for sign-in/sign-up, before hook = registration gate (runs BEFORE
-   validation), after hooks = 2FA on sign-in, admin filter on list-sessions.
-   Response: better-call cookie format (`SetCookie::to_better_call_string`),
-   written directly on the response (not via ResponseCookies, which is Next format).
-4. Endpoints: get-session, sign-in/email, sign-up/email, sign-out,
-   request-password-reset, reset-password/:token, reset-password, verify-email,
-   send-verification-email, change-password, update-user, list-sessions,
-   revoke-session(s), revoke-other-sessions, verify-password, change-email
-   (disabled: 400), delete-user (disabled: 404 no body), update-session, list-accounts,
-   unlink-account, ok, error (production: 302 `/?error=..`), two-factor/* (enable,
-   disable, get-totp-uri, verify-totp, verify-backup-code, generate-backup-codes,
-   send-otp = OTP_NOT_CONFIGURED, verify-otp), admin/* (all 15). Social/OAuth
-   endpoints planned as documented deviations.
-5. Server-side calls for actions (same effects, cookies into ResponseCookies):
-   getSession (exists in `auth/session.rs`), signInEmail (asResponse true/false),
-   sendVerificationEmail, listSessions, revokeSession, revokeOtherSessions,
-   revokeUserSessions, createUser, removeUser, setRole, banUser, unbanUser.
-6. Lib ports not started: invites, credentials, admin-users, audit helper taking
-   the request, releases-core/releases, authorize/loopback, data/sessions,
-   data/admin, data/user-prefs, theme-api, client-settings.
-7. Routes: /api/me, /api/releases/app (FIX 4: `read_json_object`), /download/app,
-   /api/theme, /api/client-settings.
-8. Actions: account, admin (loadUserDetail, updateUserAccount, setUserRole,
-   setUserBanned, createAccount, resendInvite, setUserEmailVerified,
-   sendVerificationLink), authorize, invite, login-identifier, mail, registration,
-   releases; verify tokens.rs. RPC framework: add `"revalidate": true` when the
-   response sets/deletes any cookie (CONTRACT 7.1) - not in the skeleton yet.
-9. Page loaders: (auth) layout + login, register, 2fa, forgot, reset,
-   invite/[token], authorize; (app) layout (needs folder tree, kind counts, user
-   stats, background, avatar, duplicate reminder from srv-library modules);
-   dashboard/profile, tokens, admin; `/` (redirect), welcome, download.
-   Layout/props shapes: `_wt/web-spa/server/web/src/contract/layouts.ts` and the
-   `...Props` types in `_wt/web-spa/server/web/src/pages/**`.
-10. Tests still to port: authorize-loopback, client-settings, default-password,
-    release-*, sessions, theme-api, theme-route, token-scope-actions,
-    panel-reachability, i18n-parity (relevant parts).
-11. Parity scripts under `server/tests/` and the cross-compatibility proof.
-
-## Wire facts already verified on the reference (keep for the router)
-
-- `GET /api/auth/get-session` without cookie: `200`, body `null`,
-  `content-type: application/json`. `POST` to it: `405 METHOD_NOT_ALLOWED`
-  `{"message":"POST method requires deferSessionRefresh to be enabled in session config","code":"METHOD_NOT_ALLOWED_DEFER_SESSION_REQUIRED"}`.
-- Unknown `/api/auth/x`: `404` empty, no content type. `HEAD`: 404. `PUT`: Next 405.
-  `/api/auth` alone: the Next not-found page. `/api/auth/ok`: `{"ok":true}`.
-  `/api/auth/error`: `302 location: /?error=UNKNOWN` (production).
-- POST without content type: `415 415` `{"message":"Content-Type is required. Allowed types: application/x-www-form-urlencoded, application/json","code":"UNSUPPORTED_MEDIA_TYPE"}` (sign-in/up list both types; other endpoints only application/json). Invalid JSON: `500` empty body.
-- Validation: `400 400` `{"message":"[body.email] Invalid input: expected string, received undefined; [body.password] ...","code":"VALIDATION_ERROR"}`; `[body] Invalid input: expected object, received array`; sign-up (object AND record) adds `; [body] Invalid input: expected record, received array`; `z.email()` -> `Invalid email address` (regex: no leading dot, no `..`, local `[A-Za-z0-9_'+\-.]*` ending `[A-Za-z0-9_+-]`, labels `[A-Za-z0-9][A-Za-z0-9-]*`, TLD `[A-Za-z]{2,}`); nonempty on `""` -> `Too small: expected string to have >=1 characters`, on `[]` additionally `Too small: expected array to have >=1 items`.
-- Sign-in bad credentials: `401 UNAUTHORIZED` `{"message":"Invalid email or password","code":"INVALID_EMAIL_OR_PASSWORD"}`; bad email format: `400 BAD_REQUEST` INVALID_EMAIL. Callback `//evil.com`: `403 FORBIDDEN` INVALID_CALLBACK_URL.
-- Sign-up: `role`/`userCode` in body: `400` `{"message":"role is not allowed to be set","code":"FIELD_NOT_ALLOWED"}`; short/long password PASSWORD_TOO_SHORT/LONG; success body field order `name,email,emailVerified,image,createdAt,updatedAt,role,banned,banReason,banExpires,twoFactorEnabled,userCode,usedQuota,maxQuota,hideUploads,copyRaw,theme,locale,id`, cookie `better-auth.session_token=<signed>; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax`. Row: `theme='modern'` written explicitly; `session.ip_address = ''` when no X-Real-IP (production), user agent stored.
-- Production reference with no X-Real-IP: Better Auth skips rate limiting entirely. For parity runs send `X-Real-IP` and run Rust with `TRUST_PROXY=true`.
-- getSessionFromCtx (session middleware) refreshes the DB row but its cookies never reach the response (better-auth overwrites `ctx.context.responseHeaders`); only `/get-session` itself re-issues the cookie.
-
-## How to build and verify
+Build and verify:
 
 ```sh
 export PATH=/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:$PATH
@@ -107,35 +16,146 @@ cd _wt/srv-auth/server
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
+## What is ported (upstream -> Rust)
+
+### Better Auth (better-auth 1.6.13, better-call 1.3.5, zod 4.4.3)
+
+| Rust | Upstream | Notes |
+|---|---|---|
+| `src/auth/api.rs` | `toNextJsHandler(auth)`, better-call router | `/api/auth/{*all}` (GET+POST), 32 MiB body cap, `to_response` with better-call cookie format and reason phrase = status name |
+| `src/auth/endpoint.rs` | `createAuthEndpoint`, `toAuthEndpoints` | `EndpointCtx`, `Endpoint`, middlewares (session, sensitive, fresh, admin, formCsrf, originCheck), `call()` = before hook (registration gate on the RAW body), validation, handler, after hooks |
+| `src/auth/routes/*.rs` | `api/routes/*.mjs` | get-session, sign-in/email, sign-up/email, sign-out, request-password-reset, reset-password(/:token), verify-email, send-verification-email, change-password, verify-password, update-user, change-email (disabled), delete-user (disabled), list/revoke sessions, update-session, list-accounts, unlink-account, ok, error |
+| `src/auth/two_factor.rs` | `plugins/two-factor` | enable, disable, get-totp-uri, verify-totp, generate/verify backup codes, send-otp / verify-otp (OTP not configured), sign-in interception (after hook), trust-device cookie |
+| `src/auth/admin.rs` | `plugins/admin` | all 15 admin endpoints, `has_permission`, list-sessions filter after hook, unban on expiry |
+| `src/auth/adapter.rs` | internal adapter + drizzle adapter | users, accounts, sessions, verification values; FIX 3: first-account admin inside a transaction holding `pg_advisory_xact_lock` |
+| `src/auth/validate.rs` | zod 4 schemas used by the endpoints | exact messages (`[body.email] Invalid input: ...`), `z.email()` regex, coercions |
+| `src/auth/origin.rs` | `originCheckMiddleware`, form CSRF | callbackURL / redirectTo / errorCallbackURL / newUserCallbackURL checks |
+| `src/auth/rate_limit.rs`, `src/auth/ip.rs` | BA rate limiter, `getIp` | onRequest check / onResponse count, key `ip|path`, default and custom rules; FIX 7: X-Real-IP only with TRUST_PROXY, else the socket address |
+| `src/auth/session.rs`, `cookies.rs` | `getSession`, `getSessionFromCtx`, cookie utils | signed cookie `value.base64(HMAC-SHA256)`, dont_remember, refresh policies (DbAndCookie for /get-session, DbOnly for the session middleware: the refreshed cookie is lost upstream) |
+| `src/auth/email.rs` | `emailVerification` / `sendResetPassword` callbacks of lib/auth.ts | mail errors swallowed (`runInBackgroundOrAwait`) |
+| `src/auth/server.rs` | `auth.api.*` called from server code | `call_endpoint` runs the full pipeline (no rate limit, no origin check: there is no Request); `sign_in_email`, `send_verification_email`, `create_user`, `set_role`, `ban_user`, `unban_user`, `revoke_user_sessions`, `remove_user`, `list_sessions`, `revoke_session`, `revoke_other_sessions`. `ServerCall::apply_cookies(ctx)` is the `nextCookies()` plugin |
+| `src/auth/crypto.rs`, `password.rs`, `error.rs` | crypto, scrypt hash, APIError | `two_factor.secret` / `backup_codes` = XChaCha20-Poly1305 with key SHA-256(secret), hex; TOTP HMAC-SHA1 over the secret STRING; scrypt `salt:key` N=16384 r=16 p=1 |
+
+### Lib modules
+
+`invites.rs`, `credentials.rs`, `admin_users.rs`, `audit.rs` (rest),
+`releases_core.rs` + `releases.rs`, `authorize/{mod,loopback}.rs`,
+`data/sessions.rs`, `data/admin.rs` + `data/admin_disk.rs`,
+`data/user_prefs.rs`, `theme_api.rs`, `client_settings.rs`, `js_json.rs` (V8
+JSON.parse/stringify semantics), `mail.rs` + `mail/smtp.rs` +
+`mail/address.rs` (nodemailer 8.0.10 behaviour), `mail_settings.rs`,
+`mail_templates.rs`, `registration.rs`, `secret_box.rs`, `settings.rs`,
+`password.rs` (rate limiter, client_ip, file-password hash).
+
+### Routes
+
+`/api/auth/*`, `/api/me`, `/api/theme`, `/api/client-settings`,
+`/api/releases/app` (FIX 4: `read_json_object`), `/download/app`.
+
+### Actions (`/_rpc/<module>/<export>`)
+
+`account` (all 20), `authorize` (approveDesktopClient), `invite`
+(previewInvite, acceptInvitation, resendVerification), `login-identifier`
+(signInWithIdentifier), `mail` (6), `registration` (4), `releases`, `tokens`,
+and from `admin.ts` (helper D, branch `srv-auth-d`): loadUserDetail,
+updateUserAccount, setUserRole, setUserBanned, createAccount, resendInvite,
+setUserEmailVerified, sendVerificationLink. The other admin.ts exports belong to
+srv-library and go into the same `src/actions/admin.rs` at integration. The RPC
+envelope carries `"revalidate": true` whenever the action set or deleted a
+cookie.
+
+### Page loaders
+
+Root layout (`layouts.root.config`), `(auth)` layout, `(app)` layout (folder
+tree, kind counts, user stats, background, avatar, duplicate reminder),
+`/`, `/welcome`, `/download`, `/login`, `/register`, `/forgot`, `/reset`,
+`/2fa`, `/invite/[token]` (token in the page spelling), `/authorize`,
+`/dashboard/profile`, `/dashboard/tokens`, `/dashboard/admin`.
+
+## Parity (against the scratch reference, same input on both sides)
+
+Stacks: reference `modlight-srvauth-ref` (app 127.0.0.1:8424, Postgres
+55424, secrets in `_scratch/srv-auth/ref/.env`), Rust on 8423
+(`_scratch/srv-auth/restart-rust.sh`, database `modlight_srv_auth` on the dev
+Postgres, AUTH_SECRET in `_scratch/srv-auth/rust/rust.env`). From the
+worktree root, with `S=/Users/marcinasdfg/Desktop/modlight/_scratch/srv-auth`,
+`R="--ref http://localhost:8424 --rust http://localhost:8423"` and
+`E="--ref-env $S/ref/.env --rust-env $S/rust/rust.env"`:
+
+| Script | Result on the merged branch |
+|---|---|
+| `server/tests/parity/auth.py $R $E` (DESTRUCTIVE: truncates the auth tables of both databases) | 180/180 |
+| `server/tests/parity/auth_actions.py $R $E --scratch $S` | 89/89 |
+| `server/tests/parity/auth_pages.py $R $E` | 104/104 |
+| `server/tests/parity/account.py $R --scratch $S/acct --ref-app modlight-srvauth-ref-app-1 --ref-pg modlight-srvauth-ref-postgres-1 --rust-db modlight_srv_auth` | 559/559 (profile page with the real (app) layout) |
+| `server/tests/parity/releases.py $R --ref-app modlight-srvauth-ref-app-1 --ref-pg modlight-srvauth-ref-postgres-1 --rust-db modlight_srv_auth $E` | 171/171 |
+| `server/tests/parity/api_misc.py $R --ref-container modlight-srvauth-ref-postgres-1 --rust-db modlight_srv_auth $E` | 399/399 |
+| `server/tests/parity/authorize.py $R --ref-app modlight-srvauth-ref-app-1 --ref-db-container modlight-srvauth-ref-postgres-1 --rust-db modlight_srv_auth $E` | 155/155 |
+| `server/tests/parity/admin_settings.py` (same flags as authorize.py) | 436/436 |
+| `server/tests/parity/panel.py $R --ref-app-container modlight-srvauth-ref-app-1 --ref-db-container modlight-srvauth-ref-postgres-1 --rust-db modlight_srv_auth $E --rust-storage $S/rust/data/storage` | 79/83: the 4 failures are its "scenario's state on the reference" self-checks, which expect DEFAULT_USER_QUOTA=20 GB (helper A's stack); this reference runs with -1. Every reference-vs-Rust comparison passes |
+| `admin_users.py` (helper D), `crosscompat.py` (helper X) | see the final report of srv-auth |
+
+## Deliberate differences
+
+- `ml_skin` cookie (or a stored `user.theme`) naming an `Object.prototype`
+  member (`constructor`, `toString`, `__proto__`, ...): upstream's
+  `resolveTheme` returns that member (`v in THEME_ALIASES`) and every page
+  answers 500 (verified on the reference); Rust renders the default theme.
+  `/api/theme` reproduces upstream's JSON quirk for such a value (helper T).
+- A server advertising only XOAUTH2: upstream throws an uncaught TypeError;
+  Rust reports kind "unknown" (helper M).
+- Lone surrogates produced by `slice()` in the middle of an emoji (session
+  user agents, client names): Rust strings cannot hold them, U+FFFD instead.
+- TLS error wording from rustls instead of OpenSSL (kind and code match);
+  DNS through getaddrinfo only.
+- A lying Content-Length on /api/client-settings: Rust answers 413 at once,
+  the reference waits for the body.
+- `read_json_object` (shared `api_json.rs`) still parses with serde_json: a
+  body with a lone surrogate or nested more than 128 levels gets 400 where
+  upstream accepts it (helper T; the fix belongs to whoever owns api_json.rs).
+- Document redirects (307) have no body; Next sends its HTML error shell.
+
+## Wire facts verified on the reference (keep)
+
+- `GET /api/auth/get-session` without cookie: `200`, body `null`. `POST`: `405
+  METHOD_NOT_ALLOWED` `METHOD_NOT_ALLOWED_DEFER_SESSION_REQUIRED`.
+- Unknown `/api/auth/x`: `404` empty. `HEAD`: 404. `/api/auth/error`: `302
+  location: /?error=UNKNOWN` (production).
+- POST without content type: `415 415` UNSUPPORTED_MEDIA_TYPE (sign-in/up list
+  both media types). Invalid JSON: `500` empty body.
+- Validation: `400 400` `{"message":"[body.email] Invalid input: expected string, received undefined; ...","code":"VALIDATION_ERROR"}`.
+- Sign-up success field order `name,email,emailVerified,image,createdAt,updatedAt,role,banned,banReason,banExpires,twoFactorEnabled,userCode,usedQuota,maxQuota,hideUploads,copyRaw,theme,locale,id`; `theme='modern'` written explicitly.
+- Production reference without X-Real-IP: Better Auth skips rate limiting.
+  Parity: send X-Real-IP and run Rust with TRUST_PROXY=true. lib/password's
+  `clientIp` always reads X-Real-IP upstream (FIX 7 in Rust).
+- The session middleware refreshes the DB row but its cookie never reaches the
+  response; only `/get-session` re-issues the cookie.
+- Server actions: React's decodeReply drops object keys whose value is
+  undefined; a result that points at an `E` row (directly or deeper) rejects
+  the whole call (parity.py handles both).
+- `nextCookies()`: cookies of a server-side `auth.api.*` call become the
+  action's cookies in Next's format (one per name, last value wins), which
+  also marks the action as revalidating.
+
 ## Things created outside the repo (names only, never values)
 
-- **Database** `modlight_srv_auth` on the shared dev Postgres (127.0.0.1:55421),
-  created empty (not migrated yet). Drop it when no longer needed.
-- **Scratch reference stack** `_scratch/srv-auth/ref/docker-compose.yml`
-  (compose project `modlight-srvauth-ref`): the original image
-  `modlight-wzorzec-app:latest` on its own Postgres, app on 127.0.0.1:8424,
-  Postgres on 127.0.0.1:55424, `APP_URL=http://localhost:8424`,
-  `NODE_ENV=production`. Its own generated secrets are in
-  `_scratch/srv-auth/ref/.env` (POSTGRES_PASSWORD, AUTH_SECRET; mode 600).
-  Containers were removed with `docker compose down` at hand-off; the volumes
-  (`modlight-srvauth-ref_pgdata`, `_appdata`) are kept. Restart with
-  `docker compose -f _scratch/srv-auth/ref/docker-compose.yml up -d`.
-  State inside it: `settings.register_enabled` set to `on` (by SQL, for probing),
-  one admin `admin@srvauth.test` created by sign-up, password in
-  `_scratch/srv-auth/qa.env` (also holds a not-yet-used `user@srvauth.test` entry).
-- Nothing was created on the shared reference (8420): no accounts, no tokens,
-  no settings changes.
-- The worktree's `server/target` was seeded by cloning `_wt/srv-skeleton/server/target`.
+- Databases on the dev Postgres (127.0.0.1:55421): `modlight_srv_auth` (mine);
+  helpers' databases `modlight_srv_auth_*` (see the final report for which
+  were dropped).
+- Scratch reference stack `_scratch/srv-auth/ref` (project
+  `modlight-srvauth-ref`); helpers' stacks under `_scratch/srv-auth-*/`
+  (each brought down with `docker compose down -v` by its helper).
+- `_scratch/srv-auth/acct/` holds symlinks to the two env files for account.py.
 
 ## Gotchas
 
-- The reference's APP_URL is `http://localhost:<port>`: send `Origin:
-  http://localhost:<port>` or Better Auth answers INVALID_ORIGIN once a cookie is
-  present.
-- zsh: `echo ==` is a command substitution; quote it in probe scripts.
-- `KeyInit` (aes-gcm / chacha) and `hmac::Mac` both define `new_from_slice`:
-  call `<Hmac<_> as Mac>::new_from_slice`.
-- `scrypt::Params::new` needs `len` in 10..=64, but `scrypt()` derives
-  `output.len()` bytes regardless.
-- Front-door cookies (`ResponseCookies`) are serialised in Next's format; Better
-  Auth's own endpoints must write better-call's format on the response instead.
+- Stop servers only by PID or port (`lsof -tiTCP:<port> -sTCP:LISTEN`); other
+  agents run the same binary.
+- The reference's APP_URL is `http://localhost:<port>`: send that Origin or
+  Better Auth answers INVALID_ORIGIN once a cookie is present.
+- The reference's root layout passes every message to the client, so a
+  message text is always somewhere in the RSC payload: look for it as a
+  rendered node (`"children":"<text>"`) or for a component's props.
+- `KeyInit` (aes-gcm / chacha) and `hmac::Mac` both define `new_from_slice`.
+- Front-door cookies (`ResponseCookies`) are Next's format; Better Auth's own
+  endpoints write better-call's format.

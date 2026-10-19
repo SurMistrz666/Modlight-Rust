@@ -28,7 +28,7 @@ import urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import parity  # noqa: E402
 
-ap = argparse.ArgumentParser()
+ap = argparse.ArgumentParser(allow_abbrev=False)
 ap.add_argument("--ref-env", default=os.environ.get("PARITY_REF_ENV", "../_scratch/srv-auth/ref/.env"))
 ap.add_argument("--rust-env", default=os.environ.get("PARITY_RUST_ENV", "../_scratch/srv-auth/rust/rust.env"))
 ap.add_argument("--ref-db", default="modlight-srvauth-ref-postgres-1/modlight")
