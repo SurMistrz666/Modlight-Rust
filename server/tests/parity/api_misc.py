@@ -531,12 +531,13 @@ settings_rows("after the session writes")
 # yet (/api/folders answers the 501 placeholder here), so until one does the
 # reference is held to what that function's unit test pins; once the route
 # is ported the same requests compare the two servers.
+FOLDERS_PORTED = anon.rust.request("GET", "/api/folders").status != 501
 for marks in range(4):
     body = b"\xef\xbb\xbf" * marks + b"{}"
     label = "readJsonObject with %d byte-order marks (PATCH /api/folders)" % marks
     a = anon.ref.request("PATCH", "/api/folders", headers=json_headers(W), raw=body)
     b = anon.rust.request("PATCH", "/api/folders", headers=json_headers(W), raw=body)
-    if b.status == 501:
+    if not FOLDERS_PORTED:
         pinned = "Body must be a JSON object." if marks == 3 else "`id` is required and must be a string."
         run.compare(label + " [reference vs read_json_object's pinned answer]",
                     (a.status, (a.json() or {}).get("message")), (400, pinned))
