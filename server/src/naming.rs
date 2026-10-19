@@ -786,3 +786,44 @@ mod tests {
         assert_eq!(media_path(None, "c", ""), "/c");
     }
 }
+#[cfg(test)]
+mod url_tests {
+    //! tests/unit/naming-urls.test.ts
+    use super::*;
+
+    #[test]
+    fn reserved_tags() {
+        for name in ["login", "dashboard", "api", "s", "u", "a", "welcome", "trash"] {
+            assert!(is_reserved_tag(name), "{name}");
+        }
+        assert!(is_reserved_tag("Login"));
+        assert!(is_reserved_tag("DASHBOARD"));
+        assert!(!is_reserved_tag("login-screen"));
+        assert!(!is_reserved_tag("apis"));
+        assert!(!is_reserved_tag("alicja"));
+        for tag in ["alicja", "bobby", "root", "hIto3", "kiNo4"] {
+            assert_eq!(check_tag(tag), Ok(()), "{tag}");
+        }
+    }
+
+    #[test]
+    fn media_paths() {
+        assert_eq!(media_path(Some("alicja"), "screenshot", "png"), "/alicja/screenshot.png");
+        assert_eq!(media_path(None, "screenshot", "png"), "/screenshot.png");
+        assert_eq!(media_path(Some("alicja"), "notes", ""), "/alicja/notes");
+        assert_eq!(media_path(None, "notes", ""), "/notes");
+    }
+
+    #[test]
+    fn short_link_codes() {
+        assert_eq!(scoped_short_code(Some("alicja"), "test"), "alicja/test");
+        assert_eq!(scoped_short_code(None, "test"), "test");
+        assert_eq!(split_short_code(&scoped_short_code(Some("alicja"), "test")), (Some("alicja"), "test"));
+        assert_eq!(split_short_code(&scoped_short_code(None, "test")), (None, "test"));
+        assert_eq!(split_short_code("alicja/a/b"), (Some("alicja"), "a/b"));
+        assert_ne!(scoped_short_code(Some("alicja"), "test"), scoped_short_code(Some("bobby"), "test"));
+        let tag = "x".repeat(32);
+        assert_eq!(scoped_short_code(Some(&tag), &"y".repeat(31)).len(), SHORT_CODE_MAX);
+        assert!(scoped_short_code(Some(&tag), &"y".repeat(32)).len() > SHORT_CODE_MAX);
+    }
+}
