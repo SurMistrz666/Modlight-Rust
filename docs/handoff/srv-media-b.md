@@ -28,7 +28,7 @@ cookies and view grants minted by either verify on the other. Rust database:
 cd /path/to/modlight
 PARITY_REF=http://localhost:8447 PARITY_RUST=http://localhost:8427 \
   python3 _wt/srv-media-b/server/tests/parity/media_serve.py [--only AREA] [-v]
-# 1065 checks passed on 4c7614b+, 38 counted apart as pending-A
+# 1064 checks passed, 38 counted apart as pending-A (part A not merged)
 ```
 
 Areas: raw, thumbs, gates, render, pages, bots, tagless, public, zip, oembed,
@@ -124,6 +124,31 @@ A's modules if A ported them (same names), and delete the copies here. The
 (rerun `media_serve.py`). The derived pictures of capped files already go
 through the fix-1 gate in the route (status 200 only), so A's functions need
 no budget logic.
+
+Wiring map against `srv-media-a` as of d4b81ad (not in main yet; main only
+moved in docs since 1be08bc):
+
+| bridge here | A's function | adapter |
+|---|---|---|
+| `video_poster` -> `Result<Option<Bytes>>` | `poster::video_poster(state, media, signal) -> Option<Bytes>` | wrap in `Ok` |
+| `motion_preview` -> `MotionResult::{Ok, Refused}` | `motion::motion_preview(state, media, MotionOptions{width, height, fit: MotionFit}, signal) -> Result<Result<(Bytes, u32), MotionRefusal>>` | `inside` -> `MotionFit::Inside`; map the inner Result |
+| `timeline_track` / `timeline_sheet` | `timeline::timeline_track/sheet(state, media, signal) -> Result<Result<String / Bytes, TimelineRefusal>>` | map; use A's `TimelineRefusal` |
+| `av_convert(state, AvConvertRequest<'_>)` | `av_action::av_convert(state, AvConvertRequest)` with `AdmitHook` (`'static`, `Result<bool>`) | clone the row into the request; the admit closure already owns its clones |
+| `convert_image_buffer(input, to, animated, timeout, signal)` | `convert::convert_image_buffer(input, to, ConvertOptions{..})` | build the options |
+| `conversion_budget` | `convert::conversion_budget` (same signature) | re-export |
+| `read_derived` / `write_derived(state, ..)` | `derived_cache::read_derived/write_derived(&state.storage, ..)` | pass `&state.storage` |
+| `render_card` -> `Result<Vec<u8>>` | `card_render::render_card(choice) -> Result<Bytes, String>` | map the error |
+| `shows_source(&Upload)`, `inline_text_plan` | `source_preview::shows_source(&SourceSubject)`, `inline_text_plan -> &str` | build the subject |
+| `can_timeline_preview(&str, &str, i64)` | `timeline_preview::can_timeline_preview(Option<&str>, Option<&str>, i64)` | wrap in `Some` |
+| `diagnose_playback` | `playback_health::diagnose_playback` | re-export |
+| `docx_to_html` | not in A yet | keep the stub |
+
+`media/card.rs` and `media/download_menu.rs` exist on both branches (same
+upstream files, same names): keep A's, which `card_render` uses; `embed.rs`
+uses only `CARD_WIDTH/HEIGHT`, `CardSubject`, `card_choice_for`, `card_url`,
+which A's file has with the same signatures; drop this branch's
+`download_menu` tests if A's cover the same cases (they port the same test
+file).
 
 ## Not done / open
 
