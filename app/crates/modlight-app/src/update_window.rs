@@ -72,6 +72,9 @@ pub struct Updates {
     pub scheduled: bool,
     /// The question, when there is an update.
     pub message: Option<ReleaseManifest>,
+    /// The first check's window comes forward; a later one opens without taking the
+    /// focus (`ActivateWindow`).
+    pub message_activate: bool,
     pub message_height: f32,
     pub downloader: Option<Downloader>,
 }
@@ -83,6 +86,7 @@ impl Default for Updates {
             first_check: true,
             scheduled: false,
             message: None,
+            message_activate: true,
             message_height: 260.0,
             downloader: None,
         }
@@ -137,6 +141,7 @@ pub fn checked(state: &mut AppState, outcome: UpdateOutcome) {
     }
     if let UpdateOutcome::UpdateAvailable(manifest) = outcome {
         state.updates.message = Some(manifest);
+        state.updates.message_activate = state.updates.first_check;
     }
     state.updates.first_check = false;
 }

@@ -72,7 +72,8 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
                 t(helpers::UpdateMessageBox_UpdateMessageBox_update_is_available),
                 size,
                 false,
-            ),
+            )
+            .with_active(state.updates.message_activate),
             |ui, _| {
                 let close = ui.ctx().input(|i| i.viewport().close_requested());
                 let current = ui

@@ -53,6 +53,8 @@ static RESULT: Mutex<Option<SignInResult>> = Mutex::new(None);
 
 /// The outcome, once the window has closed (taken once).
 pub fn take_result() -> Option<SignInResult> {
+    #[cfg(target_os = "macos")]
+    mac::release_retired();
     RESULT.lock().ok().and_then(|mut r| r.take())
 }
 
@@ -153,6 +155,17 @@ mod mac {
 
     thread_local! {
         static CURRENT: RefCell<Option<Session>> = const { RefCell::new(None) };
+        /// A closed window's objects, released outside their own callbacks.
+        static RETIRED: RefCell<Option<Session>> = const { RefCell::new(None) };
+    }
+
+    /// Let go of a closed window's objects (from the app's frame, never from a callback
+    /// of theirs).
+    pub fn release_retired() {
+        if MainThreadMarker::new().is_none() {
+            return;
+        }
+        let _ = RETIRED.try_with(|r| r.borrow_mut().take());
     }
 
     #[derive(Default)]
@@ -188,7 +201,19 @@ mod mac {
                 if !self.ivars().reported.replace(true) {
                     finish(SignInResult::Abandoned);
                 }
-                let _ = CURRENT.try_with(|c| c.borrow_mut().take());
+                // Not dropped here: this delegate is the object whose method is running.
+                // The session is retired and let go of on the next frame.
+                let _ = CURRENT.try_with(|c| {
+                    if let Some(session) = c.borrow_mut().take() {
+                        // SAFETY: detaching our own delegate from views we own.
+                        unsafe {
+                            session.web_view.stopLoading();
+                            session.web_view.setNavigationDelegate(None);
+                        }
+                        session.window.setDelegate(None);
+                        let _ = RETIRED.try_with(|r| *r.borrow_mut() = Some(session));
+                    }
+                });
             }
         }
     );
@@ -299,6 +324,7 @@ mod mac {
         let Some(mtm) = MainThreadMarker::new() else {
             return false;
         };
+        release_retired();
         let open = CURRENT.with(|c| {
             c.borrow().as_ref().map(|s| {
                 s.window.makeKeyAndOrderFront(None);
