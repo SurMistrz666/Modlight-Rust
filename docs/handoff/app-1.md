@@ -21,60 +21,45 @@ from automation: a plain run opens a window and reads the Keychain.
 
 ## Done
 
-- `modlight-api` (committed): typed client for every endpoint the desktop app uses,
-  upstream's error/retry/timeout rules, loopback sign-in with the PORT.md fixes,
-  12 integration tests against http://127.0.0.1:8420.
-- `modlight-core` (committed): resx texts EN+PL generated at build time, skins (14)
-  and palettes from `Skins.axaml`, Lucide constants, culture formats, config store
-  (unknown members kept), account store, settings-sync document/plan/engine and theme
-  sync (ported `ModlightSettingsSyncTests`, `ModlightLibraryTests`), library logic
-  (pager, queue, budgets, caches, file/folder models, convert menu).
-- `modlight-macos` (committed): Keychain via `/usr/bin/security`, http(s)-only
-  `open`, locale/language/reduce-motion from `defaults`, AppKit helpers to un-hide
-  windows from the tray and read the screen's visible frame.
-- `modlight-app` (committed, compiles, clippy clean):
-  - `shell.rs` main window (title band with room for the traffic lights, tab strip,
-    storage chip, account button + menu, settings menu, plan cards for Upload /
-    Download / Server, Capture tiles, Tools cards, toasts, Finder drop overlay).
-  - `myspace/*` header + crumbs, sliding library panel, folder shelf, file grid with
-    thumbnails and hover motion previews, type plates, all panels (signed out,
-    loading, empty, error), error footer, pager bar, details drawer (every section,
-    every link format), all context menus, drag cards onto folders, keyboard
-    (mapping documented in `myspace/mod.rs`), every action (move, publish, custom URL,
-    link settings, trash/restore/delete forever, empty trash, duplicates, new / rename
-    / public / delete folder, download and download-as with conversion check,
-    phase-1 direct upload via `POST /upload`).
-  - `dialogs/*` prompt, confirm (message box), folder delete (5 s arming), link
-    settings, duplicates; `signin.rs`; `settings.rs` (full navigation; account
-    pages, Theme and colours, Language and tray filled; other pages header only);
-    `notification.rs` (desktop notice viewport); `tray.rs`; `sync.rs`.
-  - `qa.rs` fixtures (no network) and `--qa-shot` for 26 screen ids (`qa::SCREENS`).
-  - `tests/reference_app.rs`: headless end-to-end run against the reference server
-    (sign in with a token, library, folder create/rename/delete, upload, trash,
-    restore, delete for good, sign out). Passes.
+Phase 1 (library, sign-in, settings shell, notifications, tray) and its leftovers
+are finished: snapshot tests (`tests/snapshots.rs`, 4 looks per QA screen),
+`scripts/build-app.sh` (never launches the app), `app/docs/MACOS.md`,
+`app/docs/STATUS.md`. See STATUS.md for every screen.
 
-## In progress / not done (phase-1 deliverables still open)
+Phase 2 (uploads), on the branch since `f0f9625`:
 
-1. Snapshot tests (`egui_kittest`) for every screen x light/dark skin x EN/PL:
-   not written yet. The renderer is ready: `qa::render(screen, &Look)` returns an
-   `RgbaImage`; add `crates/modlight-app/tests/snapshots.rs` that loops over
-   `qa::SCREENS` and calls `egui_kittest::image_snapshot` (UPDATE_SNAPSHOTS=1 to
-   create `tests/snapshots/*.png`). Render at scale 1.0 to keep files small.
-2. `scripts/build-app.sh`: not written. Plan: `cargo build --release -p modlight-app`,
-   `Modlight.app/Contents/{MacOS,Resources}`, Info.plist, `.icns` from
-   `assets/upstream/icons/Modlight_Icon.ico` via `sips` + `iconutil`, ad-hoc
-   `codesign --force --sign -`, `codesign --verify`. Must NOT launch the app (the
-   reference script in Nerium_panel/.../package-macos.sh launches it: do not copy that
-   part).
-3. `app/docs/MACOS.md` (substitutions) and `app/docs/STATUS.md` (per screen/feature):
-   not written. Content to record is listed under "Decisions" below.
-4. Visual comparison: renders were checked by eye against
-   `_scratch/app-1/shots/Modlight-App-library.png` (upstream, 1486x943, Classic dark)
-   and match closely; known differences are listed below. Light skins and Polish were
-   not inspected yet (render with `--qa-light`, `--qa-lang pl`).
-5. Not verified in a real window (only headless): tray menu, viewport dialogs sizing,
-   window dragging by the title band, hide-to-tray. Needs a human run with
-   `--qa-profile /tmp/somewhere`.
+- `modlight-core::names` (NameParser, UploadInfoParser, file and URL helpers),
+  `history` (History.db, SQLite, upstream's table), `watch` (watch folders over
+  FSEvents), `dotnet` (Newtonsoft date shapes), `upload/*` (offline queue: items,
+  Queue.json store and spool, sentences, progress, worker, tus transport),
+  `tasks/*` (TaskSettings, TaskInfo, WorkerTask, TaskManager, UploadManager, the
+  upload gate, uploader glue with upstream's error texts, paste model, recent tasks,
+  image saving). Three helper branches were merged: app-1-names, app-1-history,
+  app-1-transfer (their worktrees under `_wt/` can be removed).
+- `modlight-api`: `mime`, `upload` (streamed live `POST /upload`, ShareX's multipart),
+  `tus` (create/HEAD/PATCH/DELETE, resume, stall detection, session moved onto the
+  account's origin), `web` (Upload from URL downloads, no credential).
+- `modlight-macos`: `network` (getifaddrs), `sound` (NSSound), `keys` (Cmd+V local
+  monitor), `system::open_path`.
+- `modlight-app`: `uploads.rs` (the window's side: asks, effects, upload windows,
+  watch folders, menus), `upload_tab.rs`, dialogs `message`, `upload_confirm`,
+  `file_exists`, `before_upload`, `after_upload`, `paste`, `text_upload`,
+  `url_upload`, `shorten_url`, `clipboard_upload`, `drop_window`; tray rebuilt from
+  menu entries (Upload, after-capture/after-upload toggles, screenshots folder,
+  recent items). Phase-1 direct upload removed; drops and "Upload here" go through
+  UploadManager.
+- Tests: `modlight-api/tests/uploads.rs` (14), `modlight-core/tests/task_flow.rs`
+  (6, against 8420: small upload, text + paste, shortener + refusal, signed out,
+  offline queue across a restart, 24 MiB tus cut at 8 MiB and resumed after a
+  restart), `modlight-app/tests/reference_app.rs` (upload now through the task flow).
+
+## In progress (phase 2)
+
+1. QA screens + snapshots for the new windows and the Upload tab with rows
+   (`tab-upload` snapshots currently differ: the tab is real now).
+2. STATUS.md / MACOS.md rows for phase 2.
+3. Not verified in a real window: every upload window, the drop target, Cmd+V,
+   the tray's new submenus, sounds.
 
 ## Decisions and known differences (for MACOS.md / STATUS.md)
 
