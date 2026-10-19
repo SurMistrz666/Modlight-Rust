@@ -17,13 +17,13 @@ pub const DIM_MAX: i64 = 95;
 /// The lowest dim that keeps body text legible over any photo (measured).
 pub const DIM_SAFE: i64 = 68;
 /// Chosen for the same measurement with margin rather than for looks.
-pub const DIM_DEFAULT: i64 = 70;
+pub const DIM_DEFAULT: i32 = 70;
 
 /// `clampDim(value)` for a number (`None` = null/undefined).
 pub fn clamp_dim(value: Option<f64>) -> i64 {
     match value {
-        None => DIM_DEFAULT,
-        Some(n) if !n.is_finite() => DIM_DEFAULT,
+        None => DIM_DEFAULT as i64,
+        Some(n) if !n.is_finite() => DIM_DEFAULT as i64,
         Some(n) => (crate::naming::js_round(n) as i64).clamp(DIM_MIN, DIM_MAX),
     }
 }
@@ -33,8 +33,8 @@ pub fn clamp_dim(value: Option<f64>) -> i64 {
 /// through `Number()`.
 pub fn clamp_dim_value(value: Option<&Value>) -> i64 {
     match value {
-        None | Some(Value::Null) => DIM_DEFAULT,
-        Some(Value::String(s)) if s.is_empty() => DIM_DEFAULT,
+        None | Some(Value::Null) => DIM_DEFAULT as i64,
+        Some(Value::String(s)) if s.is_empty() => DIM_DEFAULT as i64,
         Some(Value::String(s)) => clamp_dim(Some(crate::config::js_number(s))),
         Some(Value::Number(n)) => clamp_dim(n.as_f64()),
         Some(Value::Bool(b)) => clamp_dim(Some(if *b { 1.0 } else { 0.0 })),
@@ -44,9 +44,9 @@ pub fn clamp_dim_value(value: Option<&Value>) -> i64 {
             Value::Number(n) => clamp_dim(n.as_f64()),
             Value::String(s) => clamp_dim(Some(crate::config::js_number(s))),
             Value::Null => clamp_dim(Some(0.0)),
-            _ => DIM_DEFAULT,
+            _ => DIM_DEFAULT as i64,
         },
-        Some(_) => DIM_DEFAULT,
+        Some(_) => DIM_DEFAULT as i64,
     }
 }
 
@@ -105,13 +105,13 @@ mod tests {
         assert_eq!(clamp_dim(Some(95.0)), 95);
         assert_eq!(clamp_dim(Some(-40.0)), DIM_MIN);
         assert_eq!(clamp_dim(Some(1000.0)), DIM_MAX);
-        assert_eq!(clamp_dim(None), DIM_DEFAULT);
-        assert_eq!(clamp_dim_value(Some(&json!("abc"))), DIM_DEFAULT);
-        assert_eq!(clamp_dim_value(Some(&json!(""))), DIM_DEFAULT);
-        assert_eq!(clamp_dim_value(Some(&json!(null))), DIM_DEFAULT);
+        assert_eq!(clamp_dim(None), DIM_DEFAULT as i64);
+        assert_eq!(clamp_dim_value(Some(&json!("abc"))), DIM_DEFAULT as i64);
+        assert_eq!(clamp_dim_value(Some(&json!(""))), DIM_DEFAULT as i64);
+        assert_eq!(clamp_dim_value(Some(&json!(null))), DIM_DEFAULT as i64);
         assert_eq!(clamp_dim_value(Some(&json!("40"))), 40);
-        assert_eq!(clamp_dim(Some(f64::NAN)), DIM_DEFAULT);
-        assert_eq!(clamp_dim(Some(f64::INFINITY)), DIM_DEFAULT);
+        assert_eq!(clamp_dim(Some(f64::NAN)), DIM_DEFAULT as i64);
+        assert_eq!(clamp_dim(Some(f64::INFINITY)), DIM_DEFAULT as i64);
         assert_eq!(clamp_dim(Some(55.4)), 55);
         assert_eq!(clamp_dim(Some(55.6)), 56);
     }
