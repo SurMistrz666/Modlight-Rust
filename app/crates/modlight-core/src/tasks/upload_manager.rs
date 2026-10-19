@@ -60,7 +60,12 @@ pub fn needs_confirmation(count: usize, show_multi_upload_warning: bool) -> bool
 }
 
 /// `UploadFile(string)`: a file becomes a task; a folder becomes its files.
-pub fn upload_file(manager: &mut TaskManager, path: &Path, settings: &TaskSettings, ctx: &TaskContext) {
+pub fn upload_file(
+    manager: &mut TaskManager,
+    path: &Path,
+    settings: &TaskSettings,
+    ctx: &TaskContext,
+) {
     if path.is_file() {
         if let Some(task) = WorkerTask::file_upload(path, settings.clone(), ctx) {
             manager.start(task, ctx);
@@ -73,7 +78,12 @@ pub fn upload_file(manager: &mut TaskManager, path: &Path, settings: &TaskSettin
 }
 
 /// `UploadFile(string[])` after the window asked, when it had to.
-pub fn upload_files(manager: &mut TaskManager, files: &[PathBuf], settings: &TaskSettings, ctx: &TaskContext) {
+pub fn upload_files(
+    manager: &mut TaskManager,
+    files: &[PathBuf],
+    settings: &TaskSettings,
+    ctx: &TaskContext,
+) {
     for file in files {
         upload_file(manager, file, settings, ctx);
     }
@@ -106,7 +116,12 @@ pub fn upload_text(
 
 /// `ProcessTextUpload`: an address can be fetched, shortened or shared instead of sent
 /// as text, when the clipboard settings say so.
-pub fn process_text_upload(manager: &mut TaskManager, text: &str, settings: &TaskSettings, ctx: &TaskContext) {
+pub fn process_text_upload(
+    manager: &mut TaskManager,
+    text: &str,
+    settings: &TaskSettings,
+    ctx: &TaskContext,
+) {
     if text.is_empty() {
         return;
     }
@@ -140,7 +155,10 @@ pub fn process_image_upload(
     ctx: &TaskContext,
 ) {
     let mut settings = settings.clone();
-    if !settings.advanced_settings.process_images_during_clipboard_upload {
+    if !settings
+        .advanced_settings
+        .process_images_during_clipboard_upload
+    {
         settings.after_capture_job = AfterCaptureTasks::UploadImageToHost;
     }
     run_image_task(manager, image, &settings, ctx);
@@ -194,7 +212,12 @@ pub fn upload_data(
 }
 
 /// `ShortenURL`.
-pub fn shorten_url(manager: &mut TaskManager, url: &str, settings: &TaskSettings, ctx: &TaskContext) {
+pub fn shorten_url(
+    manager: &mut TaskManager,
+    url: &str,
+    settings: &TaskSettings,
+    ctx: &TaskContext,
+) {
     if url.is_empty() {
         return;
     }
@@ -210,12 +233,23 @@ pub fn share_url(manager: &mut TaskManager, url: &str, settings: &TaskSettings, 
 }
 
 /// `DownloadAndUploadFile`.
-pub fn download_and_upload(manager: &mut TaskManager, url: &str, settings: &TaskSettings, ctx: &TaskContext) {
+pub fn download_and_upload(
+    manager: &mut TaskManager,
+    url: &str,
+    settings: &TaskSettings,
+    ctx: &TaskContext,
+) {
     download_file(manager, url, true, settings, ctx);
 }
 
 /// `DownloadFile`.
-pub fn download_file(manager: &mut TaskManager, url: &str, upload: bool, settings: &TaskSettings, ctx: &TaskContext) {
+pub fn download_file(
+    manager: &mut TaskManager,
+    url: &str,
+    upload: bool,
+    settings: &TaskSettings,
+    ctx: &TaskContext,
+) {
     if url.is_empty() {
         return;
     }

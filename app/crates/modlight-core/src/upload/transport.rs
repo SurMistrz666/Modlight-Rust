@@ -1,14 +1,16 @@
 //! The offline queue's network side over the real server: tus for the bytes
 //! (`ModlightResumableUpload`) and `/api/me` for the room left (`HasRoom`).
 
-use modlight_api::tus::{TransferOutcome as TusOutcome, TransferReason, TusClient, TusFile, TusSession};
+use modlight_api::tus::{
+    TransferOutcome as TusOutcome, TransferReason, TusClient, TusFile, TusSession,
+};
 use modlight_api::{Api, ApiError, Credential};
 use tokio_util::sync::CancellationToken;
 
 use crate::upload::item::QueueReason;
 use crate::upload::queue::{
-    BoxFuture, ProgressFn, QueueAccount, QueueTransport, QuotaAnswer, TransferItem, TransferOutcome,
-    TransferResult,
+    BoxFuture, ProgressFn, QueueAccount, QueueTransport, QuotaAnswer, TransferItem,
+    TransferOutcome, TransferResult,
 };
 
 pub struct ApiTransport {
@@ -99,8 +101,12 @@ impl QueueTransport for ApiTransport {
         let tus = self.tus.clone();
         Box::pin(async move {
             match tus.abandon(&credential(&account), &url).await {
-                Ok(status) => log::info!("Modlight queue: abandoned a resumable session, {status:?}."),
-                Err(error) => log::warn!("Modlight queue: a session could not be abandoned: {error}"),
+                Ok(status) => {
+                    log::info!("Modlight queue: abandoned a resumable session, {status:?}.")
+                }
+                Err(error) => {
+                    log::warn!("Modlight queue: a session could not be abandoned: {error}")
+                }
             }
         })
     }

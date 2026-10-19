@@ -41,8 +41,15 @@ pub fn local_size(size: i64, binary: bool, decimals: usize) -> String {
     }
     let place = ((size as f64).ln() / base.ln()).floor().clamp(0.0, 6.0) as usize;
     let number = size as f64 / base.powi(place as i32);
-    let suffix = if binary { BINARY[place] } else { DECIMAL[place] };
-    format!("{} {suffix}", Culture::current().fixed(number, decimals.min(3)))
+    let suffix = if binary {
+        BINARY[place]
+    } else {
+        DECIMAL[place]
+    };
+    format!(
+        "{} {suffix}",
+        Culture::current().fixed(number, decimals.min(3))
+    )
 }
 
 /// `ToString("N0")` in the current culture.

@@ -5,9 +5,9 @@
 use std::cell::RefCell;
 
 #[cfg(target_os = "macos")]
-use objc2::rc::Retained;
-#[cfg(target_os = "macos")]
 use objc2::AllocAnyThread;
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSSound;
 #[cfg(target_os = "macos")]
@@ -52,7 +52,8 @@ pub fn play_file(path: &std::path::Path) -> bool {
     #[cfg(target_os = "macos")]
     {
         let path = NSString::from_str(&path.to_string_lossy());
-        let Some(sound) = NSSound::initWithContentsOfFile_byReference(NSSound::alloc(), &path, true)
+        let Some(sound) =
+            NSSound::initWithContentsOfFile_byReference(NSSound::alloc(), &path, true)
         else {
             return false;
         };

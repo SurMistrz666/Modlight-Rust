@@ -171,7 +171,11 @@ impl WorkerTask {
     }
 
     /// `CreateFileUploaderTask`. `None` when the file cannot be read.
-    pub fn file_upload(path: &Path, settings: TaskSettings, ctx: &TaskContext) -> Option<WorkerTask> {
+    pub fn file_upload(
+        path: &Path,
+        settings: TaskSettings,
+        ctx: &TaskContext,
+    ) -> Option<WorkerTask> {
         let task = WorkerTask::new(settings);
         let path_text = path.to_string_lossy().into_owned();
         let mut failed = None;
@@ -182,7 +186,10 @@ impl WorkerTask {
                 let ext = naming::extension(&path_text);
                 s.info.file_name = ctx.file_name(&s.info.settings, Some(&ext), None);
             }
-            if s.info.settings.advanced_settings.process_images_during_file_upload
+            if s.info
+                .settings
+                .advanced_settings
+                .process_images_during_file_upload
                 && s.info.data_type == DataType::Image
             {
                 s.info.job = TaskJob::Job;
@@ -241,7 +248,12 @@ impl WorkerTask {
         task.with(|s| {
             s.info.job = TaskJob::TextUpload;
             s.info.data_type = DataType::Text;
-            let extension = s.info.settings.advanced_settings.text_file_extension.clone();
+            let extension = s
+                .info
+                .settings
+                .advanced_settings
+                .text_file_extension
+                .clone();
             s.info.file_name = ctx.file_name(&s.info.settings, Some(&extension), None);
             s.text = Some(text.to_string());
         });
@@ -269,7 +281,8 @@ impl WorkerTask {
         task.with(|s| {
             s.info.job = TaskJob::ShareUrl;
             s.info.data_type = DataType::Url;
-            let service = uploader::sharing_service_name(s.info.settings.url_sharing_service_destination);
+            let service =
+                uploader::sharing_service_name(s.info.settings.url_sharing_service_destination);
             s.info.file_name = format(
                 t(s::UploadTask_CreateShareURLTask_Share_URL___0__),
                 &[Arg::from(service)],
@@ -280,7 +293,12 @@ impl WorkerTask {
     }
 
     /// `CreateDownloadTask`. `None` when no file name can be made from the address.
-    pub fn download(url: &str, upload: bool, settings: TaskSettings, ctx: &TaskContext) -> Option<WorkerTask> {
+    pub fn download(
+        url: &str,
+        upload: bool,
+        settings: TaskSettings,
+        ctx: &TaskContext,
+    ) -> Option<WorkerTask> {
         let task = WorkerTask::new(settings);
         let mut ok = true;
         task.with(|s| {
@@ -399,8 +417,12 @@ impl WorkerTask {
             let settings = &s.info.settings;
             let delete = (s.info.job == TaskJob::Job
                 || (s.info.job == TaskJob::FileUpload
-                    && settings.advanced_settings.use_after_capture_tasks_during_file_upload))
-                && settings.after_capture_job.has(AfterCaptureTasks::DeleteFile)
+                    && settings
+                        .advanced_settings
+                        .use_after_capture_tasks_during_file_upload))
+                && settings
+                    .after_capture_job
+                    .has(AfterCaptureTasks::DeleteFile)
                 && !s.info.file_path().is_empty()
                 && Path::new(s.info.file_path()).is_file();
             (
@@ -476,7 +498,10 @@ impl WorkerTask {
         }
 
         if matches!(job, TaskJob::Download | TaskJob::DownloadUpload) {
-            if !self.download_from_url(job == TaskJob::DownloadUpload, ctx).await {
+            if !self
+                .download_from_url(job == TaskJob::DownloadUpload, ctx)
+                .await
+            {
                 return false;
             }
             if job == TaskJob::Download {
@@ -537,14 +562,17 @@ impl WorkerTask {
             || job.has(AfterCaptureTasks::UploadImageToHost)
             || job.has(AfterCaptureTasks::AnalyzeImage)
         {
-            let prepared = crate::tasks::image::prepare_image(&image, &settings, ctx.png_strip_color_space());
+            let prepared =
+                crate::tasks::image::prepare_image(&image, &settings, ctx.png_strip_color_space());
             let file_name = naming::change_extension(&file_name, prepared.format.extension());
             self.with(|s| {
                 s.data = Some(TaskData::Bytes(Arc::new(prepared.bytes.clone())));
                 s.info.file_name = file_name.clone();
             });
 
-            if job.has(AfterCaptureTasks::SaveImageToFile) || job.has(AfterCaptureTasks::AnalyzeImage) {
+            if job.has(AfterCaptureTasks::SaveImageToFile)
+                || job.has(AfterCaptureTasks::AnalyzeImage)
+            {
                 let folder = ctx.screenshots_folder(&settings, Some(&metadata));
                 if let Some(path) = self
                     .handle_exists_file(&folder.join(&file_name), &settings, ctx)
@@ -577,7 +605,10 @@ impl WorkerTask {
                 let (folder, name) = {
                     let path = self.lock().info.file_path().to_string();
                     if path.is_empty() {
-                        (ctx.screenshots_folder(&settings, Some(&metadata)), file_name.clone())
+                        (
+                            ctx.screenshots_folder(&settings, Some(&metadata)),
+                            file_name.clone(),
+                        )
                     } else {
                         let path = PathBuf::from(path);
                         (
@@ -588,7 +619,10 @@ impl WorkerTask {
                         )
                     }
                 };
-                if let Some(path) = self.create_thumbnail(&image, &folder, &name, &settings, ctx).await {
+                if let Some(path) = self
+                    .create_thumbnail(&image, &folder, &name, &settings, ctx)
+                    .await
+                {
                     log::info!("Thumbnail saved to file: {}", path.display());
                     self.with(|s| s.info.thumbnail_file_path = path.to_string_lossy().into_owned());
                 }
@@ -619,7 +653,9 @@ impl WorkerTask {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let name = format!("{stem}{}.jpg", images.thumbnail_name);
-        let path = self.handle_exists_file(&folder.join(name), settings, ctx).await?;
+        let path = self
+            .handle_exists_file(&folder.join(name), settings, ctx)
+            .await?;
         let bytes = crate::tasks::image::thumbnail_jpeg(
             image,
             images.thumbnail_width,
@@ -630,14 +666,16 @@ impl WorkerTask {
     }
 
     fn do_file_jobs(&self, ctx: &TaskContext) {
-        let (path, settings) = self.with(|s| (s.info.file_path().to_string(), s.info.settings.clone()));
+        let (path, settings) =
+            self.with(|s| (s.info.file_path().to_string(), s.info.settings.clone()));
         if path.is_empty() || !Path::new(&path).is_file() {
             return;
         }
         let job = settings.after_capture_job;
         // Perform actions (external programs) arrive with phase 3.
         if job.has(AfterCaptureTasks::CopyFileToClipboard) {
-            ctx.channel.effect(TaskEffect::CopyFile(PathBuf::from(&path)));
+            ctx.channel
+                .effect(TaskEffect::CopyFile(PathBuf::from(&path)));
         } else if job.has(AfterCaptureTasks::CopyFilePathToClipboard) {
             ctx.channel.effect(TaskEffect::CopyText(path.clone()));
         } else if job.has(AfterCaptureTasks::CopyFolderPathToClipboard) {
@@ -648,7 +686,8 @@ impl WorkerTask {
             ctx.channel.effect(TaskEffect::CopyText(folder));
         }
         if job.has(AfterCaptureTasks::ShowInExplorer) {
-            ctx.channel.effect(TaskEffect::RevealFile(PathBuf::from(&path)));
+            ctx.channel
+                .effect(TaskEffect::RevealFile(PathBuf::from(&path)));
         }
         // Analyze image and the QR scan arrive with phase 5.
     }
@@ -982,7 +1021,9 @@ impl WorkerTask {
         let job = info.job;
         let auto_length = settings.advanced_settings.auto_shorten_url_length;
         if job != TaskJob::ShareUrl
-            && (settings.after_upload_job.has(AfterUploadTasks::UseURLShortener)
+            && (settings
+                .after_upload_job
+                .has(AfterUploadTasks::UseURLShortener)
                 || job == TaskJob::ShortenUrl
                 || (auto_length > 0 && result.url.chars().count() as i64 > auto_length))
         {
@@ -994,7 +1035,8 @@ impl WorkerTask {
         }
 
         if job != TaskJob::ShortenUrl
-            && (settings.after_upload_job.has(AfterUploadTasks::ShareURL) || job == TaskJob::ShareUrl)
+            && (settings.after_upload_job.has(AfterUploadTasks::ShareURL)
+                || job == TaskJob::ShareUrl)
         {
             let target = self.lock().info.result.to_string();
             if !target.is_empty() {
@@ -1007,7 +1049,10 @@ impl WorkerTask {
         }
 
         let info = self.info();
-        if settings.after_upload_job.has(AfterUploadTasks::CopyURLToClipboard) {
+        if settings
+            .after_upload_job
+            .has(AfterUploadTasks::CopyURLToClipboard)
+        {
             let format = &settings.advanced_settings.clipboard_content_format;
             let text = if format.is_empty() {
                 info.result.to_string()

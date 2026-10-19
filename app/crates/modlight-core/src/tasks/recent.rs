@@ -15,13 +15,25 @@ use crate::dotnet;
 pub struct RecentTask {
     #[serde(deserialize_with = "dotnet::nullable_string::deserialize")]
     pub file_path: String,
-    #[serde(rename = "URL", deserialize_with = "dotnet::nullable_string::deserialize")]
+    #[serde(
+        rename = "URL",
+        deserialize_with = "dotnet::nullable_string::deserialize"
+    )]
     pub url: String,
-    #[serde(rename = "ThumbnailURL", deserialize_with = "dotnet::nullable_string::deserialize")]
+    #[serde(
+        rename = "ThumbnailURL",
+        deserialize_with = "dotnet::nullable_string::deserialize"
+    )]
     pub thumbnail_url: String,
-    #[serde(rename = "DeletionURL", deserialize_with = "dotnet::nullable_string::deserialize")]
+    #[serde(
+        rename = "DeletionURL",
+        deserialize_with = "dotnet::nullable_string::deserialize"
+    )]
     pub deletion_url: String,
-    #[serde(rename = "ShortenedURL", deserialize_with = "dotnet::nullable_string::deserialize")]
+    #[serde(
+        rename = "ShortenedURL",
+        deserialize_with = "dotnet::nullable_string::deserialize"
+    )]
     pub shortened_url: String,
     #[serde(with = "dotnet::utc")]
     pub time: DateTime<Utc>,

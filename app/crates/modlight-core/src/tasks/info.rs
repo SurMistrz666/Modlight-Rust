@@ -369,10 +369,20 @@ impl TaskInfo {
     /// `GetTags`.
     pub fn tags(&self) -> Option<HistoryTags> {
         let mut tags = HistoryTags::new();
-        if let Some(title) = self.metadata.window_title.as_ref().filter(|t| !t.is_empty()) {
+        if let Some(title) = self
+            .metadata
+            .window_title
+            .as_ref()
+            .filter(|t| !t.is_empty())
+        {
             tags.insert("WindowTitle".to_string(), Some(title.clone()));
         }
-        if let Some(name) = self.metadata.process_name.as_ref().filter(|t| !t.is_empty()) {
+        if let Some(name) = self
+            .metadata
+            .process_name
+            .as_ref()
+            .filter(|t| !t.is_empty())
+        {
             tags.insert("ProcessName".to_string(), Some(name.clone()));
         }
         (!tags.is_empty()).then_some(tags)
@@ -405,12 +415,10 @@ fn sharing_service_name(service: crate::tasks::settings::UrlSharingServices) -> 
     use crate::tasks::settings::UrlSharingServices;
     match service {
         UrlSharingServices::GoogleImageSearch => {
-            crate::l10n::t(crate::l10n::uploaders::URLSharingServices_GoogleImageSearch)
-                .to_string()
+            crate::l10n::t(crate::l10n::uploaders::URLSharingServices_GoogleImageSearch).to_string()
         }
         UrlSharingServices::BingVisualSearch => {
-            crate::l10n::t(crate::l10n::uploaders::URLSharingServices_BingVisualSearch)
-                .to_string()
+            crate::l10n::t(crate::l10n::uploaders::URLSharingServices_BingVisualSearch).to_string()
         }
     }
 }

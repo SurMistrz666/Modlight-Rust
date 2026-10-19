@@ -134,7 +134,9 @@ impl TaskManager {
             ..EventOutcome::default()
         };
         if event == TaskEvent::UploadProgressChanged
-            && self.find(id).is_some_and(|t| t.status() != TaskStatus::Working)
+            && self
+                .find(id)
+                .is_some_and(|t| t.status() != TaskStatus::Working)
         {
             outcome.changed = false;
         }
@@ -200,7 +202,9 @@ impl TaskManager {
                     } else {
                         error.title.clone()
                     };
-                    if general.show_toast_notification_after_task_completed && !error.text.is_empty() {
+                    if general.show_toast_notification_after_task_completed
+                        && !error.text.is_empty()
+                    {
                         outcome.effects.push(TaskEffect::ShowNotificationTip {
                             text: error.text.clone(),
                             title: format!("Modlight - {title}"),
@@ -215,7 +219,8 @@ impl TaskManager {
                     info.file_name,
                     info.task_duration().as_millis()
                 );
-                if !state.stop_requested && info.job != TaskJob::ShareUrl && !result_text.is_empty() {
+                if !state.stop_requested && info.job != TaskJob::ShareUrl && !result_text.is_empty()
+                {
                     if general.play_sound_after_upload {
                         outcome.effects.push(TaskEffect::PlaySound {
                             sound: NotificationSound::TaskCompleted,
@@ -233,26 +238,28 @@ impl TaskManager {
                         naming::parse_upload_info(info, format_text, ctx)
                     };
                     if general.show_toast_notification_after_task_completed && !text.is_empty() {
-                        outcome.effects.push(TaskEffect::ShowNotification(Box::new(NotificationConfig {
-                            duration_ms: general.toast_window_duration * 1000.0,
-                            fade_ms: general.toast_window_fade_duration * 1000.0,
-                            placement: general.toast_window_placement,
-                            size: general.toast_window_size,
-                            left_click: general.toast_window_left_click_action,
-                            right_click: general.toast_window_right_click_action,
-                            middle_click: general.toast_window_middle_click_action,
-                            button_size: general.toast_window_button_size,
-                            buttons: general.toast_window_buttons.clone(),
-                            auto_hide: general.toast_window_auto_hide,
-                            file_path: info.file_path().to_string(),
-                            image: state.image.clone(),
-                            title: format!(
-                                "Modlight - {}",
-                                t(s::TaskManager_task_UploadCompleted_ShareX___Task_completed)
-                            ),
-                            text,
-                            url: info.result.to_string(),
-                        })));
+                        outcome.effects.push(TaskEffect::ShowNotification(Box::new(
+                            NotificationConfig {
+                                duration_ms: general.toast_window_duration * 1000.0,
+                                fade_ms: general.toast_window_fade_duration * 1000.0,
+                                placement: general.toast_window_placement,
+                                size: general.toast_window_size,
+                                left_click: general.toast_window_left_click_action,
+                                right_click: general.toast_window_right_click_action,
+                                middle_click: general.toast_window_middle_click_action,
+                                button_size: general.toast_window_button_size,
+                                buttons: general.toast_window_buttons.clone(),
+                                auto_hide: general.toast_window_auto_hide,
+                                file_path: info.file_path().to_string(),
+                                image: state.image.clone(),
+                                title: format!(
+                                    "Modlight - {}",
+                                    t(s::TaskManager_task_UploadCompleted_ShareX___Task_completed)
+                                ),
+                                text,
+                                url: info.result.to_string(),
+                            },
+                        )));
                         if info
                             .settings
                             .after_upload_job

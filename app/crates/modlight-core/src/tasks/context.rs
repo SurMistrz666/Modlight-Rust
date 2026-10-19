@@ -36,10 +36,7 @@ pub struct TaskContext {
 
 impl TaskContext {
     pub fn app_settings(&self) -> AppUploadSettings {
-        self.settings
-            .read()
-            .map(|s| s.clone())
-            .unwrap_or_default()
+        self.settings.read().map(|s| s.clone()).unwrap_or_default()
     }
 
     /// The credential uploads carry, when somebody is signed in.
@@ -122,11 +119,16 @@ impl TaskContext {
     ) -> PathBuf {
         let app = self.app_settings();
         let folder = if settings.override_screenshots_folder
-            && let Some(folder) = settings.screenshots_folder.as_deref().filter(|f| !f.is_empty())
+            && let Some(folder) = settings
+                .screenshots_folder
+                .as_deref()
+                .filter(|f| !f.is_empty())
         {
             PathBuf::from(naming::parse_path_pattern(folder, metadata))
         } else {
-            let window = metadata.and_then(|m| m.window_title.as_deref()).is_some_and(|w| !w.is_empty());
+            let window = metadata
+                .and_then(|m| m.window_title.as_deref())
+                .is_some_and(|w| !w.is_empty());
             let pattern = match app.save_image_sub_folder_pattern_window.as_deref() {
                 Some(window_pattern) if window && !window_pattern.is_empty() => window_pattern,
                 _ => app.save_image_sub_folder_pattern.as_deref().unwrap_or(""),

@@ -28,8 +28,9 @@ pub trait FlagNames: Sized + Copy {
                 for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
                     if let Ok(number) = part.parse::<u32>() {
                         bits |= number;
-                    } else if let Some((_, bit)) =
-                        Self::NAMES.iter().find(|(name, _)| name.eq_ignore_ascii_case(part))
+                    } else if let Some((_, bit)) = Self::NAMES
+                        .iter()
+                        .find(|(name, _)| name.eq_ignore_ascii_case(part))
                     {
                         bits |= bit;
                     }
@@ -275,9 +276,9 @@ impl<'de> Deserialize<'de> for Size {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = Value::deserialize(deserializer)?;
         let pair = match &value {
-            Value::String(text) => text.split_once(',').and_then(|(w, h)| {
-                Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
-            }),
+            Value::String(text) => text
+                .split_once(',')
+                .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?))),
             Value::Object(map) => Some((
                 map.get("Width").and_then(Value::as_i64).unwrap_or(0),
                 map.get("Height").and_then(Value::as_i64).unwrap_or(0),
@@ -744,9 +745,10 @@ mod tests {
 
     #[test]
     fn flags_read_as_sharex_writes_them() {
-        let job: AfterCaptureTasks =
-            serde_json::from_value(json!("CopyImageToClipboard, SaveImageToFile, UploadImageToHost"))
-                .unwrap();
+        let job: AfterCaptureTasks = serde_json::from_value(json!(
+            "CopyImageToClipboard, SaveImageToFile, UploadImageToHost"
+        ))
+        .unwrap();
         assert!(job.has(AfterCaptureTasks::SaveImageToFile));
         assert!(job.has(AfterCaptureTasks::UploadImageToHost));
         assert!(!job.has(AfterCaptureTasks::DeleteFile));
@@ -759,7 +761,10 @@ mod tests {
         assert_eq!(numeric, AfterUploadTasks::CopyURLToClipboard);
         let none: AfterUploadTasks = serde_json::from_value(json!("None")).unwrap();
         assert_eq!(none, AfterUploadTasks::None);
-        assert!(!none.has(AfterUploadTasks::None), "None is never a flag that is set");
+        assert!(
+            !none.has(AfterUploadTasks::None),
+            "None is never a flag that is set"
+        );
         assert_eq!(
             AfterCaptureTasks::SaveImageToFile
                 .with(AfterCaptureTasks::DeleteFile)
@@ -793,7 +798,10 @@ mod tests {
         assert_eq!(settings.image_settings.image_format, ImageFormat::JPEG);
         assert_eq!(settings.image_settings.image_jpeg_quality, 75);
         assert!(settings.image_settings.image_auto_use_jpeg);
-        assert_eq!(settings.advanced_settings.clipboard_content_format, "<$url>");
+        assert_eq!(
+            settings.advanced_settings.clipboard_content_format,
+            "<$url>"
+        );
         assert!(settings.advanced_settings.text_task_save_as_file);
         assert_eq!(settings.upload_settings.name_format_pattern, "%ra{10}");
         assert_eq!(
@@ -811,7 +819,10 @@ mod tests {
     fn a_broken_member_does_not_lose_the_rest() {
         let mut config = AppConfig::in_memory();
         config.set("DefaultTaskSettings", json!("not an object"));
-        assert_eq!(TaskSettings::defaults_from(&config), TaskSettings::default());
+        assert_eq!(
+            TaskSettings::defaults_from(&config),
+            TaskSettings::default()
+        );
         let mut config = AppConfig::in_memory();
         config.set(
             "DefaultTaskSettings",

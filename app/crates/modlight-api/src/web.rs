@@ -124,7 +124,9 @@ impl Api {
         if !media.starts_with("image/") {
             return None;
         }
-        let bytes = Api::read_limited(response, MAX_PREVIEW_BYTES).await.ok()??;
+        let bytes = Api::read_limited(response, MAX_PREVIEW_BYTES)
+            .await
+            .ok()??;
         image_bytes::decode(&bytes)
     }
 }
@@ -160,7 +162,10 @@ mod tests {
             Some("a.png")
         );
         assert_eq!(file_name_from_disposition("attachment"), None);
-        assert_eq!(file_name_from_disposition(r#"attachment; filename="""#), None);
+        assert_eq!(
+            file_name_from_disposition(r#"attachment; filename="""#),
+            None
+        );
     }
 
     #[test]

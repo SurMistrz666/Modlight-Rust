@@ -38,10 +38,16 @@ pub fn file_name(
         parser.window_text = metadata.window_title.clone();
         parser.process_name = metadata.process_name.clone();
     }
-    let pattern = if !settings.upload_settings.name_format_pattern_active_window.is_empty()
+    let pattern = if !settings
+        .upload_settings
+        .name_format_pattern_active_window
+        .is_empty()
         && parser.window_text.as_deref().is_some_and(|w| !w.is_empty())
     {
-        settings.upload_settings.name_format_pattern_active_window.clone()
+        settings
+            .upload_settings
+            .name_format_pattern_active_window
+            .clone()
     } else {
         settings.upload_settings.name_format_pattern.clone()
     };
@@ -173,7 +179,10 @@ pub fn parse_upload_info(info: &TaskInfo, pattern: &str, _ctx: &TaskContext) -> 
 /// asked, "file" when nothing is left.
 pub fn upload_name(name: &str, settings: &TaskSettings) -> String {
     let mut name = url_helpers::remove_bidi_control_characters(name);
-    if settings.upload_settings.file_upload_replace_problematic_characters {
+    if settings
+        .upload_settings
+        .file_upload_replace_problematic_characters
+    {
         name = url_helpers::replace_reserved_characters(&name, "_");
     }
     name
