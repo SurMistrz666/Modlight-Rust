@@ -41,6 +41,55 @@ mod tests {
         assert!(!is_encrypted_upload(None, None));
     }
 
+    /// `decryptedPresentation(mime, ext, size)`'s render type (the browser half,
+    /// components/viewer/decrypted-presentation.ts, run by the SPA verbatim).
+    fn browser_render_type(mime: &str, ext: &str) -> Option<String> {
+        use crate::media::mime::{effective_type, is_displayable_image, playable_audio_type, playable_video_type};
+        if is_displayable_image(Some(mime), Some(ext)) {
+            return Some(effective_type(Some(mime), Some(ext)));
+        }
+        playable_video_type(Some(mime), Some(ext))
+            .or_else(|| playable_audio_type(Some(mime), Some(ext)))
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn decrypted_content_is_only_rendered_as_raw_would_serve_it() {
+        // tests/unit/encrypted-presentation.test.ts, the server half: if the viewer
+        // is willing to hand a type to the browser, /raw does too, with the same
+        // Content-Type. Anything else means the encrypted path became the weaker one.
+        for mime in [
+            "image/png",
+            "image/jpeg",
+            "image/gif",
+            "image/webp",
+            "image/avif",
+            "image/svg+xml",
+            "video/mp4",
+            "video/webm",
+            "video/quicktime",
+            "video/x-matroska",
+            "audio/mpeg",
+            "audio/flac",
+            "application/pdf",
+            "application/zip",
+            "text/plain",
+            "text/html",
+            "application/json",
+            "application/octet-stream",
+        ] {
+            let Some(render) = browser_render_type(mime, "") else { continue };
+            let served = serve_decision(Some(mime), Some(""));
+            assert_eq!(served.disposition, "inline", "{mime}");
+            assert_eq!(served.content_type, render, "{mime}");
+        }
+        // Markup and SVG are never rendered from decrypted bytes.
+        for hostile in ["text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/javascript"] {
+            assert_eq!(browser_render_type(hostile, ""), None, "{hostile}");
+        }
+        assert_eq!(browser_render_type("video/quicktime", "mov").as_deref(), Some("video/mp4"));
+    }
+
     #[test]
     fn the_server_never_presents_a_container_as_anything() {
         // tests/integration/encrypted-upload.test.ts: no decoder, an inert download.

@@ -418,6 +418,50 @@ mod tests {
         assert_eq!(docx_support(Some("text/plain"), Some("txt")), None);
     }
 
+    fn row(mime: &str, ext: &str, kind: &str, language: Option<&str>) -> Upload {
+        serde_json::from_value(serde_json::json!({
+            "id": "9d2e1a54-0000-4000-8000-000000000001", "ownerId": "u1", "code": "abc", "filename": "f",
+            "ext": ext, "kind": kind, "language": language, "mimeType": mime, "size": 10,
+            "storageKey": "k", "checksum": null, "width": null, "height": null, "blurhash": null,
+            "thumbKey": null, "published": true, "deleteToken": "d", "views": 0, "downloads": 0,
+            "lastAccessedAt": null, "expiresAt": null, "maxViews": null, "passwordHash": null, "folderId": null,
+            "deletedAt": null, "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z",
+            "passwordVersion": null, "frames": null, "convertedAt": null, "originalExt": null,
+            "durationSeconds": null, "fps": null
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_page_reads_the_source_of_everything_raw_serves_as_text() {
+        // tests/unit/viewer-stage.test.ts, the server half: the page decides with
+        // the same `showsSource` the stage draws from, so code that mediaKind calls
+        // "other" still arrives as text, and nothing else is read off disk.
+        for (mime, ext) in [
+            ("text/x-python", "py"),
+            ("application/json", "json"),
+            ("application/json", "sxcu"),
+            ("application/x-sh", "sh"),
+            ("application/sql", "sql"),
+            ("application/xml", "xml"),
+            ("image/svg+xml", "svg"),
+            ("text/html", "html"),
+        ] {
+            assert!(shows_source(&row(mime, ext, "file", None)), "{ext}");
+        }
+        for (mime, ext) in [
+            ("application/octet-stream", "gr2"),
+            ("application/zip", "zip"),
+            ("image/png", "png"),
+            ("video/mp4", "mp4"),
+            ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+        ] {
+            assert!(!shows_source(&row(mime, ext, "file", None)), "{ext}");
+        }
+        // A paste is text by its language, whatever was stored.
+        assert!(shows_source(&row("application/octet-stream", "py", "paste", Some("python"))));
+    }
+
     #[test]
     fn inline_text_ceiling() {
         assert_eq!(inline_text_plan(MAX_INLINE_TEXT), InlineTextPlan::Read);
