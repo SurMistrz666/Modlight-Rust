@@ -22,6 +22,7 @@ use sqlx::PgPool;
 use super::finalize::{FinalizeError, FinalizeInput, finalize_upload, remaining_quota};
 use super::folder_target::{FOLDER_KEY, FolderTarget, ROOT_FOLDER, resolve_folder_from_metadata};
 use super::tus_server::file_store::FileStore;
+use super::tus_server::s3_store::S3Store;
 use super::tus_server::server::{FinishPatch, ServerOptions, TusHooks, TusRequest, TusServer};
 use super::tus_server::store::{DataStore, Metadata, StoreError, TusError, Upload};
 use crate::api_scopes::TokenCapability;
@@ -67,17 +68,15 @@ pub async fn handle(State(state): State<AppState>, req: axum::extract::Request) 
 /// otherwise.
 fn make_datastore(state: &AppState) -> Arc<dyn DataStore> {
     if state.config.storage.driver == "s3" {
-        if let Some(store) = s3_datastore() {
-            return store;
+        match S3Store::from_env(|k| std::env::var(k).ok()) {
+            Ok(store) => return Arc::new(store),
+            // Upstream builds the store regardless and fails on every request;
+            // the storage driver refuses the same variables, so a finished
+            // upload fails at finalize either way.
+            Err(err) => tracing::error!("[tus] the S3 tus store cannot be built ({err}); using the file store"),
         }
-        tracing::error!("[tus] the S3 tus store is not available in this build; falling back to the file store");
     }
     Arc::new(FileStore::new(&state.config.uploads.tus_tmp_path, TUS_EXPIRATION_MS))
-}
-
-/// The S3 store (`@tus/s3-store`), once ported; `None` until then.
-fn s3_datastore() -> Option<Arc<dyn DataStore>> {
-    None
 }
 
 /// `createTusServer()`

@@ -54,8 +54,10 @@ async fn raw_upload_paths_bypass_everything() {
     let app = App::new(state());
     for (method, uri) in [(Method::POST, "/upload"), (Method::POST, "/api/upload"), (Method::PATCH, "/api/files/abc")] {
         let a = call(&app, Request::builder().method(method).uri(uri).body(Body::empty()).unwrap()).await;
-        assert_eq!(a.status, StatusCode::NOT_IMPLEMENTED, "{uri}");
+        // Answered by the ShareX and tus ports themselves, without the edge.
+        assert_ne!(a.status, StatusCode::NOT_IMPLEMENTED, "{uri}");
         assert!(a.header("content-security-policy").is_none(), "{uri}");
+        assert!(a.header("x-content-type-options").is_none(), "{uri}");
     }
     // GET /upload is not the ShareX path: it is a page URL (tag "upload").
     let page = get(&app, "/upload").await;

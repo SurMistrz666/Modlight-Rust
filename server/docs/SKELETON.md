@@ -74,7 +74,8 @@ action errors), so upstream `.env` files keep their meaning.
 | `api_scopes.rs`, `api_token.rs`, `api_caller.rs` | `lib/api-scopes.ts`, `lib/api-token.ts`, `lib/api-caller.ts` | done |
 | `password.rs` | `lib/password.ts` | `client_ip` only |
 | `ids.rs`, `audit.rs` | `lib/ids.ts`, `lib/audit.ts` | done |
-| `storage/` | `lib/storage/*` | local driver done, S3 configuration only |
+| `storage/` | `lib/storage/*` | done: local driver; S3 driver on `aws-sdk-s3` with ports of lib-storage `Upload` (`s3/lib_storage.rs`) and s3-request-presigner (`s3/presigner.rs`, URLs byte-identical to the JS SDK's); `is_not_found` |
+| `upload/tus_server/s3_store.rs` | `@tus/s3-store` 2.0.4 | done (`S3Store::from_env` = `makeDatastore()` for S3); keys, `.info` JSON, metadata and tags as the TS store, uploads resume across the two |
 | `routes/api/health.rs` | `app/api/health/route.ts` | done |
 | `jobs.rs` | timers in `server.ts` | done; the work functions are stubs in `upload/tus.rs`, `maintenance/trash.rs`, `mail_settings.rs` |
 | `runtime/limits.rs` | `lib/runtime/limits.ts` | done |
@@ -289,8 +290,12 @@ Deliberate, each for a reason:
 12. **Jobs** never overlap a slow previous run (upstream `setInterval` could).
 13. **`serve` validates the configuration before migrating** (the upstream
     container migrated first and refused to start afterwards).
-14. **S3**: until the driver is ported, `/api/health` reports `storage: fail` on
-    an S3 install (upstream's `stat` swallowed every error).
+14. **S3 transport**: the Rust SDK gives up connecting after 3.1 s and fails a
+    transfer the server stalls (no bytes for 5 s while it is being read; a
+    reader that pauses is not a stall), where Node would wait. `stat` still
+    swallows every error like upstream, so `/api/health` reports `storage: ok`
+    on an S3 install whose endpoint is down, as upstream did. The runtime image
+    needs a CA bundle for HTTPS endpoints (rustls reads the system store).
 
 ## 10. Verified on 2026-10-18
 
