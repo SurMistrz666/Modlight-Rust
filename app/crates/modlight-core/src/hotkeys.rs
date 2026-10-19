@@ -929,7 +929,7 @@ impl HotkeyManager {
 #[derive(Default)]
 pub struct FakeBackend {
     pub taken: Vec<HotkeyInfo>,
-    next: u32,
+    pub next: u32,
     pub registered: std::sync::Arc<std::sync::Mutex<Vec<(u32, HotkeyInfo)>>>,
 }
 

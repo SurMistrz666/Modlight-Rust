@@ -12,6 +12,10 @@ fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
     println!("cargo:rerun-if-changed={}", assets.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("../../assets/mac").display()
+    );
 
     std::fs::write(out.join("strings.rs"), strings(&assets.join("l10n"))).unwrap();
     std::fs::write(out.join("skins.rs"), skins(&assets.join("theming"))).unwrap();
@@ -29,6 +33,8 @@ const PROJECTS: &[(&str, &str)] = &[
     ("ShareX.UploadersLib", "uploaders"),
     ("ShareX.HelpersLib", "helpers"),
     ("ShareX.ScreenCaptureLib", "capture"),
+    // The macOS port's own texts, where upstream's name Windows (assets/mac/l10n).
+    ("Mac", "mac"),
 ];
 
 fn read_resx(path: &Path) -> BTreeMap<String, String> {
@@ -65,7 +71,13 @@ fn strings(dir: &Path) -> String {
     let mut polish = Vec::new();
     let mut modules = String::new();
 
+    let mac_dir = dir.join("../../mac/l10n");
     for (project, module) in PROJECTS {
+        let dir = if *project == "Mac" {
+            mac_dir.as_path()
+        } else {
+            dir
+        };
         let en = read_resx(&dir.join(format!("{project}.resx")));
         let pl = read_resx(&dir.join(format!("{project}.pl.resx")));
         writeln!(

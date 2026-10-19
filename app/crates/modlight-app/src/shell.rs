@@ -487,8 +487,13 @@ fn plan_tab(
     }
 }
 
-/// The capture tab: four large buttons and the full menu under them.
+/// The capture tab (`IsCreateSelected`): the hint, the notice when a hotkey could not be
+/// registered, four large buttons with their shortcuts, and the full menu under them.
 fn capture_tab(ui: &mut Ui, state: &mut AppState) {
+    use modlight_core::capture::CaptureKind;
+    use modlight_core::capture::region::RegionKind;
+    use modlight_core::hotkeys::HotkeyType;
+    use modlight_core::recording::ScreenRecordOutput;
     let colors = state.colors.clone();
     let rect = ui.max_rect();
     let painter = ui.painter().clone();
@@ -509,32 +514,99 @@ fn capture_tab(ui: &mut Ui, state: &mut AppState) {
     let mut faint = painter.clone();
     faint.set_opacity(0.75);
     faint.galley(pos2(left, y), hint, colors.text_secondary());
-    y += hint_h + 12.0;
+    y += hint_h;
 
-    let tiles = [
+    // `Border.notice`: 10 px corners, 14,11 padding, the keys macOS kept.
+    if let Some(problem) = crate::capture_flow::hotkey_problem(state) {
+        y += 10.0;
+        let fix = t(s::MainWindow_HotkeyProblemFix);
+        let look = Look::quiet_link(&colors);
+        let fix_w = button_width(ui, &look, Content::label(fix));
+        let text_w = width - 28.0 - 16.0 - 10.0 - 10.0 - fix_w;
+        let text = layout(
+            ui,
+            wrapped(
+                &problem,
+                13.0,
+                Weight::SemiBold,
+                colors.text_secondary(),
+                text_w,
+            ),
+        );
+        let height = (text.size().y.max(32.0)) + 22.0;
+        let notice = Rect::from_min_size(pos2(left, y), vec2(width, height));
+        painter.rect_filled(notice, 10.0, colors.control_background());
+        painter.rect_stroke(
+            notice,
+            10.0,
+            Stroke::new(1.0, colors.border()),
+            StrokeKind::Inside,
+        );
+        paint_icon(
+            ui,
+            &painter,
+            pos2(notice.left() + 14.0 + 8.0, notice.center().y),
+            icons::KEYBOARD_OFF,
+            16.0,
+            colors.text_secondary(),
+        );
+        painter.galley(
+            pos2(
+                notice.left() + 14.0 + 16.0 + 10.0,
+                notice.center().y - text.size().y / 2.0,
+            ),
+            text,
+            colors.text_secondary(),
+        );
+        let fix_rect = Rect::from_min_size(
+            pos2(notice.right() - 14.0 - fix_w, notice.center().y - 16.0),
+            vec2(fix_w, 32.0),
+        );
+        if button_at(ui, &colors, &look, Content::label(fix), true, fix_rect).clicked() {
+            state.push(Command::ShowSettings(Some("hotkeys.list")));
+        }
+        y = notice.bottom();
+    }
+    y += 12.0;
+
+    let tiles: [(char, Key, Key, HotkeyType, Command); 4] = [
         (
             icons::SCAN,
             s::MainWindow_CaptureRegionTitle,
             s::MainWindow_CaptureRegionBody,
+            HotkeyType::RectangleRegion,
+            Command::Capture(CaptureKind::Region(RegionKind::Default), true),
         ),
         (
             icons::VIDEO,
             s::MainWindow_CaptureRecordTitle,
             s::MainWindow_CaptureRecordBody,
+            HotkeyType::ScreenRecorder,
+            Command::StartRecording(
+                ScreenRecordOutput::FFmpeg,
+                crate::capture_flow::RecordStartMethod::Region,
+            ),
         ),
         (
             icons::FILM,
             s::MainWindow_CaptureGifTitle,
             s::MainWindow_CaptureGifBody,
+            HotkeyType::ScreenRecorderGIF,
+            Command::StartRecording(
+                ScreenRecordOutput::Gif,
+                crate::capture_flow::RecordStartMethod::Region,
+            ),
         ),
         (
             icons::CLIPBOARD,
             s::MainWindow_CaptureClipboardTitle,
             s::MainWindow_CaptureClipboardBody,
+            HotkeyType::ClipboardUpload,
+            Command::ClipboardUpload,
         ),
     ];
     let cell = width / 2.0;
-    for (index, (glyph, title, body)) in tiles.iter().enumerate() {
+    for (index, (glyph, title, body, job, command)) in tiles.into_iter().enumerate() {
         let col = index % 2;
         let row = index / 2;
         let r = Rect::from_min_size(
@@ -581,20 +653,32 @@ fn capture_tab(ui: &mut Ui, state: &mut AppState) {
             ui,
             &painter,
             badge.center(),
-            *glyph,
+            glyph,
             22.0,
             colors.accent_start(),
         );
+        // `capture-tile-key`: the registered shortcut, right of the text.
+        let key = state.captures.hotkeys.shortcut_for(job);
+        let key_galley = key.as_deref().map(|k| {
+            layout(
+                ui,
+                trimmed(k, 11.0, Weight::SemiBold, colors.text_secondary(), 200.0, 1),
+            )
+        });
+        let key_w = key_galley
+            .as_ref()
+            .map(|g| g.size().x + 14.0 + 14.0)
+            .unwrap_or(0.0);
         let text_left = shown.left() + 16.0 + 46.0 + 14.0;
-        let text_w = shown.right() - 16.0 - text_left;
+        let text_w = shown.right() - 16.0 - key_w - text_left;
         let title_g = layout(
             ui,
-            wrapped(t(*title), 15.0, Weight::SemiBold, colors.text(), text_w),
+            wrapped(t(title), 15.0, Weight::SemiBold, colors.text(), text_w),
         );
         let body_g = layout(
             ui,
             wrapped(
-                t(*body),
+                t(body),
                 12.0,
                 Weight::SemiBold,
                 colors.text_secondary(),
@@ -610,8 +694,19 @@ fn capture_tab(ui: &mut Ui, state: &mut AppState) {
             body_g,
             colors.text_secondary(),
         );
+        if let Some(galley) = key_galley {
+            let chip = Rect::from_min_size(
+                pos2(
+                    shown.right() - 16.0 - galley.size().x - 14.0,
+                    shown.center().y - galley.size().y / 2.0 - 3.0,
+                ),
+                vec2(galley.size().x + 14.0, galley.size().y + 6.0),
+            );
+            painter.rect_filled(chip, 6.0, colors.control_background_hover());
+            painter.galley(chip.min + vec2(7.0, 3.0), galley, colors.text_secondary());
+        }
         if response.clicked() {
-            state.push(Command::NotYet);
+            state.push(command);
         }
     }
     let rows_bottom = y + 2.0 * (86.0 + 12.0);
@@ -619,17 +714,26 @@ fn capture_tab(ui: &mut Ui, state: &mut AppState) {
     let content = Content::both(icons::ELLIPSIS, t(s::MainWindow_MoreCaptureOptions));
     let w = button_width(ui, &look, content);
     let bottom = (rect.bottom() - 18.0 - 32.0).max(rows_bottom + 10.0);
-    if button_at(
+    let more = button_at(
         ui,
         &colors,
         &look,
         content,
         true,
         Rect::from_min_size(pos2(left, bottom), vec2(w, 32.0)),
-    )
-    .clicked()
-    {
-        state.push(Command::NotYet);
+    );
+    // `BuildContextMenu(BuildCaptureMenu())`, below the button, left edges aligned.
+    let picked = egui::Popup::menu(&more)
+        .frame(crate::menus::frame(&colors))
+        .align(egui::RectAlign::BOTTOM_START)
+        .gap(4.0)
+        .show(|ui| {
+            let list = crate::capture_flow::capture_menu(state, false);
+            crate::menus::entries(ui, &colors, &list)
+        })
+        .and_then(|r| r.inner);
+    if let Some(command) = picked {
+        state.push(command);
     }
 }
 
@@ -656,6 +760,21 @@ fn tools_tab(ui: &mut Ui, state: &mut AppState) {
         hint,
         colors.text_secondary(),
     );
+    use modlight_core::hotkeys::HotkeyType;
+    let jobs = [
+        HotkeyType::ColorPicker,
+        HotkeyType::ScreenColorPicker,
+        HotkeyType::PinToScreen,
+        HotkeyType::ImageEditor,
+        HotkeyType::ImageEffects,
+        HotkeyType::ImageViewer,
+        HotkeyType::BackgroundRemover,
+        HotkeyType::ImageCombiner,
+        HotkeyType::VideoConverter,
+        HotkeyType::OCR,
+        HotkeyType::QRCode,
+        HotkeyType::Metadata,
+    ];
     let tools = [
         (icons::PALETTE, s::MainMenuBuilder_ColorPicker),
         (icons::PIPETTE, s::MainMenuBuilder_ScreenColorPicker),
@@ -725,7 +844,7 @@ fn tools_tab(ui: &mut Ui, state: &mut AppState) {
             colors.text_secondary(),
         );
         if response.clicked() {
-            state.push(Command::NotYet);
+            state.push(Command::RunJob(jobs[index]));
         }
     }
 }

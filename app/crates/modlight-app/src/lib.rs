@@ -14,6 +14,7 @@ pub mod menus;
 pub mod myspace;
 pub mod notification;
 pub mod qa;
+pub mod qa_capture;
 pub mod qa_uploads;
 pub mod recording_ui;
 pub mod region_overlay;

@@ -1027,3 +1027,228 @@ impl AppState {
         crate::scrolling::open(self, settings);
     }
 }
+
+// ---------------------------------------------------------------------- menus
+
+/// `MainMenuBuilder.BuildCaptureMenu`. `from_tray`: captures started from the tray do not
+/// hide the main window (`autoHide = !_trayMenu`).
+pub fn capture_menu(state: &AppState, from_tray: bool) -> Vec<crate::menus::Entry> {
+    use crate::commands::Command;
+    use crate::menus::{Entry, Toggle};
+    use modlight_core::icons;
+    let auto_hide = !from_tray;
+    let windows: Vec<Entry> = {
+        let list = state.window_entries();
+        if list.is_empty() {
+            vec![Entry::Item {
+                label: t(s::MainMenuBuilder_NoWindowsFound).to_string(),
+                icon: Some(icons::APP_WINDOW),
+                enabled: false,
+                toggle: Toggle::None,
+                command: None,
+            }]
+        } else {
+            list.into_iter()
+                .map(|(title, window)| Entry::Item {
+                    label: title,
+                    icon: None,
+                    enabled: true,
+                    toggle: Toggle::None,
+                    command: Some(Command::Capture(CaptureKind::Window(window), auto_hide)),
+                })
+                .collect()
+        }
+    };
+    let monitors: Vec<Entry> = state
+        .monitor_entries()
+        .into_iter()
+        .map(|(label, bounds, first)| {
+            Entry::item(
+                label,
+                if first {
+                    icons::MONITOR
+                } else {
+                    icons::MONITOR_UP
+                },
+                Command::Capture(CaptureKind::Monitor(bounds), auto_hide),
+            )
+        })
+        .collect();
+    let settings = state.default_task_settings();
+    let current = settings.capture_settings.screenshot_delay;
+    let culture = modlight_core::culture::Culture::current();
+    let delays: Vec<Entry> = (0..6)
+        .map(|delay| Entry::Item {
+            label: format(
+                t(s::ScreenshotDelay0S),
+                &[Arg::from(culture.general(delay as f64))],
+            ),
+            icon: Some(if delay == 0 {
+                icons::TIMER_OFF
+            } else {
+                icons::TIMER
+            }),
+            enabled: true,
+            toggle: Toggle::Radio((current - delay as f64).abs() < 0.01),
+            command: Some(Command::SetScreenshotDelay(delay)),
+        })
+        .collect();
+    vec![
+        Entry::item(
+            t(s::MainMenuBuilder_Fullscreen),
+            icons::MAXIMIZE,
+            Command::Capture(CaptureKind::Fullscreen, auto_hide),
+        ),
+        Entry::submenu(
+            t(s::MainMenuBuilder_Window),
+            icons::APP_WINDOW,
+            true,
+            windows,
+        ),
+        Entry::submenu(
+            t(s::MainMenuBuilder_Monitor),
+            icons::MONITOR,
+            true,
+            monitors,
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_Region),
+            icons::SCAN,
+            Command::Capture(CaptureKind::Region(RegionKind::Default), auto_hide),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_RegionLight),
+            icons::SQUARE,
+            Command::Capture(CaptureKind::Region(RegionKind::Light), auto_hide),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_RegionTransparent),
+            icons::SQUARE_DASHED,
+            Command::Capture(CaptureKind::Region(RegionKind::Transparent), auto_hide),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_LastRegion),
+            icons::LAYERS,
+            Command::Capture(CaptureKind::LastRegion, auto_hide),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_ScreenRecording),
+            icons::VIDEO,
+            Command::StartRecording(ScreenRecordOutput::FFmpeg, RecordStartMethod::Region),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_ScreenRecordingGif),
+            icons::FILM,
+            Command::StartRecording(ScreenRecordOutput::Gif, RecordStartMethod::Region),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_ScrollingCapture),
+            icons::SCROLL_TEXT,
+            Command::OpenScrollingCapture,
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_AutoCapture),
+            icons::CLOCK,
+            Command::OpenAutoCapture,
+        ),
+        Entry::Separator,
+        Entry::check(
+            t(s::MainMenuBuilder_ShowCursor),
+            icons::MOUSE_POINTER_2,
+            settings.capture_settings.show_cursor,
+            Command::ToggleShowCursor,
+        ),
+        Entry::submenu(state.screenshot_delay_text(), icons::TIMER, true, delays),
+    ]
+}
+
+/// `MainMenuBuilder.BuildToolsMenu`: every tool; those of later phases say so when
+/// picked.
+pub fn tools_menu() -> Vec<crate::menus::Entry> {
+    use crate::commands::Command;
+    use crate::menus::Entry;
+    use modlight_core::icons;
+    let job = |job: HotkeyType| Command::RunJob(job);
+    vec![
+        Entry::item(
+            t(s::MainMenuBuilder_ColorPicker),
+            icons::PALETTE,
+            job(HotkeyType::ColorPicker),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_ScreenColorPicker),
+            icons::PIPETTE,
+            job(HotkeyType::ScreenColorPicker),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_PinToScreenDialog),
+            icons::PIN,
+            job(HotkeyType::PinToScreen),
+        ),
+        Entry::Separator,
+        Entry::item(
+            t(s::MainMenuBuilder_ImageEditor),
+            icons::IMAGE,
+            job(HotkeyType::ImageEditor),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_ImageEffects),
+            icons::WAND_SPARKLES,
+            job(HotkeyType::ImageEffects),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_ImageViewer),
+            icons::EYE,
+            job(HotkeyType::ImageViewer),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_BackgroundRemover),
+            icons::ERASER,
+            job(HotkeyType::BackgroundRemover),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_ImageCombiner),
+            icons::COMBINE,
+            job(HotkeyType::ImageCombiner),
+        ),
+        Entry::Separator,
+        Entry::item(
+            t(s::MainMenuBuilder_VideoConverter),
+            icons::FILE_VIDEO,
+            job(HotkeyType::VideoConverter),
+        ),
+        Entry::Separator,
+        Entry::item(
+            t(s::MainMenuBuilder_OCR),
+            icons::SCAN_TEXT,
+            job(HotkeyType::OCR),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_QRCode),
+            icons::QR_CODE,
+            job(HotkeyType::QRCode),
+        ),
+        Entry::item(
+            t(s::MainMenuBuilder_Metadata),
+            icons::TAGS,
+            job(HotkeyType::Metadata),
+        ),
+    ]
+}
+
+/// `HotkeyProblemViewModel.Describe`: the keys macOS would not give, or nothing.
+pub fn hotkey_problem(state: &AppState) -> Option<String> {
+    let failed = state.captures.hotkeys.failed();
+    if failed.is_empty() {
+        return None;
+    }
+    let keys = failed
+        .iter()
+        .map(|h| h.info.text())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format(
+        t(modlight_core::l10n::mac::HotkeyProblem),
+        &[Arg::from(keys)],
+    ))
+}

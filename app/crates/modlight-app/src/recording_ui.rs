@@ -67,6 +67,25 @@ pub enum RecordingAction {
 }
 
 impl Recording {
+    /// A recording as a QA screen shows it (no session behind it).
+    pub fn for_qa(
+        control: Arc<RecorderControl>,
+        settings: TaskSettings,
+        compact: bool,
+    ) -> Recording {
+        Recording {
+            control,
+            settings,
+            metadata: TaskMetadata::default(),
+            show_timer: true,
+            show_labels: !compact,
+            ask_on_abort: false,
+            confirming_abort: false,
+            activate: false,
+            drag_from: None,
+        }
+    }
+
     fn toolbar_width(&self) -> f32 {
         if self.confirming_abort {
             return TOOLBAR_WIDTH;
