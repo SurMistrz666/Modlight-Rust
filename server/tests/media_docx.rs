@@ -201,6 +201,63 @@ async fn lists_tables_links_and_notes_come_out_like_mammoth() {
     );
 }
 
+/// A 16x8 RGB PNG.
+fn tiny_png() -> Vec<u8> {
+    fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let mut body = kind.to_vec();
+        body.extend_from_slice(data);
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&crc32(&body).to_be_bytes());
+    }
+    let (w, h) = (16u32, 8u32);
+    let mut raw = Vec::new();
+    for y in 0..h {
+        raw.push(0);
+        for x in 0..w {
+            raw.extend_from_slice(&[(x * 16) as u8, (y * 32) as u8, 128]);
+        }
+    }
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), Compression::default());
+    z.write_all(&raw).unwrap();
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&w.to_be_bytes());
+    ihdr.extend_from_slice(&h.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(&mut out, b"IDAT", &z.finish().unwrap());
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+fn picture(rid: &str, descr: &str) -> String {
+    format!(
+        r#"<w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:docPr id="1" name="p" descr="{descr}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{rid}"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+    )
+}
+
+/// Pictures are re-encoded from the conversion thread through the async
+/// libvips binding; that must work on a current-thread runtime too.
+#[tokio::test]
+async fn pictures_become_webp_data_uris_and_unreadable_ones_placeholders() {
+    let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rP" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/p.png"/><Relationship Id="rE" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/e.emf"/><Relationship Id="rM" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/missing.png"/></Relationships>"#;
+    let body = format!("<w:p>{}{}{}</w:p>", picture("rP", "a picture"), picture("rE", "vector"), picture("rM", "gone"));
+    let docx = build_docx(
+        &body,
+        &[
+            ("word/_rels/document.xml.rels", rels.to_vec()),
+            ("word/media/p.png", tiny_png()),
+            ("word/media/e.emf", b"\x01\x00\x00\x00 not an image".to_vec()),
+        ],
+    );
+    let result = convert(docx).await.expect("converted");
+    assert_eq!((result.images, result.images_dropped), (1, 1));
+    assert!(result.html.contains(r#"<p><img alt="a picture" src="data:image/webp;base64,UklGR"#), "{}", result.html);
+    // The placeholder keeps `alt` first (it was set before the result's keys).
+    assert!(result.html.contains(r#"<img alt="" src="" /></p>"#), "{}", result.html);
+}
+
 /// The Rust half of `tests/parity_media/docx_parity.py`: converts every file
 /// in `DOCX_CORPUS` (a directory) and writes `{name: result}` JSON to
 /// `DOCX_OUT`, the same shape the reference script prints.
