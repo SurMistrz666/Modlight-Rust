@@ -6,13 +6,13 @@
 //!
 //! The client is the official AWS SDK (`aws-sdk-s3`) configured like
 //! upstream's `new S3Client({region, endpoint, forcePathStyle, credentials})`:
-//! static credentials, everything else at the SDK defaults that match the
+//! static credentials, everything else at the SDK defaults, which match the
 //! JavaScript SDK's (standard retries with 3 attempts, CRC32 request checksums
-//! and response checksum validation "when supported", no proxy). Two transport
-//! defaults of the Rust SDK are changed to match Node: stalled-stream
-//! protection is off (a paused media download must not be failed because the
-//! browser stopped reading), and HTTPS uses rustls with ring, like the rest of
-//! the crate.
+//! and response checksum validation "when supported", no proxy). HTTPS uses
+//! rustls with ring, like the rest of the crate. Unlike Node, the Rust SDK
+//! also fails a transfer the server stalls (no bytes for 5 s while being
+//! read) and gives up connecting after 3.1 s; a reader that pauses (a paused
+//! video) is not a stall.
 
 pub mod lib_storage;
 pub mod presigner;
@@ -20,7 +20,7 @@ pub mod presigner;
 use std::path::Path;
 
 use aws_sdk_s3::Client;
-use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region, StalledStreamProtectionConfig};
+use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::error::{DisplayErrorContext, ProvideErrorMetadata, SdkError};
 use aws_sdk_s3::types::{Delete, ObjectIdentifier};
 use bytes::Bytes;
@@ -86,7 +86,6 @@ pub fn s3_client(config: &S3Config) -> Client {
             "modlight-env",
         ))
         .force_path_style(config.force_path_style)
-        .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
         .http_client(http_client);
     if let Some(endpoint) = config.endpoint.as_deref().filter(|e| !e.is_empty()) {
         builder = builder.endpoint_url(endpoint);
