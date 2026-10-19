@@ -3,4 +3,5 @@
 //! adds `sharex.rs`, `disk.rs`, `finalize.rs`, ... here and replaces the
 //! placeholder in [`crate::http::raw_upload_router`].
 
+pub mod disk;
 pub mod tus;

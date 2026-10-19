@@ -31,8 +31,10 @@
 //! upstream) and does not refresh at all.
 
 pub mod authorize;
+pub mod dashboard_admin;
 pub mod dashboard_tokens;
 pub mod download;
+pub mod layout_app;
 pub mod layout_auth;
 pub mod meta;
 pub mod root_layout;
@@ -347,6 +349,8 @@ pub fn register_all(reg: &mut PageRegistry) {
     reg.page("/download", download::load); // app/download/page.tsx
     reg.page("/dashboard/tokens", dashboard_tokens::load); // app/(app)/dashboard/tokens/page.tsx
     reg.page("/authorize", authorize::load);
+    reg.layout(Layout::App, layout_app::load);
+    reg.page("/dashboard/admin", dashboard_admin::load);
 }
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
@@ -559,6 +563,12 @@ async fn document_response(state: &AppState, ctx: &PageCtx, outcome: PageOutcome
     };
     let skin = match &outcome {
         PageOutcome::Page { skin, .. } => skin.clone(),
+        // The `(app)` layout's <ThemeApplier> paints the panel whatever the
+        // page inside it does (not ported yet, or failed into the dashboard's
+        // error boundary), CONTRACT 2.2.
+        PageOutcome::NotImplemented { layouts, .. } | PageOutcome::Error { layouts, .. } => {
+            layouts.get(Layout::App.key()).map(DocumentSkin::from_app_layout)
+        }
         _ => None,
     };
     let background_style = skin.as_ref().and_then(DocumentSkin::style);
