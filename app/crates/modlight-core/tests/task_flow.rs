@@ -24,7 +24,7 @@ use modlight_core::tasks::worker::TaskState;
 use modlight_core::upload::queue::{AccountSlot, QueueAccount, QueueEvent, UploadQueue};
 use modlight_core::upload::store::QueueStore;
 use modlight_core::upload::transport::ApiTransport;
-use modlight_core::upload::{QueueItem, QueueReason};
+use modlight_core::upload::QueueReason;
 use sha2::Digest;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
