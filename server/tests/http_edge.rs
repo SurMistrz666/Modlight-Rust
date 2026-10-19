@@ -106,6 +106,10 @@ async fn methods_like_next_route_handlers() {
         call(&app, Request::builder().method(Method::OPTIONS).uri("/_rpc/a/b").body(Body::empty()).unwrap()).await;
     assert_eq!(options.status, StatusCode::NO_CONTENT);
     assert_eq!(options.header("allow").as_deref(), Some("OPTIONS, POST"));
+    // Next sorts the list alphabetically (auto-implement-methods).
+    let folders =
+        call(&app, Request::builder().method(Method::OPTIONS).uri("/api/folders").body(Body::empty()).unwrap()).await;
+    assert_eq!(folders.header("allow").as_deref(), Some("DELETE, GET, HEAD, OPTIONS, PATCH, POST"));
     let wrong = get(&app, "/_rpc/a/b").await;
     assert_eq!(wrong.status, StatusCode::METHOD_NOT_ALLOWED);
     assert!(wrong.header("allow").is_none());

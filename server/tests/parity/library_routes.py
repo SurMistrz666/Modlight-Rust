@@ -71,7 +71,7 @@ class Area(object):
             text = re.sub(pattern, repl, text)
         return parity.normalize_json(json.loads(text))
 
-    def shape(self, r, extra=(), headers=("content-type", "cache-control", "retry-after", "location")):
+    def shape(self, r, extra=(), headers=("content-type", "cache-control", "retry-after", "location", "allow")):
         out = {"status": r.status}
         for h in headers:
             v = r.header(h)
@@ -210,6 +210,7 @@ def uploads_check(run, lib):
     a.call("as the other account (copy_raw, tagless)", "POST", path, token=other_read,
            body={"checksums": [mine, theirs]})
     a.call("GET is not a method", "GET", path, token=full)
+    a.call("OPTIONS", "OPTIONS", path)
 
     # A checksumless live file makes the library partly blind: `unknown`.
     a.name(seed_upload(lib, owner, "kf" + sfx, created_at=t(6)), "<unchecksummed>")
@@ -283,6 +284,8 @@ def folders_api(run, lib):
     a.call("GET read token", "GET", path, token=reader)
     a.call("GET as the other account", "GET", path, token=other_full)
     a.call("PUT is not a method", "PUT", path, token=full, body={})
+    a.call("OPTIONS", "OPTIONS", path)
+    a.call("HEAD", "HEAD", path, token=full)
 
     # Writes: the shared refusals, for each verb.
     for verb in ("POST", "PATCH", "DELETE"):
@@ -442,6 +445,7 @@ def duplicates_api(run, lib):
     a.call("GET an empty library", "GET", path, token=empty_read)
     a.call("GET as the other account", "GET", path, token=other_full)
     a.call("PUT is not a method", "PUT", path, token=full, body={})
+    a.call("OPTIONS", "OPTIONS", path)
 
     common_refusals(a, "POST", path, full, reader, uploader, {"countAgain": [set_a]}, write=True)
     a.call("POST neither verb", "POST", path, token=full, body={})
@@ -540,6 +544,7 @@ def shortlinks_api(run, lib):
     common_refusals(a, "GET", path, full, reader, uploader, None, write=False)
     a.call("GET read token, nothing yet", "GET", path, token=reader)
     a.call("PUT is not a method", "PUT", path, token=full, body={})
+    a.call("OPTIONS", "OPTIONS", path)
     common_refusals(a, "POST", path, full, reader, uploader, {"target": "https://example.com"}, write=True)
 
     body = lambda **kw: dict({"target": "https://example.com/" + sfx}, **kw)
@@ -801,6 +806,7 @@ def admin_disk(run, lib):
     a.call("admin read token", "GET", path, token=admin_read)
     a.call("banned admin", "GET", path, token=banned_full)
     a.call("POST is not a method", "POST", path, token=admin_full)
+    a.call("OPTIONS", "OPTIONS", path)
     a.signed_in(plain)
     a.call("non-admin session", "GET", path)
     a.call("non-admin session with a bad token", "GET", path, token="nope")
