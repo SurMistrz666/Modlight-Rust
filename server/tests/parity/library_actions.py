@@ -319,7 +319,7 @@ def uploads():
              'updated_at > now() - interval \'5 minutes\', expires_at, max_views, password_hash IS NULL, '
              'password_hash LIKE \'scrypt$%%\', password_version FROM uploads WHERE owner_id IN (%s) ORDER BY created_at'
              % in_list([owner, other]))
-        rows("quota " + name, 'SELECT id, used_quota FROM "user" WHERE id IN (%s) ORDER BY id'
+        rows("quota " + name, 'SELECT id, used_quota FROM "user" WHERE id IN (%s) ORDER BY id COLLATE "C"'
              % in_list([owner, other]))
 
     signed_out_checks("uploads", [("togglePublish", [ids["live"]]), ("trashSummary", []),
@@ -462,11 +462,11 @@ def folders():
     def folder_rows(name):
         rows("folders " + name,
              'SELECT f.name, f.slug, coalesce(p.name, \'-\'), f.is_public, f.sort_order FROM folders f '
-             'LEFT JOIN folders p ON p.id = f.parent_id WHERE f.owner_id IN (%s) ORDER BY f.name, f.slug'
+             'LEFT JOIN folders p ON p.id = f.parent_id WHERE f.owner_id IN (%s) ORDER BY f.name COLLATE "C", f.slug COLLATE "C"'
              % in_list([owner, other]))
         rows("folder of each upload " + name,
              'SELECT u.code, coalesce(f.name, \'-\'), u.deleted_at IS NULL, u.updated_at > now() - interval \'5 minutes\' '
-             'FROM uploads u LEFT JOIN folders f ON f.id = u.folder_id WHERE u.owner_id IN (%s) ORDER BY u.code'
+             'FROM uploads u LEFT JOIN folders f ON f.id = u.folder_id WHERE u.owner_id IN (%s) ORDER BY u.code COLLATE "C"'
              % in_list([owner, other]))
 
     def folder_id(name):
@@ -624,10 +624,10 @@ def duplicates():
     up("x2", other, a1, size=1000)
 
     def dup_rows(name):
-        rows("uploads " + name, 'SELECT code, deleted_at IS NULL FROM uploads WHERE owner_id IN (%s) ORDER BY code'
+        rows("uploads " + name, 'SELECT code, deleted_at IS NULL FROM uploads WHERE owner_id IN (%s) ORDER BY code COLLATE "C"'
              % in_list([owner, other]))
         rows("dismissals " + name, 'SELECT owner_id, checksum, copies, bytes FROM duplicate_dismissals '
-             'WHERE owner_id IN (%s) ORDER BY owner_id, checksum' % in_list([owner, other]))
+             'WHERE owner_id IN (%s) ORDER BY owner_id COLLATE "C", checksum COLLATE "C"' % in_list([owner, other]))
 
     signed_out_checks("duplicates", [(e, [] if e == "scanMyDuplicates" else [[ids["a1"]]]) for e in (
         "scanMyDuplicates", "trashDuplicates", "keepDuplicateSets", "countDuplicateSetsAgain")])
@@ -695,7 +695,7 @@ def shortlinks():
              'SELECT owner_id, regexp_replace(code, \'(^|/)[A-Za-z]{6}[0-9]$\', \'\\1<random>\'), target, '
              'password_hash IS NULL, clicks, last_used_at, expires_at IS NULL, '
              'round(extract(epoch FROM expires_at - created_at) / 60) FROM short_links WHERE owner_id IN (%s) '
-             'ORDER BY owner_id, target' % in_list([owner, notag, root]))
+             'ORDER BY owner_id COLLATE "C", target COLLATE "C", code COLLATE "C"' % in_list([owner, notag, root]))
 
     signed_out_checks("shortlinks", [("createShortLink", [{"target": "example.com"}]), ("listShortLinks", [])])
     parity.signed_in(pair, REF, RUST, owner)
@@ -867,7 +867,7 @@ def pastes():
                     'password_hash IS NULL, password_version, max_views, folder_id IS NULL, '
                     'length(delete_token), regexp_replace(storage_key, \'/[A-Za-z]{8}[0-9]{2}\\.\', \'/<code>.\') '
                     'FROM uploads WHERE owner_id IN (%s) ORDER BY created_at' % in_list(who))
-        rows("quota " + name, 'SELECT id, used_quota FROM "user" WHERE id IN (%s) ORDER BY id' % in_list(who))
+        rows("quota " + name, 'SELECT id, used_quota FROM "user" WHERE id IN (%s) ORDER BY id COLLATE "C"' % in_list(who))
         return text
 
     def stored_objects(name, who):
@@ -1054,7 +1054,7 @@ def instance():
     lib.both_sql('UPDATE "user" SET used_quota = 999999 WHERE id = %s' % q(drift))
 
     act(pair, "keep the files", "admin", "deleteUserAccount", [keeper, "keep"])
-    rows("orphaned rows", 'SELECT code, owner_id IS NULL, size FROM uploads WHERE code LIKE %s ORDER BY code'
+    rows("orphaned rows", 'SELECT code, owner_id IS NULL, size FROM uploads WHERE code LIKE %s ORDER BY code COLLATE "C"'
          % q("k_" + SFX))
     act(pair, "orphans after keep", "admin", "loadOrphans", [])
     act(pair, "impact of an account with drift", "admin", "loadDeletionImpact", [drift])
@@ -1097,7 +1097,7 @@ def instance():
 
     act(pair, "corrects this run's drift", "admin", "recalculateEveryQuota", [], post=recalc_view)
     rows("quota after recalculation", 'SELECT id, used_quota, updated_at > now() - interval \'5 minutes\' '
-         'FROM "user" WHERE id IN (%s) ORDER BY id' % in_list([admin_id, drift, nulled]))
+         'FROM "user" WHERE id IN (%s) ORDER BY id COLLATE "C"' % in_list([admin_id, drift, nulled]))
     a = acts.call_ref(pair.ref, "admin", "recalculateEveryQuota", [])
     b = acts.call_rust(pair.rust, "admin", "recalculateEveryQuota", [])
     oa = parity.next_action_envelope(a).get("ok") or {}
@@ -1139,7 +1139,7 @@ def instance():
     try:
         act(pair, "storage refuses one object", "admin", "deleteUserAccount", [stuck, "delete"])
         rows("rows after a refused object", 'SELECT code, owner_id IS NULL FROM uploads WHERE code LIKE %s '
-             'ORDER BY code' % q("s_" + SFX))
+             'ORDER BY code COLLATE "C"' % q("s_" + SFX))
         files("after a refused object", skeys)
         act(pair, "the refused row is an orphan", "admin", "loadOrphans", [])
         act(pair, "purge fails on it", "admin", "purgeAllOrphans", ["1"])
