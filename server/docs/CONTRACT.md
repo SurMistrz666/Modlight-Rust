@@ -168,7 +168,7 @@ Status codes, as the reference build answers them:
   payload of section 4.2, plus that meta tag for a redirect: the SPA replaces the
   URL and loads the target, as upstream's client does. The skeleton answers a
   plain `307` / `404` there, which works with the SPA as well; it only differs in
-  the status line;
+  the status line (open question 12.4);
 - `500` when computing the page failed (the error document, section 4.4);
 - `501` while a page or layout has no loader in the Rust server yet (skeleton
   only; section 4.2).
@@ -217,11 +217,12 @@ attributes still works: the SPA fetches `/_page` itself and fills `<html>` in
 
 **Two things the document must carry that the skeleton's shell does not yet:**
 
-1. **The page's own skin and wallpaper.** Upstream paints `data-theme` from the
-   root layout and then, on pages that render `<ThemeApplier>`, a blocking inline
-   script switches the skin (and the wallpaper) before the first paint. The SPA
-   has no server-rendered body, so the document must carry the **final** values
-   (otherwise the visitor's own skin shows until the SPA has loaded):
+1. **The page's own skin and wallpaper** (open question 12.2). Upstream paints
+   `data-theme` from the root layout and then, on pages that render
+   `<ThemeApplier>`, a blocking inline script switches the skin (and the
+   wallpaper) before the first paint. The SPA has no server-rendered body, so the
+   document must carry the **final** values (otherwise the visitor's own skin
+   shows until the SPA has loaded):
    - pages under `(app)`: `resolveTheme(layouts["(app)"].theme)` and
      `layouts["(app)"].background`;
    - `/{tag}/{code}` and `/{code}` (all three views): `resolveTheme(props.ownerTheme)`
@@ -235,7 +236,8 @@ attributes still works: the SPA fetches `/_page` itself and fills `<html>` in
    A wallpaper is `style="--ml-bg-image:url(&quot;{url}&quot;);--ml-bg-dim:{dim}"`
    plus `data-bg="on"` on `<html>` (`dim` written as JavaScript's
    `String(number)`, e.g. `0.7`), what `ThemeApplier`'s script sets.
-2. **`layouts.root.config`** (section 5.7; the skeleton does not send it yet).
+2. **`layouts.root.config`** (section 5.7; the skeleton does not send it yet; open
+   question 12.1).
 
 The production CSP needs nothing new: scripts and styles are same-origin files,
 the two inline scripts are the theme script (`'unsafe-inline'` is already in
@@ -2300,7 +2302,8 @@ and `"revalidate": true` added to any of them when either
   as a revalidation (`addRevalidationHeader` in `action-handler.js`) and its
   client refreshes the page. That includes the unlock and sign-in cookies and
   Better Auth's session-cookie refresh or expiry (7.2.3). The skeleton sets
-  `revalidate` only for `revalidatePath`/`revalidateTag` so far (section 12).
+  `revalidate` only for `revalidatePath`/`revalidateTag` so far (open question
+  12.3).
 
 What the browser does with it (matching Next 16's
 `router-reducer/reducers/server-action-reducer.js`):
@@ -4460,12 +4463,18 @@ components call them directly:
 What the server can rely on, and what it does not need to do:
 
 - **Navigation.** `<Link>` and `useRouter().push/replace` navigate client-side
-  when the target is a page of the SPA on the same origin (`src/routes/tree.tsx`
-  lists the pages, and the route-handler paths so that matching follows Next's
-  precedence: `/s/promo` is the short-link handler, not a `[userCode]/[mediaCode]`
-  page). Modified clicks, `target`, `download`, other origins and non-page paths
-  are left to the browser. `scroll: false` keeps the scroll position, otherwise a
-  navigation scrolls to the top; back/forward restore it.
+  when the target is a page of the SPA on the same origin. The route table is
+  `src/contract/routes.ts`: `ROUTES` names the pages and `SERVER_PATHS` the route
+  handlers and files the server answers itself, so that matching follows Next's
+  precedence (`/s/promo` is the short-link handler, not a
+  `[userCode]/[mediaCode]` page); `src/routes/tree.tsx` builds the router from
+  both. Any other target is a document load, as Next falls back to a browser
+  navigation (the fallbacks of section 4.2): another origin, a `SERVER_PATHS`
+  path, a URL no route matches, a redirect to one of those, and a `/_page`
+  request that fails or answers something that is none of the envelopes of 4.2.
+  A `<Link>` also leaves modified clicks, `target` and `download` to the
+  browser. `scroll: false` keeps the scroll position, otherwise a navigation
+  scrolls to the top; back/forward restore it.
 - **`router.refresh()`** fetches `/_page` for the current URL and re-renders with
   the new data, keeping component state (Next's semantics).
 - **Loading UI.** `app/(app)/dashboard/loading.tsx` replaces the content while a
@@ -4481,15 +4490,31 @@ What the server can rely on, and what it does not need to do:
 - **Redirect errors.** An action redirect navigates (push) and rejects the
   action's promise with Next's `NEXT_REDIRECT` error; a `redirect()` that escapes
   to the window is turned into a navigation, as Next's app router does.
-- **Head and `<html>`.** On every navigation the SPA sets `document.title` and
-  replaces the `data-ml-head` elements from `meta`. When the root layout data
-  changes (after a language or skin change and a refresh) it updates `lang`,
-  `data-mode` and `data-theme` on `<html>`, as React does when the root layout's
-  rendered attributes change; on public pages `<ThemeApplier>` switches the skin
-  and wallpaper after each navigation and writes `ml_skin` on `/dashboard*`.
-- **Translations.** Bundled: `messages/{en,pl}/<namespace>.json` for the 17
-  namespaces `i18n/request.ts` loads, one chunk per locale. The server only
-  says which locale (`layouts.root.locale`) and time zone (`layouts.root.timeZone`).
+- **Head and `<html>`.** The `meta` of every page and not-found payload (section
+  4.2) is applied by `useHead` in `src/routes/root.tsx`: it sets `document.title`
+  and the `description`, `application-name` and `robots` metas, creating a tag
+  that is missing and removing one whose value is `null` or empty (so the media
+  page drops its description and application name). The first payload leaves the
+  document's other head tags alone; every later one (a navigation or a refresh)
+  removes the Open Graph (`og:*`), Twitter (`twitter:*`), `canonical` and
+  `alternate` tags of the first document, which describe that page only and
+  exist for link-preview bots. Nothing else in `<head>` changes (the icon links
+  stay). When the root layout data changes (after a language or skin change and
+  a refresh) the SPA updates `lang`, `data-mode` and `data-theme` on `<html>`, as
+  React does when the root layout's rendered attributes change; wherever a page
+  renders `<ThemeApplier>` (the panel and the owner's public pages) its effect
+  sets that page's skin and wallpaper after each navigation, and under
+  `/dashboard` it writes `ml_skin`.
+- **Translations.** Not bundled: they come with the page data.
+  `layouts.root.messages` holds the 17 namespaces `i18n/request.ts` loads, for
+  the request's locale (`server/messages/`), and `layouts.root.timeZone` the time
+  zone; `src/pages/layout.tsx` hands them with `locale` to
+  `NextIntlClientProvider`, as upstream's root layout did. The SPA keeps the
+  dictionary it was sent (`src/runtime/messages.ts`) and names it on every
+  `/_page` request with `X-Modlight-Messages: <locale>:<messagesHash>`; while that
+  is still current the server answers `messages: null` (sections 4.1 and 5.7).
+  The first document carries the dictionary in its inlined payload, and a
+  language change brings the new locale's dictionary with the next page data.
 - **Cookies the browser writes that the server reads**: `ml_mode`
   (components/theme-toggle.tsx), `ml_skin` (components/theme-applier.tsx, panel
   only), `ml_sidebar` (components/app-shell.tsx), `ml_dupes_snooze`
@@ -4498,8 +4523,10 @@ What the server can rely on, and what it does not need to do:
 
 ## 11. Deviations from upstream
 
-Components and translations are byte-for-byte upstream (`upstream.lock.json`,
-`npm run sync:check`). What had to change, and why:
+Components are byte-for-byte upstream (`upstream.lock.json`,
+`npm run sync:check`), and so are the translations: `server/messages/` is
+upstream's `messages/`, read and sent by the server (section 5.7), not part of
+the SPA. What had to change, and why:
 
 **Ported Server Components** (`src/overrides/components/`, each starts with a
 header naming the change):
@@ -4536,9 +4563,14 @@ browser: `/2fa` and `/login` (`next`, through upstream's `safeNext`) and
 - Fonts: the same Geist woff2 files and `@font-face` rules as upstream's
   `next/font` output, served from `/assets/` with the stable class names
   `geist-sans` / `geist-mono` (Next's are hashed).
-- Translations are bundled in the SPA instead of travelling in the page data
-  (PORT.md section 8 lists `messages` under the root layout; section 11 says the
-  SPA bundles them; this contract chooses bundling, see 12.1).
+- A 501 box. While the Rust server has no loader for a page or one of its
+  layouts (SKELETON.md section 6), `/_page` and the document answer 501
+  `{"notImplemented": true, "route", "file", "layouts"}` (section 4.2) and the
+  SPA renders a box naming the upstream `file` (`src/routes/not-implemented.tsx`)
+  where the missing part would render: in place of the layout that is missing,
+  else in the page's slot inside the layouts that loaded. Upstream has nothing
+  like it. It shows in every build, because the Rust server always serves the
+  production bundle, and goes away with the last 501.
 - Layout data arrives with every navigation and the SPA uses the newest (Next
   keeps a shared layout until a refresh): the sidebar counts can be fresher.
 - A server action's promise settles after the page data it revalidated has
@@ -4555,49 +4587,118 @@ browser: `/2fa` and `/login` (`next`, through upstream's `safeNext`) and
 
 ## 12. Open questions for the backend
 
-1. **Translations in the payload or in the bundle.** PORT.md section 8 lists
-   `messages` in the root layout data; this contract bundles them in the SPA
-   (one chunk per locale, cached) and sends only `locale` and `timeZone`. If the
-   server would rather send them (for example to serve a translation fix without
-   a rebuild), the SPA change is small: say so before implementing either way.
-2. **Shortener host and the SPA's paths.** `proxy.ts` rewrites every path on the
-   shortener host except its `PASSTHROUGH` list (`_next`, `api`, `s/`, ...). The
-   SPA needs `/_page`, `/_rpc` and `/assets/` in that list (section 2.1); the
-   unlock page is the one SPA page reached on that host (`/promo/unlock` is
-   rewritten to `/s/promo/unlock`, and `/_page` must report that route).
-3. **Upstream returns secrets to their owner through two actions.**
-   `shortlinks.listShortLinks()` and `tokens.myTokens()` return whole rows
-   (`passwordHash`, `tokenHash`); the pages strip them, but the actions are
-   callable endpoints. 1:1 keeps that; dropping the two columns from the RPC
-   answers would break nothing in the SPA (no component reads them).
-4. **Masked error messages.** Several components show `err.message` from a
-   failed action (FolderTree, FolderBrowser, FileMenu, PasteEditor, SettingsForm,
-   UserManager, OrphanFiles, Maintenance). Upstream in production shows React's
-   masked text there (section 4.4); 1:1 means sending that text in `error.message`.
-   A development mode that sends the real message (as `next dev` does) is fine.
-5. **Upstream UI bug kept as is.** components/tokens/OneClickShareX.tsx passes a
-   function for the plain argument `{fileName}` of `tokens.oneClick.downloadsHint`,
-   so the file name never renders (React drops a function child; dev builds log
-   an error). Fixing it means changing a component or the message.
-6. **`/authorize` after an in-app sign-in.** `/authorize`'s wider CSP (loopback
-   `connect-src`) only applies to a document loaded at `/authorize`. After the
-   sign-in redirect the login form navigates there client-side (upstream does the
-   same with Next's router), so the document is still `/login`'s and the loopback
-   POST is blocked; the prompt then offers the manual copy. 1:1 keeps it; a
-   document navigation for `/authorize` would fix it.
-7. **Side effects of `GET /_page`.** As with upstream page loads, some page data
-   has effects: the media page counts a view (and can burn a one-time link), the
-   admin file browser writes an audit entry. Prefetching is off in the SPA, so
-   only a real navigation triggers them.
-8. **Dev server port.** `npm run dev` uses `127.0.0.1:5173` (PORT.md section 3
-   has no row for it).
-9. **Server-action quirks** (7.5, items 5 to 8): non-uuid ids answered with a
-   masked database error instead of a typed refusal, eleven behaviours a strict
-   1:1 port keeps (a 30-day cookie carrying a 24 h token, the short-link password
-   trimmed on save but not on check, `publishAppRelease` saving before refusing,
-   any role string accepted by `setRole`, `resendInvite` for any account, ...),
-   two unordered queries, and per-process rate limits. Each needs a keep-or-fix
-   decision; none is on PORT.md's security-fix list.
-10. **`revealRegistrationKey` and `createAccount`** return the plaintext
+Other sections refer to these items by number (for example 12.5): keep the
+numbers and append new items at the end.
+
+1. **`layouts.root.config`.** Section 5.7 asks for the five public configuration
+   fields (`appName`, `embedBrand`, `appUrl`, `appDomains`, `shortUrl`) in the
+   root layout data; the skeleton sends none. Until it does, the SPA falls back
+   to origin-derived values (`Modlight` for the app name and the brand, the
+   page's own origin for the three URLs; `src/overrides/lib/config.ts`), so a
+   deployment that sets `APP_NAME`, `EMBED_BRAND`, `APP_URL`, `APP_DOMAINS` or
+   `SHORTLINK_URL` would see the defaults wherever a page prints the app name or
+   builds a link.
+2. **The page's own skin and wallpaper in the document.** Section 2.2 lists, per
+   page, the `data-theme` and wallpaper the document's `<html>` must carry
+   before the first paint (upstream's `<ThemeApplier>` script did that). The
+   skeleton's shell writes the root layout's `data-theme`
+   (`resolveTheme(session theme ?? ml_skin)`) and no wallpaper, so until the SPA
+   has loaded and `<ThemeApplier>`'s effect corrects it, the document has no
+   wallpaper under `(app)` (and the wrong skin there when the stored theme is
+   NULL), and the visitor's own skin and no wallpaper on an owner's public
+   pages.
+3. **`revalidate` on cookie writes.** Section 7.1 (decided in 7.5, item 1): a
+   response that sets or deletes any cookie carries `"revalidate": true`,
+   because Next 16's client refreshes the page then. The skeleton adds it only
+   for `revalidatePath`/`revalidateTag` (`server/src/rpc/mod.rs`), so the
+   actions listed in 7.5 item 1 (preferences, invitations, sign-in, the two
+   unlock actions) and any action during which Better Auth refreshes or expires
+   the session cookie would not make the SPA refetch the page.
+4. **`/dashboard` redirects and `notFound`: 200 or 307/404.** Under `/dashboard`
+   upstream answers `200` for a page's own `redirect()` or `notFound()` (the
+   shell is already streamed behind `loading.tsx`; section 2.1 has the details,
+   including the `<meta http-equiv="refresh">` of a redirect); the skeleton
+   answers `307` and `404`, as everywhere else. The SPA handles both, so only
+   the status line differs: keep the skeleton's, or answer `200` with the
+   inlined redirect or not-found payload?
+5. **Malformed percent-escapes.** A path such as `/u/%E0%A4%A` is answered by
+   the reference with `500` `text/plain` (section 5.3); the skeleton answers
+   `400` `{"message": "Bad Request"}`, on the document and on `/_page`
+   (SKELETON.md 9.1). The SPA loads any `/_page` answer that is not a page
+   payload as a document (section 4.2), so either works: keep the `400`?
+6. **The skeleton's head for `notFound`.** `server/src/pages/meta.rs`:
+   `resolve(.., not_found = true)` always returns the root head, while inside
+   the dashboard boundary upstream keeps the page's own title (`User files - A`
+   for 6.21); OG/Twitter image URLs are emitted verbatim where Next
+   WHATWG-normalises `og:image`/`twitter:image` (differs only for unusual
+   `APP_URL`/`APP_DOMAINS` spellings).
+7. **`notFound` `meta`.** Section 5.11 recommends upstream's server-rendered
+   head (`{title: A, description: D, applicationName: A, robots: "noindex"}`)
+   rather than the browser-side `generateMetadata` result, which for the media
+   page would publish an unlisted file's name; confirm.
+8. **Skins named like `Object.prototype` members.** `ml_skin` (or a stored
+   theme) equal to an `Object.prototype` name (`toString`, `constructor`,
+   `__proto__`...) makes upstream answer 500 (verified); reproduce, or resolve
+   it to `discord`? The same plain-object lookups give absurd results elsewhere
+   (`?size=constructor` on `/dashboard` reaches SQL; ext `constructor` in
+   `MIME_BY_EXT`, `LONG_TYPES`, `EXT_CATEGORY`).
+9. **`%` in a decoded segment.** A decoded segment containing `%` makes
+   upstream's `generateMetadata` throw `URIError` (double decode, verified on
+   `/x%25`); when the page itself renders (possible only with `%` in the
+   decorative extension, e.g. `/tag/code.p%25ng`) the upstream outcome was not
+   traced: recommend computing the metadata from the page's single decode.
+10. **`preview.name` on `/invite/[token]`.** The port type sends `preview.name`
+    to the browser, which upstream never did (only `email` reached
+    `InviteForm`); keep or drop.
+11. **Capped media.** Upstream computes the head and the view count
+    concurrently, so the view that exhausts a cap may get the `Not found` head;
+    section 6.27 recommends the pre-consume row.
+12. **Preview bots and view-capped text.** Preview bots (not redirected) get the
+    full media view of a view-capped text file, `textContent` included, without
+    consuming a view; decide whether PORT.md security fix 1 covers this page.
+13. **Date filters.** `/dashboard` `?after=`/`?before=` values that are not
+    `YYYY-MM-DD` go through V8's lenient `Date` parser; the Rust server needs an
+    equivalent for non-ISO strings or a documented subset.
+14. **Ordering ties.** `ORDER BY` clauses without a tie-breaker (`listUploads`,
+    short links, folder `sort_order, name`, gallery and album `created_at DESC`,
+    which also picks the `og:image`) return ties in plan order; identical SQL is
+    the closest match.
+15. **Session refresh on page GETs.** Session refresh writes and cookie updates
+    done by Better Auth `getSession` during a page GET belong to the Rust auth
+    module (PORT.md section 9) and are not listed per page.
+16. **Upstream returns secrets to their owner through two actions.**
+    `shortlinks.listShortLinks()` and `tokens.myTokens()` return whole rows
+    (`passwordHash`, `tokenHash`); the pages strip them, but the actions are
+    callable endpoints. 1:1 keeps that; dropping the two columns from the RPC
+    answers would break nothing in the SPA (no component reads them).
+17. **Masked error messages.** Several components show `err.message` from a
+    failed action (FolderTree, FolderBrowser, FileMenu, PasteEditor, SettingsForm,
+    UserManager, OrphanFiles, Maintenance). Upstream in production shows React's
+    masked text there (section 4.4); 1:1 means sending that text in `error.message`.
+    A development mode that sends the real message (as `next dev` does) is fine.
+18. **Upstream UI bug kept as is.** components/tokens/OneClickShareX.tsx passes a
+    function for the plain argument `{fileName}` of `tokens.oneClick.downloadsHint`,
+    so the file name never renders (React drops a function child; dev builds log
+    an error). Fixing it means changing a component or the message.
+19. **`/authorize` after an in-app sign-in.** `/authorize`'s wider CSP (loopback
+    `connect-src`) only applies to a document loaded at `/authorize`. After the
+    sign-in redirect the login form navigates there client-side (upstream does the
+    same with Next's router), so the document is still `/login`'s and the loopback
+    POST is blocked; the prompt then offers the manual copy. 1:1 keeps it; a
+    document navigation for `/authorize` would fix it.
+20. **Side effects of `GET /_page`.** As with upstream page loads, some page data
+    has effects: the media page counts a view (and can burn a one-time link), the
+    admin file browser writes an audit entry. Prefetching is off in the SPA, so
+    only a real navigation triggers them.
+21. **Dev server port.** `npm run dev` uses `127.0.0.1:5173` (PORT.md section 3
+    has no row for it).
+22. **Server-action quirks** (7.5, items 5 to 8): non-uuid ids answered with a
+    masked database error instead of a typed refusal, eleven behaviours a strict
+    1:1 port keeps (a 30-day cookie carrying a 24 h token, the short-link password
+    trimmed on save but not on check, `publishAppRelease` saving before refusing,
+    any role string accepted by `setRole`, `resendInvite` for any account, ...),
+    two unordered queries, and per-process rate limits. Each needs a keep-or-fix
+    decision; none is on PORT.md's security-fix list.
+23. **`revealRegistrationKey` and `createAccount`** return the plaintext
     registration key and raw (unmasked) mail error text to administrators, as
     upstream does (7.4). 1:1 keeps both.
