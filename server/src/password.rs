@@ -505,3 +505,103 @@ mod tests {
         assert!(!check_rate_limit_at(key, 1, 1000, t0 + 1002).allowed);
     }
 }
+
+#[cfg(test)]
+mod default_password_tests {
+    //! tests/unit/default-password.test.ts
+    use super::*;
+
+    const SECRET: &str = "test-secret-test-secret-test-secret";
+    const OWNER: &str = "usr_2f8a1c94";
+    const OTHER_OWNER: &str = "usr_9b3e77d1";
+    const FILE_A: &str = "9d2e1a54-0000-4000-8000-00000000000a";
+    const FILE_B: &str = "9d2e1a54-0000-4000-8000-00000000000b";
+
+    fn on_default(media: &str, v: i64, owner: &str) -> MediaUnlockSubject {
+        MediaUnlockSubject { media_id: media.into(), owner_id: Some(owner.into()), password_version: Some(v) }
+    }
+    fn hand_picked(media: &str) -> MediaUnlockSubject {
+        MediaUnlockSubject { media_id: media.into(), owner_id: Some(OWNER.into()), password_version: None }
+    }
+    fn owner_token(owner: &str, v: i64, ttl: Option<i64>) -> String {
+        mint_owner_unlock_token(SECRET, owner, v, ttl).unwrap()
+    }
+    fn verify(token: Option<&str>, owner: Option<&str>, v: Option<i64>) -> bool {
+        verify_owner_unlock_token(SECRET, token, owner, v)
+    }
+    fn unlocked(subject: &MediaUnlockSubject, jar: &[(String, String)]) -> bool {
+        is_media_unlocked(SECRET, subject, |name| jar.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()))
+    }
+
+    #[test]
+    fn owner_scoped_tokens() {
+        assert!(verify(Some(&owner_token(OWNER, 3, None)), Some(OWNER), Some(3)));
+        for junk in ["1", "", "garbage", "abc.def", ".sig"] {
+            assert!(!verify(Some(junk), Some(OWNER), Some(0)), "{junk}");
+        }
+        assert!(!verify(None, Some(OWNER), Some(0)));
+        let token = owner_token(OWNER, 1, None);
+        let (exp, sig) = token.split_once('.').unwrap();
+        let flipped =
+            if let Some(rest) = sig.strip_prefix('A') { format!("B{rest}") } else { format!("A{}", &sig[1..]) };
+        assert!(!verify(Some(&format!("{exp}.{flipped}")), Some(OWNER), Some(1)));
+        assert!(!verify(Some(&format!("{exp}.{}", &sig[..sig.len() - 2])), Some(OWNER), Some(1)));
+        assert!(!verify(Some(&format!("{exp}.{sig}xx")), Some(OWNER), Some(1)));
+        let far = now_ms() / 1000 + 60 * 60 * 24 * 365;
+        assert!(!verify(Some(&format!("{far}.{sig}")), Some(OWNER), Some(1)));
+        assert!(!verify(Some(&owner_token(OWNER, 1, Some(-1))), Some(OWNER), Some(1)));
+        assert!(!verify(Some(&token), Some(OWNER), Some(2)));
+        assert!(!verify(Some(&token), Some(OWNER), Some(0)));
+        assert!(!verify(Some(&owner_token(OTHER_OWNER, 1, None)), Some(OWNER), Some(1)));
+        let zero = owner_token(OWNER, 0, None);
+        assert!(!verify(Some(&zero), Some(OWNER), None));
+        assert!(!verify(Some(&zero), Some(OWNER), Some(-1)));
+        assert!(!verify(Some(&zero), None, Some(0)));
+        assert!(mint_owner_unlock_token(SECRET, OWNER, -1, None).is_err());
+        // Same string in the id slot, different scope: a different signature.
+        let jar = vec![(unlock_cookie_name(UnlockScope::Media, FILE_A), owner_token(FILE_A, 0, None))];
+        assert!(!unlocked(&hand_picked(FILE_A), &jar));
+    }
+
+    #[test]
+    fn who_gets_in() {
+        let file_a = vec![(
+            unlock_cookie_name(UnlockScope::Media, FILE_A),
+            mint_unlock_token(SECRET, UnlockScope::Media, FILE_A, None),
+        )];
+        assert!(unlocked(&hand_picked(FILE_A), &file_a));
+        assert!(!unlocked(&hand_picked(FILE_B), &file_a));
+        assert!(!unlocked(&on_default(FILE_B, 0, OWNER), &file_a));
+        let remembered = vec![(owner_unlock_cookie_name(OWNER), owner_token(OWNER, 0, None))];
+        assert!(unlocked(&on_default(FILE_A, 0, OWNER), &remembered));
+        assert!(unlocked(&on_default(FILE_B, 0, OWNER), &remembered));
+        assert!(!unlocked(&hand_picked(FILE_A), &remembered));
+        assert!(!unlocked(&on_default(FILE_B, 1, OWNER), &remembered));
+        let other = vec![(owner_unlock_cookie_name(OTHER_OWNER), owner_token(OTHER_OWNER, 0, None))];
+        assert!(!unlocked(&on_default(FILE_A, 0, OWNER), &other));
+        assert!(!unlocked(&on_default(FILE_A, 0, OWNER), &[(owner_unlock_cookie_name(OWNER), "1".into())]));
+        let expired = vec![(owner_unlock_cookie_name(OWNER), owner_token(OWNER, 0, Some(-1)))];
+        assert!(!unlocked(&on_default(FILE_A, 0, OWNER), &expired));
+        let orphan = MediaUnlockSubject { media_id: FILE_A.into(), owner_id: None, password_version: Some(0) };
+        assert!(!unlocked(&orphan, &remembered));
+        assert!(!unlocked(&on_default(FILE_A, 0, OWNER), &[]));
+        assert!(!unlocked(&hand_picked(FILE_A), &[]));
+    }
+
+    #[test]
+    fn cookies() {
+        assert_eq!(owner_unlock_cookie_name(OWNER), format!("ml_dpw_{OWNER}"));
+        assert_eq!(unlock_cookie_name(UnlockScope::Owner, OWNER), format!("ml_dpw_{OWNER}"));
+        assert_eq!(unlock_cookie_name(UnlockScope::Media, FILE_A), format!("ml_unlock_{FILE_A}"));
+        let owner = unlock_cookie("n".into(), "v".into(), UnlockScope::Owner, None, true).to_next_string();
+        assert!(owner.contains(&format!("Max-Age={REMEMBER_TTL}")), "{owner}");
+        assert!(
+            owner.contains("HttpOnly") && owner.contains("Path=/") && owner.to_lowercase().contains("samesite=lax")
+        );
+        let media = unlock_cookie("n".into(), "v".into(), UnlockScope::Media, None, false).to_next_string();
+        assert!(media.contains(&format!("Max-Age={}", 60 * 60 * 24)), "{media}");
+        let remembered =
+            unlock_cookie("n".into(), "v".into(), UnlockScope::Media, Some(REMEMBER_TTL), false).to_next_string();
+        assert!(remembered.contains(&format!("Max-Age={REMEMBER_TTL}")), "{remembered}");
+    }
+}

@@ -451,6 +451,13 @@ def avatars(run, lib):
     ids["big"] = (big, big)
     gone = seed_upload(lib, owner, "gone" + lib.suffix, filename="gone.png")
     ids["gone"] = (gone, gone)
+    # Ownership is in the SELECT: another account's file and a trashed one are
+    # both simply not found (avatar-source.test.ts).
+    stranger, _ = lib.seed_user("as")
+    theirs = seed_upload(lib, stranger, "theirs" + lib.suffix, filename="theirs.png")
+    ids["theirs"] = (theirs, theirs)
+    binned = seed_upload(lib, owner, "binned" + lib.suffix, filename="binned.png", deleted_at=days_ago(1))
+    ids["binned"] = (binned, binned)
 
     def act(name, export, args_for):
         a = actions.call_ref(pair.ref, "avatar", export, args_for(0))
@@ -472,6 +479,8 @@ def avatars(run, lib):
     act("setAvatarFromUpload(svg)", "setAvatarFromUpload", lambda i: [ids["logo.svg"][i]])
     act("setAvatarFromUpload(too large)", "setAvatarFromUpload", lambda i: [ids["big"][i]])
     act("setAvatarFromUpload(bytes missing)", "setAvatarFromUpload", lambda i: [ids["gone"][i]])
+    act("setAvatarFromUpload(another account's file)", "setAvatarFromUpload", lambda i: [ids["theirs"][i]])
+    act("setAvatarFromUpload(trashed)", "setAvatarFromUpload", lambda i: [ids["binned"][i]])
     act("setAvatarFromUpload(not a uuid)", "setAvatarFromUpload", lambda i: ["nope"])
     act("setAvatarFromUpload(unknown)", "setAvatarFromUpload", lambda i: [str(uuid.uuid4())])
     act("setAvatarFromUpload(number)", "setAvatarFromUpload", lambda i: [5])
