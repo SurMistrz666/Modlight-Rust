@@ -166,6 +166,13 @@ impl ModlightApp {
                 self.tray_checked_at = self.state.time;
                 tray.update(&self.state);
             }
+            // `UpdateTrayIcon` with the average progress, when the setting asks for it.
+            let enabled = self.state.app_upload_settings().tray_icon_progress_enabled;
+            let progress = match self.state.uploads.tasks.average_progress() {
+                Some(progress) if enabled => progress as i32,
+                _ => -1,
+            };
+            tray.show_progress(progress);
             for command in tray.commands() {
                 self.state.push(command);
             }
