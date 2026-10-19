@@ -35,6 +35,10 @@ fn reset_query() -> Schema {
     Schema::object(vec![("token", Schema::string().optional())]).optional()
 }
 
+fn reset_callback_query() -> Schema {
+    Schema::object(vec![("callbackURL", Schema::string())])
+}
+
 fn verify_body() -> Schema {
     Schema::object(vec![("password", Schema::string())])
 }
@@ -54,7 +58,7 @@ pub fn endpoints() -> Vec<Endpoint> {
             path: "/reset-password/:token",
             methods: &[Method::GET],
             body: None,
-            query: None,
+            query: Some(reset_callback_query),
             media_types: &[],
             middleware: &[Middleware::OriginCheckQueryCallback],
             handler: request_password_reset_callback,

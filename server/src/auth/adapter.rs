@@ -44,6 +44,9 @@ pub enum SqlValue {
     BigInt(i64),
     Int(i32),
     Date(JsDate),
+    /// A NULL for a column of this SQL type (a bare text NULL would not fit a
+    /// timestamp or boolean column).
+    NullOf(&'static str),
     /// Text from a request body, cast by Postgres to the column's type
     /// (`$n::text::<type>`), the way node-postgres sends untyped parameters.
     Cast(String, &'static str),
@@ -140,7 +143,7 @@ fn push_bind<'q>(
     v: &'q SqlValue,
 ) -> sqlx::query::QueryAs<'q, Postgres, User, sqlx::postgres::PgArguments> {
     match v {
-        SqlValue::Null => q.bind(None::<String>),
+        SqlValue::Null | SqlValue::NullOf(_) => q.bind(None::<String>),
         SqlValue::Text(s) | SqlValue::Cast(s, _) => q.bind(s),
         SqlValue::Bool(b) => q.bind(*b),
         SqlValue::BigInt(n) => q.bind(*n),
@@ -151,7 +154,7 @@ fn push_bind<'q>(
 
 fn placeholder(i: usize, v: &SqlValue) -> String {
     match v {
-        SqlValue::Cast(_, ty) => format!("${i}::text::{ty}"),
+        SqlValue::Cast(_, ty) | SqlValue::NullOf(ty) => format!("${i}::text::{ty}"),
         _ => format!("${i}"),
     }
 }
@@ -288,6 +291,7 @@ pub async fn create_user(db: &PgPool, default_user_quota: i64, data: NewUser) ->
         };
         let value = match value {
             SqlValue::Cast(text, _) => SqlValue::Cast(text.clone(), user_column_type(column)),
+            SqlValue::Null => SqlValue::NullOf(user_column_type(column)),
             other => other.clone(),
         };
         columns.push(format!("\"{column}\""));
@@ -339,6 +343,7 @@ async fn update_user_where(
         }
         let value = match value {
             SqlValue::Cast(text, _) => SqlValue::Cast(text.clone(), user_column_type(column)),
+            SqlValue::Null => SqlValue::NullOf(user_column_type(column)),
             SqlValue::Text(email) if column == "email" => SqlValue::Text(email.to_lowercase()),
             other => other.clone(),
         };
