@@ -563,7 +563,11 @@ def next_action_envelope(res):
         ref = head.get("a") if isinstance(head, dict) else None
         key = ref[2:] if isinstance(ref, str) and ref.startswith("$@") else None
         value = rows.get(key) if key else None
-        if isinstance(value, tuple) and value[0] == "error":
+        errors = set(k for k, v in rows.items() if isinstance(v, tuple))
+        if (isinstance(value, tuple) and value[0] == "error") or _refers_error(head.get("a") if isinstance(head, dict) else None, rows, errors, set()):
+            # A value React cannot encode (a function, say) becomes its own
+            # `E` row that the result points at, possibly several rows down;
+            # the client then rejects the whole call.
             env["error"] = MASKED
         else:
             plain = dict((k, v) for k, v in rows.items() if not isinstance(v, tuple))
@@ -574,6 +578,25 @@ def next_action_envelope(res):
     if revalidated and revalidated not in ("[[],0,0]", "0"):
         env["revalidate"] = True
     return env
+
+
+def _refers_error(v, rows, errors, seen):
+    if isinstance(v, str):
+        m = re.match(r"^\$@?([0-9a-f]+)$", v)
+        if not m:
+            return False
+        k = m.group(1)
+        if k in errors:
+            return True
+        if k in rows and k not in seen:
+            seen.add(k)
+            return _refers_error(rows[k], rows, errors, seen)
+        return False
+    if isinstance(v, list):
+        return any(_refers_error(x, rows, errors, seen) for x in v)
+    if isinstance(v, dict):
+        return any(_refers_error(x, rows, errors, seen) for x in v.values())
+    return False
 
 
 def rpc_envelope(res):
