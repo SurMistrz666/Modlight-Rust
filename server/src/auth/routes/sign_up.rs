@@ -223,7 +223,7 @@ fn synthetic_user(name: &str, email: &str, body: &Map<String, Value>, additional
     let now = crate::db::types::JsDate::now().to_iso_string();
     let value_of = |field: &str| -> Option<Value> {
         additional.get(field).map(|v| match v {
-            SqlValue::Null => Value::Null,
+            SqlValue::Null | SqlValue::NullOf(_) => Value::Null,
             SqlValue::Text(s) => Value::String(s.clone()),
             SqlValue::Bool(b) => Value::Bool(*b),
             SqlValue::BigInt(n) => json!(n),

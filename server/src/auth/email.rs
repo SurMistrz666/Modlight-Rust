@@ -59,15 +59,29 @@ fn texts(ctx: &EndpointCtx) -> MailTexts {
     MailTexts::from_messages(&ctx.state.messages, &ctx.state.config.app_name)
 }
 
+/// `ctx.context.runInBackgroundOrAwait(promise)`: Better Auth awaits the mail
+/// callback but catches and logs whatever it throws, so a mail failure never
+/// fails the endpoint that triggered it.
+fn swallow(result: anyhow::Result<()>) -> Result<(), EndpointError> {
+    if let Err(e) = result {
+        tracing::error!("Failed to run background task: {e:#}");
+    }
+    Ok(())
+}
+
 /// lib/auth.ts `emailVerification.sendVerificationEmail`: nothing to send
 /// when mail is off (verification is then not required either).
 pub async fn send_verification_mail(ctx: &EndpointCtx, user: &User, url: &str) -> Result<(), EndpointError> {
-    if !crate::mail_settings::mail_ready(&ctx.state).await? {
-        return Ok(());
-    }
-    let mail = render_verify_email(&texts(ctx), locale_for(ctx, user), &user.email, url);
-    send_mail(&ctx.state, &MailMessage::from_rendered(&user.email, &mail)).await?;
-    Ok(())
+    swallow(
+        async {
+            if !crate::mail_settings::mail_ready(&ctx.state).await? {
+                return Ok(());
+            }
+            let mail = render_verify_email(&texts(ctx), locale_for(ctx, user), &user.email, url);
+            send_mail(&ctx.state, &MailMessage::from_rendered(&user.email, &mail)).await
+        }
+        .await,
+    )
 }
 
 /// `sendVerificationEmailFn(ctx, user)` with the callback URL the caller
@@ -86,8 +100,9 @@ pub async fn send_verification_email_fn(
 /// lib/auth.ts `emailAndPassword.sendResetPassword`. No `mailReady()` guard
 /// on purpose: a reset that cannot be sent must fail rather than report
 /// success (and /forgot does not render its form when mail is off).
+/// (Like every mail callback it runs through `runInBackgroundOrAwait`, so the
+/// failure is logged, and the endpoint still answers with its neutral text.)
 pub async fn send_reset_password_mail(ctx: &EndpointCtx, user: &User, url: &str) -> Result<(), EndpointError> {
     let mail = render_reset_password(&texts(ctx), locale_for(ctx, user), &user.email, url);
-    send_mail(&ctx.state, &MailMessage::from_rendered(&user.email, &mail)).await?;
-    Ok(())
+    swallow(send_mail(&ctx.state, &MailMessage::from_rendered(&user.email, &mail)).await)
 }

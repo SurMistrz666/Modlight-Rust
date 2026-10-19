@@ -145,7 +145,14 @@ class Browser(object):
         return self.request("POST", "/_rpc/%s/%s" % (module, export), headers=h, raw=json.dumps(args))
 
 
+# The servers' own origins (set by Run): spelled `<origin>` in comparisons,
+# since each answers with its own APP_URL.
+ORIGINS = []
+
+
 def normalize_text(s, extra=None):
+    for o in ORIGINS:
+        s = s.replace(o, "<origin>")
     s = ISO_RE.sub("<iso>", s)
     s = UUID_RE.sub("<uuid>", s)
     s = HTTP_DATE_RE.sub("<http-date>", s)
@@ -182,7 +189,9 @@ def cookie_shape(res, volatile_values=True):
         parts = [p.strip() for p in raw.split(";")]
         name, _, value = parts[0].partition("=")
         if volatile_values and value:
-            value = "<value len=%d>" % len(value)
+            # Lengths of the DECODED value: base64 signatures URI-encode to
+            # different lengths ("+" and "/" become three characters).
+            value = "<value len=%d>" % len(urllib.parse.unquote(value))
         attrs = []
         for p in parts[1:]:
             k, _, v = p.partition("=")
@@ -201,6 +210,7 @@ class Run(object):
     def __init__(self, ref, rust, real_ip=None, verbose=False):
         self.ref = ref
         self.rust = rust
+        ORIGINS[:] = [ref.rstrip("/"), rust.rstrip("/")]
         self.real_ip = real_ip or "198.51.100.%d" % random.randint(1, 254)
         self.verbose = verbose
         self.failures = []
