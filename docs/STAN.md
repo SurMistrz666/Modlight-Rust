@@ -38,7 +38,7 @@ Ostatnia aktualizacja: 2026-10-18 (koniec dnia 1, praca wstrzymana na prośbę w
 | `srv-auth` | scalona do `main` (bbde0a3) | konta, logowanie zgodne z Better Auth, 2FA, admin, poczta, wydania, strony auth i układ (app); skrypty porównawcze z oryginałem zielone, zgodność kont/sesji/2FA w obie strony 227/227; poprawki 3, 4, 7 wdrożone. Szczegóły i pozostałe różnice: `docs/handoff/srv-auth.md` |
 | `srv-library` | scalona do `main` (1be08bc) | wysyłanie (ShareX z poprawką 2, tus zgodny z Uppy i aplikacją), magazyn lokalny i S3, foldery, kosz, duplikaty, skróty, awatary i tapety, wiązanie libvips, strony biblioteki; 975 testów, porównania z oryginałem zielone. Otwarte pozycje dla mediów: `docs/handoff/srv-library.md` |
 | `srv-media-a` | `_wt/srv-media-a` | W TOKU: przetwarzanie mediów (konwersje, podglądy ruchome i osi czasu, okładki, docx, karty OG) |
-| `srv-media-b` | `_wt/srv-media-b` | W TOKU: serwowanie plików i strony publiczne, osadzenia, albumy z zip, poprawki 1, 5, 6 |
+| `srv-media-b` | scalona do `main` (e549b53) | serwowanie plików, strony publiczne, osadzenia, oEmbed, albumy z zip, usuwanie tokenem; poprawki 1 (limit wyświetleń: przepustka `ml_view_<id>`), 5, 6; 1080 testów, 1064 porównań zgodnych. Czeka na podpięcie części A w `media/part_a.rs`. Znaleziony błąd oryginału: zip albumu zawsze 500 |
 
 Gotowe polecenia dla kolejnych agentów: `_scratch/prompts/` (`common-server.md`,
 `srv-library.md`, `srv-media.md`).
