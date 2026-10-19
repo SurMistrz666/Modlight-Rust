@@ -30,6 +30,8 @@
 //! write cookies); a `/_page` fetch is a client-side navigation (`RSC: 1`
 //! upstream) and does not refresh at all.
 
+pub mod dashboard_tokens;
+pub mod download;
 pub mod layout_auth;
 pub mod meta;
 pub mod root_layout;
@@ -341,6 +343,8 @@ impl PageRegistry {
 pub fn register_all(reg: &mut PageRegistry) {
     reg.layout(Layout::Root, root_layout::load);
     reg.layout(Layout::Auth, layout_auth::load);
+    reg.page("/download", download::load); // app/download/page.tsx
+    reg.page("/dashboard/tokens", dashboard_tokens::load); // app/(app)/dashboard/tokens/page.tsx
 }
 
 // ── Pipeline ────────────────────────────────────────────────────────────────

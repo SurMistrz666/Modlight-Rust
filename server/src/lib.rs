@@ -40,6 +40,8 @@ pub mod password;
 pub mod paths;
 pub mod quota;
 pub mod registration;
+pub mod releases;
+pub mod releases_core;
 pub mod routes;
 pub mod rpc;
 pub mod runtime;
