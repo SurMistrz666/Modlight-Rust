@@ -52,6 +52,20 @@ Gotowe polecenia dla kolejnych agentów: `_scratch/prompts/` (`common-server.md`
    etap 5 (efekty i pozostałe narzędzia ShareX).
 4. Przegląd bezpieczeństwa kodu Rust, potem prywatne repo na GitHubie.
 
+## Decyzje do potwierdzenia u właściciela
+
+- Przekierowanie `/dashboard` i strony nie znalezione: oryginał odpowiada 200, szkielet 307/404.
+- Zły znak `%` w adresie: oryginał 500, szkielet 400.
+- Ramka „501: nie przeniesione” w panelu widoczna w każdym buildzie, do czasu ukończenia portu.
+- Nazwa prywatnego repo na GitHubie (jedno repo `modlight` czy dwa).
+
+## Przekazanie innej sesji
+
+Pełna notatka dla kolejnej sesji Claude: `~/Desktop/claude/stan_agentow/modlight-rust.md`
+(poza repo, z odnośnikami do kont testowych i sesji). Agentów z sesji 25670274 nie da się wznowić
+z innej sesji: nowa sesja uruchamia świeżych agentów z `HANDOFF.md` danej gałęzi i poleceniami
+z `_scratch/prompts/`.
+
 ## Wznowienie
 
 ```bash
