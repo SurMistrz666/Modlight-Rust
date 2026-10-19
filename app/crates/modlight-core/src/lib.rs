@@ -13,6 +13,7 @@ pub mod library;
 pub mod messages;
 pub mod names;
 pub mod sync;
+pub mod tasks;
 pub mod theme;
 pub mod upload;
 pub mod watch;
