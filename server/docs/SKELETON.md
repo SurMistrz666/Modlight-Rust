@@ -91,6 +91,7 @@ action errors), so upstream `.env` files keep their meaning.
 | `media/motion_preview.rs`, `media/serve.rs` | `lib/media/motion-preview.ts`, `lib/media/serve.ts` | partial: the row-level policy (`canMotionPreview`, `clampMotionEdge`) and the pure reads (`getMedia`, `cacheHeadersFor`); clip planning and streaming are the media serving port's |
 | `media/vips.rs` + `media/vips/*`, `media/{image,probe,avif_brand,blurhash,sharp_runtime,transform_cost,transform_queue,avatar,abort}.rs` | sharp 0.34.5 / libvips 8.17, `lib/media/{image,probe,avif-brand,sharp-runtime,transform-cost,transform-queue,avatar}.ts`, blurhash 2.0.5 | done (section 11) |
 | `media/{ffmpeg,av_probe,av_cost,av_workspace,av_meta,playback_health}.rs` | `lib/media/*` same names | done (`playback_health`: all but `diagnosePlayback`) |
+| `media/{docx,docx_support,zip_guard}.rs`, `media/mammoth/` | `lib/media/{docx,docx-support,zip-guard}.ts`, mammoth 1.12.1 (+ JSZip 3.10.1, @xmldom/xmldom 0.8.13, lop 0.4.2, dingbat-to-unicode 1.0.1) | done (section 12) |
 | `naming.rs`, `naming_words.rs`, `folders.rs`, `uploads.rs`, `shortlinks.rs`, `quota.rs`, `format.rs`, `avatar.rs`, `avatar_store.rs`, `background.rs`, `paste_languages.rs`, `js_date.rs`, `link_info/parse.rs`, `maintenance/trash.rs` | `lib/` same names (`js_date.rs`: V8's `new Date(string)`) | done |
 | `data/{uploads,upload_query,folders,duplicates,admin_files}.rs` | `lib/data/` same names | done |
 | `routes/api/{uploads,uploads_check,folders,duplicates,shortlinks,link_info,avatar,background,admin_disk}.rs`, `routes/{avatar,s_code,s_code_name}.rs` | `app/api/{uploads,uploads/check,folders,duplicates,shortlinks,link-info,avatar,background,admin/disk}`, `app/avatar/[userCode]`, `app/bg/[userCode]`, `app/s/[code]`, `app/s/[code]/[name]` | done (parity: `library.py`, `library_routes.py`) |
@@ -432,3 +433,74 @@ Copy the order and arguments from sharp's `pipeline.cc` (sources in
 `_scratch/srv-library/ref-src/sharp@0.34.5`). Not ported yet (for convert,
 motion and card rendering): `flatten`, `join: { animated }`, `composite`, text
 input.
+
+## 12. Document preview (docx)
+
+`media::docx::docx_to_html(Bytes) -> DocxResult` is `docxToHtml`
+(`Result<DocxPreview { html, images, images_dropped }, DocxRefusal>`,
+`DocxRefusal::as_str()` gives upstream's token: `not-a-zip`, `malformed`,
+`too-big`, `too-many-entries`, `zip64`, `unsupported-method`, `too-large`,
+`legacy-doc`, `not-a-document`); `media::zip_guard::inspect_zip` and
+`media::docx_support::{docx_support, MAX_DOCX_BYTES}` are the two helpers.
+The route (`/{tag}/{code}/render`, gating, status codes) is not part of it.
+
+`media/mammoth/` is mammoth 1.12.1 ported file by file (`docx/body_reader.rs`
+= `lib/docx/body-reader.js`, ...), with what it runs of JSZip
+(`jszip.rs`: central directory, local names, size check, no CRC check),
+@xmldom/xmldom (`xml/xmldom.rs`: sax.js and the DOM rules, every
+warning/error is a failure because mammoth throws on them), lop
+(`lop.rs`, the style-map grammar's combinators) and dingbat-to-unicode.
+`mammoth/js.rs` holds the JavaScript semantics it needs (`parseInt`,
+`ToNumber`, `{}` as a map with `Object.prototype` showing through, UTF-16
+strings). The conversion runs on a thread of its own (256 MB stack, the
+readers recurse); pictures go through the libvips binding one at a time in
+document order (`mapSeries` upstream), so the 3 MB budget drops the same ones.
+New dependency: `flate2` on `zlib-rs` (zlib's inflate semantics, as node:zlib
+and pako).
+
+Verified by `tests/parity_media/`: `docx_corpus.py` builds 229 documents
+(hand-built OOXML per mammoth feature, embedded style maps, pictures, hostile
+archives, xmldom edge cases, `Object.prototype` names, macOS textutil output,
+mammoth's own Word/LibreOffice test documents); `docx_parity.py` runs each
+through upstream's own `docx.ts`, `zip-guard.ts`, `docx-support.ts`,
+`sharp-runtime.ts` and `limits.ts` inside the reference container (node 24
+strips the types; imports rewritten to the container's packages) and through
+`docx_to_html` (`tests/media_docx.rs`, ignored test `parity_dump`), and
+compares the JSON. On 2026-10-20: 222 identical byte for byte, pictures
+included (libvips 8.18 here and 8.17.3 in the reference wrote the same
+WebP); 3 known differences (items 3 and 4 below); 4 that never finish
+upstream (item 1). `docx_route_e2e.py` fetches a sample through the
+reference's real `/render` route with minted tickets: same bytes as the
+harness.
+
+Differences, all deliberate or unavoidable:
+
+1. **Hangs.** Upstream never finishes on some inputs the guard lets
+   through; the port answers. JSZip loops forever on ZIP64 "extensible data"
+   whose length walks the reader backwards (`not-a-document` here); xmldom's
+   error recovery is quadratic (the port stops at the first report, which is
+   the same answer); some error-free scans are quadratic (many unterminated
+   `<?` or CDATA sections, many distinct element names: memoised here, same
+   tree).
+2. **Entries the guard never inflated** (a central record beyond the
+   declared count, or the directory JSZip finds after its prepended-data
+   shift) are expanded with a ceiling of 40 MiB + 1 (JSZip: none) and fail
+   past it.
+3. **Prototype pollution not reproduced.** A style with `w:type="__proto__"`
+   writes itself onto `Object.prototype` in upstream (every object in the
+   Node process gains a property, for the rest of its life: e.g. a style id
+   `w:type` removes every `<w:br/>`). Here such a style is ignored. An object
+   assigned to a `__proto__` key of mammoth's maps does not become the
+   prototype of the other keys (inherited `Object.prototype` members are
+   reproduced: `constructor`, `toString`, ... as ids, element names,
+   relationship types).
+4. **Nesting depth.** Upstream runs out of V8 stack at a depth that depends
+   on what nests and on JIT warm-up (fresh process: 1898 nested elements in a
+   paragraph, 909 nested `w:sdt`, 306 nested tables; warm: 2499, 1249, 312).
+   The port fails an XML part nested deeper than 1901 elements (the fresh
+   limit for plain nesting); deeper `w:sdt`/table nesting below that renders
+   here and fails upstream.
+5. **Lone UTF-16 surrogates** (from character references) are carried as
+   U+10F800..U+10FFFF inside the port and resolved at the end exactly as the
+   JavaScript string would be encoded; a document containing those private-use
+   code points literally would see them treated as surrogates.
