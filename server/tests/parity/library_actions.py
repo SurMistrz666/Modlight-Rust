@@ -215,6 +215,16 @@ def file_state(key):
     return ref, rust
 
 
+def lock_dir(directory, locked):
+    """Make storage refuse to delete the objects in one directory (no write
+    permission on it), on both sides; `locked=False` undoes it."""
+    mode = "555" if locked else "755"
+    rc, _ = ref_exec('chmod %s "$1"' % mode, OPT.ref_storage.rstrip("/") + "/" + directory)
+    if rc != 0:
+        raise RuntimeError("could not chmod %s on the reference" % directory)
+    os.chmod(os.path.join(RUST_STORAGE, *directory.split("/")), 0o555 if locked else 0o755)
+
+
 def files(name, keys):
     a, b = [], []
     for k in keys:
@@ -344,6 +354,11 @@ def uploads():
     act(pair, "number", "uploads", "setUploadExpiry", [ids["live2"], 86400000])
     act(pair, "cleared with null", "uploads", "setUploadExpiry", [ids["live2"], None])
     act(pair, "empty string", "uploads", "setUploadExpiry", [ids["trashed2"], ""])
+    for label, value in (("day out of range", "2031-02-30"), ("RFC 1123", "Tue, 01 Jan 2030 00:00:00 GMT"),
+                         ("space instead of T", "2030-01-01 10:00"), ("offset", "2030-06-01T12:00:00+02:00"),
+                         ("year only", "2032"), ("boolean", True), ("array", [2030])):
+        act(pair, label, "uploads", "setUploadExpiry", [ids["live2"], value])
+        rows("expiry after " + label, 'SELECT expires_at FROM uploads WHERE id = %s' % q(ids["live2"]))
     act(pair, "foreign is a silent no-op", "uploads", "setUploadExpiry", [ids["theirs"], "2031-01-01T00:00:00Z"])
     act(pair, "non-uuid is a silent no-op", "uploads", "setUploadExpiry", ["nope", "2031-01-01T00:00:00Z"])
 
@@ -353,6 +368,8 @@ def uploads():
     act(pair, "string", "uploads", "setUploadMaxViews", [ids["live"], "5"])
     act(pair, "NaN", "uploads", "setUploadMaxViews", [ids["live"], float("nan")])
     act(pair, "past int4", "uploads", "setUploadMaxViews", [ids["live"], 3e9])
+    act(pair, "boolean", "uploads", "setUploadMaxViews", [ids["live"], True])
+    act(pair, "infinity", "uploads", "setUploadMaxViews", [ids["live"], float("inf")])
     act(pair, "cleared", "uploads", "setUploadMaxViews", [ids["live2"], None])
     act(pair, "undefined clears", "uploads", "setUploadMaxViews", [ids["trashed2"], UNDEFINED])
 
@@ -385,6 +402,25 @@ def uploads():
     act(pair, "own, now empty", "uploads", "emptyTrash", [tag])
     upload_rows("after emptyTrash")
     files("after emptyTrash", keys)
+
+    # Storage refuses one object: its row stays in the trash (`failed`), the
+    # rest goes; once storage gives it up, the next call finishes the job.
+    locked = "%s/locked" % tag
+    stuck_key, free_key = "%s/st%s.png" % (locked, SFX), "%s/fr%s.png" % (tag, SFX)
+    up("stuck", owner, "st", deleted_at="2026-02-03T00:00:00.000Z", size=11, storage_key=stuck_key)
+    up("free", owner, "fr", deleted_at="2026-02-04T00:00:00.000Z", size=22, storage_key=free_key)
+    put_file(stuck_key, b"stuck")
+    put_file(free_key, b"free")
+    lock_dir(locked, True)
+    try:
+        act(pair, "storage refuses one object", "uploads", "emptyTrash", [])
+        upload_rows("after a refused object")
+        files("after a refused object", [stuck_key, free_key])
+        act(pair, "the refused row is still counted", "uploads", "trashSummary", [])
+    finally:
+        lock_dir(locked, False)
+    act(pair, "storage gives it up", "uploads", "emptyTrash", [])
+    files("after the retry", [stuck_key, free_key])
 
     # An administrator reaches every account's rows, and leaves an audit trail.
     parity.signed_in(pair, REF, RUST, admin)
@@ -474,6 +510,8 @@ def folders():
     call("non-string name", "createFolder", 42)
     call("same name again", "createFolder", "Projects")
     call("long name is cut to 120", "createFolder", "Ż" + "x" * 200)
+    call("emoji only", "createFolder", "🚀")
+    call("slug clash with a sibling", "createFolder", "projects!")
     projects = folder_id("Projects")
     call("nested", "createFolder", "Child", projects)
     call("foreign parent", "createFolder", "Nope", foreign)
@@ -686,6 +724,16 @@ def shortlinks():
     sl("null input", None)
     sl("string input", "example.com")
     sl("number custom code", {"target": "example.com", "customCode": 5})
+    sl("unicode host", {"target": "żółw.pl/ścieżka?q=ą", "customCode": "idn-" + SFX})
+    sl("scheme case and default port", {"target": "HTTP://Example.COM:80/a/../b", "customCode": "port-" + SFX})
+    sl("credentials kept", {"target": "https://user:pa ss@example.com/", "customCode": "cred-" + SFX})
+    sl("protocol-relative", {"target": "//example.com/x", "customCode": "rel-" + SFX})
+    sl("space in host", {"target": "exa mple.com"})
+    sl("ipv4 host", {"target": "127.0.0.1:8080/x", "customCode": "ip-" + SFX})
+    sl("ipv6 host has no dot", {"target": "http://[::1]/x"})
+    sl("unicode custom code", {"target": "example.com", "customCode": "Zażółć " + SFX})
+    sl("NaN expiry", {"target": "example.com", "customCode": "nan-" + SFX, "expiresInDays": float("nan")})
+    sl("fractional expiry", {"target": "example.com", "customCode": "frac-" + SFX, "expiresInDays": 0.25})
     link_rows("after createShortLink")
 
     parity.signed_in(pair, REF, RUST, notag)
@@ -859,6 +907,12 @@ def pastes():
     p("number content", {"content": 5})
     p("null input", None)
     p("number language", {"content": "x", "language": 5})
+    p("padded language keeps txt but takes the type", {"content": "x", "language": "  JS  "})
+    p("CRLF and tabs", {"content": "a\r\n\tb\r\n"})
+    p("NaN views", {"content": "x", "maxViews": "abc"})
+    p("emoji title", {"content": "x", "title": "🚀🚀"})
+    p("long unicode title", {"content": "x", "title": "ą" * 100})
+    p("false password uses the default", {"content": "x", "password": False})
     paste_rows("after createPaste", [owner])
     stored_objects("after createPaste", [owner])
 
@@ -867,6 +921,7 @@ def pastes():
     p("number title (after the write)", {"content": "late", "title": 5})
     p("number password (after the write)", {"content": "late", "password": 5})
     p("language longer than the column", {"content": "late", "language": "x" * 40})
+    p("expiry past the Date range", {"content": "late", "expiresInMinutes": 1e20})
     after = both('SELECT count(*) FROM uploads WHERE owner_id = %s' % q(owner))
     run.compare("pastes: failed creates insert nothing", before, after)
     a, b = ref_exec('ls "$1" | wc -l', OPT.ref_storage.rstrip("/") + "/" + tag)[1].decode().strip(), str(
@@ -1067,6 +1122,31 @@ def instance():
     files("after purgeAllOrphans", keys)
     act(pair, "nothing left", "admin", "purgeAllOrphans", ["3"])
     act(pair, "no orphans at the end", "admin", "loadOrphans", [])
+
+    # Deleting an account whose storage refuses one object: that row is
+    # parked (`failed`), never retried in the same call, and orphaned when the
+    # account goes; the purge then fails on it until storage gives it up.
+    stuck, stag = lib.seed_user("ins", used_quota=33)
+    NAMES.add(stuck, "stuck")
+    NAMES.add(stag, "stag")
+    locked = "%s/locked" % stag
+    skeys = ["%s/s0%s.png" % (locked, SFX), "%s/s1%s.png" % (stag, SFX), "%s/s2%s.png" % (stag, SFX)]
+    for i, key in enumerate(skeys):
+        NAMES.add(seed_upload(lib, stuck, "s%d%s" % (i, SFX), created_at=t(20 + i), size=11, storage_key=key),
+                  "s%d" % i)
+        put_file(key, b"stuck " + key.encode())
+    lock_dir(locked, True)
+    try:
+        act(pair, "storage refuses one object", "admin", "deleteUserAccount", [stuck, "delete"])
+        rows("rows after a refused object", 'SELECT code, owner_id IS NULL FROM uploads WHERE code LIKE %s '
+             'ORDER BY code' % q("s_" + SFX))
+        files("after a refused object", skeys)
+        act(pair, "the refused row is an orphan", "admin", "loadOrphans", [])
+        act(pair, "purge fails on it", "admin", "purgeAllOrphans", ["1"])
+    finally:
+        lock_dir(locked, False)
+    act(pair, "purge once storage gives it up", "admin", "purgeAllOrphans", ["1"])
+    files("after the purge", skeys)
     rows("orphan rows at the end", 'SELECT count(*) FROM uploads WHERE owner_id IS NULL')
 
 

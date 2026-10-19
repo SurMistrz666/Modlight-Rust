@@ -9,7 +9,6 @@
 pub mod admin_storage;
 pub mod duplicates;
 pub mod folders;
-pub mod js_value;
 pub mod pastes;
 pub mod shortlink_unlock;
 pub mod shortlinks;

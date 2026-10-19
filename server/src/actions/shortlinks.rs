@@ -5,7 +5,7 @@
 
 use serde_json::{Value, json};
 
-use crate::actions::js_value::{is_nullish, prop};
+use crate::js_value::{is_nullish, prop};
 use crate::rpc::{ActionCtx, ActionError, ActionResult, RpcRegistry};
 use crate::shortlinks::{CreateShortLinkInput, CreateShortLinkResult, create_short_link_for, normalize_target};
 
