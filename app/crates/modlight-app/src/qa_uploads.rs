@@ -121,12 +121,13 @@ pub fn prepare(screen: &str, state: &mut AppState, picture: Option<RgbaImage>) -
             state.upload_tab.history_read = true;
             crate::app::MAIN_SIZE
         }
-        "paste" => {
+        "paste" | "paste-languages" => {
             let mut window = paste::PasteWindow::new(Some(
                 "fn main() {\n    let greeting = \"Hello from Modlight\";\n    println!(\"{greeting}\");\n}\n"
                     .into(),
             ));
             window.model.title = "hello".into();
+            window.language_open = screen == "paste-languages";
             windows.paste = Some(window);
             vec2(paste::WIDTH, paste::HEIGHT)
         }
@@ -277,7 +278,7 @@ pub fn draw(screen: &str, ui: &mut Ui, state: &mut AppState) -> Option<Option<f3
     let now = state.time;
     let windows = &mut state.uploads.windows;
     let height = match screen {
-        "paste" => {
+        "paste" | "paste-languages" => {
             if let Some(w) = windows.paste.as_mut() {
                 let _ = w.ui(ui, &colors);
             }
@@ -357,6 +358,7 @@ pub fn is_dialog(screen: &str) -> bool {
     matches!(
         screen,
         "paste"
+            | "paste-languages"
             | "text-upload"
             | "url-upload"
             | "shorten-url"

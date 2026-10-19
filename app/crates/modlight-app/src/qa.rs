@@ -48,6 +48,7 @@ pub const SCREENS: &[&str] = &[
     "settings-general",
     "tab-upload-busy",
     "paste",
+    "paste-languages",
     "text-upload",
     "url-upload",
     "shorten-url",
