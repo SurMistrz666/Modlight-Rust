@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::data::folders::{descendant_folder_ids, would_create_cycle};
 use crate::db::models::{Columns, Folder, JsDate};
-use crate::naming::{js_slice, slugify_name};
+use crate::naming::{js_slice_utf8, slugify_name};
 use crate::storage::StorageDriver;
 use crate::upload::folder_target::is_uuid;
 
@@ -185,7 +185,9 @@ pub fn clean_name(name: Option<&serde_json::Value>, fallback: Option<&str>) -> R
             Some(f) => Ok(f.to_string()),
         };
     }
-    Ok(js_slice(&trimmed, FOLDER_NAME_MAX).to_string())
+    // `.slice(0, 120)` may cut an emoji in half; what Postgres then stores
+    // for the lone half is U+FFFD.
+    Ok(js_slice_utf8(&trimmed, FOLDER_NAME_MAX))
 }
 
 /// `createFolderFor(userId, name, parentId = null)`. A truthy parent must be

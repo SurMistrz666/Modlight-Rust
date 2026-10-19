@@ -70,6 +70,13 @@ pub fn router(state: &AppState) -> Router {
         .merge(crate::routes::api::background::routes()) // app/api/background/route.ts
         .merge(crate::routes::api::link_info::routes()) // app/api/link-info/route.ts
         .merge(crate::routes::avatar::routes()) // app/avatar/[userCode]/route.ts, app/bg/[userCode]/route.ts
+        .merge(crate::routes::api::uploads_check::routes()) // app/api/uploads/check/route.ts
+        .merge(crate::routes::api::folders::routes()) // app/api/folders/route.ts
+        .merge(crate::routes::api::duplicates::routes()) // app/api/duplicates/route.ts
+        .merge(crate::routes::api::shortlinks::routes()) // app/api/shortlinks/route.ts
+        .merge(crate::routes::api::admin_disk::routes()) // app/api/admin/disk/route.ts
+        .merge(crate::routes::s_code::routes()) // app/s/[code]/route.ts
+        .merge(crate::routes::s_code_name::routes()) // app/s/[code]/[name]/route.ts
         // ── Frameworks ──
         .merge(crate::rpc::routes())
         .merge(crate::pages::routes())
@@ -151,9 +158,6 @@ fn permanent_redirect(location: &str) -> Response {
     res
 }
 
-/// Next's order for the `Allow` header of a route handler.
-const METHOD_ORDER: &[&str] = &["GET", "HEAD", "OPTIONS", "POST", "PUT", "DELETE", "PATCH"];
-
 /// 405 handling as Next's app routes do it.
 fn fix_method_not_allowed(method: &Method, mut res: Response) -> Response {
     if res.status() != StatusCode::METHOD_NOT_ALLOWED {
@@ -171,7 +175,8 @@ fn fix_method_not_allowed(method: &Method, mut res: Response) -> Response {
         .filter(|m| !m.is_empty())
         .collect();
     methods.push("OPTIONS".into());
-    methods.sort_by_key(|m| METHOD_ORDER.iter().position(|o| o == m).unwrap_or(usize::MAX));
+    // `allow.sort().join(", ")` in Next's auto-implement-methods: alphabetical.
+    methods.sort();
     methods.dedup();
     let mut ok = StatusCode::NO_CONTENT.into_response();
     if let Ok(v) = HeaderValue::from_str(&methods.join(", ")) {

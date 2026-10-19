@@ -13,3 +13,5 @@
 
 pub mod api;
 pub mod avatar;
+pub mod s_code;
+pub mod s_code_name;
