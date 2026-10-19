@@ -105,7 +105,9 @@ def rows_of(text):
 
 def same(name, sql):
     a, b = both(sql)
-    run.compare(name, rows_of(a), rows_of(b))
+    # A stored URL that is the server's own origin (a preferred domain equal
+    # to APP_URL when no APP_DOMAINS are configured) differs only by port.
+    run.compare(name, unorigin(rows_of(a), run.ref), unorigin(rows_of(b), run.rust))
     return rows_of(a)
 
 
