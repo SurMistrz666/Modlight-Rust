@@ -585,3 +585,33 @@ async fn the_media_page() {
     assert_eq!(a.header("location").as_deref(), Some("/pg/clip/raw.mp4?2=b&10=a&w=64&b=x+y"));
     w.drop().await;
 }
+
+// ── Encrypted uploads (encrypted-link, encrypted-upload: the server half) ──
+
+#[tokio::test]
+async fn an_encrypted_upload_is_handed_to_the_browser_untouched() {
+    let Some(w) = World::new().await else { return eprintln!("skipped") };
+    w.user("en", "user").await;
+    let mut container = b"MLENC1\x00\x01".to_vec();
+    container.extend(std::iter::repeat_n(7u8, 5000));
+    let id = w.file("en", "box", "x.mlenc", "application/vnd.modlight.encrypted", &container).await;
+    let page = w.get("/_page?path=%2Fen%2Fbox.mlenc", &[]).await.json();
+    let props = &page["props"];
+    assert_eq!(props["view"], "encrypted");
+    // Relative, and nothing in it that could carry a key: the key lives in the
+    // fragment, which no browser sends.
+    assert_eq!(props["rawPath"], "/en/box/raw.mlenc");
+    assert_eq!(props["cipherSize"], 5008);
+    assert!(props.get("viewer").is_none());
+    // The page itself counts nothing; the viewer's first ranged read does.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(w.views(id).await.0, 0);
+    let head = w.get("/en/box/raw.mlenc", &[("range", "bytes=0-4095")]).await;
+    assert_eq!(head.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(head.header("content-type").as_deref(), Some("application/octet-stream"));
+    assert!(head.header("content-disposition").unwrap().starts_with("attachment;"));
+    // No card picture, no snippet: a container describes nothing about itself.
+    let doc = w.get("/en/box.mlenc", &[("user-agent", "Mozilla/5.0 (compatible; Twitterbot/1.0)")]).await.text();
+    assert!(doc.contains("/embed/v1/binary-FILE.png"));
+    w.drop().await;
+}
