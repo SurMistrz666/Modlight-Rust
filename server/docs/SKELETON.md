@@ -473,6 +473,17 @@ upstream (item 1). `docx_route_e2e.py` fetches a sample through the
 reference's real `/render` route with minted tickets: same bytes as the
 harness.
 
+To repeat (from the main checkout; the reference app runs on 8446, see
+`_scratch/srv-media-a/`):
+
+```sh
+python3 server/tests/parity_media/docx_corpus.py _scratch/srv-media-a/docx/corpus
+python3 server/tests/parity_media/docx_parity.py --corpus _scratch/srv-media-a/docx/corpus \
+  --work _scratch/srv-media-a/docx/run --container modlight-srvmedia-a-ref-app-1
+python3 server/tests/parity_media/docx_route_e2e.py --corpus _scratch/srv-media-a/docx/corpus \
+  --work _scratch/srv-media-a/docx/run f-basic.docx i-budget.docx h-bomb-lying.docx
+```
+
 Differences, all deliberate or unavoidable:
 
 1. **Hangs.** Upstream never finishes on some inputs the guard lets

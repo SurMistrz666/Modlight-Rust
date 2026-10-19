@@ -106,7 +106,8 @@ def main():
         print("ROUTE", json.dumps({"same": ok, "different": bad}))
     finally:
         psql(args.db, f"DELETE FROM uploads WHERE owner_id = {q(user_id)}; DELETE FROM \"user\" WHERE id = {q(user_id)}")
-        docker("exec", args.app, "sh", "-c", f"rm -rf /app/data/storage/docx-e2e/{run}")
+        docker("exec", args.app, "sh", "-c",
+               f"rm -rf /app/data/storage/docx-e2e/{run}; rmdir /app/data/storage/docx-e2e 2>/dev/null; true")
 
 
 if __name__ == "__main__":
