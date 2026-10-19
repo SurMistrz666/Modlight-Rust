@@ -64,6 +64,13 @@ hkdf = "0.12"
 unicode-normalization = "0.1"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "hostname", "tokio1-rustls-tls"] }
 
+# S3 storage (lib/storage/s3.ts, lib-storage's Upload, @tus/s3-store): the
+# official AWS SDK, as upstream uses @aws-sdk/client-s3. HTTPS through rustls
+# with ring, the provider the rest of the crate already uses, instead of the
+# SDK's default aws-lc build.
+aws-sdk-s3 = { version = "=1.152.0", default-features = false, features = ["rt-tokio", "http-1x"] }
+aws-smithy-http-client = { version = "=1.5.0", features = ["rustls-ring"] }
+
 # Errors and logging
 anyhow = "1"
 thiserror = "2"
