@@ -50,7 +50,11 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import parity  # noqa: E402
-from library import ORIGIN_RE, Library, seed_folder, seed_upload  # noqa: E402
+from library import ORIGIN_RE, Library, days_ago, seed_folder, seed_upload  # noqa: E402
+
+# Trash stamps inside the 30-day window: a purge job (either server's) must
+# not take seeded rows mid-run. Fixed per run, identical on both sides.
+TRASHED_10, TRASHED_9, TRASHED_8, TRASHED_7, TRASHED_5 = (days_ago(n) for n in (10, 9, 8, 7, 5))
 
 q = parity.sql_quote
 UNDEFINED = parity.UNDEFINED
@@ -310,12 +314,12 @@ def uploads():
 
     up("live", owner, "ua")
     up("live2", owner, "ub", published=False)
-    up("trashed", owner, "uc", deleted_at="2026-02-01T00:00:00.000Z", size=1200,
+    up("trashed", owner, "uc", deleted_at=TRASHED_10, size=1200,
        storage_key="%s/uc%s.png" % (tag, SFX), thumb_key="thumbs/%s/uc%s.webp" % (tag, SFX))
-    up("trashed2", owner, "ud", deleted_at="2026-02-02T00:00:00.000Z", size=300,
+    up("trashed2", owner, "ud", deleted_at=TRASHED_9, size=300,
        storage_key="%s/ud%s.png" % (tag, SFX))
     up("theirs", other, "ue")
-    up("theirs_trash", other, "uf", deleted_at="2026-02-01T00:00:00.000Z", size=400,
+    up("theirs_trash", other, "uf", deleted_at=TRASHED_10, size=400,
        storage_key="%s/uf%s.png" % (other_tag, SFX))
     up("theirs_live2", other, "ug")
     keys = ["%s/uc%s.png" % (tag, SFX), "thumbs/%s/uc%s.webp" % (tag, SFX), "%s/ud%s.png" % (tag, SFX),
@@ -417,8 +421,8 @@ def uploads():
     # rest goes; once storage gives it up, the next call finishes the job.
     locked = "%s/locked" % tag
     stuck_key, free_key = "%s/st%s.png" % (locked, SFX), "%s/fr%s.png" % (tag, SFX)
-    up("stuck", owner, "st", deleted_at="2026-02-03T00:00:00.000Z", size=11, storage_key=stuck_key)
-    up("free", owner, "fr", deleted_at="2026-02-04T00:00:00.000Z", size=22, storage_key=free_key)
+    up("stuck", owner, "st", deleted_at=TRASHED_8, size=11, storage_key=stuck_key)
+    up("free", owner, "fr", deleted_at=TRASHED_7, size=22, storage_key=free_key)
     put_file(stuck_key, b"stuck")
     put_file(free_key, b"free")
     lock_dir(locked, True)
@@ -465,7 +469,7 @@ def folders():
     up = {}
     for i, k in enumerate(["a", "b", "c", "d", "e", "f"]):
         up[k] = NAMES.add(seed_upload(lib, owner, "f" + k + SFX, created_at=t(i)), "up-" + k)
-    up["t"] = NAMES.add(seed_upload(lib, owner, "ft" + SFX, created_at=t(7), deleted_at="2026-02-01T00:00:00.000Z"),
+    up["t"] = NAMES.add(seed_upload(lib, owner, "ft" + SFX, created_at=t(7), deleted_at=TRASHED_10),
                         "up-trashed")
     up["x"] = NAMES.add(seed_upload(lib, other, "fx" + SFX, created_at=t(8)), "up-theirs")
 
@@ -626,7 +630,7 @@ def duplicates():
     up("a2", owner, a1, size=1000, folder_id=folder)
     up("a3", owner, a1, size=1000)
     up("b1", owner, b1, size=50)
-    up("b2", owner, b1, size=50, deleted_at="2026-03-01T00:00:00.000Z")
+    up("b2", owner, b1, size=50, deleted_at=TRASHED_5)
     up("b3", owner, b1, size=50)
     up("c1", owner, c1, size=7)
     up("n1", owner, None)
@@ -970,7 +974,7 @@ def admin():
     for i in range(3):
         vids.append(NAMES.add(seed_upload(lib, victim, "v%d%s" % (i, SFX), created_at=t(i), size=500 + i,
                                           storage_key="%s/v%d%s.png" % (vtag, i, SFX),
-                                          deleted_at=("2026-02-01T00:00:00.000Z" if i == 2 else None)),
+                                          deleted_at=(TRASHED_10 if i == 2 else None)),
                               "v%d" % i))
     keys = ["%s/v%d%s.png" % (vtag, i, SFX) for i in range(3)]
     for k in keys:
@@ -1052,19 +1056,19 @@ def instance():
     act(pair, "no orphans", "admin", "loadOrphans", [])
 
     t = lambda n: NAMES.add("2026-01-01T00:04:%02d.000Z" % n, "t%d" % n)
-    NAMES.add("2026-02-01T00:00:00.000Z", "trashed-at")
+    NAMES.add(TRASHED_10, "trashed-at")
     kids = []
     for i in range(4):
         kids.append(NAMES.add(seed_upload(lib, keeper, "k%d%s" % (i, SFX), created_at=t(i), size=100 * (i + 1),
                                           storage_key="%s/k%d%s.png" % (ktag, i, SFX),
                                           thumb_key=("thumbs/%s/k%d%s.webp" % (ktag, i, SFX) if i == 0 else None),
-                                          deleted_at=("2026-02-01T00:00:00.000Z" if i == 3 else None)),
+                                          deleted_at=(TRASHED_10 if i == 3 else None)),
                               "k%d" % i))
     keys = ["%s/k%d%s.png" % (ktag, i, SFX) for i in range(4)] + ["thumbs/%s/k0%s.webp" % (ktag, SFX)]
     for k in keys:
         put_file(k, ("keeper " + k).encode(), age_seconds=7200)
     seed_upload(lib, drift, "dr" + SFX, size=4321, created_at=t(9))
-    seed_upload(lib, nulled, "nu" + SFX, size=17, created_at=t(10), deleted_at="2026-02-01T00:00:00.000Z")
+    seed_upload(lib, nulled, "nu" + SFX, size=17, created_at=t(10), deleted_at=TRASHED_10)
     lib.both_sql('UPDATE "user" SET used_quota = NULL WHERE id IN (%s)' % in_list([keeper, nulled]))
     lib.both_sql('UPDATE "user" SET used_quota = 999999 WHERE id = %s' % q(drift))
 
