@@ -11,8 +11,8 @@ use modlight_server::media::transform_cost::{THUMBNAIL_TIMEOUT_MS, THUMBNAIL_WEI
 use modlight_server::media::transform_queue::{RunOptions, image_transforms};
 use modlight_server::media::vips::image::band_format;
 use modlight_server::media::vips::{
-    self, Arg, FailOn, Fit, GifOptions, Image, Operation, Resize, Sharp, VipsError, WebpOptions,
-    sharp::DEFAULT_LIMIT_INPUT_PIXELS,
+    self, Arg, FailOn, Fit, GifOptions, HeifOptions, Image, Operation, Resize, Sharp, VipsError, WebpOptions,
+    sharp::{DEFAULT_LIMIT_INPUT_PIXELS, HeifCompression},
 };
 
 #[tokio::test]
@@ -222,4 +222,26 @@ async fn many_pipelines_at_once_share_libvips_safely() {
     for (i, job) in jobs.into_iter().enumerate() {
         assert_eq!(job.await.unwrap().unwrap(), 32 + i as u32);
     }
+}
+
+#[tokio::test]
+async fn reads_a_heic_header_but_not_its_pixels_like_production() {
+    // Needs an HEVC encoder to make the fixture; machines without one skip.
+    let Ok(heic) = Sharp::raw(Bytes::from(solid(64, 48, [200, 100, 50])), 64, 48, 3)
+        .heif(HeifOptions { compression: HeifCompression::Hevc, ..HeifOptions::default() })
+        .to_buffer()
+        .await
+    else {
+        eprintln!("no HEVC encoder in this libheif; skipped");
+        return;
+    };
+    let heic = Bytes::from(heic);
+    let meta = Sharp::new(heic.clone()).metadata().await.unwrap();
+    assert_eq!((meta.format, meta.width, meta.height), ("heif", 64, 48));
+    assert_eq!(meta.compression.as_deref(), Some("hevc"));
+    // sharp-libvips has no HEVC decoder: header yes, pixels no.
+    assert!(Sharp::new(heic.clone()).png(Default::default()).to_buffer().await.is_err());
+    let image_meta = modlight_server::media::image::image_meta_from_buffer(heic).await;
+    assert_eq!((image_meta.width, image_meta.height, image_meta.frames), (Some(64), Some(48), Some(1)));
+    assert_eq!(image_meta.blurhash, None);
 }
