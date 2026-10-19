@@ -206,7 +206,7 @@ fn the_app_signs_in_and_manages_the_library_on_the_reference_server() {
     harness
         .state_mut()
         .state
-        .upload_paths(vec![file.clone()], Some(id.clone()));
+        .upload_paths_to(vec![file.clone()], Some(id.clone()));
     wait(&mut harness, "the upload", 30, |s| {
         s.space.files.iter().any(|f| f.file.name == "qa-pixel.png")
     });

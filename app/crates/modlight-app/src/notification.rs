@@ -95,7 +95,7 @@ impl ToastAction {
 }
 
 /// One notice and where its life is.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Notification {
     pub title: String,
     pub text: String,
@@ -115,6 +115,13 @@ pub struct Notification {
     pub pointer_inside: bool,
     /// The card's size last frame, which the window is sized to.
     pub card_size: Vec2,
+    /// The picture of a finished capture (`NotificationWindowConfig.Image`).
+    pub image: Option<std::sync::Arc<image::RgbaImage>>,
+    pub texture: Option<egui::TextureHandle>,
+    /// What a click on the card does, per button.
+    pub left_click: ToastAction,
+    pub right_click: ToastAction,
+    pub middle_click: ToastAction,
 }
 
 /// What a frame of the notice asked for.
@@ -157,6 +164,53 @@ impl Notification {
             fade_started: None,
             pointer_inside: false,
             card_size: vec2(400.0, 100.0),
+            image: None,
+            texture: None,
+            left_click: ToastAction::CloseNotification,
+            right_click: ToastAction::CloseNotification,
+            middle_click: ToastAction::CloseNotification,
+        }
+    }
+
+    /// `NotificationWindow.Show` after a task: the task's settings, its picture, its link.
+    pub fn task(config: modlight_core::tasks::host::NotificationConfig, now: f64) -> Notification {
+        let action = |a: modlight_core::tasks::settings::ToastClickAction| {
+            ToastAction::parse(a.name()).unwrap_or(ToastAction::CloseNotification)
+        };
+        // A picture comes from the task or, failing that, from the file it saved.
+        let image = config.image.clone().or_else(|| {
+            let path = config.file_path.trim();
+            (!path.is_empty() && modlight_core::names::file_helpers::is_image_file(path))
+                .then(|| {
+                    image::open(path)
+                        .ok()
+                        .map(|i| std::sync::Arc::new(i.to_rgba8()))
+                })
+                .flatten()
+        });
+        Notification {
+            title: config.title,
+            text: config.text,
+            url: config.url,
+            file_path: config.file_path,
+            has_image: image.is_some(),
+            actions: config.buttons.iter().map(|b| action(b.action)).collect(),
+            button_size: config.button_size as f32,
+            size: (config.size.width as f32, config.size.height as f32),
+            placement: config.placement.name().to_string(),
+            offset: 5.0,
+            duration: config.duration_ms / 1000.0,
+            fade: config.fade_ms / 1000.0,
+            shown_at: now,
+            duration_ended: false,
+            fade_started: None,
+            pointer_inside: false,
+            card_size: vec2(400.0, 100.0),
+            image,
+            texture: None,
+            left_click: action(config.left_click),
+            right_click: action(config.right_click),
+            middle_click: action(config.middle_click),
         }
     }
 
@@ -166,7 +220,9 @@ impl Notification {
         let has_target = has_file || !self.url.trim().is_empty();
         match action {
             ToastAction::CopyImageToClipboard => self.has_image,
-            ToastAction::AnnotateImage | ToastAction::PinToScreen => has_file && self.has_image,
+            ToastAction::AnnotateImage | ToastAction::PinToScreen => {
+                has_file && modlight_core::names::file_helpers::is_image_file(self.file_path.trim())
+            }
             ToastAction::CopyFile
             | ToastAction::CopyFilePath
             | ToastAction::OpenFile
@@ -242,7 +298,7 @@ impl Notification {
     /// `BadgeIconFor`.
     fn badge_icon(&self) -> char {
         if !self.file_path.trim().is_empty() {
-            return if self.has_image {
+            return if modlight_core::names::file_helpers::is_image_file(self.file_path.trim()) {
                 icons::IMAGE
             } else {
                 icons::FILE
@@ -263,6 +319,9 @@ impl Notification {
         opacity: f32,
     ) -> Option<NotificationOutcome> {
         ui.multiply_opacity(opacity);
+        if self.image.is_some() {
+            return self.image_ui(ui, colors);
+        }
         let full = ui.max_rect();
         let width = self.size.0.clamp(MIN_TEXT_WIDTH, MAX_TEXT_WIDTH);
         let actions = self.visible_actions();
@@ -479,14 +538,274 @@ impl Notification {
             StrokeKind::Inside,
         );
 
-        // A click on the card runs the left-click action, which for a text notice has
-        // nothing to act on, and dismisses it.
-        if outcome.is_none()
-            && (surface.clicked() || surface.secondary_clicked() || surface.middle_clicked())
-        {
-            outcome = Some(NotificationOutcome::Close);
+        // A click on the card runs the action configured for that button and dismisses
+        // the notice (`OnCardPointerReleased`).
+        if outcome.is_none() {
+            outcome = self.card_click(&surface);
         }
         outcome
+    }
+
+    fn card_click(&self, surface: &egui::Response) -> Option<NotificationOutcome> {
+        if surface.clicked() {
+            Some(NotificationOutcome::Run(self.left_click))
+        } else if surface.secondary_clicked() {
+            Some(NotificationOutcome::Run(self.right_click))
+        } else if surface.middle_clicked() {
+            Some(NotificationOutcome::Run(self.middle_click))
+        } else {
+            None
+        }
+    }
+
+    /// A notice over a capture: the picture is the card; the caption and the action row
+    /// lie over it and appear while the pointer is on it.
+    fn image_ui(&mut self, ui: &mut Ui, colors: &Colors) -> Option<NotificationOutcome> {
+        let full = ui.max_rect();
+        let image = self.image.clone()?;
+        let (w, h) = (image.width() as f32, image.height() as f32);
+        let max_w = self.size.0.max(1.0);
+        let max_h = self.size.1.max(1.0);
+        let scale = (max_w / w).min(max_h / h).min(1.0);
+        let preview = vec2((w * scale).round().max(1.0), (h * scale).round().max(1.0));
+        self.card_size = preview + Vec2::splat(2.0);
+        let card = Rect::from_min_size(full.min + Vec2::splat(SHADOW_MARGIN), self.card_size);
+        let painter = ui.painter().clone();
+        painter.add(
+            egui::Shadow {
+                offset: [0, 8],
+                blur: 16,
+                spread: 0,
+                color: Color32::from_black_alpha(0x50),
+            }
+            .as_shape(card, SURFACE_RADIUS),
+        );
+        painter.rect_filled(card, SURFACE_RADIUS, colors.background_popup());
+        let texture = self.texture.get_or_insert_with(|| {
+            let color = egui::ColorImage::from_rgba_unmultiplied(
+                [image.width() as usize, image.height() as usize],
+                image.as_raw(),
+            );
+            ui.ctx()
+                .load_texture("notification-preview", color, egui::TextureOptions::LINEAR)
+        });
+        let inner = card.shrink(1.0);
+        let corner = (SURFACE_RADIUS - 1.0) as u8;
+        painter.add(
+            egui::epaint::RectShape::filled(inner, corner, Color32::WHITE).with_texture(
+                texture.id(),
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            ),
+        );
+
+        let surface = ui.interact(card, Id::new("notification-card"), Sense::click());
+        self.pointer_inside = ui.rect_contains_pointer(card);
+        let hovered = self.pointer_inside;
+        let mut outcome = None;
+
+        if hovered {
+            // The caption: popup colour at 92%, 12,12,32,12 margins, two lines each.
+            let text_w = inner.width() - 12.0 - 32.0;
+            let title = (!self.title.trim().is_empty()).then(|| {
+                let mut job = trimmed(
+                    &self.title,
+                    13.0,
+                    Weight::SemiBold,
+                    colors.text(),
+                    text_w,
+                    2,
+                );
+                job.wrap.break_anywhere = false;
+                layout(ui, job)
+            });
+            let body = (!self.text.trim().is_empty()).then(|| {
+                let mut job = trimmed(
+                    &self.text,
+                    12.0,
+                    Weight::Normal,
+                    colors.text_secondary(),
+                    text_w,
+                    2,
+                );
+                job.wrap.break_anywhere = false;
+                layout(ui, job)
+            });
+            if title.is_some() || body.is_some() {
+                let mut height = 12.0 + 12.0;
+                if let Some(g) = &title {
+                    height += g.size().y;
+                }
+                if let Some(g) = &body {
+                    height += g.size().y + if title.is_some() { 4.0 } else { 0.0 };
+                }
+                let caption =
+                    Rect::from_min_size(inner.min, vec2(inner.width(), height.min(inner.height())));
+                painter.rect_filled(
+                    caption,
+                    egui::CornerRadius {
+                        nw: corner,
+                        ne: corner,
+                        sw: 0,
+                        se: 0,
+                    },
+                    colors.background_popup().gamma_multiply(0.92),
+                );
+                let mut y = caption.top() + 12.0;
+                if let Some(g) = title {
+                    let h = g.size().y;
+                    painter.galley(pos2(caption.left() + 12.0, y), g, colors.text());
+                    y += h + 4.0;
+                }
+                if let Some(g) = body {
+                    painter.galley(pos2(caption.left() + 12.0, y), g, colors.text_secondary());
+                }
+            }
+            // The action row over the bottom of the picture.
+            let actions = self.visible_actions();
+            if !actions.is_empty() {
+                let button_size = self.button_size.clamp(16.0, 128.0);
+                let footer_h = button_size + ACTIONS_PADDING * 2.0;
+                let footer =
+                    Rect::from_min_max(pos2(inner.left(), inner.bottom() - footer_h), inner.max);
+                painter.rect_filled(
+                    footer,
+                    egui::CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: corner,
+                        se: corner,
+                    },
+                    colors.background_popup().gamma_multiply(0.92),
+                );
+                if let Some(action) = self.action_row(ui, colors, &painter, footer, &actions) {
+                    outcome = Some(NotificationOutcome::Run(action));
+                }
+            }
+        }
+
+        if let Some(close) = self.close_button(ui, colors, &painter, card) {
+            outcome = Some(close);
+        }
+        painter.rect_stroke(
+            card,
+            SURFACE_RADIUS,
+            Stroke::new(1.0, colors.border()),
+            StrokeKind::Inside,
+        );
+        if outcome.is_none() {
+            outcome = self.card_click(&surface);
+        }
+        outcome
+    }
+
+    /// The row of action buttons, centred in `footer`.
+    fn action_row(
+        &self,
+        ui: &mut Ui,
+        colors: &Colors,
+        painter: &egui::Painter,
+        footer: Rect,
+        actions: &[ToastAction],
+    ) -> Option<ToastAction> {
+        let button_size = self.button_size.clamp(16.0, 128.0);
+        let icon_size = nearest_icon_size(button_size / 2.0);
+        let total = actions.len() as f32 * button_size + (actions.len() as f32 - 1.0) * 4.0;
+        let mut bx = footer.center().x - total / 2.0;
+        let radius = (button_size / 4.0).clamp(6.0, SURFACE_RADIUS);
+        let mut picked = None;
+        for action in actions {
+            let r = Rect::from_min_size(
+                pos2(bx, footer.center().y - button_size / 2.0),
+                Vec2::splat(button_size),
+            );
+            let response = ui.interact(
+                r,
+                Id::new(("notification-action", *action as u8)),
+                Sense::click(),
+            );
+            let hot = response.hovered() || response.is_pointer_button_down_on();
+            let shown = if response.is_pointer_button_down_on() {
+                Rect::from_center_size(r.center(), r.size() * 0.97)
+            } else {
+                r
+            };
+            painter.rect_filled(
+                shown,
+                radius,
+                if hot {
+                    colors.accent_start()
+                } else {
+                    colors.control_background()
+                },
+            );
+            painter.rect_stroke(
+                shown,
+                radius,
+                Stroke::new(
+                    1.0,
+                    if hot {
+                        colors.accent_start()
+                    } else {
+                        colors.control_border()
+                    },
+                ),
+                StrokeKind::Inside,
+            );
+            let color = if hot {
+                colors.accent_foreground()
+            } else {
+                colors.text()
+            };
+            let icon = icon_galley(ui, action.icon(), icon_size, color);
+            painter.galley(shown.center() - icon.size() / 2.0, icon, color);
+            if response.on_hover_text(action.label()).clicked() {
+                picked = Some(*action);
+            }
+            bx += button_size + 4.0;
+        }
+        picked
+    }
+
+    /// The close button in the corner, always there.
+    fn close_button(
+        &self,
+        ui: &mut Ui,
+        colors: &Colors,
+        painter: &egui::Painter,
+        card: Rect,
+    ) -> Option<NotificationOutcome> {
+        let close = Rect::from_min_size(
+            pos2(
+                card.right() - CLOSE_INSET - CLOSE_SIZE,
+                card.top() + CLOSE_INSET,
+            ),
+            Vec2::splat(CLOSE_SIZE),
+        );
+        let response = ui.interact(close, Id::new("notification-close"), Sense::click());
+        let fill = if response.is_pointer_button_down_on() {
+            colors.control_background()
+        } else if response.hovered() {
+            colors.control_background_hover()
+        } else {
+            colors.background_popup()
+        };
+        painter.rect_filled(close, 8.0, fill);
+        painter.rect_stroke(
+            close,
+            8.0,
+            Stroke::new(1.0, colors.border()),
+            StrokeKind::Inside,
+        );
+        let x_color = if response.hovered() {
+            colors.text()
+        } else {
+            colors.text_secondary()
+        };
+        paint_icon(ui, painter, close.center(), icons::X, 13.0, x_color);
+        response
+            .on_hover_text(t(s::Notification_Close))
+            .clicked()
+            .then_some(NotificationOutcome::Close)
     }
 }
 

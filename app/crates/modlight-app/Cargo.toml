@@ -33,6 +33,7 @@ arboard.workspace = true
 rfd.workspace = true
 dirs.workspace = true
 log.workspace = true
+url.workspace = true
 tray-icon = "0.21"
 
 [dev-dependencies]

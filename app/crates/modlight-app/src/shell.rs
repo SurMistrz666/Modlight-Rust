@@ -44,14 +44,7 @@ pub fn ui(ui: &mut Ui, state: &mut AppState, logo: Option<&egui::TextureHandle>)
     child.set_clip_rect(content);
     match state.tab {
         Tab::MySpace => crate::myspace::view::ui(&mut child, state),
-        Tab::Upload => plan_tab(
-            &mut child,
-            state,
-            icons::UPLOAD,
-            s::MainWindow_UploadTitle,
-            s::MainWindow_UploadBody,
-            Some(s::MainWindow_OpenUploadMenu),
-        ),
+        Tab::Upload => crate::upload_tab::ui(&mut child, state, content),
         Tab::Download => plan_tab(
             &mut child,
             state,
@@ -103,7 +96,8 @@ fn title_band(ui: &mut Ui, state: &mut AppState, rect: Rect, logo: Option<&egui:
         );
     }
     x += 17.0 + 9.0;
-    let title = modlight_core::title();
+    // `UpdateMainWindowTitle`: the average progress while uploads run.
+    let title = state.uploads.tasks.title();
     let galley = layout(
         ui,
         trimmed(
@@ -423,7 +417,8 @@ pub fn account_menu() -> Vec<Entry> {
 }
 
 /// `MainMenuBuilder.BuildSettingsMenu`; what arrives in a later phase says so.
-pub fn settings_menu(_state: &AppState) -> Vec<Entry> {
+pub fn settings_menu(state: &AppState) -> Vec<Entry> {
+    let defaults = state.default_task_settings();
     vec![
         Entry::item(
             t(s::SettingsWindow_WindowTitle),
@@ -436,21 +431,23 @@ pub fn settings_menu(_state: &AppState) -> Vec<Entry> {
             Command::ShowSettings(Some(crate::settings::ACCOUNT_SECTION)),
         ),
         Entry::Separator,
-        Entry::item(
+        Entry::submenu(
             t(s::MainMenuBuilder_AfterCaptureTasks),
             icons::IMAGE_UP,
-            Command::NotYet,
+            true,
+            crate::uploads::after_capture_menu(defaults.after_capture_job),
         ),
-        Entry::item(
+        Entry::submenu(
             t(s::MainMenuBuilder_AfterUploadTasks),
             icons::CLOUD_UPLOAD,
-            Command::NotYet,
+            !state.app_upload_settings().disable_upload,
+            crate::uploads::after_upload_menu(defaults.after_upload_job),
         ),
         Entry::Separator,
         Entry::item(
             t(s::MainMenuBuilder_ScreenshotsFolder),
             icons::FOLDER_OPEN,
-            Command::NotYet,
+            Command::OpenScreenshotsFolder,
         ),
         Entry::item(t(s::MainMenuBuilder_About), icons::INFO, Command::NotYet),
     ]
