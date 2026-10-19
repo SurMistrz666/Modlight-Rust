@@ -63,7 +63,8 @@ action errors), so upstream `.env` files keep their meaning.
 | `rpc/` | Next server actions | done (framework) |
 | `actions/tokens.rs` | `app/actions/tokens.ts` | done |
 | `actions/{uploads,folders,duplicates,shortlinks,shortlink_unlock,pastes}.rs` | `app/actions/` same names | done (parity: `tests/parity/library_actions.py`) |
-| `actions/admin_storage.rs`, `data/admin_storage.rs` | `app/actions/admin.ts` (loadOrphans, deleteOrphan, purgeAllOrphans, loadDeletionImpact, deleteUserAccount, recalculateEveryQuota, runStorageScan), the matching half of `lib/data/admin.ts`, `components/admin/confirm.ts` | done; registered as module `admin` beside the accounts port's own `actions/admin.rs` |
+| `actions/admin_library.rs` | `app/actions/admin.ts` (loadOrphans, deleteOrphan, purgeAllOrphans, loadDeletionImpact, deleteUserAccount, recalculateEveryQuota, runStorageScan), `components/admin/confirm.ts` | done; registered as module `admin` beside the accounts port's own `actions/admin.rs` |
+| `data/admin_storage.rs` | the matching half of `lib/data/admin.ts` | stand-in for the accounts port's `data/admin.rs` (same names): delete at the merge |
 | `js_value.rs` | (JavaScript operators on raw arguments) | done |
 | `actions/*` (others) | `app/actions/*.ts` | to do |
 | `pages/` | page data, SPA shell, metadata | done (framework + table of every page and route handler) |
@@ -312,7 +313,7 @@ Deliberate, each for a reason:
     broken; the answer differs only for an empty trash.
 17. **`admin.deleteUserAccount`** runs better-auth's `removeUser` as the same
     statements (sessions, then sessions, accounts and the user row) inside
-    `actions/admin_storage.rs`, for the one caller; the accounts port carries
+    `actions/admin_library.rs`, for the one caller; the accounts port carries
     the whole endpoint and should replace it when the branches meet.
 
 ## 10. Verified on 2026-10-18
