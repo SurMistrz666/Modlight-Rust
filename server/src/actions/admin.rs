@@ -929,7 +929,9 @@ async fn create_account(ctx: ActionCtx) -> ActionResult {
     let name = match input.prop("name") {
         Js::Undefined | Js::Null => email.clone(),
         Js::Str(s) => Some(js_trim(s)).filter(|t| !t.is_empty()).unwrap_or(&email).to_string(),
-        _ => return create_failed("input.name?.trim is not a function"),
+        // V8 names the expression as the production bundle spells it, where
+        // the minifier renamed `input` to `a` (verified on the reference).
+        _ => return create_failed("a.name?.trim is not a function"),
     };
     let (password_value, received) = if invite {
         (Value::String(random_password()), None)
