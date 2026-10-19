@@ -324,6 +324,14 @@ def area_fix1(ctx, f, tag):
     ctx.expect("fix1 flow: the last view's <img> loads, nothing after it",
                page.status == 200 and img.status == 200 and again.status == 404 and stranger.status == 404,
                {"page": page.status, "img": img.status, "reload": again.status, "stranger": stranger.status})
+    # ...where the reference 404s that <img> (getMedia refuses views >= max).
+    rinfo = f["fix1_page_image_ref"]
+    seed.set_cols(rinfo["id"], max_views=1)
+    rb = parity.Browser(ctx.run.ref, real_ip=ctx.run.real_ip, user_agent=BROWSER_UA)
+    rpage = rb.request("GET", "/%s/%s.%s" % (tag, rinfo["code"], rinfo["ext"]))
+    rimg = rb.request("GET", "/%s/%s/raw.%s" % (tag, rinfo["code"], rinfo["ext"]), headers={"Sec-Fetch-Dest": "image"})
+    ctx.expect("fix1 reference: the last view's own <img> is refused", rpage.status == 200 and rimg.status == 404,
+               {"page": rpage.status, "img": rimg.status})
     # 3. An encrypted file read by the in-browser viewer: two ranged reads, one view.
     info = f["fix1_encrypted"]
     seed.set_cols(info["id"], max_views=1)
@@ -839,6 +847,7 @@ def main():
         f["fix1_%d" % i] = up("jpg", "fx%d" % i)
     f["fix1_page_text"] = up("txt", "fxpt")
     f["fix1_page_image"] = up("png", "fxpi")
+    f["fix1_page_image_ref"] = up("png", "fxpr")
     f["fix1_encrypted"] = up("mlenc", "fxen")
     f["fix1_encrypted_ref"] = up("mlenc", "fxer")
     f["fix1_video"] = up("mp4", "fxvid")
