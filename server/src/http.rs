@@ -70,6 +70,18 @@ pub fn router(state: &AppState) -> Router {
         .merge(crate::routes::api::theme::routes()) // app/api/theme/route.ts
         .merge(crate::routes::api::client_settings::routes()) // app/api/client-settings/route.ts
         .merge(crate::routes::api::me::routes()) // app/api/me/route.ts
+        .merge(crate::routes::api::uploads::routes()) // app/api/uploads/route.ts
+        .merge(crate::routes::api::avatar::routes()) // app/api/avatar/route.ts
+        .merge(crate::routes::api::background::routes()) // app/api/background/route.ts
+        .merge(crate::routes::api::link_info::routes()) // app/api/link-info/route.ts
+        .merge(crate::routes::avatar::routes()) // app/avatar/[userCode]/route.ts, app/bg/[userCode]/route.ts
+        .merge(crate::routes::api::uploads_check::routes()) // app/api/uploads/check/route.ts
+        .merge(crate::routes::api::folders::routes()) // app/api/folders/route.ts
+        .merge(crate::routes::api::duplicates::routes()) // app/api/duplicates/route.ts
+        .merge(crate::routes::api::shortlinks::routes()) // app/api/shortlinks/route.ts
+        .merge(crate::routes::api::admin_disk::routes()) // app/api/admin/disk/route.ts
+        .merge(crate::routes::s_code::routes()) // app/s/[code]/route.ts
+        .merge(crate::routes::s_code_name::routes()) // app/s/[code]/[name]/route.ts
         // ── Frameworks ──
         .merge(crate::rpc::routes())
         .merge(crate::pages::routes())
@@ -83,16 +95,22 @@ pub fn router(state: &AppState) -> Router {
 /// routers (they receive every `/api/files*` request and `POST /upload`,
 /// `POST /api/upload`).
 pub fn raw_upload_router(state: &AppState) -> Router {
-    Router::new().fallback(raw_upload_not_ported).with_state(state.clone())
+    Router::new()
+        .merge(crate::upload::sharex::routes()) // lib/upload/sharex.ts: POST /upload, POST /api/upload
+        .fallback(raw_upload_dispatch) // lib/upload/tus.ts: everything under /api/files
+        .with_state(state.clone())
 }
 
-async fn raw_upload_not_ported(uri: Uri) -> Response {
-    let file = if uri.path().starts_with("/api/files") { "lib/upload/tus.ts" } else { "lib/upload/sharex.ts" };
-    crate::api_json::json_response(
-        StatusCode::NOT_IMPLEMENTED,
-        &serde_json::json!({ "message": "Not implemented in the Rust port yet.", "file": file }),
-        Some("no-store"),
-    )
+/// `/api/files*` (any method) goes to the tus server; the ShareX paths that
+/// reach this point are not routed by method and so cannot occur.
+async fn raw_upload_dispatch(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: Request<Body>,
+) -> Response {
+    if whatwg_pathname(req.uri()).starts_with("/api/files") {
+        return crate::upload::tus::handle(axum::extract::State(state), req).await;
+    }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 /// `pathname.startsWith("/api/files")` or `POST /upload | /api/upload`.
@@ -145,9 +163,6 @@ fn permanent_redirect(location: &str) -> Response {
     res
 }
 
-/// Next's order for the `Allow` header of a route handler.
-const METHOD_ORDER: &[&str] = &["GET", "HEAD", "OPTIONS", "POST", "PUT", "DELETE", "PATCH"];
-
 /// 405 handling as Next's app routes do it.
 fn fix_method_not_allowed(method: &Method, mut res: Response) -> Response {
     if res.status() != StatusCode::METHOD_NOT_ALLOWED {
@@ -165,7 +180,8 @@ fn fix_method_not_allowed(method: &Method, mut res: Response) -> Response {
         .filter(|m| !m.is_empty())
         .collect();
     methods.push("OPTIONS".into());
-    methods.sort_by_key(|m| METHOD_ORDER.iter().position(|o| o == m).unwrap_or(usize::MAX));
+    // `allow.sort().join(", ")` in Next's auto-implement-methods: alphabetical.
+    methods.sort();
     methods.dedup();
     let mut ok = StatusCode::NO_CONTENT.into_response();
     if let Ok(v) = HeaderValue::from_str(&methods.join(", ")) {

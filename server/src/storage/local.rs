@@ -149,16 +149,19 @@ impl StorageDriver for LocalDriver {
     fn delete<'a>(&'a self, path: &'a str) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
             let target = self.full(path)?;
+            // `rm(path, { force: true })`: a missing file is fine, a directory is
+            // refused (ERR_FS_EISDIR without `recursive`), which callers count
+            // as a failed delete.
+            if tokio::fs::symlink_metadata(&target).await.is_ok_and(|m| m.is_dir()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::IsADirectory,
+                    format!("Path is a directory: rm returned EISDIR (is a directory) {}", target.display()),
+                )
+                .into());
+            }
             match tokio::fs::remove_file(&target).await {
                 Ok(()) => Ok(()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::IsADirectory || target.is_dir() => {
-                    match tokio::fs::remove_dir_all(&target).await {
-                        Ok(()) => Ok(()),
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                        Err(e) => Err(e.into()),
-                    }
-                }
                 Err(e) => Err(e.into()),
             }
         })
@@ -224,6 +227,20 @@ mod tests {
         assert!(d.full("/etc/passwd").is_err());
         assert_eq!(d.full("a/../b").unwrap(), PathBuf::from("/srv/storage/b"));
         assert_eq!(d.full("").unwrap(), PathBuf::from("/srv/storage"));
+    }
+
+    #[tokio::test]
+    async fn delete_refuses_a_directory_and_ignores_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = LocalDriver::new(dir.path().to_str().unwrap());
+        std::fs::create_dir_all(dir.path().join("a/b")).unwrap();
+        std::fs::write(dir.path().join("a/b/f.txt"), b"x").unwrap();
+        let err = d.delete("a/b").await.unwrap_err();
+        assert!(!crate::storage::is_not_found(&err) && err.to_string().contains("EISDIR"), "{err}");
+        assert!(dir.path().join("a/b/f.txt").exists());
+        d.delete("a/b/f.txt").await.unwrap();
+        d.delete("a/b/f.txt").await.unwrap();
+        assert!(!dir.path().join("a/b/f.txt").exists());
     }
 
     #[tokio::test]

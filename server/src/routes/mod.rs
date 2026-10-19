@@ -12,4 +12,7 @@
 //! naming the upstream file.
 
 pub mod api;
+pub mod avatar;
 pub mod download_app;
+pub mod s_code;
+pub mod s_code_name;

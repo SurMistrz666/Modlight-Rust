@@ -4,8 +4,9 @@
 //! Framework-agnostic helpers only (no db), so the serving route, the upload
 //! route, the profile form and the theme applier all agree on the same rules.
 
-use crate::config::{js_number, js_round};
+use crate::config::js_number;
 use crate::http::cookies::encode_uri_component;
+use crate::naming::js_round;
 
 /// Where a wallpaper lives in storage. The token is what makes the URL cacheable.
 pub const BACKGROUND_PREFIX: &str = "backgrounds";
@@ -133,8 +134,113 @@ pub fn is_accepted_background_type(t: Option<&str>) -> bool {
     })
 }
 
+/// `clampDim(value: unknown)` for a JSON value (an action argument): null and
+/// "" are the default, anything else goes through `Number()`.
+pub fn clamp_dim_value(value: Option<&serde_json::Value>) -> i32 {
+    use serde_json::Value;
+    let number = |s: &str| DimInput::Number(js_number(s));
+    clamp_dim(match value {
+        None | Some(Value::Null) => DimInput::Absent,
+        Some(Value::String(s)) if s.is_empty() => DimInput::Absent,
+        Some(Value::String(s)) => number(s),
+        Some(Value::Number(n)) => DimInput::Number(n.as_f64().unwrap_or(f64::NAN)),
+        Some(Value::Bool(b)) => DimInput::Other(if *b { 1.0 } else { 0.0 }),
+        // Number([]) is 0, Number([5]) is 5, Number({}) is NaN.
+        Some(Value::Array(a)) if a.is_empty() => DimInput::Other(0.0),
+        Some(Value::Array(a)) if a.len() == 1 => match &a[0] {
+            Value::Number(n) => DimInput::Other(n.as_f64().unwrap_or(f64::NAN)),
+            Value::String(s) => DimInput::Other(js_number(s)),
+            Value::Null => DimInput::Other(0.0),
+            _ => DimInput::Other(f64::NAN),
+        },
+        Some(_) => DimInput::Other(f64::NAN),
+    })
+}
+
+/// For the file picker's `accept` attribute.
+pub fn background_accept() -> String {
+    crate::avatar::ACCEPTED_TYPES.join(",")
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    // tests/unit/background.test.ts (the pure helpers)
+    #[test]
+    fn clamp_dim_rejects_absent_values_before_coercion() {
+        assert_eq!(clamp_dim(DimInput::Absent), 70);
+        assert_eq!(clamp_dim(DimInput::Text("")), 70);
+        assert_eq!(clamp_dim(DimInput::Number(0.0)), 0);
+        assert_eq!(clamp_dim(DimInput::Number(-5.0)), 0);
+        assert_eq!(clamp_dim(DimInput::Number(120.0)), 95);
+        assert_eq!(clamp_dim(DimInput::Number(42.5)), 43);
+        assert_eq!(clamp_dim(DimInput::Text("33")), 33);
+        assert_eq!(clamp_dim(DimInput::Text("abc")), 70);
+        assert_eq!(clamp_dim(DimInput::Number(f64::NAN)), 70);
+        assert_eq!(clamp_dim(DimInput::Number(f64::INFINITY)), 70);
+    }
+
+    #[test]
+    fn urls_and_tokens() {
+        assert_eq!(background_token(Some("backgrounds/u1-abc123.webp")), "abc123");
+        assert_eq!(background_token(Some("backgrounds/u1.webp")), "");
+        assert_eq!(background_token(None), "");
+        assert_eq!(background_url(Some("bob"), Some("backgrounds/u1-tok.webp")).as_deref(), Some("/bg/bob?v=tok"));
+        assert_eq!(background_url(Some("a b"), Some("backgrounds/x.webp")).as_deref(), Some("/bg/a%20b"));
+        assert_eq!(background_url(None, Some("k")), None);
+        assert_eq!(background_url(Some("bob"), None), None);
+        assert_eq!(
+            background_style(Some("bob"), Some("backgrounds/u-t.webp"), None),
+            Some(BackgroundStyle { url: "/bg/bob?v=t".into(), dim: 0.7 })
+        );
+        assert_eq!(
+            serde_json::to_string(&background_style(Some("bob"), Some("backgrounds/u-t.webp"), Some(0))).unwrap(),
+            r#"{"url":"/bg/bob?v=t","dim":0}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&background_style(Some("bob"), Some("backgrounds/u-t.webp"), Some(7))).unwrap(),
+            r#"{"url":"/bg/bob?v=t","dim":0.07}"#
+        );
+        assert!(is_accepted_background_type(Some("image/PNG; q=1")));
+        assert!(!is_accepted_background_type(Some("image/svg+xml")));
+    }
+
+    #[test]
+    fn clamp_dim_of_json_values() {
+        use serde_json::json;
+        assert_eq!(clamp_dim_value(Some(&json!("abc"))), DIM_DEFAULT);
+        assert_eq!(clamp_dim_value(Some(&json!(""))), DIM_DEFAULT);
+        assert_eq!(clamp_dim_value(Some(&json!(null))), DIM_DEFAULT);
+        assert_eq!(clamp_dim_value(None), DIM_DEFAULT);
+        assert_eq!(clamp_dim_value(Some(&json!("40"))), 40);
+        assert_eq!(clamp_dim_value(Some(&json!(55.4))), 55);
+        assert_eq!(clamp_dim_value(Some(&json!(55.6))), 56);
+        assert_eq!(clamp_dim_value(Some(&json!([]))), 0);
+        assert_eq!(clamp_dim_value(Some(&json!({}))), DIM_DEFAULT);
+    }
+
+    #[test]
+    fn keys_and_accepted_types() {
+        let key = background_key("user_123", "deadbeef");
+        assert_eq!(key, "backgrounds/user_123-deadbeef.webp");
+        assert_eq!(background_token(Some(&background_key("a-b-c", "cafe"))), "cafe");
+        assert_eq!(background_url(Some("a\"b"), Some(&background_key("u", "t"))).as_deref(), Some("/bg/a%22b?v=t"));
+        assert_eq!(background_url(Some("tag"), Some("legacy.webp")).as_deref(), Some("/bg/tag"));
+        for t in crate::avatar::ACCEPTED_TYPES {
+            assert!(is_accepted_background_type(Some(t)));
+        }
+        assert!(is_accepted_background_type(Some("image/jpeg; charset=binary")));
+        for t in [Some("image/svg+xml"), Some("text/html"), Some("application/octet-stream"), None, Some("")] {
+            assert!(!is_accepted_background_type(t));
+        }
+    }
+}
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
     use super::*;
 
     // tests/unit/background.test.ts (the pure helpers)
