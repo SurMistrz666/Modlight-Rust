@@ -120,7 +120,7 @@ impl S3Error {
         let code = err.code().map(str::to_string);
         let message = match &err {
             SdkError::ServiceError(_) => err.message().unwrap_or("UnknownError").to_string(),
-            other => DisplayErrorContext(other).to_string(),
+            other => display_chain(other),
         };
         S3Error { code, status, message, source: Some(Box::new(err)) }
     }
@@ -133,6 +133,11 @@ impl S3Error {
     pub fn has_code(&self, code: &str) -> bool {
         self.code.as_deref() == Some(code)
     }
+
+    /// The SDK's own error, for diagnostics.
+    pub fn sdk_error(&self) -> Option<&(dyn std::error::Error + Send + Sync + 'static)> {
+        self.source.as_deref()
+    }
 }
 
 impl std::fmt::Display for S3Error {
@@ -141,10 +146,25 @@ impl std::fmt::Display for S3Error {
     }
 }
 
-impl std::error::Error for S3Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source.as_deref().map(|e| e as &(dyn std::error::Error + 'static))
+/// The message already spells out the SDK error's chain, so the SDK error is
+/// kept for `Debug` only and not exposed as `source()` (which would repeat
+/// it in `{:#}` output).
+impl std::error::Error for S3Error {}
+
+/// `a: b: c` from an error and its sources, skipping a source whose text its
+/// parent already ends with.
+fn display_chain(err: &dyn std::error::Error) -> String {
+    let mut out = err.to_string();
+    let mut next = err.source();
+    while let Some(e) = next {
+        let text = e.to_string();
+        if !out.ends_with(&text) {
+            out.push_str(": ");
+            out.push_str(&text);
+        }
+        next = e.source();
     }
+    out
 }
 
 /// `SdkError` -> `anyhow::Error` carrying an [`S3Error`].
@@ -479,6 +499,29 @@ mod tests {
         assert!(is_not_found(&anyhow::Error::from(std::io::Error::other(err("NoSuchKey")))));
         assert!(!is_not_found(&anyhow::anyhow!("boom")));
         assert_eq!(s3_error(&anyhow::Error::new(err("NoSuchUpload"))).unwrap().code.as_deref(), Some("NoSuchUpload"));
+    }
+
+    #[tokio::test]
+    async fn transport_failures_read_as_one_line() {
+        let d = S3Driver::new(S3Config {
+            endpoint: Some("http://127.0.0.1:1".into()),
+            region: "auto".into(),
+            bucket: "b".into(),
+            access_key_id: "a".into(),
+            secret_access_key: "s".into(),
+            force_path_style: true,
+            prefix: None,
+        });
+        let err = d.read_buffer("k").await.unwrap_err();
+        let text = err.to_string();
+        assert!(text.starts_with("dispatch failure: "), "{text}");
+        assert!(text.contains("Connection refused"), "{text}");
+        assert!(!text.contains("DispatchFailure {"), "no Debug dump: {text}");
+        assert_eq!(format!("{err:#}"), text);
+        assert!(!is_not_found(&err));
+        let s3 = s3_error(&err).unwrap();
+        assert_eq!(s3.code, None);
+        assert!(s3.sdk_error().is_some());
     }
 
     #[tokio::test]
