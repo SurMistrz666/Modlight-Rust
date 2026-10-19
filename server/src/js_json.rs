@@ -489,15 +489,19 @@ pub struct StackBudget {
 }
 
 /// `JSON.stringify(settings)` inside `parseClientSettingsBody`, measured on
-/// the reference image (Node 24.22, V8 13.6): a chain of 4061 nested objects
-/// serializes and 4062 throw; one object holding 4346 nested arrays
-/// serializes and 4347 throw; alternating object/array pairs stop at 2099
-/// pairs; 2000 objects then arrays stop at 2205 arrays, 2191 objects then
-/// 2000 arrays stop there. An object frame costs about 1.0705 array frames;
-/// these integers reproduce the pure cases exactly and the mixed ones to
-/// within one level. Repeated runs of the reference moved by up to four
-/// levels (JIT state), so the edge is approximate by nature.
-pub const STRINGIFY_STACK: StackBudget = StackBudget { object: 2141, array: 2000, total: 8_695_000 };
+/// the reference image (Node 24.22, V8 13.6, a warmed-up server): a chain of
+/// 4061 nested objects serializes and 4062 throw; one object holding 4351
+/// nested arrays serializes and 4352 throw. Mixed nesting fits the same two
+/// frame costs (an object frame is about 1.07 array frames: alternating
+/// object/array pairs, 2000 objects then arrays and the reverse all landed
+/// within a level of this model).
+///
+/// The edge is approximate by nature. The stack V8 has left when the route
+/// calls `JSON.stringify` depends on JIT state, so the reference itself
+/// moved between runs: arrays 4346 -> 4351 while objects stayed at 4061 (and
+/// once read 4057). Within a few levels of the edge either server may answer
+/// either way; well inside it both store, well outside it both throw.
+pub const STRINGIFY_STACK: StackBudget = StackBudget { object: 2143, array: 2000, total: 8_704_500 };
 
 /// `JSON.stringify(value)` (no replacer, no indentation).
 pub fn stringify(value: &JsValue) -> String {
@@ -759,10 +763,10 @@ mod tests {
         let pairs = |k: usize| parse(&format!("{}1{}", "{\"a\":[".repeat(k), "]}".repeat(k))).unwrap();
         assert!(stringify_within(&objects(4061), STRINGIFY_STACK).is_ok());
         assert_eq!(stringify_within(&objects(4062), STRINGIFY_STACK), Err(RangeError));
-        assert!(stringify_within(&arrays(4346), STRINGIFY_STACK).is_ok());
-        assert_eq!(stringify_within(&arrays(4347), STRINGIFY_STACK), Err(RangeError));
-        assert!(stringify_within(&pairs(2099), STRINGIFY_STACK).is_ok());
-        assert_eq!(stringify_within(&pairs(2100), STRINGIFY_STACK), Err(RangeError));
+        assert!(stringify_within(&arrays(4351), STRINGIFY_STACK).is_ok());
+        assert_eq!(stringify_within(&arrays(4352), STRINGIFY_STACK), Err(RangeError));
+        assert!(stringify_within(&pairs(2101), STRINGIFY_STACK).is_ok());
+        assert_eq!(stringify_within(&pairs(2102), STRINGIFY_STACK), Err(RangeError));
         // Width costs nothing: only the open containers count.
         let wide = parse(&format!("[{}]", vec!["[[1]]"; 10_000].join(","))).unwrap();
         assert!(stringify_within(&wide, STRINGIFY_STACK).is_ok());
