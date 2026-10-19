@@ -68,3 +68,21 @@ mod tests {
         assert_eq!(js_to_fixed(-0.04, 1), "-0.0".trim_start_matches('-'));
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    #[test]
+    fn sizes() {
+        assert_eq!(human_file_size(0.0, 1), "0 B");
+        assert_eq!(human_file_size(512.0, 1), "512 B");
+        assert_eq!(human_file_size(1536.0, 1), "1.5 KB");
+        assert_eq!(human_file_size(10_737_418_240.0, 1), "10.0 GB");
+        assert_eq!(human_file_size(1024.0 * 1024.0 * 1.25, 1), "1.3 MB");
+        assert_eq!(js_to_fixed(0.125, 2), "0.13");
+        assert_eq!(js_to_fixed(2.5, 0), "3");
+    }
+}

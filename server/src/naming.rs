@@ -857,3 +857,39 @@ mod url_tests {
         assert!(scoped_short_code(Some(&tag), &"y".repeat(32)).len() > SHORT_CODE_MAX);
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    // tests/unit/naming.test.ts (checkTag) and naming-schemes.test.ts (clamps)
+    #[test]
+    fn tags() {
+        assert_eq!(check_tag("a"), Err(TagProblem::TooShort));
+        assert_eq!(check_tag(&"a".repeat(33)), Err(TagProblem::TooLong));
+        assert_eq!(check_tag("-ab"), Err(TagProblem::Charset));
+        assert_eq!(check_tag("ab.c"), Err(TagProblem::Charset));
+        assert_eq!(check_tag("Login"), Err(TagProblem::Reserved));
+        assert_eq!(check_tag("bg"), Err(TagProblem::Reserved));
+        assert_eq!(check_tag("alicja"), Ok(()));
+        assert_eq!(check_tag("a_b-1"), Ok(()));
+        assert_eq!(check_tag("\u{e9}\u{e9}"), Err(TagProblem::Charset));
+    }
+
+    #[test]
+    fn clamps() {
+        assert_eq!(clamp_word_count(None), 2);
+        assert_eq!(clamp_word_count(Some(0.0)), 2);
+        assert_eq!(clamp_word_count(Some(3.5)), 4);
+        assert_eq!(clamp_word_count(Some(9.0)), 4);
+        assert_eq!(clamp_word_count(Some(f64::NAN)), 2);
+        assert_eq!(clamp_random_length(None), 6);
+        assert_eq!(clamp_random_length(Some(1.0)), 5);
+        assert_eq!(clamp_random_length(Some(100.0)), 32);
+        assert!(is_naming_scheme(Some("custom")));
+        assert!(!is_naming_scheme(Some("Custom")));
+        assert!(!is_naming_scheme(None));
+    }
+}

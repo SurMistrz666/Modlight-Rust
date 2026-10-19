@@ -238,3 +238,27 @@ mod tests {
         assert!(filesystem_space_at(root.path()).unwrap().total_bytes > 0);
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+
+    #[test]
+    fn measures_an_existing_directory_and_refuses_a_missing_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let space = filesystem_space_at(dir.path()).expect("statfs works on a temp dir");
+        assert!(space.total_bytes > 0);
+        assert!(space.free_bytes <= space.total_bytes);
+        assert!(space.used_bytes <= space.total_bytes);
+        assert_eq!(filesystem_space_at(std::path::Path::new("/nonexistent/modlight/storage")), None);
+        assert_eq!(filesystem_space_at(std::path::Path::new("bad\0path")), None);
+    }
+
+    #[test]
+    fn serializes_like_upstream() {
+        let v = serde_json::to_value(FilesystemSpace { total_bytes: 3, free_bytes: 1, used_bytes: 2 }).unwrap();
+        assert_eq!(v, serde_json::json!({ "totalBytes": 3, "freeBytes": 1, "usedBytes": 2 }));
+    }
+}

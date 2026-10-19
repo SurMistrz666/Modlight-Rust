@@ -30,20 +30,34 @@
 //! write cookies); a `/_page` fetch is a client-side navigation (`RSC: 1`
 //! upstream) and does not refresh at all.
 
+pub mod authorize;
 pub mod dashboard;
+pub mod dashboard_admin;
 pub mod dashboard_admin_user_files;
 pub mod dashboard_duplicates;
 pub mod dashboard_folders;
 pub mod dashboard_links;
 pub mod dashboard_paste;
+pub mod dashboard_profile;
+pub mod dashboard_tokens;
 pub mod dashboard_trash;
 pub mod dashboard_upload;
+pub mod download;
+pub mod forgot;
+pub mod invite;
 pub mod layout_app;
+pub mod layout_auth;
+pub mod login;
 pub mod meta;
+pub mod register;
+pub mod reset;
 pub mod root_layout;
+pub mod root_page;
 pub mod shell;
 pub mod shortlink_unlock;
 pub mod table;
+pub mod two_factor;
+pub mod welcome;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -61,6 +75,7 @@ use serde_json::{Value, json};
 
 use crate::auth::session::{AuthSession, RefreshPolicy};
 use crate::auth_helpers::{AuthRefusal, RequestSession};
+use crate::background::BackgroundStyle;
 use crate::http::cookies::parse_cookies_next;
 use crate::http::set_cookie::ResponseCookies;
 use crate::i18n::{Locale, Translator};
@@ -233,12 +248,52 @@ impl From<serde_json::Error> for PageError {
 pub struct PageData {
     pub props: Value,
     pub meta: PageMeta,
+    /// The skin and wallpaper the page's own `<ThemeApplier>` paints before the
+    /// first frame (public pages show the OWNER's), for the document only
+    /// (CONTRACT 2.2). Pages under the `(app)` layout get theirs from the layout.
+    pub skin: Option<DocumentSkin>,
 }
 
 impl PageData {
     /// Props from anything serializable (tagged encoding applied).
     pub fn new<T: serde::Serialize + ?Sized>(props: &T, meta: PageMeta) -> Result<PageData, PageError> {
-        Ok(PageData { props: tagged::to_tagged_value(props)?, meta })
+        Ok(PageData { props: tagged::to_tagged_value(props)?, meta, skin: None })
+    }
+
+    /// Paint the document with this skin and wallpaper (`<ThemeApplier theme
+    /// background>`): `theme` is resolved here, as the applier does.
+    pub fn with_skin(mut self, theme: Option<&str>, background: Option<BackgroundStyle>) -> PageData {
+        self.skin = Some(DocumentSkin { theme: crate::themes::resolve_theme(theme), background });
+        self
+    }
+}
+
+/// `data-theme` and the wallpaper `<ThemeApplier>` sets on `<html>`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentSkin {
+    pub theme: &'static str,
+    pub background: Option<BackgroundStyle>,
+}
+
+impl DocumentSkin {
+    /// The `style` attribute value: `--ml-bg-image:url("<url>");--ml-bg-dim:<String(dim)>`.
+    pub fn style(&self) -> Option<String> {
+        self.background.as_ref().map(|bg| {
+            format!(
+                "--ml-bg-image:url(\"{}\");--ml-bg-dim:{}",
+                bg.url,
+                crate::i18n::format::js_number_to_string(bg.dim)
+            )
+        })
+    }
+
+    /// From the `(app)` layout payload (`theme`, `background`).
+    pub fn from_app_layout(layout: &Value) -> DocumentSkin {
+        let theme = crate::themes::resolve_theme(layout.get("theme").and_then(Value::as_str));
+        let background = layout.get("background").and_then(|bg| {
+            Some(BackgroundStyle { url: bg.get("url")?.as_str()?.to_string(), dim: bg.get("dim")?.as_f64()? })
+        });
+        DocumentSkin { theme, background }
     }
 }
 
@@ -308,7 +363,21 @@ impl PageRegistry {
 /// here (`reg.page("/dashboard/folders", dashboard_folders::load);`).
 pub fn register_all(reg: &mut PageRegistry) {
     reg.layout(Layout::Root, root_layout::load);
-    reg.layout(Layout::App, layout_app::load); // app/(app)/layout.tsx (srv-auth's loader, copied verbatim)
+    reg.layout(Layout::Auth, layout_auth::load);
+    reg.page("/download", download::load); // app/download/page.tsx
+    reg.page("/dashboard/tokens", dashboard_tokens::load); // app/(app)/dashboard/tokens/page.tsx
+    reg.page("/authorize", authorize::load);
+    reg.layout(Layout::App, layout_app::load);
+    reg.page("/dashboard/admin", dashboard_admin::load);
+    reg.page("/dashboard/profile", dashboard_profile::load);
+    reg.page("/", root_page::load); // app/page.tsx
+    reg.page("/welcome", welcome::load); // app/welcome/page.tsx
+    reg.page("/login", login::load); // app/(auth)/login/page.tsx
+    reg.page("/register", register::load); // app/(auth)/register/page.tsx
+    reg.page("/forgot", forgot::load); // app/(auth)/forgot/page.tsx
+    reg.page("/reset", reset::load); // app/(auth)/reset/page.tsx
+    reg.page("/2fa", two_factor::load); // app/(auth)/2fa/page.tsx
+    reg.page("/invite/[token]", invite::load); // app/(auth)/invite/[token]/page.tsx
     reg.page("/dashboard", dashboard::load); // app/(app)/dashboard/page.tsx
     reg.page("/dashboard/folders", dashboard_folders::load); // app/(app)/dashboard/folders/page.tsx
     reg.page("/dashboard/trash", dashboard_trash::load); // app/(app)/dashboard/trash/page.tsx
@@ -331,6 +400,7 @@ pub enum PageOutcome {
         layouts: IndexMap<String, Value>,
         props: Value,
         head: ResolvedHead,
+        skin: Option<DocumentSkin>,
     },
     Redirect {
         to: String,
@@ -365,7 +435,7 @@ impl PageOutcome {
     /// The JSON payload (`/_page` body and the inlined `__MODLIGHT_PAGE__`).
     pub fn payload(&self, is_prod: bool) -> Value {
         match self {
-            PageOutcome::Page { route, params, layouts, props, head } => json!({
+            PageOutcome::Page { route, params, layouts, props, head, .. } => json!({
                 "route": route.path,
                 "params": params,
                 "layouts": layouts,
@@ -409,13 +479,20 @@ pub async fn load_page(ctx: PageCtx) -> PageOutcome {
         return PageOutcome::NotImplemented { route, missing: route.file.to_string(), layouts };
     };
     match loader.load(ctx.clone()).await {
-        Ok(data) => PageOutcome::Page {
-            route,
-            params: ctx.params.clone(),
-            layouts,
-            props: data.props,
-            head: meta::resolve(&state.config, &data.meta, false),
-        },
+        Ok(data) => {
+            let skin = match layouts.get(Layout::App.key()) {
+                Some(app) => Some(DocumentSkin::from_app_layout(app)),
+                None => data.skin,
+            };
+            PageOutcome::Page {
+                route,
+                params: ctx.params.clone(),
+                layouts,
+                props: data.props,
+                head: meta::resolve(&state.config, &data.meta, false),
+                skin,
+            }
+        }
         Err(e) => error_outcome(&state, e, layouts),
     }
 }
@@ -521,11 +598,23 @@ async fn document_response(state: &AppState, ctx: &PageCtx, outcome: PageOutcome
         PageOutcome::Page { head, .. } | PageOutcome::NotFound { head, .. } => head.clone(),
         _ => meta::resolve(&state.config, &PageMeta::default(), false),
     };
+    let skin = match &outcome {
+        PageOutcome::Page { skin, .. } => skin.clone(),
+        // The `(app)` layout's <ThemeApplier> paints the panel whatever the
+        // page inside it does (not ported yet, or failed into the dashboard's
+        // error boundary), CONTRACT 2.2.
+        PageOutcome::NotImplemented { layouts, .. } | PageOutcome::Error { layouts, .. } => {
+            layouts.get(Layout::App.key()).map(DocumentSkin::from_app_layout)
+        }
+        _ => None,
+    };
+    let background_style = skin.as_ref().and_then(DocumentSkin::style);
     let payload = outcome.payload(state.config.is_prod);
     let html = state.shell.render(&shell::ShellParts {
         lang: root.locale.as_str(),
         data_mode: root.mode,
-        data_theme: root.theme,
+        data_theme: skin.as_ref().map(|s| s.theme).unwrap_or(root.theme),
+        background_style: background_style.as_deref(),
         head: &meta::render_head(&head),
         payload_json: &tagged::json_for_html(&payload),
     });

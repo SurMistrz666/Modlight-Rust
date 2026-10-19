@@ -14,7 +14,8 @@
     "meta": {
       "title": "Protected link - Modlight",
       "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
-      "applicationName": "Modlight"
+      "applicationName": "Modlight",
+      "robots": "noindex, nofollow"
     }
   }
 }

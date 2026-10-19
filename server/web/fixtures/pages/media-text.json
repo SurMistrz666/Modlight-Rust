@@ -40,9 +40,10 @@
       }
     },
     "meta": {
-      "title": "notes.txt - Modlight",
-      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
-      "applicationName": "Modlight"
+      "title": "notes.txt · example",
+      "description": null,
+      "applicationName": null,
+      "robots": null
     }
   }
 }

@@ -23,9 +23,10 @@ use crate::api_json::json_private;
 use crate::api_token::{TokenAuth, TokenCapability, authenticate_api_token, bearer_from_request, scope_refusal_body};
 use crate::auth::session::AuthSession;
 use crate::auth_helpers::{RequestSession, Sessions};
-use crate::data::admin_disk::{TRASH_DUE_SOON_DAYS, disk_insights, server_storage_usage};
+use crate::data::admin::server_storage_usage;
+use crate::data::admin_disk::{TRASH_DUE_SOON_DAYS, disk_insights};
 use crate::db::types::JsDate;
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::maintenance::trash::TRASH_RETENTION_DAYS;
 use crate::shortlinks::text_response;
 use crate::state::AppState;
@@ -138,8 +139,7 @@ async fn report(State(state): State<AppState>, Sessions(session): Sessions, req:
     let (usage, insights) = tokio::try_join!(
         server_storage_usage(&state.db, &state.config),
         disk_insights(&state.db, &state.config, JsDate::now()),
-    )
-    .map_err(AppError::Internal)?;
+    )?;
 
     // Nothing renamed, regrouped or recomputed: every value is `usage.x` or
     // `insights.x`. `disk` is the only MEASUREMENT (a statfs, null on an

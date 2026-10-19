@@ -211,3 +211,50 @@ mod tests {
         assert!(!is_known_domain(&c, "https://x.example.com"));
     }
 }
+
+#[cfg(test)]
+mod srv_auth_tests {
+    //! The srv-auth port's tests of its narrow version of this module, kept
+    //! against the reconciled implementation.
+    use super::*;
+    use std::collections::HashMap;
+
+    fn config(domains: &str) -> Config {
+        let mut vars = HashMap::new();
+        vars.insert("APP_URL".to_string(), "https://host.example.com".to_string());
+        vars.insert("APP_DOMAINS".to_string(), domains.to_string());
+        Config::from_env_map(&vars).unwrap()
+    }
+
+    #[test]
+    fn base_url_only_trusts_configured_domains() {
+        let c = config("https://H.example.com, https://s.example.com/");
+        assert_eq!(user_base_url(&c, None), "https://host.example.com");
+        assert_eq!(user_base_url(&c, Some("")), "https://host.example.com");
+        assert_eq!(user_base_url(&c, Some("  ")), "https://host.example.com");
+        assert_eq!(user_base_url(&c, Some("https://h.example.com//")), "https://H.example.com");
+        assert_eq!(user_base_url(&c, Some("https://evil.example.com")), "https://host.example.com");
+        assert!(is_known_domain(&c, " https://S.example.com/ "));
+        assert!(!is_known_domain(&c, "https://evil.example.com"));
+    }
+
+    #[test]
+    fn url_shapes() {
+        assert_eq!(raw_url("tag", "abc", "png", "https://x"), "https://x/tag/abc/raw.png");
+        assert_eq!(raw_url("tag", "abc", "", "https://x"), "https://x/tag/abc/raw");
+        assert_eq!(tagless_raw_url("abc", "png", "https://x"), "https://x/abc/raw.png");
+        assert_eq!(public_url("tag", "abc", "png", "https://x"), "https://x/tag/abc.png");
+        assert_eq!(tagless_url("abc", "", "https://x"), "https://x/abc");
+        assert_eq!(ext_of("Photo.JPG"), "jpg");
+        assert_eq!(ext_of("archive.tar.gz"), "gz");
+        assert_eq!(ext_of("noext"), "");
+        assert_eq!(ext_of("weird.ex-t"), "");
+        let c = config("");
+        let owner = LinkOwner { user_code: None, preferred_domain: None, skip_tag_in_url: Some(true) };
+        let urls = media_urls(&c, &owner, "abc", "png");
+        assert_eq!(
+            (urls.url, urls.raw_url),
+            ("https://host.example.com/abc.png".to_string(), "https://host.example.com/abc/raw.png".to_string())
+        );
+    }
+}

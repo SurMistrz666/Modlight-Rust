@@ -372,7 +372,34 @@ pub async fn get_session(
     headers: &HeaderMap,
     policy: RefreshPolicy,
 ) -> Result<SessionLookup, FailedToGetSession> {
-    get_session_at(db, cookies, headers, policy, JsDate::now()).await.map_err(FailedToGetSession)
+    match get_session_with(db, cookies, headers, policy, false).await {
+        Ok(lookup) => Ok(lookup),
+        Err(GetSessionError::Unauthorized(_)) => {
+            Err(FailedToGetSession(anyhow::anyhow!("session disappeared while it was being refreshed")))
+        }
+        Err(GetSessionError::Failed(e)) => Err(FailedToGetSession(e)),
+    }
+}
+
+/// How the `/get-session` endpoint itself can fail.
+#[derive(Debug)]
+pub enum GetSessionError {
+    /// The row vanished during the refresh: the session cookies are expired
+    /// (these) and the answer is 401 FAILED_TO_GET_SESSION.
+    Unauthorized(Vec<SetCookie>),
+    /// Anything else: 500 FAILED_TO_GET_SESSION.
+    Failed(anyhow::Error),
+}
+
+/// `getSession` with the `disableRefresh` query flag, for the endpoint.
+pub async fn get_session_with(
+    db: &PgPool,
+    cookies: &AuthCookies,
+    headers: &HeaderMap,
+    policy: RefreshPolicy,
+    disable_refresh: bool,
+) -> Result<SessionLookup, GetSessionError> {
+    get_session_at(db, cookies, headers, policy, JsDate::now(), disable_refresh).await
 }
 
 async fn get_session_at(
@@ -381,7 +408,8 @@ async fn get_session_at(
     headers: &HeaderMap,
     policy: RefreshPolicy,
     now: JsDate,
-) -> anyhow::Result<SessionLookup> {
+    disable_refresh: bool,
+) -> Result<SessionLookup, GetSessionError> {
     let parsed = parse_cookies_better_call(headers);
     let token = match verify_signed_cookie(parsed.get(&cookies.session_token.name).map(String::as_str), &cookies.secret)
     {
@@ -395,7 +423,7 @@ async fn get_session_at(
         cookies: if policy.sets_cookies() { set } else { Vec::new() },
     };
 
-    if let SessionDataCheck::WrongSignature = check_session_data(cookies, headers)? {
+    if let SessionDataCheck::WrongSignature = check_session_data(cookies, headers).map_err(GetSessionError::Failed)? {
         return Ok(finish(None, vec![cookies.session_data.expire()]));
     }
 
@@ -404,15 +432,15 @@ async fn get_session_at(
         SignedCookie::Valid(ref v) if !v.is_empty()
     );
 
-    let Some(found) = find_session(db, &token).await? else {
+    let Some(found) = find_session(db, &token).await.map_err(GetSessionError::Failed)? else {
         return Ok(finish(None, delete_session_cookies(cookies, headers)));
     };
     if found.session.expires_at < now {
         let expired = delete_session_cookies(cookies, headers);
-        delete_session(db, &found.session.token).await?;
+        delete_session(db, &found.session.token).await.map_err(GetSessionError::Failed)?;
         return Ok(finish(None, expired));
     }
-    if dont_remember {
+    if dont_remember || disable_refresh {
         return Ok(finish(Some(found), Vec::new()));
     }
 
@@ -423,9 +451,13 @@ async fn get_session_at(
     }
 
     let new_expiry = JsDate::from_millis(now.millis() + SESSION_EXPIRES_IN * 1000).unwrap_or(now);
-    let Some(updated) = update_session_expiry(db, &found.session.token, new_expiry, now).await? else {
-        // Deleted concurrently: Better Auth expires the cookies and throws.
-        anyhow::bail!("session disappeared while it was being refreshed");
+    let Some(updated) =
+        update_session_expiry(db, &found.session.token, new_expiry, now).await.map_err(GetSessionError::Failed)?
+    else {
+        // Deleted concurrently: Better Auth expires the cookies and throws
+        // UNAUTHORIZED FAILED_TO_GET_SESSION.
+        let expired = if policy.sets_cookies() { delete_session_cookies(cookies, headers) } else { Vec::new() };
+        return Err(GetSessionError::Unauthorized(expired));
     };
     // `maxAge: (expiresAt - Date.now()) / 1000`, floored when serialized.
     let remaining_ms = updated.expires_at.millis() - JsDate::now().millis();
