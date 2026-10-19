@@ -301,9 +301,9 @@ pub async fn finalize_upload(
         if (av_kind == MediaKind::Video || av_kind == MediaKind::Audio)
             && let Some(meta) = crate::media::av_meta::probe_stored_av_meta(storage, &storage_key).await
         {
-            width = meta.width;
-            height = meta.height;
-            frames = meta.frames;
+            width = meta.width.map(i64::from);
+            height = meta.height.map(i64::from);
+            frames = meta.frames.map(i64::from);
             duration_seconds = meta.duration_seconds;
             fps = meta.fps;
         }
