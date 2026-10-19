@@ -91,6 +91,12 @@ def cases_for(name):
         out.append(("%s~convert~gif-d3-t2" % name, "convert", {"to": "gif", "d": 3, "t": 2}))
         out.append(("%s~convert~gif-d20-t9999" % name, "convert", {"to": "gif", "d": 20, "t": 9999}))
         out.append(("%s~public~mp3" % name, "convert", {"to": "mp3", "privileged": False, "check": True}))
+        out.append(("%s~public~mkv" % name, "convert", {"to": "mkv", "privileged": False, "check": True}))
+        # Served again: from the derived cache, the note read back from beside
+        # the cached bytes; and a dry run that the cache answers.
+        for to in ("mp4", "mov"):
+            out.append(("%s~again~%s" % (name, to), "convert", {"to": to}))
+            out.append(("%s~check-again~%s" % (name, to), "convert", {"to": to, "check": True}))
         out.append(("%s~timeline.vtt" % name, "timeline.vtt", {}))
         out.append(("%s~timeline.jpg" % name, "timeline.jpg", {}))
         out.append(("%s~poster" % name, "poster", {}))
@@ -347,6 +353,9 @@ MEANINGFUL = ["content-type", "x-convert-refused", "x-convert-note", "limit", "x
 def norm_args(calls, tag):
     out = []
     for tool, args in calls:
+        if args == ["-version"]:
+            # The once-per-process availability check (ffmpegAvailable).
+            continue
         norm = []
         prev = None
         for a in args:

@@ -132,14 +132,20 @@
 //! vectors (`tests/fixtures/blurhash_vectors.json`), with macOS's and glibc's
 //! libm alike.
 //!
-//! # Not ported yet
+//! The media processing port added what convert.ts, motion.ts and
+//! card-render.ts use: `.flatten({ background })` (the PDF path),
+//! `sharp([buffers], { join: { across, animated } })` (the video motion
+//! tile), `.composite([{ input, left, top }])` and `sharp({ text })` (the
+//! embed card). The animated motion WebP and every embed card come out
+//! byte- or pixel-identical to the reference container
+//! (tests/parity_media). Text runs on Pango's fontconfig backend, the one
+//! production has (see [`init`]).
 //!
-//! Used by upstream modules outside this port and left for the media agent:
-//! `flatten` (convert.ts, the PDF path), `join: { animated }` (motion.ts),
-//! `composite` and `text` input (card-render.ts; SVG input itself is here).
+//! # Not ported
+//!
 //! Used nowhere upstream: `fit: contain`, `rotate(angle)`, `flip`, `flop`,
 //! `trim`, `extend`, colour operations, TIFF/JP2/JXL output, file input and
-//! output.
+//! output, tiled or gravity composites, `create` input.
 
 mod ffi;
 pub mod image;
