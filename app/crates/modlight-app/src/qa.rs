@@ -151,6 +151,9 @@ pub const SCREENS: &[&str] = &[
     "pinned-image",
     "image-combiner",
     "image-combiner-empty",
+    "video-converter",
+    "video-converter-encoding",
+    "video-converter-empty",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

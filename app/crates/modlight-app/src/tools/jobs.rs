@@ -32,6 +32,27 @@ impl OptionsHome {
     }
 }
 
+/// A tool waiting for a component (ffmpeg, ExifTool, the model) to be installed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ToolContinuation {
+    VideoConverter {
+        file: Option<PathBuf>,
+        settings: Box<TaskSettings>,
+    },
+}
+
+/// The components window closed: the tool opens if what it needs is there now.
+pub fn after_components(state: &mut AppState, next: ToolContinuation, satisfied: bool) {
+    if !satisfied {
+        return;
+    }
+    match next {
+        ToolContinuation::VideoConverter { file, settings } => {
+            state.open_video_converter(file, *settings)
+        }
+    }
+}
+
 /// Read one member of the task's `ToolsSettings`.
 pub fn tool_options<T: DeserializeOwned + Default>(settings: &TaskSettings, member: &str) -> T {
     modlight_tools::settings::read(settings.tools_settings.get(member))
@@ -119,6 +140,10 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
         },
         H::PinToScreenCloseAll => state.pin_close_all(settings),
         H::ImageCombiner => state.open_image_combiner(Vec::new(), settings),
+        H::VideoConverter => match file {
+            Some(file) => state.open_video_converter(Some(file), settings),
+            None => state.open_video_converter(None, settings),
+        },
         // The image effects window, the tray menu toggle: other parts of the port.
         _ => state.push(Command::NotYet),
     }
