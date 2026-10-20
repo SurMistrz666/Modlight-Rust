@@ -16,12 +16,13 @@ The reference has no `/_page`, so its side is read from what it renders:
 The Rust side is `/_page` (`layouts["(app)"]`, `props`, `meta`) and the
 document's `<html data-theme style data-bg>`.
 
-The rest of `lib/data/admin.ts` has no Rust HTTP surface yet (the admin
-actions belong to the library port): the reference answers through its own
-actions (`admin.loadOrphans`, `loadDeletionImpact`, `recalculateEveryQuota`,
-`runStorageScan`, Next's protocol), the Rust functions through
-`tests/admin_data_parity.rs` run against the Rust parity database, with
-identical storage trees written into both servers' storage roots.
+The rest of `lib/data/admin.ts` is compared through the admin actions on
+both servers (`admin.loadOrphans`, `loadDeletionImpact`,
+`recalculateEveryQuota`, `runStorageScan`: Next's protocol on the reference,
+`/_rpc` on Rust), with identical storage trees written into both servers'
+storage roots. `--rust-admin-data cargo` runs the Rust functions through
+`tests/admin_data_parity.rs` against a Rust database on the dev Postgres
+instead (the way this was checked before the actions were ported).
 
 Seeds IDENTICAL state on both databases first, wiping `user` (CASCADE),
 `uploads`, `folders`, `duplicate_dismissals` and the settings it varies: run
@@ -30,8 +31,8 @@ it only against your own scratch stacks, never the shared reference (8420).
     python3 server/tests/parity/panel.py --ref http://localhost:8428 --rust http://localhost:8436
 
 Expected (explained) differences, checked as such rather than compared:
-- `/dashboard` documents: the reference renders the page (200); the Rust
-  dashboard page is another port's (501 payload with the layouts).
+- `/dashboard` documents: both render the page (200; the library port's
+  page loader; this script once expected the skeleton's 501 there).
 - `disk.disk` (statfs): two different filesystems; checked for shape only.
 - the 307 of the `(app)` layout's `requireUser()`: the reference sends a whole
   HTML document as its body, the skeleton none (CONTRACT 2.1, "no body
@@ -74,6 +75,10 @@ def options():
     p.add_argument("--ref-app-container", default="modlight-srvauth-a-ref-app-1")
     p.add_argument("--ref-storage", default="/app/data/storage", help="STORAGE_LOCAL_PATH inside the reference")
     p.add_argument("--rust-storage", default=SCRATCH + "/data/storage", help="STORAGE_LOCAL_PATH of the Rust server")
+    p.add_argument("--expect-default-quota", default="20.0 GB",
+                   help='the reference\'s DEFAULT_USER_QUOTA as the admin page prints it ("null" when unlimited)')
+    p.add_argument("--rust-admin-data", choices=["rpc", "cargo"], default="rpc",
+                   help="lib/data/admin on Rust: through /_rpc (default) or tests/admin_data_parity.rs")
     a, _ = p.parse_known_args()
     return a
 
@@ -410,8 +415,13 @@ def page_data(browser, path, query=""):
     return browser.request("GET", "/_page?" + q, origin=False)
 
 
+EXPECTED_DEFAULT_QUOTA = "20.0 GB"
+
+
 def main():
+    global EXPECTED_DEFAULT_QUOTA
     opt = options()
+    EXPECTED_DEFAULT_QUOTA = None if opt.expect_default_quota == "null" else opt.expect_default_quota
     run = parity.Run.from_args()
     if ":8420" in run.ref:
         sys.exit("refusing to seed the shared reference (8420)")
@@ -448,8 +458,7 @@ def main():
         ref_doc = pair.ref.request("GET", "/dashboard?all=1", origin=False)
         rust_doc = pair.rust.request("GET", "/dashboard?all=1", origin=False)
         rust_page = page_data(pair.rust, "/dashboard", "all=1")
-        run.compare("(app) %s: document statuses (reference page 200, Rust page not ported 501)" % label,
-                    [200, 501], [ref_doc.status, rust_doc.status])
+        run.compare("(app) %s: document statuses" % label, [200, 200], [ref_doc.status, rust_doc.status])
         ref_layout = ref_app_layout(Flight(ref_doc.text()))
         body = rust_page.json() or {}
         rust_layout = parity._decode_tagged((body.get("layouts") or {}).get("(app)"))
@@ -542,7 +551,7 @@ def main():
         return ref_props
 
     props = admin_props("(no settings)")
-    expect_state("no settings", props, {"regEnabled": False, "keyState": "unset", "defaultQuota": "20.0 GB",
+    expect_state("no settings", props, {"regEnabled": False, "keyState": "unset", "defaultQuota": EXPECTED_DEFAULT_QUOTA,
                                         "mail": {"source": "none", "host": "", "port": 587, "security": "starttls",
                                                  "user": "", "from": "no-reply@localhost", "fromName": "Modlight",
                                                  "ready": False, "passwordState": "unset",
@@ -567,7 +576,7 @@ def main():
                           "mail_from_name": " Parity Robot ", "email_verification_required": "on"})
     expect_state("panel SMTP without password, undecryptable key",
                  admin_props("(panel SMTP without password, undecryptable key)"),
-                 {"regEnabled": True, "keyState": "undecryptable", "defaultQuota": "20.0 GB",
+                 {"regEnabled": True, "keyState": "undecryptable", "defaultQuota": EXPECTED_DEFAULT_QUOTA,
                   "mail": {"source": "panel", "host": "smtp.parity.test", "port": 2525, "security": "tls",
                            "user": "mailer", "from": "robot@parity.test", "fromName": "Parity Robot",
                            "ready": False, "passwordState": "unset", "verificationRequired": False,
@@ -581,7 +590,7 @@ def main():
                           "smtp_user": "mailer", "mail_from": "", "email_verification_required": "1",
                           "smtp_password_enc": secret_box(opt.node, env["AUTH_SECRET"], "smtp", "hunter2")})
     expect_state("panel SMTP ready, key set", admin_props("(panel SMTP ready, key set)"),
-                 {"regEnabled": True, "keyState": "set", "defaultQuota": "20.0 GB",
+                 {"regEnabled": True, "keyState": "set", "defaultQuota": EXPECTED_DEFAULT_QUOTA,
                   "mail": {"source": "panel", "host": "smtp.parity.test", "port": 587, "security": "starttls",
                            "user": "mailer", "from": "no-reply@localhost", "fromName": "Modlight",
                            "ready": True, "passwordState": "set", "verificationRequired": True,
@@ -591,7 +600,7 @@ def main():
         set_settings(db, {"register_enabled": "yes", "smtp_host": "smtp.parity.test", "smtp_user": "",
                           "smtp_password_enc": "v1.x.y.z"})
     expect_state("undecryptable SMTP password", admin_props("(undecryptable SMTP password)"),
-                 {"regEnabled": False, "keyState": "unset", "defaultQuota": "20.0 GB",
+                 {"regEnabled": False, "keyState": "unset", "defaultQuota": EXPECTED_DEFAULT_QUOTA,
                   "mail": {"source": "panel", "host": "smtp.parity.test", "port": 587, "security": "starttls",
                            "user": "", "from": "no-reply@localhost", "fromName": "Modlight", "ready": False,
                            "passwordState": "undecryptable", "verificationRequired": False,
@@ -726,7 +735,21 @@ def admin_data_checks(run, opt, ref_db, rust_db, signed):
         "recalc": ref_call("recalculateEveryQuota"),
         "scan": ref_call("runStorageScan"),
     }
-    rust = rust_admin_data(opt, impact_ids)
+    if opt.rust_admin_data == "cargo":
+        rust = rust_admin_data(opt, impact_ids)
+    else:
+        def rust_call(export, *args):
+            env = parity.rpc_envelope(actions.call_rust(pair.rust, "admin", export, list(args)))
+            if "ok" not in env:
+                raise AssertionError("admin.%s failed on Rust: %r" % (export, env))
+            return env["ok"]
+
+        rust = {
+            "orphans": rust_call("loadOrphans"),
+            "impacts": [rust_call("loadDeletionImpact", i) for i in impact_ids],
+            "recalc": rust_call("recalculateEveryQuota"),
+            "scan": rust_call("runStorageScan"),
+        }
     for key in ("orphans", "impacts", "recalc", "scan"):
         run.compare("lib/data/admin: %s (reference action vs Rust function)" % key, reference[key], rust[key])
 

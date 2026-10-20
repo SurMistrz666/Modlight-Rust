@@ -386,7 +386,7 @@ def avatars(run, lib):
     token = lib.seed_token(owner, "upload")
     pair = run.pair()
     anon = run.pair()
-    actions = parity.Actions(run, "modlight-srvlib-ref-app-1")
+    actions = parity.Actions(run, lib.ref_app)
     corpus = lambda name: open(os.path.join(SCRATCH, "media/corpus", name), "rb").read()
 
     def both(name, method, path, browser_pair=None, sha=True, **kw):
@@ -876,6 +876,7 @@ def main():
     p.add_argument("--rust-db", default="modlight-devdb-postgres-1:modlight_srv_library")
     p.add_argument("--ref-env", default="_scratch/srv-library/ref/.env")
     p.add_argument("--rust-env", default="_scratch/srv-library/rust.env")
+    p.add_argument("--ref-app", default="modlight-srvlib-ref-app-1")
     p.add_argument("--only", default=None)
     a, _ = p.parse_known_args()
     run = parity.Run.from_args()
@@ -884,6 +885,7 @@ def main():
     ref_db = parity.Db(rc, rd, parity.read_env_file(a.ref_env)["AUTH_SECRET"])
     rust_db = parity.Db(uc, ud, parity.read_env_file(a.rust_env)["AUTH_SECRET"])
     lib = Library(run, ref_db, rust_db)
+    lib.ref_app = a.ref_app
     for name, fn in [("sharex", sharex), ("tus", tus), ("uploads_api", uploads_api), ("media_meta", media_meta), ("avatars", avatars), ("link_info", link_info)]:
         if a.only and a.only != name:
             continue
