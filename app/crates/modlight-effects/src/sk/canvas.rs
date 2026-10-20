@@ -546,7 +546,16 @@ impl Canvas {
             outlines.push(path.clone());
         }
         let hairline = paint.style != Style::Fill && paint.stroke_width <= 0.0;
-        if paint.style != Style::Fill && !hairline {
+        let single_line = if paint.dash.is_none() {
+            single_segment(path)
+        } else {
+            None
+        };
+        if let (Some((a, b)), true) = (single_line, paint.style != Style::Fill && !hairline) {
+            if let Some(o) = line_outline(a, b, paint.stroke_width, paint.cap) {
+                outlines.push(o);
+            }
+        } else if paint.style != Style::Fill && !hairline {
             let res = matrix_scale(matrix);
             // A dash whose first interval is longer than the contour leaves the closed
             // contour whole in Skia (no butt-capped seam at its start).
@@ -1066,6 +1075,94 @@ pub fn blend_into(dst: &mut [u8], s: F4, mode: Blend, cov: f32) {
     dst[1] = unorm(o.g).min(a);
     dst[2] = unorm(o.b).min(a);
     dst[3] = a;
+}
+
+/// The two points of a path that is one open line segment.
+fn single_segment(path: &Path) -> Option<(Point, Point)> {
+    let pts = path.points();
+    let verbs = path.verbs();
+    if pts.len() == 2 && verbs.len() == 2 {
+        Some((pts[0], pts[1]))
+    } else {
+        None
+    }
+}
+
+/// `SkStroke` of one line segment: the offset sides and the caps (round caps as two
+/// quarter conics, as `RoundCapper` makes them).
+pub fn line_outline(a: Point, b: Point, width: f32, cap: Cap) -> Option<Path> {
+    let r = width / 2.0;
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len <= f32::EPSILON {
+        return match cap {
+            Cap::Round => oval_path(a.x - r, a.y - r, a.x + r, a.y + r),
+            Cap::Square => Some(PathBuilder::from_rect(rect(
+                a.x - r,
+                a.y - r,
+                a.x + r,
+                a.y + r,
+            ))),
+            Cap::Butt => None,
+        };
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let (nx, ny) = (-uy * r, ux * r);
+    let (px, py) = (ux * r, uy * r);
+    let w = std::f32::consts::FRAC_1_SQRT_2;
+    let mut pb = PathBuilder::new();
+    pb.move_to(a.x + nx, a.y + ny);
+    pb.line_to(b.x + nx, b.y + ny);
+    match cap {
+        Cap::Butt => pb.line_to(b.x - nx, b.y - ny),
+        Cap::Square => {
+            pb.line_to(b.x + nx + px, b.y + ny + py);
+            pb.line_to(b.x - nx + px, b.y - ny + py);
+            pb.line_to(b.x - nx, b.y - ny);
+        }
+        Cap::Round => {
+            conic_to(
+                &mut pb,
+                (b.x + nx, b.y + ny),
+                (b.x + nx + px, b.y + ny + py),
+                (b.x + px, b.y + py),
+                w,
+            );
+            conic_to(
+                &mut pb,
+                (b.x + px, b.y + py),
+                (b.x - nx + px, b.y - ny + py),
+                (b.x - nx, b.y - ny),
+                w,
+            );
+        }
+    }
+    pb.line_to(a.x - nx, a.y - ny);
+    match cap {
+        Cap::Butt => {}
+        Cap::Square => {
+            pb.line_to(a.x - nx - px, a.y - ny - py);
+            pb.line_to(a.x + nx - px, a.y + ny - py);
+        }
+        Cap::Round => {
+            conic_to(
+                &mut pb,
+                (a.x - nx, a.y - ny),
+                (a.x - nx - px, a.y - ny - py),
+                (a.x - px, a.y - py),
+                w,
+            );
+            conic_to(
+                &mut pb,
+                (a.x - px, a.y - py),
+                (a.x + nx - px, a.y + ny - py),
+                (a.x + nx, a.y + ny),
+                w,
+            );
+        }
+    }
+    pb.close();
+    pb.finish()
 }
 
 /// The length of a path's outline (curves flattened).
