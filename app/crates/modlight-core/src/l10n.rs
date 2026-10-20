@@ -262,12 +262,14 @@ pub fn format(template: &str, args: &[Arg]) -> String {
 fn format_arg(arg: &Arg, spec: Option<&str>, culture: &Culture) -> String {
     match (arg, spec) {
         (Arg::Text(text), _) => text.clone(),
-        (Arg::Int(value), Some("N0")) => culture.n0(*value),
+        (Arg::Int(value), Some(spec)) if spec.eq_ignore_ascii_case("N0") => culture.n0(*value),
         (Arg::Int(value), Some(spec)) if spec.starts_with("0.") => {
             culture.fixed(*value as f64, spec.len() - 2)
         }
         (Arg::Int(value), _) => value.to_string(),
-        (Arg::Float(value), Some("N0")) => culture.n0(value.round() as i64),
+        (Arg::Float(value), Some(spec)) if spec.eq_ignore_ascii_case("N0") => {
+            culture.n0(value.round() as i64)
+        }
         (Arg::Float(value), Some(spec)) if spec.starts_with("0.") => {
             culture.fixed(*value, spec.len() - 2)
         }
