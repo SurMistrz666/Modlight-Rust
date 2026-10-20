@@ -60,3 +60,7 @@ strip = "symbols"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Effects run per preview change on the UI thread; keep them fast in debug builds too.
+[profile.dev.package.modlight-effects]
+opt-level = 2
