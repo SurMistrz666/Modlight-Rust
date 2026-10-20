@@ -66,6 +66,7 @@ pub const SCREENS: &[&str] = &[
     "capture-menu",
     "region-capture",
     "region-capture-hover",
+    "region-capture-annotate",
     "region-capture-light",
     "recording-toolbar",
     "recording-toolbar-compact",
