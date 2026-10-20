@@ -35,6 +35,8 @@ pub enum TaskPageAsk {
     WatchFoldersChanged,
     /// Image effects configuration (phase 5).
     ImageEffects,
+    /// Ask the server for the folders (`ModlightFolderPicker.LoadAsync`).
+    LoadModlightFolders,
     /// Choose the screenshots folder of a hotkey's settings.
     PickScreenshotsFolder,
 }
@@ -48,6 +50,56 @@ pub struct TaskPagesState {
     pub snap_width: f64,
     pub snap_height: f64,
     pub editor: Option<crate::task_editors::TaskEditor>,
+    /// The Modlight folder picker of a hotkey's upload page.
+    pub folders: ModlightFolders,
+    /// The open task or task-flag menu of the Task page.
+    pub menu: Option<&'static str>,
+}
+
+/// `ModlightFolderPicker`: what the server said the folders are.
+#[derive(Clone, Debug, Default)]
+pub struct ModlightFolders {
+    pub requested: bool,
+    pub loading: bool,
+    /// The line under the picker (signed out, loading, missing, rejected, failed).
+    pub status: String,
+    /// `RootValue` once the server named it.
+    pub root: Option<String>,
+    /// Every folder: id, the path shown ("Parent / Child"), the folder's own name.
+    pub folders: Option<Vec<(String, String, String)>>,
+}
+
+/// `PathOf`, at most 16 levels up.
+pub fn folder_choices(list: &modlight_api::FolderList) -> Vec<(String, String, String)> {
+    let folders = list.folders.clone().unwrap_or_default();
+    let by_id: std::collections::HashMap<String, &modlight_api::Folder> = folders
+        .iter()
+        .filter_map(|f| f.id.clone().filter(|id| !id.is_empty()).map(|id| (id, f)))
+        .collect();
+    let mut choices: Vec<(String, String, String)> = by_id
+        .iter()
+        .map(|(id, folder)| {
+            let mut parts = vec![folder.name.clone().unwrap_or_default()];
+            let mut parent = folder.parent_id.clone();
+            for _ in 0..16 {
+                let Some(parent_id) = parent.filter(|p| !p.is_empty()) else {
+                    break;
+                };
+                let Some(up) = by_id.get(&parent_id) else {
+                    break;
+                };
+                parts.insert(0, up.name.clone().unwrap_or_default());
+                parent = up.parent_id.clone();
+            }
+            (
+                id.clone(),
+                parts.join(" / "),
+                folder.name.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    choices.sort_by_key(|(_, label, _)| label.to_lowercase());
+    choices
 }
 
 /// Where the pages are shown.
@@ -126,6 +178,15 @@ pub fn editors(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder, area: 
                 let current = b.get(&["GeneralSettings", "ToastWindowButtons"]).cloned();
                 ctx.state.editor = Some(TaskEditor::Buttons(ButtonsEditor::new(current.as_ref())));
             }
+            TaskPageAsk::PickScreenshotsFolder => {
+                if ctx.dialogs
+                    && let Some(folder) = rfd::FileDialog::new()
+                        .set_title(t(s::TaskSettingsWindow_ChooseScreenshotsFolder))
+                        .pick_folder()
+                {
+                    b.set(&["ScreenshotsFolder"], json!(folder.display().to_string()));
+                }
+            }
             TaskPageAsk::PickSound(path) => {
                 if ctx.dialogs
                     && let Some(file) = rfd::FileDialog::new()
@@ -190,6 +251,22 @@ pub fn editors(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder, area: 
 /// Draw one task page. Returns false when `section` is not a task page.
 pub fn page(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder, section: &str) -> bool {
     match section {
+        "task.task" => task(ui, ctx, b),
+        "task.general" => override_group(
+            ui,
+            ctx,
+            b,
+            "UseDefaultGeneralSettings",
+            t(s::TaskSettingsWindow_OverrideGeneralSettings),
+        ),
+        "task.upload" => override_group(
+            ui,
+            ctx,
+            b,
+            "UseDefaultUploadSettings",
+            t(s::TaskSettingsWindow_OverrideUploadSettings),
+        ),
+        "task.upload-modlight" => modlight_folder(ui, ctx, b),
         "task.general-notifications" => notifications(ui, ctx, b),
         "task.image" => image(ui, ctx, b),
         "task.image-effects" => effects(ui, ctx, b),
@@ -2430,5 +2507,854 @@ impl crate::state::AppState {
                 }
             }
         }
+    }
+}
+
+// ------------------------------------------------------------------ a hotkey's own pages
+
+/// A button that opens a menu under it (`TaskMenu`, `TaskFlagsMenu`, `DestinationMenu`):
+/// an accent icon, the text, a chevron.
+fn menu_button(
+    ui: &mut egui::Ui,
+    colors: &Colors,
+    icon: char,
+    text: &str,
+    min_width: f32,
+    stretch: bool,
+) -> egui::Response {
+    let width = if stretch {
+        ui.available_width().max(min_width)
+    } else {
+        min_width.max(250.0)
+    };
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::hover());
+    let look = crate::widgets::Look::button(colors)
+        .height(32.0)
+        .padding(8.0);
+    let enabled = ui.is_enabled();
+    let response = crate::widgets::button_at(
+        ui,
+        colors,
+        &look,
+        crate::widgets::Content {
+            icon: None,
+            label: None,
+        },
+        enabled,
+        rect,
+    );
+    let color = if enabled {
+        colors.text()
+    } else {
+        colors.text().gamma_multiply(0.5)
+    };
+    crate::widgets::paint_icon(
+        ui,
+        ui.painter(),
+        egui::pos2(rect.left() + 8.0 + 8.0, rect.center().y),
+        icon,
+        16.0,
+        colors.accent_start(),
+    );
+    let galley = crate::widgets::layout(
+        ui,
+        crate::widgets::trimmed(
+            text,
+            13.0,
+            Weight::Normal,
+            color,
+            rect.width() - 8.0 - 16.0 - 7.0 - 7.0 - 14.0 - 8.0,
+            1,
+        ),
+    );
+    ui.painter().galley(
+        egui::pos2(
+            rect.left() + 8.0 + 16.0 + 7.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        color,
+    );
+    crate::widgets::paint_icon(
+        ui,
+        ui.painter(),
+        egui::pos2(rect.right() - 8.0 - 7.0, rect.center().y),
+        modlight_core::icons::CHEVRON_DOWN,
+        14.0,
+        colors.text_secondary(),
+    );
+    response
+}
+
+/// Open `menu` under `response` while it is the open one; the position picked.
+fn menu_under(
+    ctx: &mut TaskPagesCtx,
+    response: &egui::Response,
+    name: &'static str,
+    entries: impl FnOnce() -> Vec<crate::menus::Entry>,
+) -> Option<usize> {
+    if response.clicked() {
+        ctx.state.menu = if ctx.state.menu == Some(name) {
+            None
+        } else {
+            Some(name)
+        };
+    }
+    if ctx.state.menu != Some(name) {
+        return None;
+    }
+    let mut open = true;
+    let picked = match crate::menus::popup_open_left(ctx.colors, response, &mut open, entries) {
+        Some(crate::commands::Command::Local(index)) => Some(index),
+        _ => None,
+    };
+    if !open {
+        ctx.state.menu = None;
+    }
+    picked
+}
+
+/// `BuildTaskPage`: the task, its after capture and after upload tasks, destinations and
+/// screenshots folder.
+fn task(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
+    use modlight_core::hotkeys::HotkeyType;
+    use modlight_core::tasks::settings::{
+        AfterCaptureTasks, AfterUploadTasks, FlagNames, TaskSettings,
+    };
+    let colors = ctx.colors;
+    let defaults = TaskSettings::default();
+    card(ui, colors, t(s::TaskSettingsWindow_Task), true, |ui| {
+        row(
+            ui,
+            colors,
+            TASK_ROW,
+            t(s::TaskSettingsWindow_TaskLabel),
+            |ui| {
+                let job = b
+                    .get(&["Job"])
+                    .and_then(Value::as_str)
+                    .and_then(HotkeyType::parse)
+                    .unwrap_or(HotkeyType::None);
+                let response = menu_button(ui, colors, job.icon(), &job.text(), 250.0, false);
+                let jobs: Vec<HotkeyType> = HotkeyType::ALL.to_vec();
+                if let Some(index) = menu_under(ctx, &response, "job", || job_menu(job)) {
+                    let ordered = job_order();
+                    if let Some(picked) = ordered.get(index).or_else(|| jobs.get(index)) {
+                        b.set(&["Job"], json!(picked.name()));
+                    }
+                }
+            },
+        );
+        row(
+            ui,
+            colors,
+            TASK_ROW,
+            t(s::TaskSettingsWindow_Description),
+            |ui| text(ui, colors, b, &["Description"], ""),
+        );
+    });
+    card(
+        ui,
+        colors,
+        t(s::TaskSettingsWindow_AfterCaptureTasks),
+        true,
+        |ui| {
+            let on = check_inverted_value(
+                ui,
+                colors,
+                b,
+                "UseDefaultAfterCaptureJob",
+                t(s::TaskSettingsWindow_OverrideAfterCaptureTasks),
+            );
+            ui.add_enabled_ui(on, |ui| {
+                let current: AfterCaptureTasks = b
+                    .get(&["AfterCaptureJob"])
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or(defaults.after_capture_job);
+                let entries = crate::uploads::after_capture_menu(current);
+                let shown = flags_text(&entries, || {
+                    modlight_core::l10n::enum_text("AfterCaptureTasks", "None", None)
+                });
+                let response = menu_button(
+                    ui,
+                    colors,
+                    modlight_core::icons::IMAGE_UP,
+                    &shown,
+                    300.0,
+                    true,
+                );
+                if let Some(index) = menu_under(ctx, &response, "after-capture", || {
+                    local_entries(entries.clone())
+                }) && let Some(bit) = entry_bit(&entries, index)
+                {
+                    let flipped = AfterCaptureTasks(current.0 ^ bit);
+                    b.set(&["AfterCaptureJob"], json!(flipped.names()));
+                }
+            });
+        },
+    );
+    card(
+        ui,
+        colors,
+        t(s::TaskSettingsWindow_AfterUploadTasks),
+        true,
+        |ui| {
+            let on = check_inverted_value(
+                ui,
+                colors,
+                b,
+                "UseDefaultAfterUploadJob",
+                t(s::TaskSettingsWindow_OverrideAfterUploadTasks),
+            );
+            ui.add_enabled_ui(on, |ui| {
+                let current: AfterUploadTasks = b
+                    .get(&["AfterUploadJob"])
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or(defaults.after_upload_job);
+                let entries = crate::uploads::after_upload_menu(current);
+                let shown = flags_text(&entries, || {
+                    modlight_core::l10n::enum_text("AfterUploadTasks", "None", None)
+                });
+                let response = menu_button(
+                    ui,
+                    colors,
+                    modlight_core::icons::CLOUD_UPLOAD,
+                    &shown,
+                    300.0,
+                    true,
+                );
+                if let Some(index) = menu_under(ctx, &response, "after-upload", || {
+                    local_entries(entries.clone())
+                }) && let Some(bit) = entry_bit(&entries, index)
+                {
+                    let flipped = AfterUploadTasks(current.0 ^ bit);
+                    b.set(&["AfterUploadJob"], json!(flipped.names()));
+                }
+            });
+        },
+    );
+    card(
+        ui,
+        colors,
+        t(s::TaskSettingsWindow_Destinations),
+        true,
+        |ui| {
+            let on = check_inverted_value(
+                ui,
+                colors,
+                b,
+                "UseDefaultDestinations",
+                t(s::TaskSettingsWindow_OverrideDestinations),
+            );
+            ui.add_enabled_ui(on, |ui| {
+                let label = format!("{}...", t(s::TaskSettingsWindow_Destinations));
+                let response = menu_button(
+                    ui,
+                    colors,
+                    modlight_core::icons::SERVER,
+                    &label,
+                    300.0,
+                    true,
+                );
+                let (entries, picks) = destination_menu(b);
+                if let Some(index) = menu_under(ctx, &response, "destinations", || entries)
+                    && let Some(writes) = picks.get(index)
+                {
+                    for (member, value) in writes {
+                        b.set(&[member], json!(value));
+                    }
+                }
+            });
+        },
+    );
+    card(
+        ui,
+        colors,
+        t(s::TaskSettingsWindow_UploaderAccounts),
+        true,
+        |_ui| {},
+    );
+    card(
+        ui,
+        colors,
+        t(s::TaskSettingsWindow_ScreenshotsFolder),
+        true,
+        |ui| {
+            let on = check(
+                ui,
+                colors,
+                b,
+                &["OverrideScreenshotsFolder"],
+                false,
+                t(s::TaskSettingsWindow_OverrideScreenshotsFolder),
+            );
+            ui.add_enabled_ui(on, |ui| {
+                ui.horizontal(|ui| {
+                    let browse = t(s::TaskSettingsWindow_BrowseWithEllipsis);
+                    let w = crate::widgets::button_width(
+                        ui,
+                        &crate::widgets::Look::button(colors)
+                            .height(32.0)
+                            .padding(10.0),
+                        crate::widgets::Content::label(browse),
+                    );
+                    ui.allocate_ui(egui::vec2(ui.available_width() - w - 6.0, 32.0), |ui| {
+                        text(ui, colors, b, &["ScreenshotsFolder"], "")
+                    });
+                    ui.add_space(6.0);
+                    if compact_button(ui, colors, browse).clicked() {
+                        ctx.asks.push(TaskPageAsk::PickScreenshotsFolder);
+                    }
+                });
+            });
+        },
+    );
+}
+
+/// A check box over an inverted flag that defaults to true (`OverrideValue`).
+fn check_inverted_value(
+    ui: &mut egui::Ui,
+    colors: &Colors,
+    b: &mut Binder,
+    member: &str,
+    label: &str,
+) -> bool {
+    let mut value = !b.bool(&[member], true);
+    let enabled = ui.is_enabled();
+    if crate::widgets::checkbox_weighted(
+        ui,
+        colors,
+        &mut value,
+        Some(label),
+        enabled,
+        Weight::Normal,
+    )
+    .changed()
+    {
+        b.set(&[member], json!(!value));
+    }
+    value
+}
+
+/// The jobs in the order the task menu lists them.
+fn job_order() -> Vec<modlight_core::hotkeys::HotkeyType> {
+    use modlight_core::hotkeys::{HotkeyCategory, HotkeyType};
+    let mut jobs = vec![HotkeyType::None];
+    let mut categories: Vec<HotkeyCategory> = Vec::new();
+    for job in HotkeyType::ALL.iter().copied() {
+        let category = job.category();
+        if job != HotkeyType::None
+            && category != HotkeyCategory::None
+            && !categories.contains(&category)
+        {
+            categories.push(category);
+        }
+    }
+    for category in categories {
+        jobs.extend(
+            HotkeyType::ALL
+                .iter()
+                .copied()
+                .filter(|j| *j != HotkeyType::None && j.category() == category),
+        );
+    }
+    jobs
+}
+
+/// `TaskMenu`'s menu: None, then a submenu per category.
+fn job_menu(current: modlight_core::hotkeys::HotkeyType) -> Vec<crate::menus::Entry> {
+    use crate::menus::{Entry, Toggle};
+    let jobs = job_order();
+    let item = |index: usize| {
+        let job = jobs[index];
+        Entry::Item {
+            label: job.text(),
+            icon: Some(job.icon()),
+            enabled: true,
+            toggle: Toggle::Radio(job == current),
+            command: Some(crate::commands::Command::Local(index)),
+        }
+    };
+    let mut entries = vec![item(0)];
+    let mut index = 1;
+    while index < jobs.len() {
+        let category = jobs[index].category();
+        let mut children = Vec::new();
+        while index < jobs.len() && jobs[index].category() == category {
+            children.push(item(index));
+            index += 1;
+        }
+        entries.push(Entry::Submenu {
+            label: category.text().to_string(),
+            icon: None,
+            enabled: true,
+            children,
+        });
+    }
+    entries
+}
+
+/// The checked labels of a flags menu, or the "None" text (`UpdateSelectedTasks`).
+fn flags_text(entries: &[crate::menus::Entry], none: impl FnOnce() -> String) -> String {
+    let titles: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| match e {
+            crate::menus::Entry::Item {
+                label,
+                toggle: crate::menus::Toggle::Check(true),
+                ..
+            } => Some(label.as_str()),
+            _ => None,
+        })
+        .collect();
+    if titles.is_empty() {
+        none()
+    } else {
+        titles.join(", ")
+    }
+}
+
+/// The flag bit of the entry at `index` (the menus carry `ToggleAfter...Task(bit)`).
+fn entry_bit(entries: &[crate::menus::Entry], index: usize) -> Option<u32> {
+    match entries.get(index) {
+        Some(crate::menus::Entry::Item {
+            command:
+                Some(
+                    crate::commands::Command::ToggleAfterCaptureTask(bit)
+                    | crate::commands::Command::ToggleAfterUploadTask(bit),
+                ),
+            ..
+        }) => Some(*bit),
+        _ => None,
+    }
+}
+
+/// The same entries, answering with their position instead of their command.
+fn local_entries(entries: Vec<crate::menus::Entry>) -> Vec<crate::menus::Entry> {
+    entries
+        .into_iter()
+        .enumerate()
+        .map(|(index, entry)| match entry {
+            crate::menus::Entry::Item {
+                label,
+                icon,
+                enabled,
+                toggle,
+                ..
+            } => crate::menus::Entry::Item {
+                label,
+                icon,
+                enabled,
+                toggle,
+                command: Some(crate::commands::Command::Local(index)),
+            },
+            other => other,
+        })
+        .collect()
+}
+
+/// `MainMenuBuilder.BuildDestinationsMenu`: image, text and file uploaders, the URL
+/// shortener and the sharing service, each a radio list; the writes each choice makes.
+#[allow(clippy::type_complexity)]
+fn destination_menu(
+    b: &Binder,
+) -> (
+    Vec<crate::menus::Entry>,
+    Vec<Vec<(&'static str, &'static str)>>,
+) {
+    use crate::menus::{Entry, Toggle};
+    use modlight_core::l10n::uploaders as u;
+    let get = |member: &str, default: &'static str| b.str(&[member], default);
+    let image = get("ImageDestination", "Modlight");
+    let image_file = get("ImageFileDestination", "Modlight");
+    let text_dest = get("TextDestination", "Modlight");
+    let text_file = get("TextFileDestination", "Modlight");
+    let file = get("FileDestination", "Modlight");
+    let shortener = get("URLShortenerDestination", "Modlight");
+    let sharing = get("URLSharingServiceDestination", "GoogleImageSearch");
+    let file_uploader = t(u::ImageDestination_FileUploader).to_string();
+    let mut picks: Vec<Vec<(&'static str, &'static str)>> = Vec::new();
+    let radio = |label: String,
+                 checked: bool,
+                 writes: Vec<(&'static str, &'static str)>,
+                 picks: &mut Vec<_>| {
+        let entry = Entry::Item {
+            label,
+            icon: None,
+            enabled: true,
+            toggle: Toggle::Radio(checked),
+            command: Some(crate::commands::Command::Local(picks.len())),
+        };
+        picks.push(writes);
+        entry
+    };
+    let image_name = if image == "FileUploader" {
+        file_uploader.clone()
+    } else {
+        "Modlight".to_string()
+    };
+    let text_name = if text_dest == "FileUploader" {
+        file_uploader.clone()
+    } else {
+        "Modlight".to_string()
+    };
+    let image_children = vec![
+        radio(
+            "Modlight".into(),
+            image == "Modlight",
+            vec![("ImageDestination", "Modlight")],
+            &mut picks,
+        ),
+        Entry::Submenu {
+            label: file_uploader.clone(),
+            icon: None,
+            enabled: true,
+            children: vec![radio(
+                "Modlight".into(),
+                image == "FileUploader" && image_file == "Modlight",
+                vec![
+                    ("ImageDestination", "FileUploader"),
+                    ("ImageFileDestination", "Modlight"),
+                ],
+                &mut picks,
+            )],
+        },
+    ];
+    let text_children = vec![
+        radio(
+            "Modlight".into(),
+            text_dest == "Modlight",
+            vec![("TextDestination", "Modlight")],
+            &mut picks,
+        ),
+        Entry::Submenu {
+            label: file_uploader.clone(),
+            icon: None,
+            enabled: true,
+            children: vec![radio(
+                "Modlight".into(),
+                text_dest == "FileUploader" && text_file == "Modlight",
+                vec![
+                    ("TextDestination", "FileUploader"),
+                    ("TextFileDestination", "Modlight"),
+                ],
+                &mut picks,
+            )],
+        },
+    ];
+    let file_children = vec![radio(
+        "Modlight".into(),
+        file == "Modlight",
+        vec![("FileDestination", "Modlight")],
+        &mut picks,
+    )];
+    let shortener_children = vec![radio(
+        "Modlight".into(),
+        shortener == "Modlight",
+        vec![("URLShortenerDestination", "Modlight")],
+        &mut picks,
+    )];
+    let sharing_children = vec![
+        radio(
+            t(u::URLSharingServices_GoogleImageSearch).to_string(),
+            sharing == "GoogleImageSearch",
+            vec![("URLSharingServiceDestination", "GoogleImageSearch")],
+            &mut picks,
+        ),
+        radio(
+            t(u::URLSharingServices_BingVisualSearch).to_string(),
+            sharing == "BingVisualSearch",
+            vec![("URLSharingServiceDestination", "BingVisualSearch")],
+            &mut picks,
+        ),
+    ];
+    let sharing_name = if sharing == "BingVisualSearch" {
+        t(u::URLSharingServices_BingVisualSearch)
+    } else {
+        t(u::URLSharingServices_GoogleImageSearch)
+    };
+    let parent = |key: modlight_core::l10n::Key, name: &str, icon: char, children: Vec<Entry>| {
+        Entry::Submenu {
+            label: format(t(key), &[Arg::from(name)]),
+            icon: Some(icon),
+            enabled: true,
+            children,
+        }
+    };
+    let entries = vec![
+        parent(
+            s::TaskSettingsForm_UpdateUploaderMenuNames_Image_uploader___0_,
+            &image_name,
+            modlight_core::icons::IMAGE,
+            image_children,
+        ),
+        parent(
+            s::TaskSettingsForm_UpdateUploaderMenuNames_Text_uploader___0_,
+            &text_name,
+            modlight_core::icons::FILE_TEXT,
+            text_children,
+        ),
+        parent(
+            s::TaskSettingsForm_UpdateUploaderMenuNames_File_uploader___0_,
+            "Modlight",
+            modlight_core::icons::FILE_UP,
+            file_children,
+        ),
+        parent(
+            s::TaskSettingsForm_UpdateUploaderMenuNames_URL_shortener___0_,
+            "Modlight",
+            modlight_core::icons::LINK_2,
+            shortener_children,
+        ),
+        parent(
+            s::TaskSettingsForm_UpdateUploaderMenuNames_URL_sharing_service___0_,
+            sharing_name,
+            modlight_core::icons::SHARE_2,
+            sharing_children,
+        ),
+    ];
+    (entries, picks)
+}
+
+/// `BuildModlightPage`: the folder a hotkey's uploads go to.
+fn modlight_folder(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
+    let colors = ctx.colors;
+    let on = group_enabled(b, ctx, "UseDefaultUploadSettings");
+    if !ctx.state.folders.requested {
+        ctx.state.folders.requested = true;
+        ctx.asks.push(TaskPageAsk::LoadModlightFolders);
+    }
+    card(ui, colors, "", on, |ui| {
+        row(
+            ui,
+            colors,
+            TASK_ROW,
+            t(s::TaskSettingsWindow_ModlightFolder),
+            |ui| {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    let folders = &ctx.state.folders;
+                    let root = folders
+                        .root
+                        .clone()
+                        .unwrap_or_else(|| modlight_api::ROOT_FOLDER.to_string());
+                    let selected = b.str(&["UploadSettings", "ModlightFolderId"], "");
+                    let selected_name = b.str(&["UploadSettings", "ModlightFolderName"], "");
+                    let is_folder = |id: &str| !id.is_empty() && id != root;
+                    // `Fixed`: the window's folder, then no folder.
+                    let mut choices: Vec<(String, String, String)> = vec![
+                        (
+                            String::new(),
+                            t(s::TaskSettingsWindow_ModlightFolderAmbient).to_string(),
+                            String::new(),
+                        ),
+                        (
+                            root.clone(),
+                            t(s::TaskSettingsWindow_ModlightFolderNone).to_string(),
+                            String::new(),
+                        ),
+                    ];
+                    match &folders.folders {
+                        Some(list) => {
+                            choices.extend(list.iter().cloned());
+                            if is_folder(&selected)
+                                && !list.iter().any(|(id, _, _)| *id == selected)
+                            {
+                                let label = if selected_name.is_empty() {
+                                    t(s::TaskSettingsWindow_ModlightFolderUnknown).to_string()
+                                } else {
+                                    format(
+                                        t(s::TaskSettingsWindow_ModlightFolderGone),
+                                        &[Arg::from(selected_name.as_str())],
+                                    )
+                                };
+                                choices.push((selected.clone(), label, String::new()));
+                            }
+                        }
+                        None => {
+                            if is_folder(&selected) {
+                                let label = if selected_name.is_empty() {
+                                    t(s::TaskSettingsWindow_ModlightFolderUnknown).to_string()
+                                } else {
+                                    selected_name.clone()
+                                };
+                                choices.push((selected.clone(), label, selected_name.clone()));
+                            }
+                        }
+                    }
+                    let current = if choices.iter().any(|(id, _, _)| *id == selected) {
+                        selected.clone()
+                    } else {
+                        String::new()
+                    };
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let refresh = t(s::TaskSettingsWindow_ModlightFolderRefresh);
+                        let refresh_w = crate::widgets::button_width(
+                            ui,
+                            &crate::widgets::Look::button(colors)
+                                .height(32.0)
+                                .padding(10.0),
+                            crate::widgets::Content::label(refresh),
+                        );
+                        let list: Vec<(String, String)> = choices
+                            .iter()
+                            .map(|(id, label, _)| (id.clone(), label.clone()))
+                            .collect();
+                        let width = (ui.available_width() - refresh_w - 6.0).max(250.0);
+                        if ui.is_enabled() {
+                            if let Some(picked) = crate::widgets::combo(
+                                ui,
+                                colors,
+                                "modlight-folder",
+                                width,
+                                &current,
+                                &list,
+                            ) && let Some((id, _, name)) =
+                                choices.iter().find(|(id, _, _)| *id == picked)
+                            {
+                                b.set(&["UploadSettings", "ModlightFolderId"], json!(id));
+                                b.set(&["UploadSettings", "ModlightFolderName"], json!(name));
+                            }
+                        } else {
+                            let shown: Vec<(String, String)> = list
+                                .iter()
+                                .filter(|(id, _)| *id == current)
+                                .cloned()
+                                .collect();
+                            let _ = crate::widgets::combo(
+                                ui,
+                                colors,
+                                "modlight-folder",
+                                width,
+                                &current,
+                                &shown,
+                            );
+                        }
+                        let busy = ctx.state.folders.loading;
+                        if crate::widgets::button(
+                            ui,
+                            colors,
+                            &crate::widgets::Look::button(colors)
+                                .height(32.0)
+                                .padding(10.0),
+                            crate::widgets::Content::label(refresh),
+                            ui.is_enabled() && !busy,
+                        )
+                        .clicked()
+                        {
+                            ctx.asks.push(TaskPageAsk::LoadModlightFolders);
+                        }
+                    });
+                    if !ctx.state.folders.status.is_empty() {
+                        crate::widgets::text_wrapped(
+                            ui,
+                            &ctx.state.folders.status,
+                            12.0,
+                            Weight::Normal,
+                            colors.text_secondary(),
+                        );
+                    }
+                });
+            },
+        );
+        hint(ui, colors, t(s::TaskSettingsWindow_ModlightFolderHint));
+    });
+}
+
+impl crate::state::AppState {
+    fn folder_pickers(&mut self) -> impl Iterator<Item = &mut ModlightFolders> {
+        [
+            self.windows.settings.as_mut(),
+            self.windows.hotkey_task.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|w| &mut w.task_pages.folders)
+    }
+
+    /// `ModlightFolderPicker.LoadAsync`: the account's folders, 20 s at most.
+    pub fn load_modlight_folders(&mut self) {
+        let Some(credential) = self.credential() else {
+            for picker in self.folder_pickers() {
+                picker.loading = false;
+                picker.status = t(s::TaskSettingsWindow_ModlightFolderSignedOut).to_string();
+            }
+            return;
+        };
+        for picker in self.folder_pickers() {
+            picker.loading = true;
+            picker.status = t(s::TaskSettingsWindow_ModlightFolderLoading).to_string();
+        }
+        let api = self.api.clone();
+        self.rt.spawn(async move {
+            let answer = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                api.get_folders(&credential),
+            )
+            .await;
+            Box::new(
+                move |state: &mut crate::state::AppState, _ctx: &egui::Context| {
+                    let selected: Vec<(String, String)> = [
+                        state.windows.settings.as_ref(),
+                        state.windows.hotkey_task.as_ref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .map(|w| {
+                        let task = state.task_object(w.target);
+                        let upload = task.get("UploadSettings");
+                        (
+                            upload
+                                .and_then(|u| u.get("ModlightFolderId"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                            upload
+                                .and_then(|u| u.get("ModlightFolderName"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                        )
+                    })
+                    .collect();
+                    let mut index = 0;
+                    for picker in state.folder_pickers() {
+                        picker.loading = false;
+                        match &answer {
+                            Ok(Ok(list)) => {
+                                let root = list
+                                    .root_value
+                                    .clone()
+                                    .filter(|r| !r.is_empty())
+                                    .unwrap_or_else(|| modlight_api::ROOT_FOLDER.to_string());
+                                let choices = folder_choices(list);
+                                let (id, _) = selected.get(index).cloned().unwrap_or_default();
+                                let is_folder = !id.is_empty() && id != root;
+                                let found = choices
+                                    .iter()
+                                    .any(|(c, _, name)| *c == id && !name.is_empty());
+                                picker.status = if is_folder && !found {
+                                    t(s::TaskSettingsWindow_ModlightFolderMissing).to_string()
+                                } else {
+                                    String::new()
+                                };
+                                picker.root = Some(root);
+                                picker.folders = Some(choices);
+                            }
+                            Ok(Err(modlight_api::ApiError::Unauthorized)) => {
+                                picker.status =
+                                    t(s::TaskSettingsWindow_ModlightFolderRejected).to_string()
+                            }
+                            _ => {
+                                picker.status =
+                                    t(s::TaskSettingsWindow_ModlightFolderFailed).to_string()
+                            }
+                        }
+                        index += 1;
+                    }
+                },
+            ) as Box<dyn FnOnce(&mut crate::state::AppState, &egui::Context) + Send>
+        });
     }
 }

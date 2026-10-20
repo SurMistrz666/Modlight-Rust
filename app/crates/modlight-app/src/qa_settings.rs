@@ -76,6 +76,13 @@ pub const SCREENS: &[&str] = &[
     "settings-print",
     "settings-proxy",
     "settings-advanced",
+    "settings-hotkeys",
+    "settings-hotkeys-capturing",
+    "settings-hotkeys-reset",
+    "settings-hotkeys-disabled",
+    "hotkey-task-settings",
+    "hotkey-task-folder",
+    "hotkey-task-capture",
     "ffmpeg-options",
     "ffmpeg-options-video",
     "ffmpeg-options-audio",
@@ -165,6 +172,62 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
                 Some(0),
                 format.as_ref(),
             ));
+        }
+        state.windows.settings = Some(window);
+        return Some(vec2(crate::settings::WIDTH, crate::settings::HEIGHT));
+    }
+    if screen.starts_with("settings-hotkeys") {
+        state.captures.hotkeys = crate::qa_capture::registered_hotkeys(true);
+        if screen == "settings-hotkeys-disabled" {
+            state.captures.hotkeys.toggle(true);
+        }
+        // One hotkey with its own settings, for the pencil.
+        if let Some(hotkey) = state.captures.hotkeys.hotkeys.get_mut(1) {
+            hotkey.task["UseDefaultAfterCaptureJob"] = json!(false);
+        }
+        let mut window = crate::settings::SettingsWindow::new("hotkeys.list", &state.options.skin);
+        window.hotkeys.selected = Some(1);
+        if screen == "settings-hotkeys-capturing" {
+            window.hotkeys.capturing = Some(2);
+            if let Some(hotkey) = state.captures.hotkeys.hotkeys.get_mut(2) {
+                hotkey.info = modlight_core::hotkeys::HotkeyInfo::default();
+            }
+        }
+        window.hotkeys.confirm_reset = screen == "settings-hotkeys-reset";
+        state.windows.settings = Some(window);
+        return Some(vec2(crate::settings::WIDTH, crate::settings::HEIGHT));
+    }
+    if screen.starts_with("hotkey-task") {
+        state.captures.hotkeys = crate::qa_capture::registered_hotkeys(false);
+        let index = 0;
+        if let Some(hotkey) = state.captures.hotkeys.hotkeys.get_mut(index) {
+            hotkey.task["UseDefaultAfterCaptureJob"] = json!(false);
+            hotkey.task["AfterCaptureJob"] =
+                json!("CopyImageToClipboard, SaveImageToFile, UploadImageToHost");
+            hotkey.task["UseDefaultUploadSettings"] = json!(false);
+            hotkey.task["Description"] = json!("");
+        }
+        state.open_hotkey_task_settings(index);
+        let mut window = state.windows.hotkey_task.take().expect("hotkey window");
+        window.section = match screen {
+            "hotkey-task-folder" => "task.upload-modlight",
+            "hotkey-task-capture" => "task.capture",
+            _ => "task.task",
+        }
+        .to_string();
+        window.reveal(&window.section.clone());
+        if screen == "hotkey-task-folder" {
+            window.task_pages.folders = crate::task_pages::ModlightFolders {
+                requested: true,
+                loading: false,
+                status: String::new(),
+                root: Some("root".into()),
+                folders: Some(vec![
+                    ("f1".into(), "Design".into(), "Design".into()),
+                    ("f2".into(), "Design / Mockups".into(), "Mockups".into()),
+                    ("f3".into(), "Screenshots".into(), "Screenshots".into()),
+                ]),
+            };
         }
         state.windows.settings = Some(window);
         return Some(vec2(crate::settings::WIDTH, crate::settings::HEIGHT));

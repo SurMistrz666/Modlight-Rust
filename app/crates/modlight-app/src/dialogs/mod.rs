@@ -36,6 +36,8 @@ use crate::theme::Colors;
 pub struct Windows {
     pub sign_in: Option<SignInWindow>,
     pub settings: Option<SettingsWindow>,
+    /// One hotkey's settings, in the same shell (`SettingsWindow(TaskSettings)`).
+    pub hotkey_task: Option<SettingsWindow>,
     pub prompt: Option<prompt::Prompt>,
     pub folder_delete: Option<folder_delete::FolderDelete>,
     pub link_settings: Option<link_settings::LinkSettings>,

@@ -335,9 +335,180 @@ pub static GROUPS: [Group; 11] = [
     },
 ];
 
+/// `SettingsSections.ForTaskOverrides()`: one hotkey's settings window. The Task group
+/// first (task, general, upload, Modlight folder), then the task sections of every group
+/// of the full window, under the same group names.
+pub static OVERRIDE_GROUPS: [Group; 8] = [
+    Group {
+        title: s::TaskSettingsWindow_Task,
+        icon: icons::KEYBOARD,
+        sections: &[
+            section!(
+                "task.task",
+                s::TaskSettingsWindow_Task,
+                icons::KEYBOARD,
+                s::SettingsWindow_HintTask,
+                "task job description after capture after upload destinations"
+            ),
+            section!(
+                "task.general",
+                s::TaskSettingsWindow_General,
+                icons::SETTINGS,
+                s::SettingsWindow_HintTaskGeneral,
+                "general"
+            ),
+            section!(
+                "task.upload",
+                s::TaskSettingsWindow_Upload,
+                icons::UPLOAD,
+                s::SettingsWindow_HintTaskUpload,
+                "upload"
+            ),
+            section!(
+                "task.upload-modlight",
+                s::TaskSettingsWindow_ModlightDestination,
+                icons::FOLDER_UP,
+                s::SettingsWindow_HintTaskFolder,
+                "folder modlight folder destination"
+            ),
+        ],
+    },
+    Group {
+        title: s::SettingsWindow_GroupCapture,
+        icon: icons::CAMERA,
+        sections: &[
+            section!(
+                "task.capture-region",
+                s::SettingsWindow_PageRegion,
+                icons::CROP,
+                s::SettingsWindow_HintRegion,
+                "region capture rectangle capture crop"
+            ),
+            section!(
+                "task.capture",
+                s::SettingsWindow_PageScreenshots,
+                icons::CAMERA,
+                s::SettingsWindow_HintScreenshots,
+                "capture screenshot screen capture window capture cursor"
+            ),
+            section!(
+                "task.image",
+                s::SettingsWindow_PageImageFormat,
+                icons::IMAGE,
+                s::SettingsWindow_HintImageFormat,
+                "image format quality png jpeg jpg gif"
+            ),
+            section!(
+                "task.image-effects",
+                s::SettingsWindow_PageEffects,
+                icons::WAND_SPARKLES,
+                s::SettingsWindow_HintEffects,
+                "effects image effects watermark"
+            ),
+            section!(
+                "task.image-thumbnail",
+                s::SettingsWindow_PageFileThumbnails,
+                icons::IMAGES,
+                s::SettingsWindow_HintFileThumbnails,
+                "thumbnail thumbnails"
+            ),
+            section!(
+                "task.upload-file-naming",
+                s::SettingsWindow_PageFileNames,
+                icons::FILE_PEN,
+                modlight_core::l10n::mac::HintFileNames,
+                "file naming name pattern name format filename"
+            ),
+        ],
+    },
+    Group {
+        title: s::SettingsWindow_GroupRecording,
+        icon: icons::VIDEO,
+        sections: &[section!(
+            "task.capture-screen-recorder",
+            s::SettingsWindow_GroupRecording,
+            icons::VIDEO,
+            s::SettingsWindow_HintRecording,
+            "screen recorder recording ffmpeg gif"
+        )],
+    },
+    Group {
+        title: s::SettingsWindow_GroupTextFromImage,
+        icon: icons::SCAN_TEXT,
+        sections: &[section!(
+            "task.capture-ocr",
+            s::SettingsWindow_GroupTextFromImage,
+            icons::SCAN_TEXT,
+            s::SettingsWindow_HintOcr,
+            "ocr text capture"
+        )],
+    },
+    Group {
+        title: s::SettingsWindow_GroupSharing,
+        icon: icons::UPLOAD,
+        sections: &[section!(
+            "task.upload-clipboard",
+            s::SettingsWindow_PageFromClipboard,
+            icons::CLIPBOARD,
+            s::SettingsWindow_HintFromClipboard,
+            "clipboard upload clipboard"
+        )],
+    },
+    Group {
+        title: s::SettingsWindow_GroupSounds,
+        icon: icons::BELL,
+        sections: &[section!(
+            "task.general-notifications",
+            s::SettingsWindow_GroupSounds,
+            icons::BELL,
+            s::SettingsWindow_HintSounds,
+            "sound sounds notification toast"
+        )],
+    },
+    Group {
+        title: s::SettingsWindow_GroupTools,
+        icon: icons::WRENCH,
+        sections: &[
+            section!(
+                "task.tools",
+                s::SettingsWindow_PageEditor,
+                icons::WRENCH,
+                s::SettingsWindow_HintEditor,
+                "image editor tools"
+            ),
+            section!(
+                "task.actions",
+                s::SettingsWindow_PageExternalPrograms,
+                icons::ZAP,
+                s::SettingsWindow_HintExternalPrograms,
+                "actions external programs"
+            ),
+            section!(
+                "task.watch-folders",
+                s::TaskSettingsWindow_WatchFolders,
+                icons::FOLDER_SEARCH,
+                modlight_core::l10n::mac::HintWatchFolders,
+                "watch folders watch folder"
+            ),
+        ],
+    },
+    Group {
+        title: s::SettingsWindow_GroupAdvanced,
+        icon: icons::SLIDERS_HORIZONTAL,
+        sections: &[section!(
+            "task.advanced",
+            s::SettingsWindow_AdvancedTasks,
+            icons::ZAP,
+            s::SettingsWindow_HintAllCapture,
+            "advanced"
+        )],
+    },
+];
+
 pub fn find_section(id: &str) -> Option<(&'static Group, &'static Section)> {
     GROUPS
         .iter()
+        .chain(OVERRIDE_GROUPS.iter())
         .find_map(|g| g.sections.iter().find(|s| s.id == id).map(|s| (g, s)))
 }
 
@@ -366,6 +537,14 @@ pub struct SettingsWindow {
     pub startup: Option<modlight_macos::integration::StartupState>,
     /// Where the page is drawn (the editors' veil covers it).
     pub page_area: Rect,
+    /// The keyboard shortcuts page.
+    pub hotkeys: crate::hotkey_page::HotkeyPageState,
+    /// The sections this window lists: the full window or one hotkey's.
+    pub groups: &'static [Group],
+    /// The task settings the task pages edit.
+    pub target: crate::task_pages::TaskTarget,
+    /// The window title of a hotkey's settings (`ShareXTaskSettingsFor0`).
+    pub title: String,
 }
 
 impl SettingsWindow {
@@ -373,21 +552,36 @@ impl SettingsWindow {
         let mut window = SettingsWindow {
             section: section.to_string(),
             search: String::new(),
-            expanded: vec![false; GROUPS.len()],
+            expanded: vec![false; GROUPS.len().max(OVERRIDE_GROUPS.len())],
             account: AccountPage::default(),
             opened_skin: skin.to_string(),
             task_pages: Default::default(),
             app_pages: Default::default(),
             startup: None,
             page_area: Rect::NOTHING,
+            hotkeys: Default::default(),
+            groups: &GROUPS,
+            target: crate::task_pages::TaskTarget::Defaults,
+            title: t(s::SettingsWindow_WindowTitle).to_string(),
         };
         window.reveal(section);
         window
     }
 
+    /// The same window holding one hotkey's overrides (`SettingsWindow(TaskSettings)`).
+    pub fn for_hotkey(index: usize, title: String, skin: &str) -> SettingsWindow {
+        let mut window = SettingsWindow::new("task.task", skin);
+        window.groups = &OVERRIDE_GROUPS;
+        window.target = crate::task_pages::TaskTarget::Hotkey(index);
+        window.title = title;
+        window.expanded = vec![false; OVERRIDE_GROUPS.len()];
+        window.reveal("task.task");
+        window
+    }
+
     /// Expand the group holding `section` so the selection is on screen.
     pub fn reveal(&mut self, section: &str) {
-        for (index, group) in GROUPS.iter().enumerate() {
+        for (index, group) in self.groups.iter().enumerate() {
             if group.sections.len() > 1 && group.sections.iter().any(|s| s.id == section) {
                 self.expanded[index] = true;
             }
@@ -511,7 +705,8 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Vec<SettingsAsk> {
         return asks;
     };
     let section_id = window.section.clone();
-    let any_match = GROUPS
+    let any_match = window
+        .groups
         .iter()
         .any(|g| g.sections.iter().any(|sec| window.matches(g, sec)));
     if !any_match {
@@ -623,7 +818,7 @@ fn navigation(ui: &mut Ui, state: &mut AppState, colors: &Colors, rect: Rect) {
         .auto_shrink([false, false])
         .show(&mut list_ui, |ui| {
             let width = list.width();
-            for (index, group) in GROUPS.iter().enumerate() {
+            for (index, group) in window.groups.iter().enumerate() {
                 let visible: Vec<&Section> = group
                     .sections
                     .iter()
@@ -1005,6 +1200,15 @@ fn page(
         | "application.proxy"
         | "application.advanced" => app_page(ui, state, colors, section, asks),
         "application.components" => crate::components_window::settings_page(ui, state, colors),
+        "hotkeys.list" => {
+            let area = state
+                .windows
+                .settings
+                .as_ref()
+                .map(|w| w.page_area)
+                .unwrap_or(Rect::NOTHING);
+            crate::hotkey_page::page(ui, state, colors, area)
+        }
         task if task.starts_with("task.") => task_page(ui, state, colors, task, asks),
         _ => {}
     }
@@ -1076,16 +1280,14 @@ fn task_page(
     asks: &mut Vec<SettingsAsk>,
 ) {
     use crate::settings_kit::Binder;
-    use crate::task_pages::{TaskPagesCtx, editors, page};
+    use crate::task_pages::{TaskPagesCtx, TaskTarget, editors, page};
     let Some(window) = state.windows.settings.as_mut() else {
         return;
     };
     let mut pages = std::mem::take(&mut window.task_pages);
     let area = window.page_area;
-    let mut defaults = match state.config.get("DefaultTaskSettings") {
-        Some(serde_json::Value::Object(map)) => map.clone(),
-        _ => serde_json::Map::new(),
-    };
+    let target = window.target;
+    let mut object = state.task_object(target);
     let mut auto_increment = state
         .config
         .get("NameParserAutoIncrementNumber")
@@ -1093,7 +1295,7 @@ fn task_page(
         .unwrap_or(0);
     let mut ctx = TaskPagesCtx {
         colors,
-        is_default: true,
+        is_default: target == TaskTarget::Defaults,
         state: &mut pages,
         asks: Vec::new(),
         auto_increment: &mut auto_increment,
@@ -1101,7 +1303,7 @@ fn task_page(
         dev_mode: state.config.dev_mode(),
         dialogs: !state.env.qa && state.mode == crate::app::Mode::Normal,
     };
-    let mut binder = Binder::new(&mut defaults);
+    let mut binder = Binder::new(&mut object);
     page(ui, &mut ctx, &mut binder, section);
     editors(ui, &mut ctx, &mut binder, area);
     let changed = binder.changed;
@@ -1111,9 +1313,19 @@ fn task_page(
         window.task_pages = pages;
     }
     if changed {
-        state
-            .config
-            .set("DefaultTaskSettings", serde_json::Value::Object(defaults));
+        match target {
+            TaskTarget::Defaults => {
+                state
+                    .config
+                    .set("DefaultTaskSettings", serde_json::Value::Object(object));
+            }
+            TaskTarget::Hotkey(index) => {
+                if let Some(hotkey) = state.captures.hotkeys.hotkeys.get_mut(index) {
+                    hotkey.task = serde_json::Value::Object(object);
+                }
+                state.save_hotkeys();
+            }
+        }
     }
     if auto_changed {
         state.config.set(
@@ -1121,7 +1333,7 @@ fn task_page(
             serde_json::json!(auto_increment),
         );
     }
-    if changed || auto_changed {
+    if (changed && target == TaskTarget::Defaults) || auto_changed {
         state.save_config();
     }
     asks.extend(page_asks.into_iter().map(SettingsAsk::TaskPage));
@@ -1665,7 +1877,13 @@ pub fn handle(state: &mut AppState, asks: Vec<SettingsAsk>) {
             }
             SettingsAsk::AppPage(ask) => state.app_page_ask(ask),
             SettingsAsk::TaskPage(ask) => {
-                task_page_ask(state, crate::task_pages::TaskTarget::Defaults, ask)
+                let target = state
+                    .windows
+                    .settings
+                    .as_ref()
+                    .map(|w| w.target)
+                    .unwrap_or(crate::task_pages::TaskTarget::Defaults);
+                task_page_ask(state, target, ask)
             }
         }
     }
@@ -1683,6 +1901,7 @@ pub fn task_page_ask(
         A::ScreenRecordingOptions => state.open_ffmpeg_options(target),
         A::WatchFoldersChanged => state.update_watch_folders(),
         A::ImageEffects => state.push(Command::NotYet),
+        A::LoadModlightFolders => state.load_modlight_folders(),
         // Handled by the pages themselves.
         A::NotificationButtons
         | A::PickSound(_)
