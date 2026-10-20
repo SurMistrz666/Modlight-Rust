@@ -243,8 +243,17 @@ fn mirror(v: i32, n: i32) -> i32 {
 /// `SKImageFilter.CreateDilate(rx, ry)` (or erode): the per-channel maximum (minimum) of
 /// premultiplied pixels over the box, transparent outside.
 pub fn morphology(source: &Bitmap, rx: i32, ry: i32, dilate: bool) -> Bitmap {
-    let (w, h) = (source.w, source.h);
     let src: Vec<C> = source.px.iter().map(|c| premul(*c)).collect();
+    let b = morphology_premul(&src, source.w, source.h, rx, ry, dilate);
+    Bitmap {
+        w: source.w,
+        h: source.h,
+        px: b.into_iter().map(unpremul).collect(),
+    }
+}
+
+/// [`morphology`] on premultiplied pixels, returning premultiplied pixels.
+pub fn morphology_premul(src: &[C], w: i32, h: i32, rx: i32, ry: i32, dilate: bool) -> Vec<C> {
     let pick = |a: u8, b: u8| if dilate { a.max(b) } else { a.min(b) };
     let init = if dilate { 0u8 } else { 255u8 };
     let pass = |input: &[C], horizontal: bool, r: i32| -> Vec<C> {
@@ -274,11 +283,6 @@ pub fn morphology(source: &Bitmap, rx: i32, ry: i32, dilate: bool) -> Bitmap {
         }
         out
     };
-    let a = pass(&src, true, rx);
-    let b = pass(&a, false, ry);
-    Bitmap {
-        w,
-        h,
-        px: b.into_iter().map(unpremul).collect(),
-    }
+    let a = pass(src, true, rx);
+    pass(&a, false, ry)
 }
