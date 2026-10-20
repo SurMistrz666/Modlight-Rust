@@ -969,4 +969,63 @@ mod tests {
             &real
         ));
     }
+
+    /// Every class with its defaults on one sheet, for looking at by eye:
+    /// `CLASSIC_SHEET=/path/sheet.png cargo test -p modlight-effects contact_sheet -- --ignored`.
+    #[test]
+    #[ignore]
+    fn contact_sheet() {
+        let Ok(out) = std::env::var("CLASSIC_SHEET") else {
+            return;
+        };
+        let src = RgbaImage::from_fn(160, 110, |x, y| {
+            let t = y as f32 / 110.0;
+            let ridge = 66.0 + 10.0 * (x as f32 / 15.0).sin();
+            if (y as f32) > ridge {
+                image::Rgba([90, 60, 110, 255])
+            } else if ((x as f32 - 50.0).powi(2) + (y as f32 - 30.0).powi(2)).sqrt() < 14.0 {
+                image::Rgba([250, 230, 170, 255])
+            } else {
+                image::Rgba([240, (170.0 - 50.0 * t) as u8, 140, 255])
+            }
+        });
+        let kinds: Vec<Kind> = crate::classic::model::CATALOG
+            .iter()
+            .flat_map(|(_, k)| k.iter().copied())
+            .collect();
+        let (cw, ch, cols) = (220u32, 170u32, 8u32);
+        let rows = (kinds.len() as u32).div_ceil(cols);
+        let mut sheet =
+            RgbaImage::from_pixel(cw * cols, ch * rows, image::Rgba([128, 128, 128, 255]));
+        for (i, kind) in kinds.iter().enumerate() {
+            let mut effect = ClassicEffect::new(*kind);
+            if effect.get("Gradient").is_some() {
+                effect.set(
+                    "Gradient",
+                    Value::Gradient(Gradient::new(
+                        "Vertical",
+                        &[(C::rgb(0, 187, 138), 0.0), (C::rgb(0, 105, 163), 100.0)],
+                    )),
+                );
+            }
+            let preset = Preset {
+                name: String::new(),
+                effects: vec![effect],
+            };
+            let Some(img) = preset.apply(&src) else {
+                continue;
+            };
+            let (x0, y0) = ((i as u32 % cols) * cw, (i as u32 / cols) * ch);
+            for (x, y, p) in img.enumerate_pixels() {
+                if x < cw && y < ch {
+                    let d = sheet.get_pixel_mut(x0 + x, y0 + y);
+                    let a = p[3] as u32;
+                    for c in 0..3 {
+                        d[c] = ((p[c] as u32 * a + d[c] as u32 * (255 - a)) / 255) as u8;
+                    }
+                }
+            }
+        }
+        sheet.save(out).unwrap();
+    }
 }

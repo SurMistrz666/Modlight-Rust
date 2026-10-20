@@ -1066,12 +1066,36 @@ pub fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, radius: f32) -> Option<
     }
     let r = radius.min(w.min(h) / 2.0);
     let d = r * 2.0;
-    crate::sk::canvas::add_arc(&mut pb, (x, y, x + d, y + d), 180.0, 90.0);
-    crate::sk::canvas::add_arc(&mut pb, (x + w - d, y, x + w, y + d), 270.0, 90.0);
-    crate::sk::canvas::add_arc(&mut pb, (x + w - d, y + h - d, x + w, y + h), 0.0, 90.0);
-    crate::sk::canvas::add_arc(&mut pb, (x, y + h - d, x + d, y + h), 90.0, 90.0);
+    // `GraphicsPath.AddArc` joins each arc to the figure with a line.
+    figure_arc(&mut pb, (x, y, x + d, y + d), 180.0, true);
+    figure_arc(&mut pb, (x + w - d, y, x + w, y + d), 270.0, false);
+    figure_arc(&mut pb, (x + w - d, y + h - d, x + w, y + h), 0.0, false);
+    figure_arc(&mut pb, (x, y + h - d, x + d, y + h), 90.0, false);
     pb.close();
     pb.finish()
+}
+
+/// A quarter of an ellipse from `start` degrees, joined to the current figure (or
+/// starting it), as conics like Skia's `arcTo`.
+fn figure_arc(pb: &mut PathBuilder, oval: (f32, f32, f32, f32), start: f32, first: bool) {
+    let (l, t, r, b) = oval;
+    let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0);
+    let (rx, ry) = ((r - l) / 2.0, (b - t) / 2.0);
+    let pt = |deg: f32| {
+        let a = deg.to_radians();
+        (cx + rx * a.cos(), cy + ry * a.sin())
+    };
+    let begin = pt(start);
+    if first {
+        pb.move_to(begin.0, begin.1);
+    } else {
+        pb.line_to(begin.0, begin.1);
+    }
+    let mid = (start + 45.0).to_radians();
+    let half = 45f32.to_radians();
+    let k = 1.0 / half.cos();
+    let control = (cx + rx * mid.cos() * k, cy + ry * mid.sin() * k);
+    crate::sk::canvas::conic_to(pb, begin, control, pt(start + 90.0), half.cos());
 }
 
 /// A `LinearGradientBrush` for `GradientInfo` over a rectangle.
@@ -1704,6 +1728,21 @@ mod tests {
         box_blur(&mut b, 3);
         assert_eq!((b.w, b.h), (9, 1));
         assert!(b.px[4].r < 255 && b.px[3].r > 0);
+    }
+
+    #[test]
+    fn rounded_corners_keep_the_middle() {
+        let src = Bitmap::from_image(&image::RgbaImage::from_pixel(
+            40,
+            30,
+            image::Rgba([200, 100, 50, 255]),
+        ));
+        let out = rounded_corners(&src, 10).to_image();
+        assert_eq!(out.get_pixel(20, 15)[3], 255);
+        assert_eq!(out.get_pixel(20, 0)[3], 255);
+        assert_eq!(out.get_pixel(0, 15)[3], 255);
+        assert_eq!(out.get_pixel(0, 0)[3], 0);
+        assert_eq!(out.get_pixel(39, 29)[3], 0);
     }
 
     #[test]
