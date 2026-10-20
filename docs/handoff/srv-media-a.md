@@ -2,9 +2,12 @@
 
 Branch `srv-media-a`, worktree `_wt/srv-media-a` (from main 1be08bc). Task:
 port the media PROCESSING half of the Modlight server to Rust (part A); part B
-(`srv-media-b`) ports media serving and the public pages and calls these
-functions. The docx preview was done by a helper on `srv-media-a-docx`
-(worktree `_wt/srv-media-a-docx`) and merged here.
+(`srv-media-b`, merged into main as e549b53) ports media serving and the
+public pages and calls these functions through `server/src/media/part_a.rs`.
+The docx preview was done by a helper on `srv-media-a-docx` (worktree
+`_wt/srv-media-a-docx`) and merged here. Main (with part B) is merged into
+this branch and `part_a.rs` is wired to the real functions: every bridge now
+delegates (SKELETON section 12), nothing waits for part A any more.
 
 Build and verify:
 
@@ -58,9 +61,24 @@ can run the reference's ffmpeg 5.1 (`--ffmpeg ref`).
 ```sh
 _scratch/srv-media-a/run-media-parity.sh      # ref + rust (ref ffmpeg) + compare + rust (host ffmpeg) + compare + cards
 python3 server/tests/parity_media/convert_actions.py   # Rust server started with FFMPEG_PATH=$S/parity/shim-ref/ffmpeg
+python3 server/tests/parity_media/docx_parity.py --corpus $S/docx/corpus --work $S/docx/run --container modlight-srvmedia-a-ref-app-1
+# Part B's serving parity on the merged binary: B's reference stack (8447,
+# _scratch/srv-media-b/ref, `docker compose up -d`) and this binary with B's
+# environment on 8427 ($S/serve-b.sh; the reference image's ffmpeg unless FF=host):
+PARITY_REF=http://localhost:8447 PARITY_RUST=http://localhost:8427 python3 server/tests/parity/media_serve.py
 ```
 
-Results on 2026-10-20: see SKELETON section 12 (statuses, headers and
+`media_serve.py` no longer counts part-A checks apart: they are ordinary
+comparisons, and the responses whose bytes follow the encoder build (PNG,
+AVIF and PDF conversions, the card PNGs) are compared by status, headers and
+decoded content (pixels within 3/255, the PDF's inflated structure).
+
+Results on 2026-10-20 (merged tree, d8e845a + the docx merge): B's
+`media_serve.py` 1113/1113 (the 38 former pending-A checks included);
+`media_parity.py` 640 cases with statuses, headers and argument vectors all
+identical; 155/155 cards pixel-identical; `convert_actions.py` 20/20; docx
+222/229 byte-identical on the helper's branch (the other 7 explained in
+SKELETON section 13). Details: SKELETON section 12 (statuses, headers and
 ffmpeg/ffprobe argument vectors identical in every case; byte identity where
 the encoders are deterministic across the libvips/ffmpeg builds; every embed
 card pixel-identical; the convert RPC module 20/20) and item 33 for what
@@ -68,9 +86,8 @@ Homebrew's ffmpeg 9 changes.
 
 ## Open / for others
 
-- Part B: the routes. Everything they need is listed in SKELETON section 12;
-  `card.rs` is ported here (the card route needs `parse_card_file` and
-  `render_card`).
+- `part_a.rs` could now be dissolved (the routes calling the processing
+  modules directly); it was kept so the merge changed one file of part B.
 - Runtime image: Debian 12 (ffmpeg 5.1, the reference's major) and libvips
   >= 8.17; on ffmpeg 7+ three upstream argument vectors fail (item 33).
 - `convertTargetsForUpload`, `convertTargetsForSelection`, `convertUploads`
@@ -85,5 +102,8 @@ Homebrew's ffmpeg 9 changes.
 (`card/`, `parity/cards`), library sources copied out of the reference image
 (`ref-src/`: mammoth, pdf-lib, lop, xmldom, jszip, pako, ...), the docx
 helper's scratch (`docx/`). Databases: `modlight_srv_media_a` on the dev
-Postgres (parity rows only). Containers: the reference stack and
-`modlight-srvmedia-a-ff` (removed at the end of the session, volumes kept).
+Postgres (parity rows only). Containers: the reference stack
+(`modlight-srvmedia-a-ref`) and the ffmpeg helper `modlight-srvmedia-a-ff`
+were stopped at the end of the session (volumes kept; `docker compose up -d`
+in `ref/` and `media_parity.py rust --ffmpeg ref` bring them back). Part B's
+reference stack was started for its script and stopped again.

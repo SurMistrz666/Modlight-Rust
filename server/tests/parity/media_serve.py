@@ -17,9 +17,12 @@ Intended differences are checked as such, never silently skipped:
 - security fix 1 (`fix1`): the view-limit bypasses must be OPEN on the
   reference and CLOSED on Rust; the legitimate flows must work on Rust;
 - security fix 6 (`oembed`): a capped file's oEmbed carries no raw URL on Rust;
-- part A (media processing) not merged yet: thumbnails of videos, motion
-  tiles, timelines, conversions, document rendering and card images are
-  reported as `pending-A` (counted, not failed) until it lands.
+- part A (media processing): merged and wired (`media/part_a.rs`). Where the
+  BYTES of a derived picture or PDF depend on the encoder build (PNG, AVIF
+  and the card PNGs from libvips 8.18 here against 8.17 there; the PDF's
+  creation date and random XObject name), the check compares status, headers
+  and the decoded content instead: pixels through the `vips` CLI (mean
+  absolute difference under 3/255), a PDF by its inflated structure.
 
 State-changing (view counters, deletes): never point it at the shared
 reference on 8420.
@@ -81,17 +84,30 @@ class Ctx(object):
         return self.run.pair(user_agent=ua, real_ip=ip)
 
     def compare(self, name, a, b, pending_a=False):
-        a = norm(a)
-        b = norm(b)
-        if pending_a:
-            if a == b:
-                self.run.passed += 1
-            else:
-                self.pending.append(name)
-                if self.run.verbose:
-                    print("PENDING-A %s" % name)
-            return a == b
-        return self.run.compare(name, a, b)
+        # `pending_a` once counted part-A checks apart; part A is merged, so
+        # every such check is an ordinary comparison now.
+        return self.run.compare(name, norm(a), norm(b))
+
+    def compare_encoded(self, name, ra, rb, headers=RAW_HEADERS):
+        """A response whose bytes follow the encoder build: status and headers
+        as usual (lengths left out), the body by its decoded content."""
+        sa, sb = shape(ra, None, headers), shape(rb, None, headers)
+        for d in (sa, sb):
+            d.pop("content-length", None)
+        if not self.run.compare(name + " (status, headers)", norm(sa), norm(sb)):
+            return False
+        if ra.status != 200 or ra.body == rb.body:
+            self.run.passed += 1
+            return True
+        (ia, pa), (ib, pb) = decoded(ra), decoded(rb)
+        if not self.run.compare(name + " (decoded)", ia, ib):
+            return False
+        if pa is None and pb is None:
+            return True
+        diff = None
+        if pa and pb and len(pa) == len(pb):
+            diff = sum(abs(x - y) for x, y in zip(pa, pb)) / float(len(pa))
+        return self.run.compare(name + " (pixels: mean abs diff < 3/255)", True, diff is not None and diff < 3.0)
 
     def expect(self, name, ok, detail=None):
         """An assertion about one server (the intended differences)."""
@@ -127,6 +143,45 @@ def shape(r, body="hash", headers=RAW_HEADERS):
     elif body == "len":
         d["body"] = len(r.body)
     return d
+
+
+def decoded(r):
+    """What a derived body shows. A PDF: its objects with the streams inflated
+    and the volatile parts (dates, the random XObject name) masked. A picture:
+    size, bands, pages and a 32x32 grey thumbnail (compared by mean absolute
+    difference, see `compare_encoded`)."""
+    import re as _re
+    import subprocess as _sp
+    import tempfile as _tf
+    import zlib as _zlib
+    ctype = (r.header("content-type") or "").split(";")[0]
+    if ctype == "application/pdf":
+        out = []
+        for m in _re.finditer(rb"(\d+) 0 obj\n(<<.*?>>)\n(stream\n)?", r.body, _re.S):
+            d = _re.sub(rb"Image-\d+", b"Image-<n>", _re.sub(rb"/Length \d+", b"/Length <n>", m.group(2)))
+            entry = [m.group(1).decode(), d.decode("latin1")]
+            if m.group(3) and b"FlateDecode" in m.group(2) and m.group(1) in (b"6", b"7"):
+                n = int(_re.search(rb"/Length (\d+)", m.group(2)).group(1))
+                data = _zlib.decompress(r.body[m.end():m.end() + n])
+                data = _re.sub(rb"Image-\d+", b"Image-<n>", _re.sub(rb"D:\d{14}Z", b"D:<date>", data))
+                entry.append(hashlib.sha256(data).hexdigest()[:16])
+            out.append(entry)
+        return {"pdf": out}, None
+    with _tf.TemporaryDirectory() as d:
+        src, small, grey = os.path.join(d, "in"), os.path.join(d, "s.v"), os.path.join(d, "g.v")
+        with open(src, "wb") as f:
+            f.write(r.body)
+        head = lambda field: _sp.run(["vipsheader", "-f", field, src], capture_output=True, text=True).stdout.strip()
+        info = {k: head(k) for k in ("width", "height", "bands", "n-pages")}
+        _sp.run(["vips", "thumbnail", src, small, "32", "--height", "32", "--size", "force"], capture_output=True)
+        _sp.run(["vips", "colourspace", small, grey, "b-w"], capture_output=True)
+        _sp.run(["vips", "extract_band", grey, os.path.join(d, "b.v"), "0"], capture_output=True)
+        _sp.run(["vips", "rawsave", os.path.join(d, "b.v"), os.path.join(d, "b.raw")], capture_output=True)
+        try:
+            pixels = open(os.path.join(d, "b.raw"), "rb").read()
+        except OSError:
+            pixels = None
+    return info, pixels
 
 
 def both(pair, method, path, headers=None, cookies=True):
@@ -184,8 +239,11 @@ def area_thumbs(ctx, f, tag):
         for to in targets:
             for q in ("to=%s&check=1" % to, "to=%s" % to):
                 a, b = both(pair, "GET", "/%s/%s/convert?%s" % (tag, f[key]["code"], q))
-                engine_needed = not (key == "png" and to in ("bogus", "", "png", "mp4")) and key != "zip"
-                ctx.compare("convert %s %s" % (key, q), shape(a, "len"), shape(b, "len"), pending_a=engine_needed)
+                # PNG, AVIF and PDF bytes follow the encoder build (see the header).
+                if to in ("avif", "pdf", "png") and "check" not in q:
+                    ctx.compare_encoded("convert %s %s" % (key, q), a, b)
+                else:
+                    ctx.compare("convert %s %s" % (key, q), shape(a, "len"), shape(b, "len"))
 
 
 # ── gates: unpublished, password, expiry ───────────────────────────────────
@@ -754,9 +812,12 @@ def area_embed(ctx):
     for path in ["/embed/v1/archive-ZIP.png", "/embed/v1/binary-FILE.png", "/embed/v2/archive-ZIP.png",
                  "/embed/v1/code-ZIP.png", "/embed/v1/archive-zip.png", "/embed/v1/archive-ZIP.svg"]:
         a, b = both(pair, "GET", path)
-        ok = path in ("/embed/v1/archive-ZIP.png", "/embed/v1/binary-FILE.png")
-        ctx.compare("embed %s" % path, shape(a, "len", ("content-type", "cache-control", "content-disposition")),
-                    shape(b, "len", ("content-type", "cache-control", "content-disposition")), pending_a=ok)
+        hdrs = ("content-type", "cache-control", "content-disposition")
+        if path in ("/embed/v1/archive-ZIP.png", "/embed/v1/binary-FILE.png"):
+            # The same pixels; the PNG encoder of the two libvips builds differs.
+            ctx.compare_encoded("embed %s" % path, a, b, hdrs)
+        else:
+            ctx.compare("embed %s" % path, shape(a, "len", hdrs), shape(b, "len", hdrs))
 
 
 def area_extras(ctx, f, tag, owner, admin, dressed):
@@ -913,11 +974,6 @@ def main():
         if a.only and a.only != name:
             continue
         fn()
-    if ctx.pending:
-        print("\npending-A (part A not merged; differ until it is): %d" % len(ctx.pending))
-        if run.verbose:
-            for n in ctx.pending:
-                print("  " + n)
     run.finish()
 
 
