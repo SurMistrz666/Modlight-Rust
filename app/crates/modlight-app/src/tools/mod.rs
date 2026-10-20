@@ -21,6 +21,9 @@ pub mod color_picker;
 pub mod combiner;
 pub mod editor_hooks;
 pub mod files;
+pub mod history;
+pub mod history_list;
+pub mod image_history;
 pub mod image_viewer;
 pub mod jobs;
 pub mod kit;
@@ -46,6 +49,8 @@ pub struct WindowSpec {
     /// `WindowState="FullScreen" WindowDecorations="None"`: no frame, covering this
     /// display area (desktop points), above the menu bar.
     pub screen: Option<Rect>,
+    /// Where the window opens (a remembered place); centred when `None`.
+    pub position: Option<egui::Pos2>,
 }
 
 impl WindowSpec {
@@ -57,6 +62,7 @@ impl WindowSpec {
             topmost: false,
             fit_height: false,
             screen: None,
+            position: None,
         }
     }
 
@@ -68,6 +74,7 @@ impl WindowSpec {
             topmost: false,
             fit_height: false,
             screen: None,
+            position: None,
         }
     }
 }
@@ -203,6 +210,9 @@ fn builder(spec: &WindowSpec, size: Vec2) -> ViewportBuilder {
     }
     if spec.topmost {
         builder = builder.with_always_on_top();
+    }
+    if let Some(position) = spec.position {
+        return builder.with_position(position);
     }
     if let Some((x, y, w, h)) = modlight_macos::system::visible_frame() {
         let area = Rect::from_min_size(pos2(x, y), vec2(w, h));

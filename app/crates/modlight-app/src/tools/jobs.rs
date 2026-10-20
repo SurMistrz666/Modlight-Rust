@@ -187,6 +187,8 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
         H::BackgroundRemover => state.open_background_remover(settings),
         H::ActiveWindowBorderless => state.active_window_borderless(settings),
         H::ActiveWindowTopMost => state.active_window_top_most(settings),
+        H::OpenHistory => state.open_history(),
+        H::OpenImageHistory => state.open_image_history(),
         H::StripMetadata => state.strip_metadata(file, settings),
         H::VideoConverter => match file {
             Some(file) => state.open_video_converter(Some(file), settings),
