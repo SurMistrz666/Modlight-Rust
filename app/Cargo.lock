@@ -2866,6 +2866,7 @@ dependencies = [
  "modlight-api",
  "modlight-core",
  "modlight-editor",
+ "modlight-effects",
  "modlight-macos",
  "modlight-tools",
  "rfd",
@@ -2926,6 +2927,22 @@ dependencies = [
  "tiny-skia",
  "ttf-parser",
  "unicode-linebreak",
+]
+
+[[package]]
+name = "modlight-effects"
+version = "0.7.7"
+dependencies = [
+ "chrono",
+ "image",
+ "log",
+ "modlight-core",
+ "modlight-editor",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tiny-skia",
+ "zip",
 ]
 
 [[package]]

@@ -10,6 +10,9 @@ pub const SCREENS: &[&str] = &[
     "image-editor",
     "image-editor-start",
     "image-editor-annotate",
+    // The editor with the effect library registered (phase 5, image effects).
+    "image-editor-effects",
+    "image-editor-effect-dialog",
 ];
 
 pub fn is_dialog(screen: &str) -> bool {
@@ -31,6 +34,18 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         }
         "image-editor-start" => {
             state.open_image_editor_window();
+        }
+        "image-editor-effects" | "image-editor-effect-dialog" => {
+            let mut scene = modlight_editor::qa::scene("editor-select")?;
+            if screen == "image-editor-effects" {
+                scene.editor.toggle_effects_panel();
+            } else {
+                scene.editor.run_effect("vignette");
+            }
+            state.open_editor(None, None, false, false, Finish::RunImageTask);
+            if let Some(session) = state.windows.editors.sessions.last_mut() {
+                adopt(session, scene);
+            }
         }
         _ => {
             // Task mode (`AnnotateImage` after a capture): Continue and Cancel, no start screen.

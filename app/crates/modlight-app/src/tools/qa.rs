@@ -139,7 +139,7 @@ fn recent() -> Vec<Color> {
 
 /// Whether `screen` is one of these (drawn as a window of its own).
 pub fn is_dialog(screen: &str) -> bool {
-    SCREENS.contains(&screen)
+    SCREENS.contains(&screen) || super::image_effects::SCREENS.contains(&screen)
 }
 
 /// Set the state up for `screen`; the size the window wants.
@@ -147,6 +147,9 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
     let _ = ctx;
     if !is_dialog(screen) {
         return None;
+    }
+    if let Some(size) = super::image_effects::qa_prepare(screen, state) {
+        return Some(size);
     }
     use super::color_picker::{ColorPickerWindow, Purpose};
     match screen {
