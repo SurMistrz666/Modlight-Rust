@@ -19,6 +19,7 @@ ttf-parser = "0.25"
 rustybuzz = "0.20"
 fontdb = "0.24"
 unicode-linebreak = "0.1"
+i_overlay = "9"
 
 [dev-dependencies]
 tempfile.workspace = true
