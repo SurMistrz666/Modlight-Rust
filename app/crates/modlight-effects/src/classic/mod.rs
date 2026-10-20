@@ -5,5 +5,6 @@ pub mod apply;
 pub mod gdi;
 pub mod model;
 pub mod package;
+pub mod sample;
 
 pub use model::{ClassicEffect, Kind, Preset, Value};
