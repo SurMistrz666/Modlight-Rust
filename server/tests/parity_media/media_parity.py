@@ -46,12 +46,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "parity"))
 import parity  # noqa: E402
 
-SCRATCH = "/Users/marcinasdfg/Desktop/modlight/_scratch/srv-media-a"
-REF = "http://127.0.0.1:8446"
-REF_APP = "modlight-srvmedia-a-ref-app-1"
-REF_DB = "modlight-srvmedia-a-ref-postgres-1"
-REF_ENV = os.path.join(SCRATCH, "ref", ".env")
+SCRATCH = os.environ.get("MEDIA_PARITY_SCRATCH", "/Users/marcinasdfg/Desktop/modlight/_scratch/srv-media-a")
+REF = os.environ.get("MEDIA_PARITY_REF", "http://127.0.0.1:8446")
+REF_APP = os.environ.get("MEDIA_PARITY_REF_APP", "modlight-srvmedia-a-ref-app-1")
+REF_DB = os.environ.get("MEDIA_PARITY_REF_DB", "modlight-srvmedia-a-ref-postgres-1")
+REF_ENV = os.environ.get("MEDIA_PARITY_REF_ENV", os.path.join(SCRATCH, "ref", ".env"))
 FF_HELPER = "modlight-srvmedia-a-ff"
+# `--ffmpeg docker`: the production image itself (libvips-cpp 8.17.3 as
+# sharp-libvips builds it, Debian 12's ffmpeg 5.1) with the media_probe
+# example added (_scratch/srv-integration/parity/probe/Dockerfile).
+PROBE_IMAGE = os.environ.get("MEDIA_PARITY_PROBE_IMAGE", "modlight-rust-probe:local")
+WORKTREE_ROOT = "/Users/marcinasdfg/Desktop/modlight"
 SERVER = os.path.abspath(os.path.join(HERE, "..", ".."))
 SEP = "\x1f"
 
@@ -280,15 +285,44 @@ os.execv("/opt/homebrew/bin/docker", ["docker", "exec", "-i", helper, "/usr/bin/
 """
 
 
+SH_SHIM = """#!/bin/sh
+# Logs the argument vector (US-separated, one line per call), then runs the
+# image's own tool (written by media_parity.py for --ffmpeg docker).
+{ printf '%s'; for a in "$@"; do printf '\\037%%s' "$a"; done; printf '\\n'; } >> %s
+exec /usr/bin/%s "$@"
+"""
+
+
 def write_shims(work, mode, log):
     d = os.path.join(work, "shim-" + mode)
     os.makedirs(d, exist_ok=True)
     for tool in ("ffmpeg", "ffprobe"):
         path = os.path.join(d, tool)
         with open(path, "w") as f:
-            f.write(SHIM % (tool, mode, FF_HELPER, log, os.environ["HOME"]))
+            if mode == "docker":
+                f.write(SH_SHIM % (tool, log, tool))
+            else:
+                f.write(SHIM % (tool, mode, FF_HELPER, log, os.environ["HOME"]))
         os.chmod(path, 0o755)
     return d
+
+
+def docker_probe(args, env):
+    """Run media_probe in the production image, the work tree mounted at the
+    same path, as the host user (the files it writes stay ours)."""
+    # The CPU quota of the reference stack (compose `cpus: 2.0`): libvips'
+    # threads and ffmpeg's `-threads` follow it, and x264 and libaom write
+    # different (equally valid) bitstreams for different thread counts.
+    cmd = ["run", "--rm", "--network", "none", "--entrypoint", "/usr/local/bin/media_probe",
+           "--cpus", os.environ.get("MEDIA_PARITY_PROBE_CPUS", "2"), "--memory", "2g",
+           "-u", "%d:%d" % (os.getuid(), os.getgid()),
+           "-v", "%s:%s" % (WORKTREE_ROOT, WORKTREE_ROOT)]
+    for k, v in env.items():
+        cmd += ["-e", "%s=%s" % (k, v)]
+    got = docker(*(cmd + [PROBE_IMAGE] + args), check=False)
+    if got.returncode != 0:
+        sys.stderr.write(got.stderr.decode("utf-8", "replace")[-4000:])
+        raise SystemExit("media_probe failed in %s" % PROBE_IMAGE)
 
 
 def ensure_ff_helper():
@@ -327,8 +361,15 @@ def cmd_rust(work, mode):
     })
     with open(os.path.join(out, "manifest.json"), "w") as f:
         json.dump(manifest, f)
-    subprocess.run([os.path.join(SERVER, "target", "debug", "examples", "media_probe"), "batch",
-                    os.path.join(out, "manifest.json"), out], env=env, check=True)
+    if mode == "docker":
+        keep = ("STORAGE_DRIVER", "STORAGE_LOCAL_PATH", "UPLOAD_TMP_PATH", "FFMPEG_PATH", "FFPROBE_PATH",
+                "MEDIA_PROBE_ARGLOG", "MODLIGHT_ROOT", "APP_URL", "NODE_ENV", "SKIP_ENV_VALIDATION",
+                "AUTH_SECRET", "RUST_LOG")
+        docker_probe(["batch", os.path.join(out, "manifest.json"), out],
+                     dict((k, env[k]) for k in keep) | {"TZ": "UTC"})
+    else:
+        subprocess.run([os.path.join(SERVER, "target", "debug", "examples", "media_probe"), "batch",
+                        os.path.join(out, "manifest.json"), out], env=env, check=True)
     # Split the argument log by case marker.
     by_case, current = {}, None
     for line in open(log, encoding="utf-8", errors="replace").read().splitlines() if os.path.exists(log) else []:
@@ -541,7 +582,7 @@ CARD_WORDS = {"code": "CODE", "archive": "ARCHIVE", "document": "DOCUMENT", "she
               "text": "TEXT", "image": "IMAGE", "binary": "FILE"}
 
 
-def cmd_cards(work):
+def cmd_cards(work, mode="host"):
     """Every embed card: the reference's /embed/v1/<card>.png against
     `media_probe card` (card_art + card_render), pixel for pixel."""
     import urllib.request
@@ -558,7 +599,10 @@ def cmd_cards(work):
         ref, rust = os.path.join(d, "ref-" + f), os.path.join(d, "rust-" + f)
         with urllib.request.urlopen(REF + "/embed/v1/" + f) as res, open(ref, "wb") as out:
             out.write(res.read())
-        subprocess.run([probe, "card", f, rust], env=env, check=True)
+        if mode == "docker":
+            docker_probe(["card", f, rust], {"MODLIGHT_ROOT": SERVER})
+        else:
+            subprocess.run([probe, "card", f, rust], env=env, check=True)
         if open(ref, "rb").read() == open(rust, "rb").read():
             counts["bytes identical"] += 1
         st = vips_stats(ref, rust)
@@ -575,7 +619,7 @@ def main():
     p.add_argument("command", choices=["ref", "rust", "compare", "cards"])
     p.add_argument("--work", default=os.path.join(SCRATCH, "parity"))
     p.add_argument("--corpus", default=os.path.join(SCRATCH, "corpus"))
-    p.add_argument("--ffmpeg", choices=["host", "ref"], default="host")
+    p.add_argument("--ffmpeg", choices=["host", "ref", "docker"], default="host")
     a = p.parse_args()
     os.makedirs(a.work, exist_ok=True)
     if a.command == "ref":
@@ -583,7 +627,7 @@ def main():
     elif a.command == "rust":
         cmd_rust(a.work, a.ffmpeg)
     elif a.command == "cards":
-        cmd_cards(a.work)
+        cmd_cards(a.work, a.ffmpeg)
     else:
         cmd_compare(a.work, a.ffmpeg)
 

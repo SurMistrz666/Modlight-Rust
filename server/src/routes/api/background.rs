@@ -16,7 +16,9 @@ use serde_json::json;
 
 use super::avatar::{client_closed, error, json, read_image_body};
 use crate::auth_helpers::MaybeUser;
-use crate::background::{BACKGROUND_MAX_BYTES, BACKGROUND_MAX_EDGE, background_key, is_accepted_background_type};
+use crate::background::{
+    BACKGROUND_MAX_BYTES, BACKGROUND_MAX_EDGE, BACKGROUND_PREFIX, background_key, is_accepted_background_type,
+};
 use crate::db::types::JsDate;
 use crate::error::{AppError, AppResult};
 use crate::media::abort::AbortController;
@@ -97,17 +99,11 @@ async fn set(State(state): State<AppState>, MaybeUser(session): MaybeUser, req: 
     let size = output.len();
     storage.write(&key, bytes_stream(Bytes::from(output))).await?;
 
-    // RETURNING reads the row AFTER the update, so `old` is the new key and
-    // the discard is a no-op: the previous file stays behind (upstream quirk).
-    let old: Option<Option<String>> = sqlx::query_scalar(
-        r#"update "user" set "background_key" = $1, "updated_at" = $2 where "user"."id" = $3 returning "background_key""#,
-    )
-    .bind(&key)
-    .bind(JsDate::now())
-    .bind(&session.user.id)
-    .fetch_optional(&state.db)
-    .await?;
-    discard(storage.as_ref(), old.flatten().as_deref(), Some(&key)).await;
+    // Fix (SKELETON.md 9): upstream's RETURNING read the row AFTER the
+    // update, so the previous wallpaper was never deleted. The previous key is
+    // read under the row lock and its object deleted once the new one is set.
+    let old = set_background_key(&state.db, &session.user.id, Some(&key)).await?;
+    discard(storage.as_ref(), &session.user.id, old.flatten().as_deref(), Some(&key)).await;
 
     Ok(json(StatusCode::OK, json!({ "ok": true, "bytes": size })))
 }
@@ -116,21 +112,39 @@ async fn remove(State(state): State<AppState>, MaybeUser(session): MaybeUser) ->
     let Some(session) = session else {
         return Ok(error(StatusCode::UNAUTHORIZED, "unauthorized"));
     };
-    let old: Option<Option<String>> = sqlx::query_scalar(
-        r#"update "user" set "background_key" = null, "updated_at" = $1 where "user"."id" = $2 returning "background_key""#,
-    )
-    .bind(JsDate::now())
-    .bind(&session.user.id)
-    .fetch_optional(&state.db)
-    .await?;
+    let old = set_background_key(&state.db, &session.user.id, None).await?;
     let storage = state.storage.get().map_err(AppError::Internal)?;
-    discard(storage.as_ref(), old.flatten().as_deref(), None).await;
+    discard(storage.as_ref(), &session.user.id, old.flatten().as_deref(), None).await;
     Ok(json(StatusCode::OK, json!({ "ok": true })))
 }
 
-/// Delete the file a key used to point at; never fails the request.
-async fn discard(storage: &dyn StorageDriver, old: Option<&str>, keep: Option<&str>) {
-    let Some(old) = old.filter(|o| !o.is_empty()) else {
+/// Point `user.background_key` at `key` (or clear it) and return the value it
+/// held BEFORE (`None`: no such user). Read under the row lock the statement
+/// takes, so concurrent replacements each get the key they replaced.
+pub async fn set_background_key(
+    db: &sqlx::PgPool,
+    user_id: &str,
+    key: Option<&str>,
+) -> anyhow::Result<Option<Option<String>>> {
+    Ok(sqlx::query_scalar(
+        r#"update "user" as u set "background_key" = $1, "updated_at" = $2
+           from (select "id", "background_key" from "user" where "id" = $3 for update) as prev
+           where u."id" = prev."id"
+           returning prev."background_key""#,
+    )
+    .bind(key)
+    .bind(JsDate::now())
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// Delete the file a key used to point at; never fails the request. Only
+/// this account's own wallpaper keys (`backgrounds/<userId>-...`) are ever
+/// handed to the driver.
+pub async fn discard(storage: &dyn StorageDriver, user_id: &str, old: Option<&str>, keep: Option<&str>) {
+    let own = format!("{BACKGROUND_PREFIX}/{user_id}-");
+    let Some(old) = old.filter(|o| o.starts_with(&own)) else {
         return;
     };
     if Some(old) == keep {

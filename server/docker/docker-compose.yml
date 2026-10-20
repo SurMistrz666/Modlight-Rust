@@ -1,0 +1,82 @@
+# Modlight (Rust port): the local stack on this Mac.
+#
+#   server/docker/setup-local.sh          # once: writes server/docker/.env (secrets, mode 600)
+#   docker compose -f server/docker/docker-compose.yml up -d --build
+#
+# The panel is http://127.0.0.1:8430, published on the loopback address ONLY:
+# nothing here is reachable from another machine. Migrations run every time
+# the app container starts. The first account to register becomes the
+# administrator (also with REGISTRATION_ENABLED=false).
+#
+# Same hardening as upstream's docker/docker-compose.prod.yml (no Caddy: there
+# is no public hostname and no TLS on a loopback-only install).
+
+name: modlight-rust
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: modlight-rust:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      # Always 3000 inside the container; the host side is below.
+      PORT: "3000"
+      DATABASE_URL: postgresql://modlight:${POSTGRES_PASSWORD:?run setup-local.sh first}@postgres:5432/modlight
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      # These three MUST stay on one filesystem: finishing an upload renames the
+      # temporary file into storage, and a rename cannot cross devices.
+      STORAGE_LOCAL_PATH: /app/data/storage
+      TUS_TMP_PATH: /app/data/tus
+      UPLOAD_TMP_PATH: /app/data/tmp
+    volumes:
+      # Every uploaded file lives here (named volume "modlight-rust_appdata").
+      - appdata:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${APP_PORT:-8430}:3000"
+
+    # ── Hardening (as upstream) ──────────────────────────────────────────────
+    # This container ingests untrusted files and decodes them with libvips and
+    # ffmpeg. It holds no privilege it cannot justify.
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 512
+    cpus: 2.0
+
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/modlight-server", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: modlight
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run setup-local.sh first}
+      POSTGRES_DB: modlight
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Not published: only the app talks to it, over the compose network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U modlight -d modlight"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  appdata:
+  pgdata:

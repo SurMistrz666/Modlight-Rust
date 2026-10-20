@@ -27,6 +27,7 @@
 //! malformed request is answered 400 by hyper and only closes its connection,
 //! and shutdown stops accepting, then waits briefly for in-flight requests.
 
+pub mod compression;
 pub mod cookies;
 pub mod headers;
 pub mod proxy;
@@ -203,17 +204,22 @@ impl App {
 
     /// Answer one request (steps 1-5 of the module docs).
     pub async fn handle(&self, req: Request<Body>) -> Response {
+        // server.ts `fail()` answers JSON on its own (raw upload) paths;
+        // anything Next handled answers a bare 500 for a thrown error.
+        let raw = is_raw_upload(req.method(), &whatwg_pathname(req.uri()));
         let fut = AssertUnwindSafe(self.handle_inner(req)).catch_unwind();
         match fut.await {
             Ok(res) => res,
             Err(_) => {
                 tracing::error!("a request handler panicked");
-                crate::error::internal_error_response()
+                if raw { crate::error::internal_error_response() } else { crate::error::route_handler_error_response() }
             }
         }
     }
 
     async fn handle_inner(&self, mut req: Request<Body>) -> Response {
+        let accept_encoding = req.headers().get(header::ACCEPT_ENCODING).cloned();
+        let method = req.method().clone();
         // 1. Raw upload paths.
         let pathname = whatwg_pathname(req.uri());
         if is_raw_upload(req.method(), &pathname) {
@@ -253,7 +259,8 @@ impl App {
         // 5. next.config.ts headers, on the original path.
         let mut response = response;
         self.state.security.apply(&raw_path, response.headers_mut());
-        response
+        // 6. Next's compression, on what Next renders itself.
+        compression::apply(accept_encoding.as_ref(), &method, response).await
     }
 
     /// 4. Routing, with the per-request cookie store.

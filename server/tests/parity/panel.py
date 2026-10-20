@@ -16,12 +16,13 @@ The reference has no `/_page`, so its side is read from what it renders:
 The Rust side is `/_page` (`layouts["(app)"]`, `props`, `meta`) and the
 document's `<html data-theme style data-bg>`.
 
-The rest of `lib/data/admin.ts` has no Rust HTTP surface yet (the admin
-actions belong to the library port): the reference answers through its own
-actions (`admin.loadOrphans`, `loadDeletionImpact`, `recalculateEveryQuota`,
-`runStorageScan`, Next's protocol), the Rust functions through
-`tests/admin_data_parity.rs` run against the Rust parity database, with
-identical storage trees written into both servers' storage roots.
+The rest of `lib/data/admin.ts` is compared through the admin actions on
+both servers (`admin.loadOrphans`, `loadDeletionImpact`,
+`recalculateEveryQuota`, `runStorageScan`: Next's protocol on the reference,
+`/_rpc` on Rust), with identical storage trees written into both servers'
+storage roots. `--rust-admin-data cargo` runs the Rust functions through
+`tests/admin_data_parity.rs` against a Rust database on the dev Postgres
+instead (the way this was checked before the actions were ported).
 
 Seeds IDENTICAL state on both databases first, wiping `user` (CASCADE),
 `uploads`, `folders`, `duplicate_dismissals` and the settings it varies: run
@@ -30,16 +31,18 @@ it only against your own scratch stacks, never the shared reference (8420).
     python3 server/tests/parity/panel.py --ref http://localhost:8428 --rust http://localhost:8436
 
 Expected (explained) differences, checked as such rather than compared:
-- `/dashboard` documents: the reference renders the page (200); the Rust
-  dashboard page is another port's (501 payload with the layouts).
+- `/dashboard` documents: both render the page (200; the library port's
+  page loader; this script once expected the skeleton's 501 there).
 - `disk.disk` (statfs): two different filesystems; checked for shape only.
-- the 307 of the `(app)` layout's `requireUser()`: the reference sends a whole
-  HTML document as its body, the skeleton none (CONTRACT 2.1, "no body
-  needed"); status, reason, Location and cookies are compared.
-- a non-admin on `/dashboard/admin`: the reference answers 200 with a
-  `<meta http-equiv="refresh" content="1;url=/dashboard">` (the page runs
-  inside `dashboard/loading.tsx`'s boundary); the Rust skeleton answers 307
-  to the same target (CONTRACT 2.1). The targets are compared.
+- the 307 of the `(app)` layout's `requireUser()`: both send a whole HTML
+  document as its body (Next's error shell, the SPA shell with the redirect
+  payload); status, reason, Location and cookies are compared, and that the
+  body is a document.
+- a non-admin on `/dashboard/admin`: both answer 200 with the page's title
+  and a refresh tag to `/dashboard` (the page runs inside
+  `dashboard/loading.tsx`'s boundary; Rust's tag sits in <noscript>, the SPA
+  follows the inlined redirect payload itself). Status, title and target are
+  compared.
 - an upload whose extension is `constructor` with a useless stored type: the
   reference's `MIME_BY_EXT["constructor"]` is `Object`, so `mediaKind` throws
   and the disk report fails (500); Rust treats it as "no entry" (other).
@@ -74,6 +77,10 @@ def options():
     p.add_argument("--ref-app-container", default="modlight-srvauth-a-ref-app-1")
     p.add_argument("--ref-storage", default="/app/data/storage", help="STORAGE_LOCAL_PATH inside the reference")
     p.add_argument("--rust-storage", default=SCRATCH + "/data/storage", help="STORAGE_LOCAL_PATH of the Rust server")
+    p.add_argument("--expect-default-quota", default="20.0 GB",
+                   help='the reference\'s DEFAULT_USER_QUOTA as the admin page prints it ("null" when unlimited)')
+    p.add_argument("--rust-admin-data", choices=["rpc", "cargo"], default="rpc",
+                   help="lib/data/admin on Rust: through /_rpc (default) or tests/admin_data_parity.rs")
     a, _ = p.parse_known_args()
     return a
 
@@ -410,8 +417,13 @@ def page_data(browser, path, query=""):
     return browser.request("GET", "/_page?" + q, origin=False)
 
 
+EXPECTED_DEFAULT_QUOTA = "20.0 GB"
+
+
 def main():
+    global EXPECTED_DEFAULT_QUOTA
     opt = options()
+    EXPECTED_DEFAULT_QUOTA = None if opt.expect_default_quota == "null" else opt.expect_default_quota
     run = parity.Run.from_args()
     if ":8420" in run.ref:
         sys.exit("refusing to seed the shared reference (8420)")
@@ -448,8 +460,7 @@ def main():
         ref_doc = pair.ref.request("GET", "/dashboard?all=1", origin=False)
         rust_doc = pair.rust.request("GET", "/dashboard?all=1", origin=False)
         rust_page = page_data(pair.rust, "/dashboard", "all=1")
-        run.compare("(app) %s: document statuses (reference page 200, Rust page not ported 501)" % label,
-                    [200, 501], [ref_doc.status, rust_doc.status])
+        run.compare("(app) %s: document statuses" % label, [200, 200], [ref_doc.status, rust_doc.status])
         ref_layout = ref_app_layout(Flight(ref_doc.text()))
         body = rust_page.json() or {}
         rust_layout = parity._decode_tagged((body.get("layouts") or {}).get("(app)"))
@@ -471,26 +482,26 @@ def main():
                                       "/dashboard/admin", body="none", headers_to_compare=("location",),
                                       origin=False)
     # Next renders the layout's redirect into a whole HTML document under the
-    # 307; the skeleton sends the redirect without a body (CONTRACT 2.1:
-    # "Location header, no body needed"). Browsers only read Location.
-    run.compare("admin page with a dead session: 307 body (reference HTML, Rust none: CONTRACT 2.1)",
-                {"reference": "html", "rust": "empty"},
+    # 307; so does Rust (the SPA shell with the redirect payload, SKELETON 9.41).
+    run.compare("admin page with a dead session: 307 body is a document",
+                {"reference": "html", "rust": "html"},
                 {"reference": "html" if b"<html" in ref_res.body else "other",
-                 "rust": "empty" if not rust_res.body else "%d bytes" % len(rust_res.body)})
+                 "rust": "html" if b"<html" in rust_res.body else "%d bytes" % len(rust_res.body)})
     run.compare("admin page with a dead session: /_page", {"redirect": "/login", "status": 307},
                 page_data(garbage.rust, "/dashboard/admin").json())
     nonadmin = signed(USER)
     ref_doc = nonadmin.ref.request("GET", "/dashboard/admin", origin=False)
     rust_doc = nonadmin.rust.request("GET", "/dashboard/admin", origin=False)
-    refresh = re.search(r'<meta id="__next-page-redirect" http-equiv="refresh" content="1;url=([^"]*)"',
-                        ref_doc.text())
-    run.compare("admin page as a non-admin: redirect target (reference 200 + refresh, Rust 307)",
-                {"status": 200, "target": "/dashboard"}, {"status": ref_doc.status,
-                                                           "target": refresh.group(1) if refresh else None})
-    run.compare("admin page as a non-admin: Rust document and /_page",
-                {"status": 307, "location": "/dashboard", "page": {"redirect": "/dashboard", "status": 307}},
-                {"status": rust_doc.status, "location": rust_doc.header("location"),
-                 "page": page_data(nonadmin.rust, "/dashboard/admin").json()})
+    def boundary_redirect(doc):
+        refresh = re.search(r'<meta id="__next-page-redirect" http-equiv="refresh" content="1;url=([^"]*)"',
+                            doc.text())
+        title = re.search(r"<title>(.*?)</title>", doc.text())
+        return {"status": doc.status, "location": doc.header("location"),
+                "target": refresh.group(1) if refresh else None, "title": title.group(1) if title else None}
+    run.compare("admin page as a non-admin: 200 + the page's title + refresh target (dashboard boundary)",
+                boundary_redirect(ref_doc), boundary_redirect(rust_doc))
+    run.compare("admin page as a non-admin: Rust /_page",
+                {"redirect": "/dashboard", "status": 307}, page_data(nonadmin.rust, "/dashboard/admin").json())
 
     # ── /dashboard/admin props, under several settings states ──────────────
     def expect_state(label, props, expected):
@@ -542,7 +553,7 @@ def main():
         return ref_props
 
     props = admin_props("(no settings)")
-    expect_state("no settings", props, {"regEnabled": False, "keyState": "unset", "defaultQuota": "20.0 GB",
+    expect_state("no settings", props, {"regEnabled": False, "keyState": "unset", "defaultQuota": EXPECTED_DEFAULT_QUOTA,
                                         "mail": {"source": "none", "host": "", "port": 587, "security": "starttls",
                                                  "user": "", "from": "no-reply@localhost", "fromName": "Modlight",
                                                  "ready": False, "passwordState": "unset",
@@ -567,7 +578,7 @@ def main():
                           "mail_from_name": " Parity Robot ", "email_verification_required": "on"})
     expect_state("panel SMTP without password, undecryptable key",
                  admin_props("(panel SMTP without password, undecryptable key)"),
-                 {"regEnabled": True, "keyState": "undecryptable", "defaultQuota": "20.0 GB",
+                 {"regEnabled": True, "keyState": "undecryptable", "defaultQuota": EXPECTED_DEFAULT_QUOTA,
                   "mail": {"source": "panel", "host": "smtp.parity.test", "port": 2525, "security": "tls",
                            "user": "mailer", "from": "robot@parity.test", "fromName": "Parity Robot",
                            "ready": False, "passwordState": "unset", "verificationRequired": False,
@@ -581,7 +592,7 @@ def main():
                           "smtp_user": "mailer", "mail_from": "", "email_verification_required": "1",
                           "smtp_password_enc": secret_box(opt.node, env["AUTH_SECRET"], "smtp", "hunter2")})
     expect_state("panel SMTP ready, key set", admin_props("(panel SMTP ready, key set)"),
-                 {"regEnabled": True, "keyState": "set", "defaultQuota": "20.0 GB",
+                 {"regEnabled": True, "keyState": "set", "defaultQuota": EXPECTED_DEFAULT_QUOTA,
                   "mail": {"source": "panel", "host": "smtp.parity.test", "port": 587, "security": "starttls",
                            "user": "mailer", "from": "no-reply@localhost", "fromName": "Modlight",
                            "ready": True, "passwordState": "set", "verificationRequired": True,
@@ -591,7 +602,7 @@ def main():
         set_settings(db, {"register_enabled": "yes", "smtp_host": "smtp.parity.test", "smtp_user": "",
                           "smtp_password_enc": "v1.x.y.z"})
     expect_state("undecryptable SMTP password", admin_props("(undecryptable SMTP password)"),
-                 {"regEnabled": False, "keyState": "unset", "defaultQuota": "20.0 GB",
+                 {"regEnabled": False, "keyState": "unset", "defaultQuota": EXPECTED_DEFAULT_QUOTA,
                   "mail": {"source": "panel", "host": "smtp.parity.test", "port": 587, "security": "starttls",
                            "user": "", "from": "no-reply@localhost", "fromName": "Modlight", "ready": False,
                            "passwordState": "undecryptable", "verificationRequired": False,
@@ -726,7 +737,21 @@ def admin_data_checks(run, opt, ref_db, rust_db, signed):
         "recalc": ref_call("recalculateEveryQuota"),
         "scan": ref_call("runStorageScan"),
     }
-    rust = rust_admin_data(opt, impact_ids)
+    if opt.rust_admin_data == "cargo":
+        rust = rust_admin_data(opt, impact_ids)
+    else:
+        def rust_call(export, *args):
+            env = parity.rpc_envelope(actions.call_rust(pair.rust, "admin", export, list(args)))
+            if "ok" not in env:
+                raise AssertionError("admin.%s failed on Rust: %r" % (export, env))
+            return env["ok"]
+
+        rust = {
+            "orphans": rust_call("loadOrphans"),
+            "impacts": [rust_call("loadDeletionImpact", i) for i in impact_ids],
+            "recalc": rust_call("recalculateEveryQuota"),
+            "scan": rust_call("runStorageScan"),
+        }
     for key in ("orphans", "impacts", "recalc", "scan"):
         run.compare("lib/data/admin: %s (reference action vs Rust function)" % key, reference[key], rust[key])
 

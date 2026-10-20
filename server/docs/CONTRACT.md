@@ -4622,6 +4622,9 @@ numbers and append new items at the end.
    answers `307` and `404`, as everywhere else. The SPA handles both, so only
    the status line differs: keep the skeleton's, or answer `200` with the
    inlined redirect or not-found payload?
+   **Decided (integration, 2026-10-20): `200` as upstream**, with the page's
+   own title, `noindex` for `notFound()`, and the refresh tag inside
+   `<noscript>` for a redirect (SKELETON.md 9.41).
 5. **Malformed percent-escapes.** A path such as `/u/%E0%A4%A` is answered by
    the reference with `500` `text/plain` (section 5.3); the skeleton answers
    `400` `{"message": "Bad Request"}`, on the document and on `/_page`
