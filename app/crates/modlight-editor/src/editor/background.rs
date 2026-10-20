@@ -36,6 +36,31 @@ fn current_wallpaper() -> Option<(String, ImageLayout)> {
     wallpaper_slot().read().unwrap().as_ref()?.wallpaper()
 }
 
+/// A host-provided picture reader for files the `image` crate cannot decode (a HEIC
+/// desktop picture on a Mac).
+pub type ImageLoader = Box<dyn Fn(&std::path::Path) -> Option<RgbaImage> + Send + Sync>;
+
+static LOADER: std::sync::OnceLock<std::sync::RwLock<Option<ImageLoader>>> =
+    std::sync::OnceLock::new();
+
+pub fn set_image_loader(loader: Option<ImageLoader>) {
+    *LOADER
+        .get_or_init(|| std::sync::RwLock::new(None))
+        .write()
+        .unwrap() = loader;
+}
+
+/// Opens a picture: the `image` crate first, then the host's reader.
+pub fn open_image(path: &std::path::Path) -> Option<RgbaImage> {
+    if let Ok(image) = image::open(path) {
+        return Some(image.to_rgba8());
+    }
+    LOADER
+        .get()
+        .and_then(|l| l.read().ok())
+        .and_then(|l| l.as_ref().and_then(|f| f(path)))
+}
+
 /// The ratio buttons (`SetOutputRatioCommand` parameters).
 pub const OUTPUT_RATIOS: [&str; 9] = [
     "Auto", "1:1", "4:3", "3:2", "16:9", "5:3", "9:16", "3:4", "2:3",
@@ -271,13 +296,13 @@ impl BackgroundSettings {
         {
             return BackgroundBrush::Image(image.clone(), layout);
         }
-        match image::open(path) {
-            Ok(img) => {
-                let image = Arc::new(img.to_rgba8());
+        match open_image(std::path::Path::new(path)) {
+            Some(img) => {
+                let image = Arc::new(img);
                 self.image = Some((path.to_string(), layout, image.clone()));
                 BackgroundBrush::Image(image, layout)
             }
-            Err(_) => BackgroundBrush::Transparent,
+            None => BackgroundBrush::Transparent,
         }
     }
 
