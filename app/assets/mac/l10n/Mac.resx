@@ -79,4 +79,7 @@
   <data name="FirstRunOptionsLater" xml:space="preserve">
     <value>You can change these options later in Application settings → macOS integration.</value>
   </data>
+  <data name="PinWheelHint" xml:space="preserve">
+    <value>Mouse wheel changes scale, Cmd + mouse wheel changes opacity.</value>
+  </data>
 </root>

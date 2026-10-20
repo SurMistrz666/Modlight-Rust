@@ -145,6 +145,10 @@ pub const SCREENS: &[&str] = &[
     "qr-code",
     "qr-code-empty",
     "image-viewer",
+    "pin-startup",
+    "pin-startup-error",
+    "pin-options",
+    "pinned-image",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

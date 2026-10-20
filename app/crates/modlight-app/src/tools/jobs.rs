@@ -107,6 +107,17 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
             state.open_qr_code_scan(None, Some(super::qr::ScanMode::Screen))
         }
         H::QRCodeScanRegion => state.open_qr_code_scan(None, Some(super::qr::ScanMode::Region)),
+        H::PinToScreen => match file {
+            Some(file) => state.pin_file(&file, &settings),
+            None => state.open_pin_startup(settings),
+        },
+        H::PinToScreenFromScreen => state.pin_from_screen(settings),
+        H::PinToScreenFromClipboard => state.pin_from_clipboard(settings),
+        H::PinToScreenFromFile => match file {
+            Some(file) => state.pin_file(&file, &settings),
+            None => state.pin_from_file(settings),
+        },
+        H::PinToScreenCloseAll => state.pin_close_all(settings),
         // The image effects window, the tray menu toggle: other parts of the port.
         _ => state.push(Command::NotYet),
     }
