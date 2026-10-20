@@ -1963,6 +1963,8 @@ impl crate::state::AppState {
         if !path.is_file() {
             return;
         }
+        // The import compares what it restores with the settings as they are now.
+        self.save_config();
         self.app_status(
             t(s::ApplicationSettingsWindow_ImportingBackup).to_string(),
             true,

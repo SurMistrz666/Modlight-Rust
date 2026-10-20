@@ -55,6 +55,16 @@
   <data name="BackupImportRefused" xml:space="preserve">
     <value>Not imported, because a Modlight backup never holds them: {0}</value>
   </data>
+  <data name="BackupImportDisabled" xml:space="preserve">
+    <value>These would run on their own, so they came in turned off. Turn them on again in the task settings only if you trust where the backup came from:
+{0}</value>
+  </data>
+  <data name="BackupImportDefaultTask" xml:space="preserve">
+    <value>Task settings</value>
+  </data>
+  <data name="BackupImportProgram" xml:space="preserve">
+    <value>action {0} ({1})</value>
+  </data>
   <data name="PageMacIntegration" xml:space="preserve">
     <value>macOS integration</value>
   </data>

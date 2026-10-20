@@ -118,6 +118,15 @@ Everything not listed behaves as upstream does. The per-screen state is in
   one), hotkeys from a fake backend (pressed through `captures.simulated`), devices of
   the FFmpeg window from a fixed list, and "Save as" writes to `<dir>/Saved`; no
   ScreenCaptureKit, Accessibility, camera, microphone or login item call is made.
+- **Settings backup import** restores what runs by itself switched off: an external
+  program of "Perform actions", the "Perform actions" step after capture, and watch
+  folders, whenever the backup switches one on that this installation did not already
+  have switched on for the same task (the default task settings; a hotkey by its place
+  in the list; a program only when the very same one was on). A message after the
+  import names each one, and they are turned on again in the task settings. Upstream
+  restores the file whole, so a backup from somebody else could start a program on the
+  next capture. Restoring one's own backup on the same Mac changes nothing; on another
+  Mac these wait to be turned on.
 - **Deleting the folder you stand in** reloads the folder list; upstream loses that
   refresh and keeps showing the deleted folder until the next reload.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
