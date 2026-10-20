@@ -1,0 +1,10 @@
+# ONNX Runtime's Core ML provider (modlight-tools' background remover, linked
+# statically through `ort`) uses Objective-C `@available` checks, which call
+# `__isPlatformVersionAtLeast` from clang's compiler-rt builtins. rustc drives
+# the linker without them, so the release binary fails to link. Ask clang to
+# add Apple's runtime library.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fapple-link-rtlib"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fapple-link-rtlib"]
