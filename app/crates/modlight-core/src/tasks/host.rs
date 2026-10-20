@@ -110,9 +110,11 @@ pub enum TaskQuestion {
     FileExists { path: PathBuf },
     /// `SaveImageToFileWithDialog`: where to save the picture (a save panel).
     SaveAs { folder: PathBuf, file_name: String },
-    /// `AnnotateImage`: the picture through the image editor (phase 4 hands it back
-    /// unchanged until the editor exists).
+    /// `AnnotateImage`: the picture through the image editor in task mode; the answer
+    /// comes when its window closes.
     Annotate(Arc<image::RgbaImage>),
+    /// `BeautifyImage`: the editor in task mode with its Background panel open.
+    Beautify(Arc<image::RgbaImage>),
 }
 
 /// The answer to a [`TaskQuestion`].
