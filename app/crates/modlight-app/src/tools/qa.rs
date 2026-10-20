@@ -37,6 +37,11 @@ pub const SCREENS: &[&str] = &[
     "ocr",
     "ocr-services",
     "ocr-error",
+    "analyze-image",
+    "analyze-image-empty",
+    "analyze-image-error",
+    "analyze-image-options",
+    "analyze-image-options-gemini",
 ];
 
 /// ExifTool's `-G -t` output for the fixture photo.
@@ -368,6 +373,79 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                 }
             }
             Some(vec2(940.0, 600.0))
+        }
+        "analyze-image" | "analyze-image-empty" | "analyze-image-error" => {
+            use super::analyze::{AnalyzeWindow, Network};
+            let settings = state.default_task_settings();
+            let mut options = modlight_tools::settings::AiOptions::default();
+            if screen == "analyze-image" {
+                options.openai_api_key = Some("sk-qa".into());
+            }
+            let file = (screen != "analyze-image-empty").then(|| fixture_files()[0].clone());
+            let key = state.tools.open_keyed(|key| {
+                Box::new(AnalyzeWindow::new(
+                    key,
+                    settings,
+                    options,
+                    file,
+                    Network::Offline(Err(String::new())),
+                ))
+            });
+            if let Some(window) = state.tools.window_mut::<AnalyzeWindow>(key) {
+                window.qa_started();
+                window.qa_display = Some("mountain-sunset.png".into());
+                match screen {
+                    "analyze-image" => {
+                        window.preset = Some(1);
+                        window.options.input =
+                            modlight_tools::analyze::preset_prompts()[1].to_string();
+                        window.result = "A wide landscape at sunset: a pale sun low in a peach sky above a ridge of violet hills.\n\nThe colours run from warm orange near the horizon to soft pink higher up; the hills are in shadow, with no people, buildings or text in the picture.".into();
+                        window.elapsed = modlight_core::l10n::format(
+                            modlight_core::l10n::t(
+                                modlight_core::l10n::tools::AnalyzeImageViewModel_Time_ms,
+                            ),
+                            &[modlight_core::l10n::Arg::Int(2384)],
+                        );
+                    }
+                    "analyze-image-error" => {
+                        window.error = modlight_core::l10n::t(
+                            modlight_core::l10n::tools::AnalyzeImageViewModel_Configure_API_key,
+                        )
+                        .to_string();
+                    }
+                    _ => {}
+                }
+            }
+            Some(vec2(1000.0, 650.0))
+        }
+        "analyze-image-options" | "analyze-image-options-gemini" => {
+            use super::analyze::{AnalyzeOptionsWindow, Network};
+            let mut options = modlight_tools::settings::AiOptions {
+                openai_api_key: Some("sk-qa-0123456789".into()),
+                ..Default::default()
+            };
+            if screen == "analyze-image-options-gemini" {
+                options.provider = modlight_tools::settings::AiProvider::Gemini;
+            }
+            let key = state.tools.open_keyed(|key| {
+                Box::new(AnalyzeOptionsWindow::new(
+                    key,
+                    0,
+                    super::jobs::OptionsHome::Defaults,
+                    &options,
+                    Network::Offline(Err(String::new())),
+                ))
+            });
+            if screen == "analyze-image-options"
+                && let Some(window) = state.tools.window_mut::<AnalyzeOptionsWindow>(key)
+            {
+                window.status = modlight_core::l10n::t(
+                    modlight_core::l10n::tools::AnalyzeImageService_Connection_OK,
+                )
+                .to_string();
+                window.status_success = true;
+            }
+            Some(vec2(650.0, 590.0))
         }
         _ => None,
     }

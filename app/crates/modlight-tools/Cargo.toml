@@ -17,6 +17,10 @@ chrono.workspace = true
 image.workspace = true
 log.workspace = true
 regex = "1"
+base64.workspace = true
+# Analyze image: the providers' HTTP requests.
+reqwest.workspace = true
+tokio.workspace = true
 # QR codes and the other ZXing formats (a Rust port of ZXing).
 rxing = { version = "=0.9.3", default-features = false, features = ["encoding_rs", "encoders", "decoders", "full_barcode_format_support", "multi_barcode_readers"] }
 

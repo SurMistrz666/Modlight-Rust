@@ -163,6 +163,11 @@ pub const SCREENS: &[&str] = &[
     "ocr",
     "ocr-services",
     "ocr-error",
+    "analyze-image",
+    "analyze-image-empty",
+    "analyze-image-error",
+    "analyze-image-options",
+    "analyze-image-options-gemini",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

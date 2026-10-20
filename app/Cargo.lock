@@ -2928,16 +2928,19 @@ name = "modlight-tools"
 version = "0.7.7"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "image",
  "log",
  "modlight-core",
  "regex",
+ "reqwest",
  "rxing",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
