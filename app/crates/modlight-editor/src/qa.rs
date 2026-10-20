@@ -19,6 +19,7 @@ pub const SCENES: &[&str] = &[
     "editor-text",
     "editor-text-editing",
     "editor-balloon",
+    "editor-more-tools",
     "editor-step",
     "editor-effect-tools",
     "editor-spotlight",
@@ -80,7 +81,14 @@ pub fn sample_image(width: u32, height: u32) -> RgbaImage {
     {
         fill(&mut img, wx + 14 + i as u32 * 20, wy + 11, 12, 12, *c);
     }
-    fill(&mut img, wx, wy + 34, 180, wh - 34, [235, 238, 242, 255]);
+    fill(
+        &mut img,
+        wx,
+        wy + 34,
+        180,
+        wh.saturating_sub(34),
+        [235, 238, 242, 255],
+    );
     for i in 0..8 {
         fill(
             &mut img,
@@ -92,7 +100,7 @@ pub fn sample_image(width: u32, height: u32) -> RgbaImage {
         );
     }
     for i in 0..10 {
-        let w = ww.saturating_sub(260) - (i % 4) * 60;
+        let w = ww.saturating_sub(260).saturating_sub((i % 4) * 60);
         fill(
             &mut img,
             wx + 210,
@@ -233,6 +241,28 @@ pub fn scene(name: &str) -> Option<Scene> {
             type_text(&mut e, "Look at this!");
             input::commit_text_edit(&mut e);
         }
+        "editor-more-tools" => {
+            // Freehand, a smart eraser, an emoji and an inserted picture.
+            e.select_tool(EditorTool::Freehand);
+            let m = Modifiers::NONE;
+            input::pointer_pressed(&mut e, Point::new(260.0, 200.0), Button::Left, m, 1);
+            for i in 1..=24 {
+                let t = i as f32 / 24.0;
+                input::pointer_moved(
+                    &mut e,
+                    Point::new(260.0 + 220.0 * t, 200.0 + (t * 9.0).sin() * 40.0),
+                    false,
+                    m,
+                );
+            }
+            input::pointer_released(&mut e, Point::new(480.0, 200.0), Button::Left, m);
+            e.select_tool(EditorTool::SmartEraser);
+            drag(&mut e, (560.0, 230.0), (760.0, 280.0), true);
+            e.insert_emoji("1F389", "party popper", Some(Point::new(700.0, 420.0)));
+            e.options.show_insert_image_dialog = false;
+            e.insert_external_image(sample_image(240, 150), None);
+            e.select_tool(EditorTool::Freehand);
+        }
         "editor-step" => {
             e.select_tool(EditorTool::Step);
             for (i, x) in [300.0, 380.0, 460.0].iter().enumerate() {
@@ -317,4 +347,150 @@ pub fn scene(name: &str) -> Option<Scene> {
         view: EditorView::new(),
         popup,
     })
+}
+
+/// One of every annotation on a test picture, exported (`GetSnapshot`): the renderer's
+/// golden picture and the `gallery` example.
+pub fn gallery() -> RgbaImage {
+    use std::sync::Arc;
+
+    use crate::annot_effects::{EffectCache, update_effect};
+    use crate::frame::{self, BackgroundState};
+    use crate::model::*;
+
+    let source = Arc::new(RgbaImage::from_fn(900, 600, |x, y| {
+        let checker = ((x / 20) + (y / 20)) % 2 == 0;
+        if checker {
+            Rgba([230, 236, 245, 255])
+        } else {
+            Rgba([(x / 4) as u8, (y / 3) as u8, 160, 255])
+        }
+    }));
+    let mut list = Vec::new();
+    let mut rect = Annotation::rectangle();
+    rect.start = Point::new(20.0, 20.0);
+    rect.end = Point::new(180.0, 100.0);
+    rect.shadow.enabled = true;
+    if let Kind::Rectangle { corner_radius, .. } = &mut rect.kind {
+        *corner_radius = 12;
+    }
+    list.push(rect);
+    let mut dashed = Annotation::ellipse();
+    dashed.start = Point::new(200.0, 20.0);
+    dashed.end = Point::new(360.0, 100.0);
+    dashed.set_border_style(BorderStyle::Dash);
+    dashed.fill_color = "#4022C55E".into();
+    list.push(dashed);
+    for (i, style) in ArrowStyle::PICKER_ORDER.iter().enumerate() {
+        let mut arrow = Annotation::arrow();
+        arrow.start = Point::new(390.0, 30.0 + i as f32 * 22.0);
+        arrow.end = Point::new(560.0, 30.0 + i as f32 * 22.0);
+        set_arrow_style(&mut arrow, *style);
+        list.push(arrow);
+    }
+    let mut curved = Annotation::arrow();
+    curved.start = Point::new(600.0, 120.0);
+    curved.end = Point::new(860.0, 120.0);
+    set_curve_point(&mut curved, Point::new(730.0, 40.0));
+    list.push(curved);
+    let mut line = Annotation::line();
+    line.start = Point::new(20.0, 140.0);
+    line.end = Point::new(360.0, 160.0);
+    line.set_border_style(BorderStyle::DashDot);
+    list.push(line);
+    let mut pen = Annotation::freehand();
+    if let Some(points) = pen.freehand_points_mut() {
+        for i in 0..60 {
+            let t = i as f32 / 10.0;
+            points.push(Point::new(
+                20.0 + i as f32 * 5.0,
+                200.0 + (t * 2.0).sin() * 20.0,
+            ));
+        }
+    }
+    list.push(pen);
+    let mut text = Annotation::text();
+    text.start = Point::new(380.0, 160.0);
+    text.end = Point::new(700.0, 260.0);
+    text.stroke_color = "#FFF23C3C".into();
+    text.stroke_width = 8.0;
+    if let Some(t) = text.text_data_mut() {
+        t.text = "Zażółć gęślą jaźń".into();
+        t.text_color = "#FFFAFAFA".into();
+        t.font_size = 40.0;
+        t.bold = true;
+    }
+    list.push(text);
+    let mut balloon = Annotation::speech_balloon();
+    balloon.start = Point::new(40.0, 280.0);
+    balloon.end = Point::new(300.0, 380.0);
+    balloon.fill_color = "#FFF23C3C".into();
+    balloon.stroke_color = "#FF000000".into();
+    balloon.stroke_width = 4.0;
+    set_balloon_tail(&mut balloon, Point::new(80.0, 440.0));
+    if let Some(t) = balloon.text_data_mut() {
+        t.text = "Speech balloon with wrapping text".into();
+        t.text_color = "#FFFAFAFA".into();
+        t.font_size = 24.0;
+    }
+    list.push(balloon);
+    for n in 1..=3 {
+        let mut step = Annotation::number();
+        step.fill_color = "#FFF23C3C".into();
+        step.stroke_color = "#00000000".into();
+        step.start = Point::new(360.0 + n as f32 * 60.0, 330.0);
+        if let Kind::Number(d) = &mut step.kind {
+            d.number = n;
+            d.font_size = 30.0;
+            d.step_type = if n == 2 {
+                StepType::UppercaseRoman
+            } else {
+                StepType::Numeric
+            };
+        }
+        if n == 3 {
+            set_number_tail(&mut step, Point::new(600.0, 400.0));
+        }
+        list.push(step);
+    }
+    for (i, kind) in [
+        EffectKind::Blur,
+        EffectKind::Pixelate,
+        EffectKind::Highlight,
+        EffectKind::Magnify,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut effect = Annotation::effect(kind);
+        effect.start = Point::new(20.0 + i as f32 * 140.0, 460.0);
+        effect.end = Point::new(140.0 + i as f32 * 140.0, 580.0);
+        if let Some(d) = effect.effect_data_mut() {
+            d.amount = match kind {
+                EffectKind::Magnify => 2.0,
+                EffectKind::Pixelate => 20.0,
+                _ => 10.0,
+            };
+            d.is_ellipse = kind == EffectKind::Magnify;
+        }
+        list.push(effect);
+    }
+    let mut spot = Annotation::spotlight();
+    spot.start = Point::new(600.0, 440.0);
+    spot.end = Point::new(880.0, 590.0);
+    if let Kind::Spotlight(s) = &mut spot.kind {
+        s.is_ellipse = true;
+        s.darken_opacity = 120;
+        s.canvas_size = (900.0, 600.0);
+    }
+    list.push(spot);
+    let mut emoji = Annotation::emoji("1f600", "grinning face");
+    emoji.start = Point::new(740.0, 200.0);
+    emoji.end = Point::new(860.0, 320.0);
+    list.push(emoji);
+    let mut cache = EffectCache::default();
+    for a in &mut list {
+        update_effect(a, &source, 1, &mut cache);
+    }
+    frame::snapshot(&BackgroundState::default(), &source, &list, None)
 }
