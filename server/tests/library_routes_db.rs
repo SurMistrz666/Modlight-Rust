@@ -895,3 +895,111 @@ async fn admin_disk_report_has_the_client_contract_and_is_paced() {
     assert_eq!(user_session.status, StatusCode::NOT_FOUND);
     t.drop().await;
 }
+
+// ── Replacing an avatar or a wallpaper deletes the previous object ──────────
+// Fix 7b (SKELETON.md 9): upstream's `UPDATE ... RETURNING` read the NEW key,
+// so the previous object stayed in storage forever.
+
+const TINY_PNG: &str = "89504e470d0a1a0a0000000d4948445200000004000000040802000000269309290000001049444154789c6338212707470cc47100b16310413b4b63820000000049454e44ae426082";
+
+fn stored(root: &std::path::Path, prefix: &str, user_id: &str) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(root.join(prefix))
+        .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    names.retain(|n| n.starts_with(&format!("{user_id}-")));
+    names.sort();
+    names
+}
+
+fn image_post(uri: &str, cookie: &str) -> Request<Body> {
+    let bytes = hex::decode(TINY_PNG).unwrap();
+    Request::post(uri)
+        .header("host", "host.example.com")
+        .header("cookie", cookie)
+        .header("content-type", "image/png")
+        .header("content-length", bytes.len().to_string())
+        .body(Body::from(bytes))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn replacing_avatar_or_wallpaper_deletes_the_previous_object() {
+    let db = db_or_skip!();
+    // The storage driver reads the process environment (as upstream); give
+    // this app a private directory instead.
+    let root = tempfile::tempdir().unwrap();
+    let vars: std::collections::HashMap<String, String> = [
+        ("APP_URL", "https://host.example.com"),
+        ("NODE_ENV", "production"),
+        ("SKIP_ENV_VALIDATION", "1"),
+        ("AUTH_SECRET", SECRET),
+    ]
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    let mut state = AppState::new(Config::from_env_map(&vars).unwrap(), Paths::crate_dir(), db.pool.clone()).unwrap();
+    state.storage = modlight_server::storage::Storage::with_driver(std::sync::Arc::new(
+        modlight_server::storage::local::LocalDriver::new(root.path().to_str().unwrap()),
+    ));
+    let app = App::new(state);
+    let root = root.path();
+    let id = format!("repl{}", rand::random::<u32>());
+    user(&db.pool, &id, Some(&id), "user").await;
+    let cookie = session_cookie(&db.pool, &id).await;
+
+    for (route, column, prefix) in
+        [("/api/avatar", "image", "avatars"), ("/api/background", "background_key", "backgrounds")]
+    {
+        let first = call(&app, image_post(route, &cookie)).await;
+        assert_eq!(first.status, StatusCode::OK, "{route}: {}", first.text());
+        let first_key: String = sqlx::query_scalar(&format!(r#"select "{column}" from "user" where "id" = $1"#))
+            .bind(&id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(stored(root, prefix, &id).len(), 1, "{route}");
+
+        let second = call(&app, image_post(route, &cookie)).await;
+        assert_eq!(second.status, StatusCode::OK, "{route}: {}", second.text());
+        let second_key: String = sqlx::query_scalar(&format!(r#"select "{column}" from "user" where "id" = $1"#))
+            .bind(&id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_ne!(first_key, second_key);
+        // Only the current object is left.
+        let left = stored(root, prefix, &id);
+        assert_eq!(left.len(), 1, "{route}: {left:?}");
+        assert!(second_key.ends_with(&left[0]), "{route}: {second_key} vs {left:?}");
+
+        // A stored key naming ANOTHER account's object is never deleted.
+        let victim = format!("{prefix}/someoneelse-0000.webp");
+        let victim_path = root.join(&victim);
+        std::fs::write(&victim_path, b"not yours").unwrap();
+        sqlx::query(&format!(r#"update "user" set "{column}" = $1 where "id" = $2"#))
+            .bind(&victim)
+            .bind(&id)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let third = call(&app, image_post(route, &cookie)).await;
+        assert_eq!(third.status, StatusCode::OK, "{route}: {}", third.text());
+        assert!(victim_path.exists(), "{route}: another account's object was deleted");
+        std::fs::remove_file(&victim_path).unwrap();
+
+        // Removing deletes the current object too (the second one stays: the
+        // test pointed the column away from it by hand).
+        let removed = call(
+            &app,
+            Request::delete(route)
+                .header("host", "host.example.com")
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(removed.status, StatusCode::OK, "{route}: {}", removed.text());
+        assert_eq!(stored(root, prefix, &id), vec![left[0].clone()], "{route}");
+    }
+    db.drop().await;
+}
