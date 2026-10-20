@@ -262,6 +262,42 @@ mod tests {
         );
     }
 
+    /// W2: a `Queue.json` in a backup could mark any file as the queue's own, which the
+    /// queue deletes when it lets the item go.
+    #[test]
+    fn a_backup_cannot_replace_the_upload_queue() {
+        use crate::upload::store::{QUEUE_FILE_NAME, SPOOL_FOLDER_NAME};
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        let victim = dir.path().join("work.docx");
+        std::fs::write(&victim, b"keep me").unwrap();
+        let queue = format!(
+            r#"{{"Version":1,"Items":[{{"Id":"a","FileName":"a","SourcePath":{},"OwnsSource":true,"Host":"https://h","Length":1,"DeadlineUtc":"2000-01-01T00:00:00Z"}}]}}"#,
+            serde_json::to_string(&victim.to_string_lossy()).unwrap()
+        );
+        let spooled = format!("{SPOOL_FOLDER_NAME}/a.png");
+        let hostile = archive(
+            dir.path(),
+            &[
+                (QUEUE_FILE_NAME, queue.as_bytes()),
+                (spooled.as_str(), b"png"),
+                (HOTKEYS_CONFIG_FILE, b"{}"),
+            ],
+        );
+        let report = import(&hostile, &profile).unwrap();
+        assert_eq!(report.written, [HOTKEYS_CONFIG_FILE]);
+        assert_eq!(report.refused, [QUEUE_FILE_NAME, spooled.as_str()]);
+        assert!(!profile.join(QUEUE_FILE_NAME).exists());
+        assert!(!profile.join(SPOOL_FOLDER_NAME).exists());
+        assert!(
+            crate::upload::store::QueueStore::new(&profile)
+                .load(chrono::Utc::now())
+                .is_empty()
+        );
+        assert!(victim.exists());
+    }
+
     #[test]
     fn reset_removes_the_settings_files() {
         let dir = tempfile::tempdir().unwrap();
