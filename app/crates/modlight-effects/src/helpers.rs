@@ -265,3 +265,24 @@ pub fn resize(source: &Bitmap, w: i32, h: i32, sampling: Sampling) -> Bitmap {
 pub fn sample(source: &Bitmap, u: f32, v: f32, sampling: Sampling, tile: Tile) -> C {
     crate::sk::canvas::sample_bitmap(source, u, v, sampling, tile)
 }
+
+/// The `HsvToRgb(h, s, v)` many effects carry privately: `h` in 0..1, no wrapping.
+pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    if s <= 0.0001 {
+        return (v, v, v);
+    }
+    let scaled = h * 6.0;
+    let sector = scaled.floor() as i32;
+    let f = scaled - sector as f32;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - s * f);
+    let t = v * (1.0 - s * (1.0 - f));
+    match sector {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    }
+}

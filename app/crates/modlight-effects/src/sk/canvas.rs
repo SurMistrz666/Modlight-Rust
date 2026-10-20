@@ -432,7 +432,16 @@ impl Canvas {
 
     pub fn draw_rect(&mut self, r: Rect, paint: &Paint) {
         let path = PathBuilder::from_rect(r);
-        self.draw_path(&path, paint);
+        let m = self.state.matrix;
+        // `SkDraw::ComputeRectType`: a plain stroked rect is framed (`AntiFrameRect`), never
+        // turned into a hairline unless its width is zero.
+        let frame = paint.mask_blur.is_none()
+            && paint.dash.is_none()
+            && paint.join == Join::Miter
+            && paint.miter > std::f32::consts::SQRT_2
+            && m.kx == 0.0
+            && m.ky == 0.0;
+        self.draw_path_impl(&path, paint, m, frame);
     }
 
     pub fn draw_rect_ltrb(&mut self, l: f32, t: f32, r: f32, b: f32, paint: &Paint) {
@@ -521,6 +530,16 @@ impl Canvas {
     }
 
     fn draw_path_with(&mut self, path: &Path, paint: &Paint, shader_matrix: Transform) {
+        self.draw_path_impl(path, paint, shader_matrix, false);
+    }
+
+    fn draw_path_impl(
+        &mut self,
+        path: &Path,
+        paint: &Paint,
+        shader_matrix: Transform,
+        rect_frame: bool,
+    ) {
         let matrix = self.state.matrix;
         let (w, h) = (self.pm.width(), self.pm.height());
         if let Some(Shader::Image {
@@ -545,17 +564,22 @@ impl Canvas {
         if paint.style != Style::Stroke {
             outlines.push(path.clone());
         }
-        let hairline = paint.style != Style::Fill && paint.stroke_width <= 0.0;
+        // `SkDrawTreatAsHairline`: zero-width strokes, and anti-aliased strokes at most one
+        // device pixel wide (drawn as hairlines with their width as coverage).
+        let hairline = paint.style == Style::Stroke
+            && (paint.stroke_width <= 0.0
+                || (paint.aa && !rect_frame && thin_stroke(paint.stroke_width, matrix)));
+        let stroked = paint.style != Style::Fill && !hairline && paint.stroke_width > 0.0;
         let single_line = if paint.dash.is_none() {
             single_segment(path)
         } else {
             None
         };
-        if let (Some((a, b)), true) = (single_line, paint.style != Style::Fill && !hairline) {
+        if let (Some((a, b)), true) = (single_line, stroked) {
             if let Some(o) = line_outline(a, b, paint.stroke_width, paint.cap) {
                 outlines.push(o);
             }
-        } else if paint.style != Style::Fill && !hairline {
+        } else if stroked {
             let res = matrix_scale(matrix);
             // A dash whose first interval is longer than the contour leaves the closed
             // contour whole in Skia (no butt-capped seam at its start).
@@ -580,8 +604,14 @@ impl Canvas {
                 self.fill_outline(o, &ts_paint, matrix, clip.as_ref(), paint.aa);
             }
             if hairline {
-                self.pm
-                    .stroke_path(path, &ts_paint, &stroke, matrix, clip.as_ref());
+                stroke_hairline(
+                    &mut self.pm,
+                    path,
+                    &ts_paint,
+                    &stroke,
+                    matrix,
+                    clip.as_ref(),
+                );
             }
             return;
         }
@@ -593,7 +623,7 @@ impl Canvas {
             self.fill_outline(o, &lp, matrix, None, paint.aa);
         }
         if hairline {
-            self.pm.stroke_path(path, &lp, &stroke, matrix, None);
+            stroke_hairline(&mut self.pm, path, &lp, &stroke, matrix, None);
         }
         let layer = std::mem::replace(&mut self.pm, saved);
         let mut px = pixmap_pixels(&layer);
@@ -1175,6 +1205,82 @@ fn path_length(path: &Path) -> f32 {
 }
 
 /// The scale a matrix applies (the stroker's resolution scale).
+/// Draws a hairline the way Skia does near the top and left edges. tiny-skia's
+/// anti-aliased hairline blitters clamp rows and columns above or left of the pixmap to
+/// zero (Skia keeps them negative and clips them away), which paints stray coverage on the
+/// first row or column; so a hairline reaching there is drawn on a copy of that corner of
+/// the canvas padded by a few pixels, and the copy is put back.
+fn stroke_hairline(
+    pm: &mut Pixmap,
+    path: &Path,
+    paint: &tiny_skia::Paint,
+    stroke: &tiny_skia::Stroke,
+    m: Transform,
+    clip: Option<&Mask>,
+) {
+    const PAD: i32 = 3;
+    let Some(dev) = path.clone().transform(m) else {
+        return;
+    };
+    let b = dev.bounds();
+    if b.left() >= 2.0 && b.top() >= 2.0 {
+        pm.stroke_path(path, paint, stroke, m, clip);
+        return;
+    }
+    let (w, h) = (pm.width() as i32, pm.height() as i32);
+    let rw = (b.right().ceil() as i32 + PAD).clamp(0, w);
+    let rh = (b.bottom().ceil() as i32 + PAD).clamp(0, h);
+    if rw <= 0 || rh <= 0 {
+        return;
+    }
+    let (tw, th) = (rw + PAD, rh + PAD);
+    let Some(mut tmp) = Pixmap::new(tw as u32, th as u32) else {
+        return;
+    };
+    let mut tmp_mask = clip.and_then(|_| Mask::new(tw as u32, th as u32));
+    {
+        let src = pm.data();
+        let dst = tmp.data_mut();
+        for y in 0..rh {
+            let s0 = ((y * w) * 4) as usize;
+            let d0 = (((y + PAD) * tw + PAD) * 4) as usize;
+            dst[d0..d0 + (rw * 4) as usize].copy_from_slice(&src[s0..s0 + (rw * 4) as usize]);
+        }
+        if let (Some(c), Some(tm)) = (clip, tmp_mask.as_mut()) {
+            let (cs, ds) = (c.data(), tm.data_mut());
+            for y in 0..rh {
+                let s0 = (y * w) as usize;
+                let d0 = ((y + PAD) * tw + PAD) as usize;
+                ds[d0..d0 + rw as usize].copy_from_slice(&cs[s0..s0 + rw as usize]);
+            }
+        }
+    }
+    let shifted = m.post_translate(PAD as f32, PAD as f32);
+    tmp.stroke_path(path, paint, stroke, shifted, tmp_mask.as_ref());
+    let src = tmp.data();
+    let dst = pm.data_mut();
+    for y in 0..rh {
+        let d0 = ((y * w) * 4) as usize;
+        let s0 = (((y + PAD) * tw + PAD) * 4) as usize;
+        dst[d0..d0 + (rw * 4) as usize].copy_from_slice(&src[s0..s0 + (rw * 4) as usize]);
+    }
+}
+
+/// `SkDrawTreatAAStrokeAsHairline`: both mapped width vectors at most one pixel long
+/// (Skia's fast length: the longer side plus half the shorter).
+fn thin_stroke(width: f32, m: Transform) -> bool {
+    let fast_len = |x: f32, y: f32| {
+        let (mut a, mut b) = (x.abs(), y.abs());
+        if a < b {
+            std::mem::swap(&mut a, &mut b);
+        }
+        a + b * 0.5
+    };
+    let l0 = fast_len(m.sx * width, m.ky * width);
+    let l1 = fast_len(m.kx * width, m.sy * width);
+    l0 <= 1.0 && l1 <= 1.0
+}
+
 fn matrix_scale(m: Transform) -> f32 {
     let sx = (m.sx * m.sx + m.ky * m.ky).sqrt();
     let sy = (m.kx * m.kx + m.sy * m.sy).sqrt();
