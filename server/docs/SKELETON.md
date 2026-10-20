@@ -475,6 +475,27 @@ Deliberate, each for a reason:
     be written through Better Auth's `update-user`. Test:
     `tests/library_routes_db.rs` `replacing_avatar_or_wallpaper_deletes_the_previous_object`.
 
+40. **PORT.md section 12, fixes 1 to 7, re-checked in the integrated build**
+    (2026-10-20), each with a test that fails on upstream's behaviour:
+    1 view limits: items 26, `tests/media_serving_db.rs`
+    `fix1_every_bypass_of_the_audit_is_closed`, `fix1_the_legitimate_flows_ride_on_the_view_grant`,
+    `fix1_preview_bots_get_no_content_of_a_capped_file` (+ parity `media_serve.py --only fix1`);
+    2 ShareX: item 17, `tests/security_fixes_db.rs`
+    `fix2_sharex_authenticates_before_the_body_and_caps_what_streams` (an
+    unknown header token is refused with the body unread; no token: 413 after
+    8 MiB; a chunked body over the quota: 507 while streaming, nothing kept);
+    3 first administrator: `auth::adapter` (`pg_advisory_xact_lock`),
+    `tests/security_fixes_db.rs` `fix3_concurrent_first_sign_ups_make_exactly_one_admin`
+    (12 concurrent sign-ups on an empty install, one admin);
+    4 `POST /api/releases/app`: `tests/releases.rs`
+    `publishing_authenticates_before_it_reads_the_body` and the 415 / 413
+    checks in `release_channel_against_a_database`;
+    5 constant-time delete token: item 27, `tests/media_serving_db.rs` `fix5_delete_by_token`;
+    6 `/oembed` of a capped file: item 28, `tests/media_serving_db.rs`
+    `fix6_oembed_describes_a_capped_file_without_its_bytes`;
+    7 `X-Real-IP` only behind `TRUST_PROXY`: item 8, `password::tests::honours_x_real_ip_only_behind_a_trusted_proxy`,
+    `auth::ip::tests::real_ip_only_behind_a_trusted_proxy`.
+
 ## 10. Verified on 2026-10-18
 
 - Fresh dev database -> `modlight-server migrate` -> `pg_dump --schema-only`
