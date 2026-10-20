@@ -154,6 +154,12 @@ pub const SCREENS: &[&str] = &[
     "video-converter",
     "video-converter-encoding",
     "video-converter-empty",
+    "metadata",
+    "metadata-strip",
+    "metadata-empty",
+    "input-box",
+    "output-box",
+    "error-window",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

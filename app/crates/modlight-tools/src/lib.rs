@@ -8,6 +8,7 @@ pub mod color_format;
 pub mod color_picker;
 pub mod combine;
 pub mod images;
+pub mod metadata;
 pub mod pin;
 pub mod qr;
 pub mod settings;

@@ -39,6 +39,13 @@ pub enum ToolContinuation {
         file: Option<PathBuf>,
         settings: Box<TaskSettings>,
     },
+    Metadata {
+        file: Option<PathBuf>,
+    },
+    StripMetadata {
+        file: PathBuf,
+        settings: Box<TaskSettings>,
+    },
 }
 
 /// The components window closed: the tool opens if what it needs is there now.
@@ -49,6 +56,10 @@ pub fn after_components(state: &mut AppState, next: ToolContinuation, satisfied:
     match next {
         ToolContinuation::VideoConverter { file, settings } => {
             state.open_video_converter(file, *settings)
+        }
+        ToolContinuation::Metadata { file } => state.open_metadata(file),
+        ToolContinuation::StripMetadata { file, settings } => {
+            state.strip_metadata(Some(file), *settings)
         }
     }
 }
@@ -140,6 +151,8 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
         },
         H::PinToScreenCloseAll => state.pin_close_all(settings),
         H::ImageCombiner => state.open_image_combiner(Vec::new(), settings),
+        H::Metadata => state.open_metadata(file),
+        H::StripMetadata => state.strip_metadata(file, settings),
         H::VideoConverter => match file {
             Some(file) => state.open_video_converter(Some(file), settings),
             None => state.open_video_converter(None, settings),
@@ -151,5 +164,10 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
 
 /// Every frame: background results the tools wait for.
 pub fn tick(state: &mut AppState, _ctx: &egui::Context) {
+    static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
+    if state.mode == crate::app::Mode::Normal {
+        PANIC_HOOK.call_once(super::boxes::install_panic_hook);
+        state.tick_panics();
+    }
     state.tick_screen_pick();
 }

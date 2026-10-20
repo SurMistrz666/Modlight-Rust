@@ -14,6 +14,7 @@ use modlight_core::tasks::settings::TaskSettings;
 
 use crate::state::AppState;
 
+pub mod boxes;
 pub mod color_picker;
 pub mod combiner;
 pub mod editor_hooks;
@@ -21,6 +22,7 @@ pub mod files;
 pub mod image_viewer;
 pub mod jobs;
 pub mod kit;
+pub mod metadata;
 pub mod pin;
 pub mod qa;
 pub mod qr;
@@ -101,6 +103,8 @@ pub struct Tools {
     pub restore: Vec<u64>,
     /// The pinned pictures (`PinToScreenManager.Windows`).
     pub pins: Vec<pin::Pin>,
+    /// Input boxes that closed: their key and the text, when OK was pressed.
+    pub input_answers: Vec<(u64, Option<String>)>,
     /// What the open panels answer in QA and headless runs (tests queue paths here).
     pub qa_open: std::collections::VecDeque<std::path::PathBuf>,
 }
