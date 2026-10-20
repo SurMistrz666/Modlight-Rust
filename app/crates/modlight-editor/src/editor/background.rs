@@ -50,10 +50,16 @@ pub fn set_image_loader(loader: Option<ImageLoader>) {
         .unwrap() = loader;
 }
 
-/// Opens a picture: the `image` crate first, then the host's reader.
+/// Opens a picture: the `image` crate first (under the app's decoding limits), then the
+/// host's reader. A picture the limits refuse is not handed to the host's reader.
 pub fn open_image(path: &std::path::Path) -> Option<RgbaImage> {
-    if let Ok(image) = image::open(path) {
-        return Some(image.to_rgba8());
+    match modlight_core::image_decode::open(path) {
+        Ok(image) => return Some(image.into_rgba8()),
+        Err(image::ImageError::Limits(error)) => {
+            log::warn!("Modlight: {} was not opened: {error}", path.display());
+            return None;
+        }
+        Err(_) => {}
     }
     LOADER
         .get()

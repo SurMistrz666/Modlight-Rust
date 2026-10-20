@@ -501,7 +501,11 @@ impl AppState {
                     Some(modlight_editor::editor::Modal::StartScreen(_))
                 )
             {
-                s.editor.start_screen_status(&text);
+                // `OnLoadRecentFileRequested`: upstream's sentence with the path.
+                s.editor.start_screen_status(&modlight_core::l10n::tf(
+                    modlight_core::l10n::editor::EditorView_FailedToLoadImageFileFormat,
+                    &[text.as_str().into()],
+                ));
             }
             return;
         };
@@ -561,17 +565,54 @@ impl AppState {
     }
 }
 
-/// `RequestLoadFromUrl`: the picture behind an address.
+/// The most an address opened in the editor may send: far more than any picture the
+/// decoding limits let through, far less than would exhaust memory.
+const MAX_URL_IMAGE_BYTES: usize = 256 * 1024 * 1024;
+
+/// `RequestLoadFromUrl`: the picture behind an address, with upstream's messages
+/// (`OnLoadFromUrlRequested`): a failed download says why, anything that does not decode
+/// is "not a valid image".
 async fn download_image(url: &str) -> Result<RgbaImage, String> {
-    let client = modlight_core::components::net::file_client()?;
-    let response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    use modlight_core::l10n::{editor, tf};
+    let failed = |message: String| {
+        tf(
+            editor::EditorView_FailedToDownloadImageFormat,
+            &[message.into()],
+        )
+    };
+    let client = modlight_core::components::net::file_client().map_err(failed)?;
+    let mut response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| failed(e.to_string()))?;
     if !response.status().is_success() {
-        return Err(response.status().to_string());
+        return Err(failed(response.status().to_string()));
     }
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    image::load_from_memory(&bytes)
-        .map(|i| i.to_rgba8())
-        .map_err(|e| e.to_string())
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| failed(e.to_string()))? {
+        if bytes.len() + chunk.len() > MAX_URL_IMAGE_BYTES {
+            log::warn!("Modlight: the editor stopped a download past {MAX_URL_IMAGE_BYTES} bytes.");
+            return Err(not_an_image());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    decode_downloaded(&bytes)
+}
+
+fn not_an_image() -> String {
+    modlight_core::l10n::t(modlight_core::l10n::editor::EditorView_UrlDoesNotPointToValidImage)
+        .to_string()
+}
+
+/// The downloaded bytes as a picture, under the app's decoding limits.
+fn decode_downloaded(bytes: &[u8]) -> Result<RgbaImage, String> {
+    modlight_core::image_decode::from_bytes(bytes)
+        .map(|i| i.into_rgba8())
+        .map_err(|error| {
+            log::warn!("Modlight: the editor could not open a downloaded picture: {error}");
+            not_an_image()
+        })
 }
 
 /// The window builder: the saved size when "Remember window state" is on, otherwise
@@ -699,4 +740,33 @@ pub fn editor_viewports(state: &mut AppState, ctx: &egui::Context) {
     }
     // A paste nobody took is dropped.
     state.windows.editors.paste = false;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// S3: an address that answers with a small file claiming an enormous picture gets
+    /// upstream's "not a valid image", and nothing is allocated for it.
+    #[test]
+    fn a_downloaded_picture_claiming_an_enormous_size_is_not_a_valid_image() {
+        let mut png = Vec::new();
+        RgbaImage::from_pixel(16, 16, image::Rgba([1, 2, 3, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        assert_eq!(decode_downloaded(&png).unwrap().dimensions(), (16, 16));
+
+        let mut jpeg = Vec::new();
+        image::RgbImage::from_pixel(16, 16, image::Rgb([1, 2, 3]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        let sof = jpeg.windows(2).position(|w| w == [0xff, 0xc0]).unwrap();
+        jpeg[sof + 5..sof + 7].copy_from_slice(&60_000u16.to_be_bytes());
+        jpeg[sof + 7..sof + 9].copy_from_slice(&60_000u16.to_be_bytes());
+        assert_eq!(decode_downloaded(&jpeg).unwrap_err(), not_an_image());
+        assert_eq!(decode_downloaded(b"<html>").unwrap_err(), not_an_image());
+    }
 }

@@ -72,7 +72,7 @@ impl Reel {
 
 /// Decode a still picture, shrunk to `max_width` when wider (never enlarged).
 pub fn decode_still(bytes: &[u8], max_width: u32) -> Option<ColorImage> {
-    let image = image::load_from_memory(bytes).ok()?;
+    let image = modlight_core::image_decode::from_bytes(bytes).ok()?;
     Some(to_color_image(shrink(image, max_width)))
 }
 
@@ -93,27 +93,33 @@ pub fn to_color_image(image: DynamicImage) -> ColorImage {
 
 /// Decode an animated WebP or GIF within the motion budget; `None` for fewer than two
 /// frames (a still is not a moving preview).
+///
+/// Every frame is decoded under the app's animation limits and shrunk to the plan's size
+/// as soon as it is out of the decoder, so no more than one full-size frame is held at a
+/// time, whatever the server sends.
 pub fn decode_animation(bytes: &[u8]) -> Option<Animation> {
+    use image::ImageDecoder;
     let format = image::guess_format(bytes).ok()?;
-    let frames: Vec<image::Frame> = match format {
+    let limits = modlight_core::image_decode::animation_limits();
+    let ((canvas_w, canvas_h), frames) = match format {
         ImageFormat::WebP => {
-            let decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes)).ok()?;
+            let mut decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes)).ok()?;
             if !decoder.has_animation() {
                 return None;
             }
-            collect_frames(decoder.into_frames())?
+            decoder.set_limits(limits).ok()?;
+            (decoder.dimensions(), decoder.into_frames())
         }
         ImageFormat::Gif => {
-            let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(bytes)).ok()?;
-            collect_frames(decoder.into_frames())?
+            let mut decoder = image::codecs::gif::GifDecoder::new(Cursor::new(bytes)).ok()?;
+            decoder.set_limits(limits).ok()?;
+            (decoder.dimensions(), decoder.into_frames())
         }
         _ => return None,
     };
-    if frames.len() < motion::MIN_FRAMES as usize {
-        return None;
-    }
-    let (canvas_w, canvas_h) = frames[0].buffer().dimensions();
-    let plan = motion::plan(canvas_w as i64, canvas_h as i64, frames.len() as i64);
+    // The plan for as many frames as the ceiling allows; fewer arrive when the artefact
+    // has fewer, which is what planning with the count would have taken.
+    let plan = motion::plan(canvas_w as i64, canvas_h as i64, motion::MAX_FRAMES as i64);
     if plan.frames < motion::MIN_FRAMES {
         return None;
     }
@@ -121,7 +127,11 @@ pub fn decode_animation(bytes: &[u8]) -> Option<Animation> {
         frames: Vec::new(),
         delays_ms: Vec::new(),
     };
-    for frame in frames.into_iter().take(plan.frames as usize) {
+    for frame in frames.take(plan.frames as usize) {
+        // The first frame that fails ends the animation.
+        let Ok(frame) = frame else {
+            break;
+        };
         let (numerator, denominator) = frame.delay().numer_denom_ms();
         let delay = numerator.checked_div(denominator).unwrap_or(0) as i64;
         let buffer = frame.into_buffer();
@@ -134,19 +144,7 @@ pub fn decode_animation(bytes: &[u8]) -> Option<Animation> {
         out.frames.push(to_color_image(scaled));
         out.delays_ms.push(clamp_frame_delay(delay));
     }
-    (out.frames.len() >= 2).then_some(out)
-}
-
-/// The first frames of a decoder, up to the motion ceiling; `None` when it fails early.
-fn collect_frames(frames: image::Frames<'_>) -> Option<Vec<image::Frame>> {
-    let mut out = Vec::new();
-    for frame in frames.take(motion::MAX_FRAMES as usize) {
-        match frame {
-            Ok(frame) => out.push(frame),
-            Err(_) => break,
-        }
-    }
-    (!out.is_empty()).then_some(out)
+    (out.frames.len() >= motion::MIN_FRAMES as usize).then_some(out)
 }
 
 /// The moving preview of the card under the pointer.
@@ -600,6 +598,57 @@ mod tests {
             "one frame does not move"
         );
         assert!(decode_animation(b"not an image").is_none());
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for byte in bytes {
+            crc ^= *byte as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    /// A real small PNG whose header now claims `width` x `height` (CRC fixed).
+    fn png_claiming(width: u32, height: u32) -> Vec<u8> {
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(16, 16, image::Rgba([1, 2, 3, 255]))
+            .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+            .unwrap();
+        assert_eq!(&png[12..16], b"IHDR");
+        png[16..20].copy_from_slice(&width.to_be_bytes());
+        png[20..24].copy_from_slice(&height.to_be_bytes());
+        let crc = crc32(&png[12..29]);
+        png[29..33].copy_from_slice(&crc.to_be_bytes());
+        png
+    }
+
+    /// S3: a thumbnail, preview or moving preview from the server whose header claims an
+    /// enormous picture is refused by its size, not allocated.
+    #[test]
+    fn pictures_claiming_an_enormous_size_are_refused() {
+        assert!(
+            decode_still(&png_claiming(16, 16), 288).is_some(),
+            "the real picture"
+        );
+        assert!(decode_still(&png_claiming(30_000, 30_000), 288).is_none());
+        assert!(decode_still(&png_claiming(100_000, 1), 288).is_none());
+
+        // A real animation whose canvas (logical screen) now says 30000 x 30000, and one
+        // past the side limit.
+        for side in [30_000u16, 40_000] {
+            let mut gif = animated_gif(3, 48, 48);
+            gif[6..8].copy_from_slice(&side.to_le_bytes());
+            gif[8..10].copy_from_slice(&side.to_le_bytes());
+            assert!(decode_animation(&gif).is_none(), "{side}");
+        }
+        assert!(decode_animation(&animated_gif(3, 48, 48)).is_some());
     }
 
     #[test]
