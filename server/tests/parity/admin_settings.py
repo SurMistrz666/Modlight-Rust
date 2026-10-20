@@ -151,8 +151,7 @@ class Sinks(object):
         os.makedirs(os.path.dirname(self.host_log), exist_ok=True)
 
     def start(self):
-        self.proc = subprocess.Popen(["node", os.path.join(HERE, "smtp_sink.mjs"), self.host_log, str(SINK_BASE),
-                                      "3600"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.proc = parity.start_rust_sink(os.path.join(HERE, "smtp_sink.mjs"), self.host_log, SINK_BASE, 3600)
         subprocess.run(["docker", "cp", os.path.join(HERE, "smtp_sink.mjs"), ARGS.ref_app + ":/tmp/smtp_sink.mjs"],
                        check=True, stdout=subprocess.DEVNULL)
         subprocess.run(["docker", "exec", "-d", ARGS.ref_app, "node", "/tmp/smtp_sink.mjs", self.ref_log,
