@@ -1,6 +1,6 @@
 # Stan prac: Modlight w Rust
 
-Ostatnia aktualizacja: 2026-10-18 (koniec dnia 1, praca wstrzymana na prośbę właściciela).
+Ostatnia aktualizacja: 2026-10-20: CAŁOŚĆ GOTOWA i scalona do `main`; serwer w Dockerze na 127.0.0.1:8430, `app/dist/Modlight.app` zbudowana. Zostało: sprawdzenie aplikacji w prawdziwym oknie z właścicielem (uprawnienia macOS) i prywatne repo na GitHubie.
 
 ## Cel (decyzje właściciela z 2026-10-18)
 
@@ -39,7 +39,7 @@ Ostatnia aktualizacja: 2026-10-18 (koniec dnia 1, praca wstrzymana na prośbę w
 | `srv-library` | scalona do `main` (1be08bc) | wysyłanie (ShareX z poprawką 2, tus zgodny z Uppy i aplikacją), magazyn lokalny i S3, foldery, kosz, duplikaty, skróty, awatary i tapety, wiązanie libvips, strony biblioteki; 975 testów, porównania z oryginałem zielone. Otwarte pozycje dla mediów: `docs/handoff/srv-library.md` |
 | `srv-media-a` | scalona do `main` (78eee7c) | konwersje, podglądy ruchome i osi czasu, okładki, docx (mammoth), karty OG, pdf; 1212 testów; przy ffmpeg 5.1 wyjścia bajt w bajt jak w oryginale, karty co do piksela |
 | `srv-integration` | scalona do `main` (0933c6d) | serwer GOTOWY: obraz Dockera (libvips 8.17.3 jak w sharp, ffmpeg 5.1.9), stos `modlight-rust` na 127.0.0.1:8430 (działa, pusta baza: pierwsze konto = admin), wszystkie porównania z oryginałem zielone, e2e 12/15 jak na oryginale, wszystkie 7 poprawek z testami, `server/README.md` po polsku, `server/docs/COVERAGE.md` |
-| `app-5-effects` | `_wt/app-5-effects` | W TOKU: biblioteka efektów obrazu (ImageEditor/Core/ImageEffects + ImageEffectsLib) na bazie edytora |
+| `app-5-effects` | scalona do `main` (ca86544) | 230 efektów edytora (677 obrazów wzorcowych z oryginalnego SkiaSharp w Dockerze) + 51 klasycznych efektów ShareX z presetami i paczkami .sxie; okno efektów podpięte |
 | przegląd bezpieczeństwa serwera | `docs/audyt/rust-serwer.md` (d665cb6) | brak luk krytycznych i wysokich, brak wysyłania danych, 7 poprawek skutecznych; porównanie kodu 2FA już w stałym czasie |
 | przegląd bezpieczeństwa aplikacji | `docs/audyt/rust-aplikacja.md` (21b3764) | brak wysyłania danych, reguły z audytu zachowane; naprawione W1 (import kopii nie podmieni hosta, token związany z hostem), W2 (kolejka kasuje tylko swoje pliki), W3 (obce programy i ścieżka ffmpeg z importu przychodzą wyłączone), S3 (limity dekodowania obrazów); 558 testów |
 | `app-5-tools` | scalona do `main` (88ea827) | narzędzia ShareX: pipety, przypinanie, przeglądarka, druk, łączenie obrazów, konwerter wideo, metadane (ExifTool + /usr/bin/perl), indeks folderu, QR (rxing), OCR (Vision), analiza AI (klucze w Pęku kluczy), usuwanie tła (ONNX Runtime przez `ort`, Core ML), okna historii; 649 testów. Pierwsze czyste budowanie pobiera ONNX Runtime z cdn.pyke.io (przypięty SHA-256) |
