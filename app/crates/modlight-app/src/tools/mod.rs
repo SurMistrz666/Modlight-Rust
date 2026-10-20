@@ -23,6 +23,7 @@ pub mod image_viewer;
 pub mod jobs;
 pub mod kit;
 pub mod metadata;
+pub mod ocr;
 pub mod pin;
 pub mod qa;
 pub mod qr;
@@ -105,6 +106,8 @@ pub struct Tools {
     pub pins: Vec<pin::Pin>,
     /// Input boxes that closed: their key and the text, when OK was pressed.
     pub input_answers: Vec<(u64, Option<String>)>,
+    /// QA runs: the text the OCR stand-in "recognises".
+    pub qa_ocr_text: Option<String>,
     /// What the open panels answer in QA and headless runs (tests queue paths here).
     pub qa_open: std::collections::VecDeque<std::path::PathBuf>,
 }

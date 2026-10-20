@@ -13,21 +13,30 @@ use serde::de::DeserializeOwned;
 use crate::commands::Command;
 use crate::state::AppState;
 
-/// Where a task's tool options live in the settings, for writing them back.
+/// Where a task's options live in the settings, for writing them back: the defaults, or
+/// the first hotkey running `job` that overrides the group (`UseDefault<group>` false).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OptionsHome {
-    /// `DefaultTaskSettings.ToolsSettings`.
     Defaults,
-    /// The `ToolsSettings` of the first hotkey running `job` that overrides them.
-    Hotkey(HotkeyType),
+    Hotkey(HotkeyType, &'static str),
 }
 
 impl OptionsHome {
+    /// `ToolsSettingsReference`.
     pub fn of(settings: &TaskSettings) -> OptionsHome {
         if settings.use_default_tools_settings {
             OptionsHome::Defaults
         } else {
-            OptionsHome::Hotkey(settings.job)
+            OptionsHome::Hotkey(settings.job, "UseDefaultToolsSettings")
+        }
+    }
+
+    /// `CaptureSettingsReference`.
+    pub fn of_capture(settings: &TaskSettings) -> OptionsHome {
+        if settings.use_default_capture_settings {
+            OptionsHome::Defaults
+        } else {
+            OptionsHome::Hotkey(settings.job, "UseDefaultCaptureSettings")
         }
     }
 }
@@ -70,29 +79,24 @@ pub fn tool_options<T: DeserializeOwned + Default>(settings: &TaskSettings, memb
 }
 
 impl AppState {
-    /// Write one member of `ToolsSettings` back where it came from, and save.
-    pub fn save_tool_options<T: Serialize>(&mut self, home: &OptionsHome, member: &str, value: &T) {
+    /// Write a member of a task's settings (`path` from the `TaskSettings` object) back
+    /// where it came from, and save.
+    pub fn save_task_member<T: Serialize>(&mut self, home: &OptionsHome, path: &[&str], value: &T) {
         match home {
             OptionsHome::Defaults => {
-                modlight_tools::settings::write(
-                    self.config.values_mut(),
-                    &["DefaultTaskSettings", "ToolsSettings", member],
-                    value,
-                );
+                let mut full = vec!["DefaultTaskSettings"];
+                full.extend_from_slice(path);
+                modlight_tools::settings::write(self.config.values_mut(), &full, value);
             }
-            OptionsHome::Hotkey(job) => {
+            OptionsHome::Hotkey(job, flag) => {
                 let mut list = self.captures.hotkeys.hotkeys.clone();
                 let Some(hotkey) = list.iter_mut().find(|h| {
-                    h.job() == *job
-                        && h.task
-                            .get("UseDefaultToolsSettings")
-                            .and_then(|v| v.as_bool())
-                            == Some(false)
+                    h.job() == *job && h.task.get(*flag).and_then(|v| v.as_bool()) == Some(false)
                 }) else {
                     return;
                 };
                 if let serde_json::Value::Object(task) = &mut hotkey.task {
-                    modlight_tools::settings::write(task, &["ToolsSettings", member], value);
+                    modlight_tools::settings::write(task, path, value);
                 }
                 self.captures.hotkeys.hotkeys = list;
                 self.save_hotkeys();
@@ -101,13 +105,21 @@ impl AppState {
         self.save_config();
     }
 
-    /// Write a member of `DefaultTaskSettings.CaptureSettings` (OCR options, the colour
-    /// picker's palette choice).
-    pub fn save_capture_options<T: Serialize>(&mut self, path: &[&str], value: &T) {
-        let mut full = vec!["DefaultTaskSettings", "CaptureSettings"];
+    /// Write one member of `ToolsSettings` back where it came from.
+    pub fn save_tool_options<T: Serialize>(&mut self, home: &OptionsHome, member: &str, value: &T) {
+        self.save_task_member(home, &["ToolsSettings", member], value);
+    }
+
+    /// Write a member of `CaptureSettings` (OCR options, the colour picker's palette).
+    pub fn save_capture_options<T: Serialize>(
+        &mut self,
+        home: &OptionsHome,
+        path: &[&str],
+        value: &T,
+    ) {
+        let mut full = vec!["CaptureSettings"];
         full.extend_from_slice(path);
-        modlight_tools::settings::write(self.config.values_mut(), &full, value);
-        self.save_config();
+        self.save_task_member(home, &full, value);
     }
 
     /// Write an application member (`HistorySettings`, `ImageHistorySettings`).
@@ -152,6 +164,10 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
         H::PinToScreenCloseAll => state.pin_close_all(settings),
         H::ImageCombiner => state.open_image_combiner(Vec::new(), settings),
         H::Metadata => state.open_metadata(file),
+        H::OCR => match file {
+            Some(file) => state.ocr_file(file, settings),
+            None => state.ocr_region(settings),
+        },
         H::IndexFolder => state.index_folder(file, settings),
         H::StripMetadata => state.strip_metadata(file, settings),
         H::VideoConverter => match file {
@@ -213,11 +229,31 @@ impl AppState {
     }
 }
 
+impl AppState {
+    /// After-capture "Analyze image" (`TaskHelpers.AnalyzeImage(filePath)`).
+    pub fn task_analyze_image(&mut self, file: PathBuf, settings: TaskSettings) {
+        let _ = (file, settings);
+        self.push(Command::NotYet);
+    }
+
+    /// `TaskHelpers.PrintImage(image)`.
+    pub fn print_image(&mut self, image: image::RgbaImage) {
+        let _ = image;
+        self.push(Command::NotYet);
+    }
+}
+
 /// Every frame: background results the tools wait for.
 pub fn tick(state: &mut AppState, _ctx: &egui::Context) {
     static INDEXER: std::sync::Once = std::sync::Once::new();
     INDEXER.call_once(|| modlight_core::tasks::upload_manager::set_folder_indexer(folder_indexer));
     static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
+    if state.mode == crate::app::Mode::Normal && !state.env.qa {
+        static VISION: std::sync::Once = std::sync::Once::new();
+        VISION.call_once(|| {
+            std::thread::spawn(super::ocr::use_vision_languages);
+        });
+    }
     if state.mode == crate::app::Mode::Normal {
         PANIC_HOOK.call_once(super::boxes::install_panic_hook);
         state.tick_panics();

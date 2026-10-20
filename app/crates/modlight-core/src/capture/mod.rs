@@ -86,6 +86,7 @@ pub struct Captured {
 }
 
 /// What a capture needs next.
+#[allow(clippy::large_enum_variant)]
 pub enum CaptureStep {
     /// The picture is taken.
     Done(Captured),

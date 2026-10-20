@@ -615,6 +615,11 @@ impl AppState {
                 let settings = self.default_task_settings();
                 self.pin_picture(image, &settings);
             }
+            // The other tools a task hands work to (phase 5, `tools`).
+            TaskEffect::Ocr(image, settings) => self.ocr_image((*image).clone(), None, *settings),
+            TaskEffect::AnalyzeImage(file, settings) => self.task_analyze_image(file, *settings),
+            TaskEffect::ScanQrCode(file) => self.open_qr_code_scan(Some(file), None),
+            TaskEffect::PrintImage(image) => self.print_image((*image).clone()),
             TaskEffect::DisableLargeFileWarning => {
                 self.config
                     .set("ShowLargeFileSizeWarning", serde_json::json!(0));
