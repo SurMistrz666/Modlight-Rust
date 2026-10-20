@@ -5,4 +5,5 @@
 
 pub mod color;
 pub mod color_format;
+pub mod color_picker;
 pub mod settings;
