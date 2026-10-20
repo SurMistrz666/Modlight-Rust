@@ -17,9 +17,9 @@ fn ffmpeg() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// A two-second test clip with a tone.
-fn clip(ffmpeg: &PathBuf, folder: &std::path::Path, seconds: u32) -> PathBuf {
-    let path = folder.join("clip.mov");
+/// A test clip with a tone (`size` as ffmpeg writes it, "160x120").
+fn clip(ffmpeg: &PathBuf, folder: &std::path::Path, seconds: u32, size: &str) -> PathBuf {
+    let path = folder.join(format!("clip-{seconds}-{size}.mov"));
     let status = std::process::Command::new(ffmpeg)
         .args([
             "-hide_banner",
@@ -28,13 +28,15 @@ fn clip(ffmpeg: &PathBuf, folder: &std::path::Path, seconds: u32) -> PathBuf {
             "-f",
             "lavfi",
             "-i",
-            &format!("testsrc=duration={seconds}:size=160x120:rate=15"),
+            &format!("testsrc=duration={seconds}:size={size}:rate=15"),
             "-f",
             "lavfi",
             "-i",
             &format!("sine=frequency=440:duration={seconds}"),
             "-c:v",
             "libx264",
+            "-preset",
+            "ultrafast",
             "-c:a",
             "aac",
             "-y",
@@ -62,7 +64,7 @@ fn converts_stops_and_reports() {
         return;
     };
     let dir = tempfile::tempdir().unwrap();
-    let input = clip(&ffmpeg, dir.path(), 2);
+    let input = clip(&ffmpeg, dir.path(), 2, "160x120");
 
     // H.264 with upstream's arguments, progress reported.
     let c = conversion(&input, ConverterVideoCodecs::X264);
@@ -81,8 +83,9 @@ fn converts_stops_and_reports() {
         assert!(PathBuf::from(c.output_path()).is_file());
     }
 
-    // Stopped half way: `q`, then the result says so.
-    let long = clip(&ffmpeg, dir.path(), 30);
+    // Stopped half way: `q`, then the result says so. The clip is long and large enough
+    // that no AV1 encoder finishes it before the stop.
+    let long = clip(&ffmpeg, dir.path(), 60, "1280x720");
     let mut c = conversion(&long, ConverterVideoCodecs::Av1);
     c.output_name = "stopped".into();
     let control = Arc::new(Control::default());
