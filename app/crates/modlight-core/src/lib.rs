@@ -7,6 +7,7 @@ pub mod backup;
 pub mod capture;
 pub mod config;
 pub mod culture;
+pub mod debug_log;
 pub mod dotnet;
 pub mod format;
 pub mod history;

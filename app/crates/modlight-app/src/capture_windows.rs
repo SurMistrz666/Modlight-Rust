@@ -217,6 +217,83 @@ impl ModlightApp {
             }
         }
 
+        // About (CenterScreen).
+        if let Some(window) = state.windows.about.as_mut() {
+            use crate::about_window as a;
+            let (asks, close) = dialog_resizable(
+                ctx,
+                "about",
+                t(s::AboutWindow_Title),
+                vec2(a::ABOUT_WIDTH, a::ABOUT_HEIGHT),
+                vec2(a::ABOUT_MIN.0, a::ABOUT_MIN.1),
+                Placement::screen(true),
+                |ui| a::about_ui(ui, window, &colors),
+            );
+            for ask in asks {
+                match ask {
+                    a::AboutAsk::Open(url) => state.open_url(&url),
+                    a::AboutAsk::Update(manifest) => {
+                        if state.updates.message.is_none() && state.updates.downloader.is_none() {
+                            state.updates.message = Some(manifest);
+                            state.updates.message_activate = true;
+                        }
+                    }
+                    a::AboutAsk::DebugLog => state.show_debug_log(),
+                }
+            }
+            if close {
+                state.windows.about = None;
+            }
+        }
+
+        // Debug log (CenterScreen).
+        if let Some(window) = state.windows.debug_log.as_mut() {
+            use crate::about_window as a;
+            let (asks, close) = dialog_resizable(
+                ctx,
+                "debug-log",
+                t(s::DebugLogWindow_Title),
+                vec2(a::LOG_WIDTH, a::LOG_HEIGHT),
+                vec2(a::LOG_MIN.0, a::LOG_MIN.1),
+                Placement::screen(true),
+                |ui| a::debug_log_ui(ui, window, &colors),
+            );
+            for ask in asks {
+                match ask {
+                    a::LogAsk::CopyAll(text) => state.copy_text(&text),
+                    a::LogAsk::OpenLogFile => {
+                        if let Some(path) = modlight_core::debug_log::file_path() {
+                            state.effects.push(crate::state::Effect::OpenFile(path));
+                        }
+                    }
+                    a::LogAsk::Upload(text) => {
+                        // `UploadManager.UploadText`.
+                        let settings = state.default_task_settings();
+                        let task_ctx = state.uploads.ctx.clone();
+                        modlight_core::tasks::upload_manager::upload_text(
+                            &mut state.uploads.tasks,
+                            &text,
+                            &settings,
+                            false,
+                            &task_ctx,
+                        );
+                    }
+                    a::LogAsk::OpenUrl(url) => state.open_url(&url),
+                    a::LogAsk::OpenStartupFolder => {
+                        if let Some(folder) = std::env::current_exe()
+                            .ok()
+                            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                        {
+                            state.effects.push(crate::state::Effect::OpenFile(folder));
+                        }
+                    }
+                }
+            }
+            if close {
+                state.windows.debug_log = None;
+            }
+        }
+
         // The screen recording options (`FFmpegOptionsWindow`, CenterOwner).
         if let Some(window) = state.captures.ffmpeg_window.as_mut() {
             use crate::ffmpeg_window as f;
