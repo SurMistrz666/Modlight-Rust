@@ -10,6 +10,9 @@ use modlight_core::tasks::settings::TaskSettings;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use modlight_core::l10n::{mac, t};
+use modlight_core::tasks::host::{MessageIcon, NotificationSound};
+
 use crate::commands::Command;
 use crate::state::AppState;
 
@@ -182,6 +185,8 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
         H::IndexFolder => state.index_folder(file, settings),
         H::AnalyzeImage => state.open_analyze_image(file, settings),
         H::BackgroundRemover => state.open_background_remover(settings),
+        H::ActiveWindowBorderless => state.active_window_borderless(settings),
+        H::ActiveWindowTopMost => state.active_window_top_most(settings),
         H::StripMetadata => state.strip_metadata(file, settings),
         H::VideoConverter => match file {
             Some(file) => state.open_video_converter(Some(file), settings),
@@ -252,6 +257,74 @@ impl AppState {
     pub fn print_image(&mut self, image: image::RgbaImage) {
         let _ = image;
         self.push(Command::NotYet);
+    }
+}
+
+impl AppState {
+    fn window_tool_message(&mut self, job: HotkeyType, text: &str, icon: MessageIcon) {
+        self.uploads
+            .windows
+            .messages
+            .push_back(crate::dialogs::message::MessageBox::new(
+                &format!("Modlight - {}", job.text()),
+                text,
+                icon,
+            ));
+    }
+
+    /// `MakeActiveWindowBorderless` the macOS way (`modlight_tools::borderless`): the
+    /// active window fills its screen, and goes back the second time. QA and headless
+    /// runs never touch other apps' windows.
+    pub fn active_window_borderless(&mut self, settings: TaskSettings) {
+        if self.env.qa || self.mode != crate::app::Mode::Normal {
+            log::info!("QA run: the active window is left as it is");
+            return;
+        }
+        let options: modlight_tools::settings::BorderlessWindowSettings =
+            tool_options(&settings, "BorderlessWindowSettings");
+        let working_area = options.exclude_taskbar_area;
+        let outcome = modlight_macos::ax::toggle_active_window(|window, screens| {
+            use modlight_tools::borderless::{Frame, Screen, target_frame};
+            let frame = |r: (f64, f64, f64, f64)| Frame::new(r.0, r.1, r.2, r.3);
+            let screens: Vec<Screen> = screens
+                .iter()
+                .map(|(whole, visible)| Screen {
+                    frame: frame(*whole),
+                    visible: frame(*visible),
+                })
+                .collect();
+            target_frame(&frame(window), &screens, working_area)
+                .map(|f| (f.x, f.y, f.width, f.height))
+        });
+        use modlight_macos::ax::Toggled;
+        match outcome {
+            Toggled::Filled | Toggled::Restored => {
+                self.play_task_sound(NotificationSound::ActionCompleted, &settings)
+            }
+            Toggled::NotTrusted => self.window_tool_message(
+                HotkeyType::ActiveWindowBorderless,
+                t(mac::BorderlessNeedsAccessibility),
+                MessageIcon::Information,
+            ),
+            Toggled::NoWindow => {}
+            Toggled::Failed(error) => self.window_tool_message(
+                HotkeyType::ActiveWindowBorderless,
+                &error,
+                MessageIcon::Error,
+            ),
+        }
+    }
+
+    /// `MakeActiveWindowTopMost`: macOS has no public way to keep another app's window
+    /// above the others (window levels belong to the app that owns the window), so the
+    /// hotkey says so and points at Pin to screen.
+    pub fn active_window_top_most(&mut self, settings: TaskSettings) {
+        let _ = settings;
+        self.window_tool_message(
+            HotkeyType::ActiveWindowTopMost,
+            t(mac::TopMostUnavailable),
+            MessageIcon::Information,
+        );
     }
 }
 

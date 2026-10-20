@@ -98,4 +98,10 @@
   <data name="PinWheelHint" xml:space="preserve">
     <value>Mouse wheel changes scale, Cmd + mouse wheel changes opacity.</value>
   </data>
+  <data name="BorderlessNeedsAccessibility" xml:space="preserve">
+    <value>To move and size another app's window, allow Modlight under System Settings &gt; Privacy &amp; Security &gt; Accessibility, then press the hotkey again.</value>
+  </data>
+  <data name="TopMostUnavailable" xml:space="preserve">
+    <value>macOS does not let one app keep another app's window on top of the others. To keep a picture of the window in view, use Pin to screen.</value>
+  </data>
 </root>
