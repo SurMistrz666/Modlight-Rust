@@ -118,6 +118,9 @@ pub fn entries(ui: &mut Ui, colors: &Colors, list: &[Entry], inset: f32) -> Opti
                     pos2(outer.left() + inset, outer.top() + 2.0),
                     pos2(outer.right() - inset, outer.bottom() - 2.0),
                 );
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, *enabled, label.as_str())
+                });
                 let hovered = *enabled && response.hovered();
                 let opacity = if *enabled { 1.0 } else { 0.35 };
                 let fg = if hovered {
