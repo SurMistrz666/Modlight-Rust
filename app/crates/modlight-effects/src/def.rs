@@ -149,7 +149,12 @@ impl ImageEffect for Def {
         values: &ParamValues,
         context: &EffectContext,
     ) -> Result<RgbaImage, String> {
-        let bitmap = Bitmap::from_image(source);
+        // Upstream's source is a premultiplied bitmap: semi-transparent colours read back
+        // through that storage.
+        let mut bitmap = Bitmap::from_image(source);
+        for c in bitmap.px.iter_mut() {
+            *c = crate::sk::store(*c);
+        }
         let out = (self.run)(&bitmap, &P { values, context })?;
         Ok(out.to_image())
     }

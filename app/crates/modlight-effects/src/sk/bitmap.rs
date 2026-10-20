@@ -26,9 +26,10 @@ pub fn premul(c: C) -> C {
     C::new(m(c.r), m(c.g), m(c.b), c.a)
 }
 
-/// Premultiplied memory read back as straight colour (raster pipeline `unpremul` and
-/// `to_unorm`). Components above alpha (an invalid premultiplied value an effect wrote
-/// directly into memory) clamp to 255.
+/// Premultiplied memory read back as straight colour, as `SKBitmap.Pixels` reads it
+/// (`SkUnPreMultiply`'s scale table: `((255 << 24) + a / 2) / a`, then `(s * c + 2^23) >> 24`;
+/// checked against SkiaSharp for every alpha and value). Components above alpha (an
+/// invalid premultiplied value an effect wrote directly into memory) clamp to 255.
 #[inline]
 pub fn unpremul(p: C) -> C {
     if p.a == 255 {
@@ -37,12 +38,9 @@ pub fn unpremul(p: C) -> C {
     if p.a == 0 {
         return C::ZERO;
     }
-    let a = p.a as f32 * (1.0 / 255.0);
-    let s = 1.0 / a;
-    let u = |v: u8| {
-        let f = (v as f32 * (1.0 / 255.0)) * s;
-        (f.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
-    };
+    let a = p.a as u32;
+    let scale = ((255u32 << 24) + (a >> 1)) / a;
+    let u = |v: u8| (((scale as u64 * v as u64 + (1u64 << 23)) >> 24).min(255)) as u8;
     C::new(u(p.r), u(p.g), u(p.b), p.a)
 }
 
