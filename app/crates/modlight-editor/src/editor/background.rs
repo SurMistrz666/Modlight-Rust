@@ -303,3 +303,34 @@ impl BackgroundSettings {
         let _ = self.brush();
     }
 }
+
+impl super::Editor {
+    /// Changes the Background panel's values: the options follow, the frame redraws.
+    pub fn update_background(&mut self, change: impl FnOnce(&mut BackgroundSettings)) {
+        change(&mut self.background);
+        self.background.write_options(&mut self.options);
+        self.background.prepare();
+        self.invalidate();
+    }
+
+    /// `ApplyGradientPresetCommand`.
+    pub fn apply_gradient_preset(&mut self, index: usize) {
+        if let Some((_, a, b)) = GRADIENT_PRESETS.get(index) {
+            let (a, b) = (normalize(a, Color::WHITE), normalize(b, Color::WHITE));
+            self.update_background(|s| {
+                s.gradient1 = a;
+                s.gradient2 = b;
+                s.mode = BackgroundMode::Gradient;
+            });
+        }
+    }
+
+    /// The host picked a background image (`OnBrowseBackgroundImageClick`).
+    pub fn set_background_image(&mut self, path: &str) {
+        let path = path.to_string();
+        self.update_background(|s| {
+            s.image_path = Some(path);
+            s.mode = BackgroundMode::Image;
+        });
+    }
+}
