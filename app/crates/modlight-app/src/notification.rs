@@ -188,9 +188,9 @@ impl Notification {
             let path = config.file_path.trim();
             (!path.is_empty() && modlight_core::names::file_helpers::is_image_file(path))
                 .then(|| {
-                    image::open(path)
+                    modlight_core::image_decode::open(std::path::Path::new(path))
                         .ok()
-                        .map(|i| std::sync::Arc::new(i.to_rgba8()))
+                        .map(|i| std::sync::Arc::new(i.into_rgba8()))
                 })
                 .flatten()
         });

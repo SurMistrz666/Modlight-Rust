@@ -107,7 +107,9 @@ impl BeforeUpload {
                 && Path::new(path).is_file()
                 && modlight_core::names::file_helpers::is_image_file(path)
             {
-                image = image::open(path).ok().map(|i| Arc::new(i.to_rgba8()));
+                image = modlight_core::image_decode::open(Path::new(path))
+                    .ok()
+                    .map(|i| Arc::new(i.into_rgba8()));
             }
         }
         BeforeUpload {

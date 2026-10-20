@@ -177,7 +177,11 @@ impl AfterCapture {
                     .unwrap_or_default();
                 let image =
                     modlight_core::names::file_helpers::is_image_file(&path.to_string_lossy())
-                        .then(|| image::open(path).ok().map(|i| Arc::new(i.to_rgba8())))
+                        .then(|| {
+                            modlight_core::image_decode::open(path)
+                                .ok()
+                                .map(|i| Arc::new(i.into_rgba8()))
+                        })
                         .flatten();
                 (stem, image)
             }

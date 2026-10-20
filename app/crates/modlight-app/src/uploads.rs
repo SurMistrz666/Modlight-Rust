@@ -732,9 +732,9 @@ impl AppState {
     fn copy_notice_image(&mut self, path: &str, image: Option<Arc<image::RgbaImage>>) {
         let from_file = (!path.is_empty()
             && modlight_core::names::file_helpers::is_image_file(path))
-        .then(|| image::open(path).ok())
+        .then(|| modlight_core::image_decode::open(Path::new(path)).ok())
         .flatten()
-        .map(|picture| Arc::new(picture.to_rgba8()));
+        .map(|picture| Arc::new(picture.into_rgba8()));
         match from_file.or(image) {
             Some(picture) => self.effects.push(Effect::CopyImage(picture)),
             None => {
@@ -810,8 +810,8 @@ impl AppState {
             let image = api
                 .download_image(&url)
                 .await
-                .and_then(|picture| image::load_from_memory(&picture.bytes).ok())
-                .map(|picture| picture.to_rgba8());
+                .and_then(|picture| modlight_core::image_decode::from_bytes(&picture.bytes).ok())
+                .map(|picture| picture.into_rgba8());
             Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
                 if let Some(image) = image
                     && let Some(window) = state
@@ -1012,13 +1012,13 @@ impl AppState {
         {
             return Some(ClipboardContent::Files(files));
         }
-        if let Ok(image) = clipboard.get_image() {
-            let rgba = image::RgbaImage::from_raw(
-                image.width as u32,
-                image.height as u32,
-                image.bytes.into_owned(),
-            )?;
-            return Some(ClipboardContent::Image(rgba));
+        // The picture's bytes, decoded here under the app's limits (arboard's own
+        // decoding has none).
+        if let Some(bytes) = modlight_macos::pasteboard::image_bytes() {
+            match modlight_core::image_decode::from_bytes(&bytes) {
+                Ok(picture) => return Some(ClipboardContent::Image(picture.into_rgba8())),
+                Err(error) => log::warn!("Modlight: the clipboard's picture was not read: {error}"),
+            }
         }
         if let Ok(text) = clipboard.get_text()
             && !text.is_empty()
