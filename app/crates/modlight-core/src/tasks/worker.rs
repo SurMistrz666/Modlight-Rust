@@ -563,7 +563,25 @@ impl WorkerTask {
             self.do_file_jobs(ctx);
         }
 
-        // `DoOCR` arrives with the OCR tool (phase 5).
+        // `DoOCR`: the picture's text (the window, or straight to the clipboard).
+        let (ocr, image, data_type, settings) = self.with(|s| {
+            (
+                s.info
+                    .settings
+                    .after_capture_job
+                    .has(AfterCaptureTasks::DoOCR),
+                s.image.clone(),
+                s.info.data_type,
+                s.info.settings.clone(),
+            )
+        });
+        if ocr
+            && data_type == DataType::Image
+            && let Some(image) = image
+        {
+            ctx.channel
+                .effect(TaskEffect::Ocr(image, Box::new(settings)));
+        }
         true
     }
 
@@ -620,7 +638,9 @@ impl WorkerTask {
         if job.has(AfterCaptureTasks::PinToScreen) {
             ctx.channel.effect(TaskEffect::PinToScreen(image.clone()));
         }
-        // Printing (`SendImageToPrinter`) is not ported: see MACOS.md.
+        if job.has(AfterCaptureTasks::SendImageToPrinter) {
+            ctx.channel.effect(TaskEffect::PrintImage(image.clone()));
+        }
 
         self.with(|s| s.info.metadata.image = Some(image.clone()));
 
@@ -820,7 +840,17 @@ impl WorkerTask {
             ctx.channel
                 .effect(TaskEffect::RevealFile(PathBuf::from(&path)));
         }
-        // Analyze image and the QR scan arrive with phase 5.
+        let is_image = self.with(|s| s.info.data_type == DataType::Image);
+        if job.has(AfterCaptureTasks::AnalyzeImage) && is_image {
+            ctx.channel.effect(TaskEffect::AnalyzeImage(
+                PathBuf::from(&path),
+                Box::new(self.with(|s| s.info.settings.clone())),
+            ));
+        }
+        if job.has(AfterCaptureTasks::ScanQRCode) && is_image {
+            ctx.channel
+                .effect(TaskEffect::ScanQrCode(PathBuf::from(&path)));
+        }
     }
 
     async fn do_text_jobs(&self, ctx: &TaskContext) {

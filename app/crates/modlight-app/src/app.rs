@@ -480,6 +480,7 @@ impl ModlightApp {
         self.upload_viewports(ctx, main);
         self.capture_viewports(ctx, main);
         crate::media_windows::viewports(ctx, &mut self.state);
+        crate::tools::viewports(ctx, &mut self.state);
 
         if self.state.windows.notification.is_some() {
             self.notification(ctx);

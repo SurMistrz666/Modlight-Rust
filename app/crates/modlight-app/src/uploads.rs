@@ -610,8 +610,16 @@ impl AppState {
                 .messages
                 .push_back(MessageBox::new(&title, &text, icon)),
             TaskEffect::ShowSignIn => self.show_sign_in(),
-            // `TaskHelpers.PinToScreen`: the pin tool arrives with phase 5.
-            TaskEffect::PinToScreen(_) => self.push(crate::commands::Command::NotYet),
+            // `TaskHelpers.PinToScreen(image)` (phase 5, `tools::pin`).
+            TaskEffect::PinToScreen(image) => {
+                let settings = self.default_task_settings();
+                self.pin_picture(image, &settings);
+            }
+            // The other tools a task hands work to (phase 5, `tools`).
+            TaskEffect::Ocr(image, settings) => self.ocr_image((*image).clone(), None, *settings),
+            TaskEffect::AnalyzeImage(file, settings) => self.task_analyze_image(file, *settings),
+            TaskEffect::ScanQrCode(file) => self.open_qr_code_scan(Some(file), None),
+            TaskEffect::PrintImage(image) => self.print_image((*image).clone()),
             TaskEffect::DisableLargeFileWarning => {
                 self.config
                     .set("ShowLargeFileSizeWarning", serde_json::json!(0));
@@ -663,7 +671,13 @@ impl AppState {
                     self.annotate_file(&file);
                 }
             }
-            ToastAction::PinToScreen => {}
+            // `TaskHelpers.PinToScreen(filePath)` (phase 5, `tools::pin`).
+            ToastAction::PinToScreen => {
+                if !path.is_empty() {
+                    let settings = self.default_task_settings();
+                    self.pin_file(&file, &settings);
+                }
+            }
             ToastAction::CopyFile => {
                 if !path.is_empty() {
                     self.effects.push(Effect::CopyFiles(vec![file]));

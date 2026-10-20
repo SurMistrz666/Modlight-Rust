@@ -38,6 +38,8 @@ pub enum OverlayPurpose {
     ScrollingRegion,
     /// The task settings' preconfigured region (`Select region...`).
     CustomRegion(crate::task_pages::TaskTarget),
+    /// A picture for a tool (`RegionCaptureTasks.GetRegionImage`, phase 5).
+    Tool(crate::tools::region::RegionFor),
 }
 
 /// The overlay and what it will do with its answer.
