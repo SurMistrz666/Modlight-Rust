@@ -20,7 +20,7 @@ Snapshots of every screen below that is drawn live in
 | Download tab (`DownloadView`, yt-dlp) | done | Queue with pause/resume/cancel/retry/remove, format and destination strip, folder, ffmpeg and yt-dlp notices, error wording, update-and-retry, upload through the task flow. Not run against a real yt-dlp in a window yet. Snapshots `tab-download`, `tab-download-busy`, `tab-download-missing`, `download-youtube`. |
 | YouTube sign-in (`YouTubeSignInForm`, `YouTubeCookies`) | partial | WKWebView window; never opened by automation; real-window check needed. |
 | Capture tab (`IsCreateSelected`) | done | Tiles with their shortcuts, the capture menu, every capture kind (`capture_flow`). Snapshots `tab-create`, `tab-create-problem`, `capture-menu`. |
-| Tools tab cards | partial | Cards drawn from the same list as upstream; scrolling capture, auto capture, screen recording and the image editor selector run; the other tools are phases 4 and 5. |
+| Tools tab cards | partial | Cards drawn from the same list as upstream; scrolling capture, auto capture, screen recording, the image editor selector and the image editor run; the other tools are phase 5. |
 | Server tab (`AdminView`, disk report) | done | Read when opened (fresh for 2 min) and on Refresh; 404 settled through `/api/me`. Snapshots `tab-server`, `tab-server-problem`, `tab-server-loading`. |
 | Hotkey problem notice (`HotkeyProblemViewModel`) | done | On the Capture tab, with "Change shortcut". Snapshot `tab-create-problem`. |
 
@@ -73,8 +73,26 @@ Snapshots of every screen below that is drawn live in
 | First run (`FirstTimeConfig`), about, debug log, components | done (snapshots `first-run`, `about`, `debug-log*`, `components`) |
 | Region capture overlay, recording frame and toolbar, scrolling capture window | done in drawing and behaviour with the fake desktop; real-window checks listed in `docs/handoff/app-3.md` (snapshots `region-capture*`, `recording-toolbar*`, `scrolling-capture`) |
 | History and image history windows (`ShareX.HistoryLib` views) | not done (outside the phase 3 brief; the history store and the Upload tab's history are done) |
-| Image editor | phase 4 |
+| Image editor | done in drawing and behaviour headlessly; see "Image editor" below |
 | Image effects and the other ShareX tools | phase 5 |
+
+## Image editor (`ShareX.ImageEditor`, crate `modlight-editor`)
+
+The map of the crate and the effect registry contract are in `EDITOR.md`. Snapshots:
+`crates/modlight-editor/tests/snapshots/<scene>/` (30 scenes) and the app's
+`image-editor*` screens.
+
+| Upstream | State | Notes |
+|---|---|---|
+| `EditorCore`, history (mementos, canvas mementos, crop/cut-out, flatten, z-order), clipboard, image insert, new image | done | Unit tests in the crate; ids of pasted and duplicated annotations are new (upstream kept the copied id). |
+| Annotations: rectangle, ellipse, line, arrow (5 styles, curves), freehand, text (outlined), speech balloon, step (5 types, tail), image, emoji, cursor, smart eraser, blur, pixelate, highlight, magnify, spotlight, crop, cut-out | done | Rendered with tiny-skia (`examples/gallery.rs` draws each); handles, snapping, Shift and Cmd modifiers, rotation, tails, curve points. |
+| Editor window (`EditorWindow`, `EditorView`, built-in toolbars) | done | Canvas with zoom levels, Cmd+wheel, pinch, middle-button pan, scroll; overlay chrome; text boxes; context menu; toast; options persisted in `ToolsSettings.ImageEditorOptions`. Real-window checks in `docs/handoff/app-4.md`. |
+| Annotation toolbar, tool options row and every picker (colour with `ColorView`, width, border style, corner radius, font family, alignment, arrow style, cursor type, font size, bold, italic, step type, start number, strength, spotlight blur, ellipse, tail, shadow with its options) | done | `ColorView` is an approximation (see `MACOS.md`). |
+| Background panel (margin, padding, smart padding, corner, shadow, ratio, gradient presets, colour, image, wallpaper) | done | Wallpaper through `NSWorkspace`. |
+| Effect browser, schema-driven dialog, preview | done | Registry with the editor operations and three sample effects; the effect library plugs in (`EDITOR.md`). |
+| Dialogs: start screen, new image, insert image, emoji picker, exit confirmation, toolbar customisation | done | |
+| Integration: Image editor hotkey and selector, after-capture "Annotate image" (task mode), "Beautify image" (Background panel open), the notice's "Annotate image", save, copy, upload, open, URL, clipboard | done | Print, pin to screen and the screen colour picker say "later" (phase 5). |
+| Region capture's annotation tools (`EditorView` as the overlay's workspace) | not done | `ANNOTATION_TOOLS_AVAILABLE` stays false; what it needs is in `docs/handoff/app-4.md`. |
 
 ## Engine
 

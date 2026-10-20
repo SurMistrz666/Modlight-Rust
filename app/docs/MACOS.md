@@ -107,7 +107,8 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **Printing**, **image effects** and the **OCR** engine are later phases; their settings
   are edited and stored, and their buttons say "later".
 - **The image editor selector** stores the choice the first time the editor is asked
-  for; the editors are phase 4.
+  for; both choices open the same editor, because the legacy (Greenshot) editor is a
+  WinForms program and is not ported.
 - **Language** applies at once; upstream asks for a restart. Only Automatic, English and
   Polish are offered, because those are the two translations upstream ships.
 - **QA mode** (`--qa-profile <dir>`, `--qa-shot <screen> <out.png>`): settings, queue,
@@ -138,9 +139,26 @@ Everything not listed behaves as upstream does. The per-screen state is in
   time, oldest first; every task waiting for a sign-in hears the answer when the sign-in
   window closes.
 - **Paste window**: the hint says "Ctrl+Enter" as upstream does; Cmd+Enter works too.
-- **Desktop notice actions** "Annotate image" and "Pin to screen" do nothing until the
-  image editor and the pin tool arrive (phases 4 and 5); every other action is
+- **Desktop notice actions**: "Annotate image" opens the editor on the file; "Pin to
+  screen" does nothing until the pin tool arrives (phase 5); every other action is
   upstream's.
 - **GIF bit depth 4** is written as a 256-colour GIF (the encoder has no 16-colour
   palette mode). A custom time zone other than UTC in file name patterns falls back to
   local time.
+
+## Image editor
+
+| Upstream (Avalonia, SkiaSharp, Windows) | This port | Notes |
+|---|---|---|
+| `Ctrl` shortcuts of the editor (`Ctrl+Z`, `Ctrl+C`, `Ctrl+Shift+S`, ...) | `Cmd` | As everywhere. Delete also on Backspace (a Mac keyboard's Delete key); Shift+Backspace clears all. Cmd+H (toggle toolbars) is the system's Hide on a Mac and may never reach the window. Menus and tooltips show "Cmd". |
+| Ctrl+mouse wheel zoom, middle-button pan | Cmd+wheel and trackpad pinch (one zoom level per step, 150 ms apart), middle-button pan, two-finger scroll | |
+| Cmd+V in the editor | AppKit key monitor (as the main window) | egui reports a paste only when the clipboard holds text. |
+| Avalonia's default font (Inter) and `FontWeight.Bold` | Bundled Inter Regular and SemiBold; bold Inter text uses SemiBold (Bold is not bundled), other families bold and italic from the system or simulated (Skia's fake bold, 0.2 skew) | "Segoe UI" (upstream's default family) is not on a Mac and falls back to Inter, as Avalonia does there. |
+| Emoji (`EmojiPreviewImage`, Segoe UI Emoji / Noto) | Apple Color Emoji `sbix` strikes | |
+| Cursor annotation (`WindowsCursorBitmapRenderer`, Windows cursors; nothing on a Mac) | `NSCursor` pictures at 2x, trimmed to the cursor | Arrow, Default, AppStarting, Help and WaitCursor are the arrow; SizeAll/NoMove2D the open hand; vertical and horizontal kinds the resize cursors; diagonals macOS 15's frame-resize cursors (crosshair before). |
+| Wallpaper background (`MacOSDesktopWallpaperService`: `osascript` to System Events, `defaults read`) | `NSWorkspace.desktopImageURL`/`desktopImageOptions` of the main screen, read through `NSImage` (HEIC) | Upstream's way needs the Automation permission; this one needs none. Scaling none = Center, axes independently = Stretch, proportionally down = Fit, up or down = Fill (Fit without clipping). |
+| `ColorView` (Avalonia's colour picker) | Same three tabs (spectrum, palette, components), `FluentColorPalette` with `ColorPickerPanel`'s three replacements, the previewer with accent shades, "Pick colour from screen" | Drawn by the port; sizes approximate Avalonia's template. The screen colour picker is phase 5. |
+| Font picker previews in each family | Drawn with the editor's text engine | egui renders only its own fonts. |
+| Text box over a text annotation (Avalonia `TextBox` in the family) | egui text box in Inter at the annotation's size | The annotation itself is drawn in its family once the box closes. Rotated text is edited unrotated. |
+| Printing, pin to screen | "Later" notice | Phase 5. |
+| `EditorWindow` maximised (`WindowState="Maximized"`) | Zoomed window (`with_maximized`) | "Remember window state" keeps size and zoom. |
