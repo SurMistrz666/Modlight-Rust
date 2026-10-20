@@ -8,7 +8,7 @@
 
 use std::any::Any;
 
-use egui::{Rect, Ui, Vec2, ViewportBuilder, ViewportCommand, ViewportId, pos2, vec2};
+use egui::{Id, Rect, Ui, Vec2, ViewportBuilder, ViewportCommand, ViewportId, pos2, vec2};
 use modlight_core::hotkeys::HotkeyType;
 use modlight_core::tasks::settings::TaskSettings;
 
@@ -16,9 +16,13 @@ use crate::state::AppState;
 
 pub mod color_picker;
 pub mod editor_hooks;
+pub mod files;
+pub mod image_viewer;
 pub mod jobs;
 pub mod kit;
 pub mod qa;
+pub mod qr;
+pub mod region;
 pub mod screen_picker;
 
 /// How a tool window opens.
@@ -31,6 +35,9 @@ pub struct WindowSpec {
     pub topmost: bool,
     /// `SizeToContent="Height"`: the height follows what the window last drew.
     pub fit_height: bool,
+    /// `WindowState="FullScreen" WindowDecorations="None"`: no frame, covering this
+    /// display area (desktop points), above the menu bar.
+    pub screen: Option<Rect>,
 }
 
 impl WindowSpec {
@@ -41,6 +48,7 @@ impl WindowSpec {
             min_size: Some(min),
             topmost: false,
             fit_height: false,
+            screen: None,
         }
     }
 
@@ -51,6 +59,7 @@ impl WindowSpec {
             min_size: None,
             topmost: false,
             fit_height: false,
+            screen: None,
         }
     }
 }
@@ -85,8 +94,10 @@ pub struct Tools {
     pub pending_pick: Option<screen_picker::PendingPick>,
     pub screen_pick_busy: bool,
     pub screen_picker: Option<screen_picker::ScreenPicker>,
-    /// Tool windows to bring back after they stepped aside (minimised) for a pick.
+    /// Tool windows to bring back after they stepped aside (hidden or minimised).
     pub restore: Vec<u64>,
+    /// What the open panels answer in QA and headless runs (tests queue paths here).
+    pub qa_open: std::collections::VecDeque<std::path::PathBuf>,
 }
 
 impl Tools {
@@ -130,8 +141,40 @@ impl Tools {
     }
 }
 
+/// Run `f` on the window with `key` (taken out of the list for the call, so `f` may use
+/// the whole state); nothing when it is gone.
+pub fn with_window<T: ToolWindow, R>(
+    state: &mut AppState,
+    key: u64,
+    f: impl FnOnce(&mut T, &mut AppState) -> R,
+) -> Option<R> {
+    let index = state.tools.windows.iter().position(|h| h.key == key)?;
+    let mut hosted = state.tools.windows.remove(index);
+    let result = hosted
+        .window
+        .as_any_mut()
+        .downcast_mut::<T>()
+        .map(|window| f(window, state));
+    let index = index.min(state.tools.windows.len());
+    state.tools.windows.insert(index, hosted);
+    result
+}
+
 /// A window centred on the screen (`WindowStartupLocation="CenterScreen"`).
 fn builder(spec: &WindowSpec, size: Vec2) -> ViewportBuilder {
+    if let Some(screen) = spec.screen {
+        let mut builder = ViewportBuilder::default()
+            .with_title(spec.title.clone())
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_taskbar(false)
+            .with_position(screen.min)
+            .with_inner_size(screen.size());
+        if spec.topmost {
+            builder = builder.with_always_on_top();
+        }
+        return builder;
+    }
     let resizable = spec.min_size.is_some();
     let mut builder = ViewportBuilder::default()
         .with_title(spec.title.clone())
@@ -161,6 +204,7 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
     screen_picker::viewports(ctx, state);
     for key in std::mem::take(&mut state.tools.restore) {
         let id = ViewportId::from_hash_of(("tool-window", key));
+        ctx.send_viewport_cmd_to(id, ViewportCommand::Visible(true));
         ctx.send_viewport_cmd_to(id, ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);
     }
@@ -176,8 +220,12 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
         } else {
             spec.size.y
         };
-        let size = vec2(spec.size.x, height.max(80.0).round());
-        let id = ViewportId::from_hash_of(("tool-window", hosted.key));
+        let size = match spec.screen {
+            Some(screen) => screen.size(),
+            None => vec2(spec.size.x, height.max(80.0).round()),
+        };
+        let key = hosted.key;
+        let id = ViewportId::from_hash_of(("tool-window", key));
         let (close_asked, closes_itself) =
             ctx.show_viewport_immediate(id, builder(&spec, size), |ui, _| {
                 let close = ui.ctx().input(|i| i.viewport().close_requested());
@@ -187,6 +235,17 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
                         .input(|i| i.viewport().inner_rect.map(|r| r.size()));
                     if current.is_some_and(|c| (c.y - size.y).abs() > 0.5) {
                         ui.ctx().send_viewport_cmd(ViewportCommand::InnerSize(size));
+                    }
+                }
+                if spec.screen.is_some() {
+                    let raised = Id::new(("tool-window-raised", key));
+                    if !ui
+                        .ctx()
+                        .data(|d| d.get_temp::<bool>(raised).unwrap_or(false))
+                        && modlight_macos::windows::raise_overlay(&spec.title)
+                    {
+                        ui.ctx().data_mut(|d| d.insert_temp(raised, true));
+                        ui.ctx().send_viewport_cmd(ViewportCommand::Focus);
                     }
                 }
                 let title = ui.ctx().input(|i| i.viewport().title.clone());

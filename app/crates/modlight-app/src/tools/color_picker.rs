@@ -236,6 +236,7 @@ impl ToolWindow for ColorPickerWindow {
             min_size: None,
             topmost: self.selection_mode(),
             fit_height: true,
+            screen: None,
         }
     }
 

@@ -484,6 +484,21 @@ impl AppState {
                     self.after_capture(captured, settings);
                 }
             }
+            OverlayPurpose::Tool(target) => {
+                // A tool's picture: the area as the overlay left it, with where it was.
+                let picture = match &outcome {
+                    RegionOutcome::Completed { screen_rect, .. } => capture::finish_region(
+                        &session.request,
+                        &outcome,
+                        self.captures.source.as_ref(),
+                        modified,
+                    )
+                    .and_then(|captured| captured.metadata.image)
+                    .map(|image| (image, *screen_rect)),
+                    _ => None,
+                };
+                self.tool_region_closed(target, picture);
+            }
             OverlayPurpose::AutoCaptureRegion => {
                 if let RegionOutcome::Completed { screen_rect, .. } = outcome {
                     self.auto_capture_region_chosen(screen_rect);
