@@ -14,7 +14,11 @@ Upstream: `ShareX.ImageEditor/Core/ImageEffects/**` (the editor's effect browser
 - [x] Golden harness (`app/scripts/effects-golden`, Docker only) and goldens in
   `crates/modlight-effects/tests/golden` (230 effects, 677 cases); test `tests/golden.rs`.
 - [x] Adjustments (32 of 32): metadata and pixels match upstream.
-- [ ] Manipulations (33), Filters (149), Drawings (16).
+- [x] Manipulations (32 of 32, Rotate3D dead code excluded).
+- [ ] Filters: 117 of 149 ported (files `fx/filters_a.rs` .. `filters_k.rs`, through
+  Rope border); next batches are the upstream sources from Rotate onwards (scratch
+  `fb11..fb14.txt`).
+- [ ] Drawings (16).
 - [ ] `ShareX.ImageEffectsLib`: classic effects, presets JSON, packager, windows,
   "Add image effects" after capture.
 - [ ] Snapshots of the windows; STATUS.md / MACOS.md.
@@ -32,6 +36,17 @@ scripts/effects-golden/run.sh            # all effects
 ```
 
 ## Decisions so far
+
+- Images from outside the process (map files of Displacement map etc., later presets
+  and packages) are decoded with `modlight_core::image_decode` (from main's security
+  fixes), never `image::open`; preset/package import rejects entries with paths.
+- Skia raster details reproduced because upstream's pixels show them: anti-aliased
+  strokes at most one device pixel wide are hairlines (`SkDrawTreatAsHairline`, rect
+  frames excepted), walked segment by segment like `hair_path` (cap extension, closing
+  segment between the pushed-out points), drawn through tiny-skia's hairline rasteriser
+  with a padded copy near the top/left edge (tiny-skia clamps negative rows to 0); a
+  bitmap drawn unscaled with paint alpha uses the legacy sprite blend (alpha+1, >>8).
+- `Array.Sort(array, comparison)` is .NET's unstable introsort (`dotnet::sort_by`).
 
 - Effects are `def::Def` values (id, name, category, icon, description, mode, parameter
   builder, run function) implementing the editor's `ImageEffect` trait unchanged; no
