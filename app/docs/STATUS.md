@@ -13,14 +13,14 @@ Snapshots of every screen below that is drawn live in
 | Upstream | State | Notes |
 |---|---|---|
 | Shell: title band, tab strip, storage chip, account button and menu, settings menu | done | |
-| Tray icon and menu (`TrayIconService`) | partial | Account, Capture, Upload, Tools, after-capture and after-upload tasks, the hotkey switch, Settings, screenshots folder, recent items, Show Modlight, Exit, built from the same entries as the window's menus. Not yet checked in a real window. |
+| Tray icon and menu (`TrayIconService`) | partial | Account, Capture, Upload, Tools, after-capture and after-upload tasks, the hotkey switch, Settings, screenshots folder, recent items, Show Modlight, Exit, built from the same entries as the window's menus; every Tools entry opens its tool (phase 5). Not yet checked in a real window. |
 | Toasts in the window corner (`UploadToastViewModel`) | done | |
 | My space tab | done | See below. |
 | Upload tab (`UploadView`) | done | Transfers with progress, speed and time left; the offline queue with countdowns, Send now and Cancel; history from `History.db` and this session's tasks, with copy, open and Try again. Snapshots `tab-upload`, `tab-upload-busy`. |
 | Download tab (`DownloadView`, yt-dlp) | done | Queue with pause/resume/cancel/retry/remove, format and destination strip, folder, ffmpeg and yt-dlp notices, error wording, update-and-retry, upload through the task flow. Not run against a real yt-dlp in a window yet. Snapshots `tab-download`, `tab-download-busy`, `tab-download-missing`, `download-youtube`. |
 | YouTube sign-in (`YouTubeSignInForm`, `YouTubeCookies`) | partial | WKWebView window; never opened by automation; real-window check needed. |
 | Capture tab (`IsCreateSelected`) | done | Tiles with their shortcuts, the capture menu, every capture kind (`capture_flow`). Snapshots `tab-create`, `tab-create-problem`, `capture-menu`. |
-| Tools tab cards | partial | Cards drawn from the same list as upstream; scrolling capture, auto capture, screen recording, the image editor selector and the image editor run; the other tools are phase 5. |
+| Tools tab cards | done | Cards drawn from the same list as upstream; every card runs its tool (phase 5, see "ShareX tools" below); the Image effects card belongs to the effects branch. |
 | Server tab (`AdminView`, disk report) | done | Read when opened (fresh for 2 min) and on Refresh; 404 settled through `/api/me`. Snapshots `tab-server`, `tab-server-problem`, `tab-server-loading`. |
 | Hotkey problem notice (`HotkeyProblemViewModel`) | done | On the Capture tab, with "Change shortcut". Snapshot `tab-create-problem`. |
 
@@ -55,7 +55,7 @@ Snapshots of every screen below that is drawn live in
 | Sharing: copy formats (with their editor), from clipboard, upload limits, history | done |
 | Capture: region, screenshots (preconfigured region through the overlay), image format, effects, thumbnails, file names (previews) | done (effects configuration is phase 5) |
 | Screen recording page and FFmpeg options window (`FFmpegOptionsWindow`) | done; snapshots `settings-recorder`, `ffmpeg-options*` |
-| Text from image | done as upstream's "languages unavailable" state until OCR (phase 5) |
+| Text from image | done (Vision's languages; see "ShareX tools") |
 | Sounds and notifications (with the notification buttons editor) | done |
 | Tools: editor, colour picker, external programs (with the action editor), watch folders (with their editor) | done |
 | Keyboard shortcuts (`HotkeySettingsView`) and one hotkey's settings window (`SettingsWindow(TaskSettings)`) | done; snapshots `settings-hotkeys*`, `hotkey-task-*` |
@@ -72,9 +72,36 @@ Snapshots of every screen below that is drawn live in
 | After capture, auto capture, image editor selector, quick task menu and its editor | done (snapshots `after-capture*`, `auto-capture`, `editor-selector`, `quick-task-*`) |
 | First run (`FirstTimeConfig`), about, debug log, components | done (snapshots `first-run`, `about`, `debug-log*`, `components`) |
 | Region capture overlay, recording frame and toolbar, scrolling capture window | done in drawing and behaviour with the fake desktop; real-window checks listed in `docs/handoff/app-3.md` (snapshots `region-capture*`, `recording-toolbar*`, `scrolling-capture`) |
-| History and image history windows (`ShareX.HistoryLib` views) | not done (outside the phase 3 brief; the history store and the Upload tab's history are done) |
+| History and image history windows (`ShareX.HistoryLib` views) | done (phase 5; see "ShareX tools") |
 | Image editor | done in drawing and behaviour headlessly; see "Image editor" below |
-| Image effects and the other ShareX tools | phase 5 |
+| ShareX tools | done (phase 5; see "ShareX tools"); the image effects window is the effects branch's |
+
+## ShareX tools (phase 5: crate `modlight-tools`, windows in `modlight-app/src/tools/`)
+
+Each tool runs from its hotkey, the tray's Tools menu and the Tools tab (`tools::jobs::run`),
+and from the after-capture tasks and the history windows where upstream reaches it. Real-window
+checks and the permissions they need are in `docs/handoff/app-5-tools.md`.
+
+| Upstream | State | Notes |
+|---|---|---|
+| Colour picker (`ColorPickerWindow`, `ColorPickerViewModel`) | done | Recent colours, standard palette, formats, copy; also the settings' and editor's colour dialogs' "pick from screen". Snapshots `color-picker*`. |
+| Screen colour picker (`ScreenColorPickerWindow`) | done | Frozen desktop (ScreenCaptureKit), magnifier, info text, copy formats; the editor's "Pick colour from screen". Snapshot `screen-color-picker`. |
+| Pin to screen (`PinToScreenWindow`, startup, options, close all) | done | From the screen, clipboard, file, a task, the editor and the notices; zoom, opacity, move, toolbar, minimise. Snapshots `pin-*`, `pinned-image`. |
+| Image viewer (`ImageViewerWindow`) | done | Full-screen, folder navigation, the history's neighbours. Snapshot `image-viewer`. |
+| Input box, output box, error window | done | The output box shows a failed recording's ffmpeg output; the error window catches panics off the UI thread. Snapshots `input-box`, `output-box`, `error-window`. |
+| Print (`PrintWindow`, `PrintHelper`) | done | `NSPrintOperation`; preview as a PDF in Preview. Snapshots `print`, `print-settings`. |
+| Image combiner | done | Snapshots `image-combiner*`. |
+| Video converter | done | ffmpeg from Components; tested with Homebrew's ffmpeg (`tests/tools_video.rs`). Snapshots `video-converter*`. |
+| Metadata viewer, strip metadata | done | ExifTool (Perl) from Components; tested with a stand-in script. Snapshots `metadata*`. |
+| Directory indexer (HTML, text, XML, JSON) and the clipboard upload's folder indexing | done | Output tests per format. |
+| QR code (generate, decode a picture, scan the screen or a region) | done | rxing (ZXing); round-trip tests. Snapshots `qr-code*`. |
+| OCR (`OCRWindow`, silent mode, the after-capture task) | done | Apple Vision. Snapshots `ocr*`. |
+| Analyze image (`AnalyzeImageWindow`, options) | done | OpenAI (Responses and legacy Chat Completions), Gemini, OpenRouter; requests tested against a stub on 127.0.0.1. Not in the menus, as upstream. Snapshots `analyze-image*`. |
+| Background remover | done | ONNX Runtime with Core ML or the CPU (`modlight_core::background_removal`, also behind `remove_background`); tested with a hand-written ONNX model. Snapshots `background-remover*`. |
+| Active window borderless | done (closest macOS behaviour) | Fills the screen through Accessibility; see `MACOS.md`. |
+| Active window top-most | not possible | macOS gives no public way; the hotkey says so (`MACOS.md`). |
+| History, image history | done | On `History.db`. Snapshots `history*`, `image-history*`. |
+| Toggle tray menu (`HotkeyType.ToggleTrayMenu`) | not done | Says "later". |
 
 ## Image editor (`ShareX.ImageEditor`, crate `modlight-editor`)
 
@@ -91,7 +118,7 @@ The map of the crate and the effect registry contract are in `EDITOR.md`. Snapsh
 | Background panel (margin, padding, smart padding, corner, shadow, ratio, gradient presets, colour, image, wallpaper) | done | Wallpaper through `NSWorkspace`. |
 | Effect browser, schema-driven dialog, preview | done | Registry with the editor operations and three sample effects; the effect library plugs in (`EDITOR.md`). |
 | Dialogs: start screen, new image, insert image, emoji picker, exit confirmation, toolbar customisation | done | |
-| Integration: Image editor hotkey and selector, after-capture "Annotate image" (task mode), "Beautify image" (Background panel open), the notice's "Annotate image", save, copy, upload, open, URL, clipboard | done | Print, pin to screen and the screen colour picker say "later" (phase 5). |
+| Integration: Image editor hotkey and selector, after-capture "Annotate image" (task mode), "Beautify image" (Background panel open), the notice's "Annotate image", save, copy, upload, open, URL, clipboard, print, pin to screen, the screen colour picker | done | Print, pin and the screen colour picker are phase 5's tools. |
 | Region capture's annotation tools (`EditorView` as the overlay's workspace) | done | The editor under the overlay (one canvas per display), the tool strip beside the region tool with the options row, keys to the editor first; the annotations go with the captured picture. Snapshot `region-capture-annotate`. |
 
 ## Engine

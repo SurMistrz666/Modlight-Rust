@@ -377,10 +377,20 @@ impl AppState {
                     s.editor.close_after_task_action();
                 }
             }
-            // Printing and pinning are later phases (MACOS.md).
-            Request::Print | Request::PinToScreen | Request::PickScreenColor(_) => {
-                self.push(crate::commands::Command::NotYet);
+            // `TaskHelpers.PrintImage(image)` (phase 5, `tools::print`).
+            Request::Print => {
+                if let Some(image) = self.session(key).and_then(|s| s.editor.snapshot()) {
+                    self.print_picture(image);
+                }
             }
+            // `TaskHelpers.PinToScreen(image)` (phase 5, `tools::pin`).
+            Request::PinToScreen => {
+                if let Some(image) = self.session(key).and_then(|s| s.editor.snapshot()) {
+                    self.pin_picture(std::sync::Arc::new(image), &settings);
+                }
+            }
+            // The screen colour picker (phase 5, `tools::editor_hooks`).
+            Request::PickScreenColor(target) => self.editor_pick_screen_color(key, target),
             Request::OpenImage
             | Request::InsertImage
             | Request::ReplaceImage(_)

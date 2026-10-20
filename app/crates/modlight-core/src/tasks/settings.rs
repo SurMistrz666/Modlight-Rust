@@ -636,6 +636,10 @@ pub struct TaskSettings {
     #[serde(deserialize_with = "null_default")]
     pub external_programs: Vec<ExternalProgram>,
     pub use_default_tools_settings: bool,
+    /// `ToolsSettings` as the file has it (phase 5's tools read their options from it
+    /// through `modlight_tools::settings`).
+    #[serde(rename = "ToolsSettings")]
+    pub tools_settings: Value,
     pub use_default_advanced_settings: bool,
     #[serde(deserialize_with = "null_default")]
     pub advanced_settings: AdvancedSettings,
@@ -665,6 +669,7 @@ impl Default for TaskSettings {
             use_default_upload_settings: true,
             use_default_actions: true,
             use_default_tools_settings: true,
+            tools_settings: Value::Null,
             use_default_advanced_settings: true,
             capture_settings: crate::capture::options::CaptureSettings::default(),
             external_programs: Vec::new(),

@@ -6,6 +6,7 @@ members = [
     "crates/modlight-app",
     "crates/modlight-editor",
     "crates/modlight-effects",
+    "crates/modlight-tools",
 ]
 resolver = "3"
 
@@ -22,6 +23,7 @@ modlight-core = { path = "crates/modlight-core" }
 modlight-macos = { path = "crates/modlight-macos" }
 modlight-editor = { path = "crates/modlight-editor" }
 modlight-effects = { path = "crates/modlight-effects" }
+modlight-tools = { path = "crates/modlight-tools" }
 
 anyhow = "1"
 thiserror = "2"
@@ -49,6 +51,9 @@ tempfile = "3"
 roxmltree = "0.20"
 log = "0.4"
 base64 = "0.22"
+# ONNX Runtime for the background remover: the official build (1.31, with Core ML) linked
+# statically; ort-sys fetches it while building and checks its pinned SHA-256.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "coreml"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 notify = { version = "8.2", default-features = false, features = ["macos_fsevent"] }
 

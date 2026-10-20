@@ -1639,29 +1639,13 @@ fn ocr(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
         t(s::TaskSettingsWindow_OpticalCharacterRecognition),
         on,
         |ui| {
-            // The languages come from the OCR engine (Vision, phase 5); until it is there
-            // the list is upstream's "unavailable" state.
+            // The languages come from the OCR engine (Vision, phase 5 `tools::ocr`).
             row(
                 ui,
                 colors,
                 TASK_ROW,
                 t(s::TaskSettingsWindow_DefaultLanguage),
-                |ui| {
-                    ui.add_enabled_ui(false, |ui| {
-                        let list = vec![(
-                            0usize,
-                            t(s::TaskSettingsWindow_OCRLanguagesAreUnavailable).to_string(),
-                        )];
-                        let _ = crate::widgets::combo(
-                            ui,
-                            colors,
-                            "ocr-language",
-                            250.0,
-                            &0usize,
-                            &list,
-                        );
-                    });
-                },
+                |ui| crate::tools::ocr::settings_language_combo(ui, colors, b, &o("Language")),
             );
             let silent = check(
                 ui,

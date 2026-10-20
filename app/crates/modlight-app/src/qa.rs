@@ -138,6 +138,50 @@ pub const SCREENS: &[&str] = &[
     "ffmpeg-options-video",
     "ffmpeg-options-audio",
     "ffmpeg-options-advanced",
+    // Phase 5, tools (`tools::qa::SCREENS`).
+    "color-picker",
+    "color-picker-standard",
+    "screen-color-picker",
+    "qr-code",
+    "qr-code-empty",
+    "image-viewer",
+    "pin-startup",
+    "pin-startup-error",
+    "pin-options",
+    "pinned-image",
+    "image-combiner",
+    "image-combiner-empty",
+    "video-converter",
+    "video-converter-encoding",
+    "video-converter-empty",
+    "metadata",
+    "metadata-strip",
+    "metadata-empty",
+    "input-box",
+    "output-box",
+    "error-window",
+    "ocr",
+    "ocr-services",
+    "ocr-error",
+    "analyze-image",
+    "analyze-image-empty",
+    "analyze-image-error",
+    "analyze-image-options",
+    "analyze-image-options-gemini",
+    "background-remover",
+    "background-remover-source",
+    "background-remover-empty",
+    "history",
+    "history-advanced",
+    "history-empty",
+    "history-edit",
+    "history-stats",
+    "history-delete",
+    "image-history",
+    "image-history-settings",
+    "image-history-import",
+    "print",
+    "print-settings",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.
@@ -609,6 +653,9 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
     if let Some(size) = crate::qa_editor::prepare(screen, state) {
         return size;
     }
+    if let Some(size) = crate::tools::qa::prepare(screen, state, ctx) {
+        return size;
+    }
     match screen {
         "my-space" | "toasts" | "my-space-wide" => {
             load_library(state, ctx, files(), 9);
@@ -836,6 +883,7 @@ pub fn is_main_window(screen: &str) -> bool {
         && !crate::qa_media::is_dialog(screen)
         && !crate::qa_settings::is_dialog(screen)
         && !crate::qa_editor::is_dialog(screen)
+        && !crate::tools::qa::is_dialog(screen)
         && !matches!(
             screen,
             "sign-in"
@@ -899,6 +947,10 @@ impl eframe::App for ShotApp {
             return;
         }
         if let Some(wanted) = crate::qa_editor::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
+        if let Some(wanted) = crate::tools::qa::draw(&self.screen, ui, state) {
             self.wanted = wanted;
             return;
         }
