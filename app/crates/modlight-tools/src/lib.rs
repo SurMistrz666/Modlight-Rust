@@ -11,6 +11,7 @@ pub mod color_format;
 pub mod color_picker;
 pub mod combine;
 pub mod dotnet;
+pub mod history;
 pub mod images;
 pub mod indexer;
 pub mod metadata;

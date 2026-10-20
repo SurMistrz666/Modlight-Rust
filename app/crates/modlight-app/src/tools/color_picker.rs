@@ -240,6 +240,7 @@ impl ToolWindow for ColorPickerWindow {
             topmost: self.selection_mode(),
             fit_height: true,
             screen: None,
+            position: None,
         }
     }
 

@@ -45,6 +45,15 @@ pub const SCREENS: &[&str] = &[
     "background-remover",
     "background-remover-source",
     "background-remover-empty",
+    "history",
+    "history-advanced",
+    "history-empty",
+    "history-edit",
+    "history-stats",
+    "history-delete",
+    "image-history",
+    "image-history-settings",
+    "image-history-import",
 ];
 
 /// ExifTool's `-G -t` output for the fixture photo.
@@ -504,8 +513,166 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
             }
             Some(vec2(1080.0, 720.0))
         }
+        "history" | "history-advanced" | "history-empty" | "history-edit" | "history-stats"
+        | "history-delete" => {
+            use super::history::{Act, HistoryHost, Modal};
+            use super::history_list::HistoryWindow;
+            let settings = modlight_tools::settings::HistorySettings::default();
+            let key = state
+                .tools
+                .open_keyed(|key| Box::new(HistoryWindow::new(key, None, settings)));
+            let items = if screen == "history-empty" {
+                Vec::new()
+            } else {
+                history_items()
+            };
+            super::with_window::<HistoryWindow, _>(state, key, |window, state| {
+                window.qa_load(state, items);
+                match screen {
+                    "history-advanced" => {
+                        window.advanced = true;
+                        window.adv.type_on = true;
+                        window.adv.kind = window.types.iter().position(|t| t == "Image");
+                        window.refilter(state);
+                    }
+                    "history-edit" => {
+                        window.selected = vec![4];
+                        super::history::run(window, state, Act::EditItem);
+                    }
+                    "history-stats" => {
+                        window.data.modal = Some(Modal::Stats(modlight_tools::history::stats(
+                            &window.data.items,
+                        )));
+                    }
+                    "history-delete" => {
+                        window.selected = vec![12, 11, 10];
+                        super::history::run(window, state, Act::DeleteFile);
+                    }
+                    _ => {}
+                }
+            });
+            Some(vec2(1300.0, 700.0))
+        }
+        "image-history" | "image-history-settings" | "image-history-import" => {
+            use super::image_history::ImageHistoryWindow;
+            let settings = modlight_tools::settings::ImageHistorySettings::default();
+            let key = state
+                .tools
+                .open_keyed(|key| Box::new(ImageHistoryWindow::new(key, None, settings)));
+            super::with_window::<ImageHistoryWindow, _>(state, key, |window, state| {
+                window.qa_load(state, history_items());
+                window.selected = vec![12];
+                match screen {
+                    "image-history-settings" => window.qa_open_settings(),
+                    "image-history-import" => {
+                        super::history::open_import(window, true);
+                        if let Some(super::history::Modal::Import(form)) =
+                            window.data.modal.as_mut()
+                        {
+                            form.folder = "/Users/alex/Pictures/Screenshots".into();
+                            form.status = modlight_core::l10n::format(
+                                modlight_core::l10n::t(modlight_core::l10n::history::ImageHistoryWindow_SuccessfullyImportedFilesFormat),
+                                &[modlight_core::l10n::Arg::Int(1284)],
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            });
+            Some(vec2(1100.0, 720.0))
+        }
         _ => None,
     }
+}
+
+/// History rows for the history windows' QA screens, oldest first (ids 1 to 12). The
+/// three newest pictures are the fixture files; the rest point at files that are not
+/// there.
+pub fn history_items() -> Vec<modlight_core::history::HistoryItem> {
+    use modlight_core::history::{HistoryItem, HistoryTags};
+    use modlight_tools::history::at;
+    let files = fixture_files();
+    type Row<'a> = (&'a str, &'a str, &'a str, (i32, u32, u32, u32, u32));
+    let rows: [Row; 12] = [
+        ("Q3-report.pdf", "File", "Finder", (2025, 11, 3, 9, 12)),
+        (
+            "meeting-notes.txt",
+            "Text",
+            "TextEdit",
+            (2025, 12, 1, 14, 40),
+        ),
+        (
+            "onboarding.mp4",
+            "File",
+            "QuickTime Player",
+            (2026, 1, 15, 10, 5),
+        ),
+        ("logo-draft.png", "Image", "Figma", (2026, 2, 2, 16, 22)),
+        (
+            "dashboard-dark.png",
+            "Image",
+            "Safari",
+            (2026, 3, 9, 11, 48),
+        ),
+        ("snippet.rs", "Text", "Xcode", (2026, 4, 21, 18, 3)),
+        ("bug-repro.gif", "Image", "Simulator", (2026, 5, 30, 13, 27)),
+        ("invoice-0420.pdf", "File", "Preview", (2026, 6, 12, 8, 55)),
+        ("roadmap.png", "Image", "Keynote", (2026, 8, 18, 15, 10)),
+        ("brand-palette.png", "Image", "Figma", (2026, 9, 14, 19, 42)),
+        (
+            "aurora-wallpaper.png",
+            "Image",
+            "Photos",
+            (2026, 10, 2, 7, 30),
+        ),
+        (
+            "mountain-sunset.png",
+            "Image",
+            "Photos",
+            (2026, 10, 19, 21, 4),
+        ),
+    ];
+    rows.iter()
+        .enumerate()
+        .map(|(index, (name, kind, process, (y, mo, d, h, mi)))| {
+            let id = index as i64 + 1;
+            let file_path = match *name {
+                "mountain-sunset.png" => files[0].to_string_lossy().into_owned(),
+                "aurora-wallpaper.png" => files[1].to_string_lossy().into_owned(),
+                "brand-palette.png" => files[2].to_string_lossy().into_owned(),
+                other => format!("/Users/alex/Pictures/Modlight/{other}"),
+            };
+            let mut tags = HistoryTags::new();
+            tags.insert("WindowTitle", Some(format!("{name} - {process}")));
+            tags.insert("ProcessName", Some(process.to_string()));
+            let mut item = HistoryItem {
+                id,
+                file_name: name.to_string(),
+                file_path,
+                date_time: Some(at(*y, *mo, *d, *h, *mi)),
+                kind: kind.to_string(),
+                host: "Modlight".into(),
+                url: format!(
+                    "https://files.example.com/alex/{id:02}x{}",
+                    &name[name.rfind('.').unwrap_or(0)..]
+                ),
+                tags: Some(tags),
+                ..HistoryItem::default()
+            };
+            if *kind == "Image" {
+                item.thumbnail_url = format!("https://files.example.com/alex/{id:02}x-thumb.jpg");
+            }
+            if matches!(id, 4 | 10) {
+                item.set_favorite(true);
+            }
+            if id == 5 {
+                item.set_tag("release");
+                item.shortened_url = "https://mdl.ink/k3Q9".into();
+                item.deletion_url = "https://files.example.com/delete/05x".into();
+            }
+            item
+        })
+        .collect()
 }
 
 /// Draw `screen`'s window; `Some(height)` for windows whose height follows the content.

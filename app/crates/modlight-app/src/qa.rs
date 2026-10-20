@@ -171,6 +171,15 @@ pub const SCREENS: &[&str] = &[
     "background-remover",
     "background-remover-source",
     "background-remover-empty",
+    "history",
+    "history-advanced",
+    "history-empty",
+    "history-edit",
+    "history-stats",
+    "history-delete",
+    "image-history",
+    "image-history-settings",
+    "image-history-import",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

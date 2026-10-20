@@ -213,6 +213,7 @@ impl ToolWindow for ImageViewerWindow {
             topmost: true,
             fit_height: false,
             screen: Some(self.screen),
+            position: None,
         }
     }
 
