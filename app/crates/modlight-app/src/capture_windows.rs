@@ -181,6 +181,42 @@ impl ModlightApp {
                 state.captures.quick_task_editor = None;
             }
         }
+        // One hotkey's settings: the settings shell drawn with that window in the
+        // settings slot for the length of the frame.
+        if state.windows.hotkey_task.is_some() {
+            let hotkey = state.windows.hotkey_task.take();
+            let main_settings = std::mem::replace(&mut state.windows.settings, hotkey);
+            let title = state
+                .windows
+                .settings
+                .as_ref()
+                .map(|w| w.title.clone())
+                .unwrap_or_default();
+            let (asks, close) = dialog_resizable(
+                ctx,
+                "hotkey-task-settings",
+                &title,
+                vec2(crate::settings::WIDTH, crate::settings::HEIGHT),
+                vec2(crate::settings::MIN_WIDTH, crate::settings::MIN_HEIGHT),
+                Placement::owner(main),
+                |ui| crate::settings::ui(ui, state),
+            );
+            let mut closing = close;
+            let mut rest = Vec::new();
+            for ask in asks {
+                match ask {
+                    crate::settings::SettingsAsk::Close => closing = true,
+                    other => rest.push(other),
+                }
+            }
+            crate::settings::handle(state, rest);
+            let hotkey = std::mem::replace(&mut state.windows.settings, main_settings);
+            state.windows.hotkey_task = hotkey;
+            if closing {
+                state.close_hotkey_task_settings();
+            }
+        }
+
         // The screen recording options (`FFmpegOptionsWindow`, CenterOwner).
         if let Some(window) = state.captures.ffmpeg_window.as_mut() {
             use crate::ffmpeg_window as f;

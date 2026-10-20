@@ -511,8 +511,14 @@ impl HotkeyInfo {
             text.push_str(t(helpers::HotkeyInfo_Caps_lock));
         } else if code == 34 {
             text.push_str(t(helpers::HotkeyInfo_Page_down));
+        } else if code == 44 {
+            // Print Screen, Scroll Lock and Pause are F13, F14 and F15 on a Mac
+            // (`code_for` in modlight-macos), and the label says so.
+            text.push_str("F13");
         } else if code == 145 {
-            text.push_str(t(helpers::HotkeyInfo_Scroll_lock));
+            text.push_str("F14");
+        } else if code == 19 {
+            text.push_str("F15");
         } else if (48..=57).contains(&code) {
             text.push_str(&(code - 48).to_string());
         } else if (96..=105).contains(&code) {
@@ -540,6 +546,40 @@ impl HotkeyInfo {
     fn write_into(&self, object: &mut Map<String, Value>) {
         object.insert("Hotkey".into(), self.hotkey.to_value());
         object.insert("Win".into(), json!(self.win));
+    }
+}
+
+/// `HotkeySettingsAvaloniaService.ConvertGesture` for a key pressed on a Mac: the key's
+/// WinForms name (`None` while only modifiers are down), then Command (`Control`), Shift,
+/// Option (`Alt`) and Control (`Win`). F13, F14 and F15 are stored as Print Screen,
+/// Scroll Lock and Pause, the keys in their place, so a binding means the same key on
+/// Windows.
+pub fn gesture(
+    key: Option<&str>,
+    command: bool,
+    shift: bool,
+    option: bool,
+    control: bool,
+) -> HotkeyInfo {
+    let name = match key {
+        Some("F13") => Some("PrintScreen"),
+        Some("F14") => Some("Scroll"),
+        Some("F15") => Some("Pause"),
+        other => other,
+    };
+    let mut bits = name.and_then(key_code).unwrap_or(0);
+    if command {
+        bits |= Keys::CONTROL;
+    }
+    if shift {
+        bits |= Keys::SHIFT;
+    }
+    if option {
+        bits |= Keys::ALT;
+    }
+    HotkeyInfo {
+        hotkey: Keys(bits),
+        win: control,
     }
 }
 
@@ -981,6 +1021,71 @@ pub fn load(config: &AppConfig) -> Vec<HotkeySettings> {
     }
 }
 
+/// The groups of a `TaskSettings` and the flag that says the defaults stand in for each.
+const TASK_GROUPS: [(&str, &str); 7] = [
+    ("UseDefaultGeneralSettings", "GeneralSettings"),
+    ("UseDefaultImageSettings", "ImageSettings"),
+    ("UseDefaultCaptureSettings", "CaptureSettings"),
+    ("UseDefaultUploadSettings", "UploadSettings"),
+    ("UseDefaultActions", "ExternalPrograms"),
+    ("UseDefaultToolsSettings", "ToolsSettings"),
+    ("UseDefaultAdvancedSettings", "AdvancedSettings"),
+];
+
+fn uses_default(task: &Value, flag: &str) -> bool {
+    task.get(flag).and_then(Value::as_bool).unwrap_or(true)
+}
+
+/// `TaskSettings.SetDefaultSettings`: every part a hotkey takes from the defaults gets a
+/// copy of them, so its settings window shows what it runs with.
+pub fn set_default_settings(task: &mut Value, defaults: &Value) {
+    if !task.is_object() {
+        *task = json!({});
+    }
+    let copy = |name: &str| defaults.get(name).cloned().unwrap_or(Value::Null);
+    if uses_default(task, "UseDefaultAfterCaptureJob") {
+        task["AfterCaptureJob"] = copy("AfterCaptureJob");
+    }
+    if uses_default(task, "UseDefaultAfterUploadJob") {
+        task["AfterUploadJob"] = copy("AfterUploadJob");
+    }
+    if uses_default(task, "UseDefaultDestinations") {
+        for name in [
+            "ImageDestination",
+            "ImageFileDestination",
+            "TextDestination",
+            "TextFileDestination",
+            "FileDestination",
+            "URLShortenerDestination",
+            "URLSharingServiceDestination",
+        ] {
+            task[name] = copy(name);
+        }
+    }
+    for (flag, group) in TASK_GROUPS {
+        if uses_default(task, flag) {
+            task[group] = copy(group);
+        }
+    }
+    // Members the defaults never had stay out rather than becoming null.
+    if let Value::Object(map) = task {
+        map.retain(|_, v| !v.is_null());
+    }
+}
+
+/// `TaskSettings.Cleanup` (`SettingManager.CleanupHotkeysConfig`): the parts a hotkey
+/// takes from the defaults are written as `null`.
+pub fn cleanup(task: &mut Value) {
+    if !task.is_object() {
+        return;
+    }
+    for (flag, group) in TASK_GROUPS {
+        if uses_default(task, flag) {
+            task[group] = Value::Null;
+        }
+    }
+}
+
 /// Write the list back, keeping every member of each entry this build does not know.
 pub fn save(config: &mut AppConfig, hotkeys: &[HotkeySettings]) {
     let mut document = config.hotkeys().cloned().unwrap_or_default();
@@ -991,7 +1096,13 @@ pub fn save(config: &mut AppConfig, hotkeys: &[HotkeySettings]) {
     let list: Vec<Value> = hotkeys
         .iter()
         .enumerate()
-        .map(|(i, h)| h.to_value(original.get(i)))
+        .map(|(i, h)| {
+            let mut value = h.to_value(original.get(i));
+            if let Some(task) = value.get_mut("TaskSettings") {
+                cleanup(task);
+            }
+            value
+        })
         .collect();
     document.insert("Hotkeys".into(), Value::Array(list));
     document
@@ -1013,6 +1124,53 @@ pub fn windows_modifier_keys() -> [Key; 4] {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_hotkey_shows_the_defaults_and_saves_them_as_null() {
+        let defaults = serde_json::json!({
+            "AfterCaptureJob": "CopyImageToClipboard, SaveImageToFile",
+            "GeneralSettings": {"PlaySoundAfterCapture": false},
+            "CaptureSettings": {"ShowCursor": false}
+        });
+        let mut task = serde_json::json!({"Job": "RectangleRegion", "UseDefaultCaptureSettings": false, "CaptureSettings": {"ShowCursor": true}});
+        super::set_default_settings(&mut task, &defaults);
+        assert_eq!(
+            task["GeneralSettings"]["PlaySoundAfterCapture"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            task["CaptureSettings"]["ShowCursor"],
+            serde_json::json!(true)
+        );
+        assert_eq!(task["AfterCaptureJob"], defaults["AfterCaptureJob"]);
+        super::cleanup(&mut task);
+        assert!(task["GeneralSettings"].is_null());
+        assert_eq!(
+            task["CaptureSettings"]["ShowCursor"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn a_mac_gesture_becomes_a_windows_binding() {
+        let info = super::gesture(Some("D2"), true, true, false, false);
+        assert_eq!(
+            info.hotkey.to_value(),
+            serde_json::json!("D2, Shift, Control")
+        );
+        assert!(!info.win);
+        assert_eq!(
+            info.text(),
+            format!("Cmd + {} + 2", super::modifier_names()[1])
+        );
+        let print = super::gesture(Some("F13"), false, false, false, true);
+        assert_eq!(print.key_code(), 44);
+        assert!(print.win);
+        assert!(print.text().ends_with("F13"));
+        let modifiers = super::gesture(None, true, false, true, false);
+        assert!(modifiers.is_only_modifiers() || modifiers.key_code() == 0);
+        assert!(!modifiers.is_valid());
+    }
+
     use super::*;
     use crate::l10n::{Language, set_thread_language};
 
@@ -1042,10 +1200,7 @@ mod tests {
         set_thread_language(Some(Language::English));
         let info = HotkeyInfo::new(Keys::CONTROL | Keys::SHIFT | 50);
         assert_eq!(info.text(), "Cmd + Shift + 2");
-        assert_eq!(
-            HotkeyInfo::new(Keys::ALT | 44).text(),
-            "Option + Print Screen"
-        );
+        assert_eq!(HotkeyInfo::new(Keys::ALT | 44).text(), "Option + F13");
         assert_eq!(HotkeyInfo::new(34).text(), t(helpers::HotkeyInfo_Page_down));
         assert_eq!(HotkeyInfo::new(Keys::CONTROL | 99).text(), "Cmd + Numpad 3");
         let only = HotkeyInfo::new(Keys::CONTROL | 17);

@@ -129,7 +129,7 @@ fn session(kind: RegionKind) -> RegionSession {
     RegionSession::new(request)
 }
 
-fn registered_hotkeys(failed: bool) -> HotkeyManager {
+pub fn registered_hotkeys(failed: bool) -> HotkeyManager {
     let backend = FakeBackend {
         taken: if failed {
             vec![HotkeyInfo::new(Keys::CONTROL | Keys::SHIFT | 49)]
