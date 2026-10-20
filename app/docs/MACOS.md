@@ -70,6 +70,21 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | `ImageHelpers.LoadImage` on files, the clipboard and URLs | `modlight_core::image_decode`'s limits, EXIF orientation applied | |
 | Unhandled exceptions window | Panics on background threads open the error window | |
 
+## Image effects (phase 5)
+
+| Windows (upstream) | macOS (this port) | Notes |
+|---|---|---|
+| SkiaSharp 3.119 (the editor's effects, `ShareX.ImageEditor/Core/ImageEffects`) | `modlight_effects::sk`: Skia's arithmetic in Rust over tiny-skia | Colour filters, convolution, morphology, blurs, blend modes, sampling, hairlines, rectangle anti-aliasing and sprite blits follow Skia m119's code; pixels compared with goldens rendered by the real SkiaSharp in Docker (230 effects, 677 cases, `tests/golden.rs`). Skia's analytic anti-aliasing of rotated and curved shapes is tiny-skia's supersampling here (edges within 3% of pixels: Rounded corners, Art deco border, Celtic knot border, Stripe overlay), and small dots at the canvas edge (Color halftone, Engraving, Pointillism) are compared blurred. |
+| Gamma (`SKColorFilter.CreateTable(null, t, t, t)`) | The table applied to the colour channels, alpha untouched | SkiaSharp 3.119.4 throws `ArgumentNullException` for the null alpha table, so the effect fails on Windows; the port does what it was written to do. |
+| Windows fonts in the text effects (ASCII art, Draw text, Text watermark, Matrix digital rain) | The macOS font of the same family when there is one, else the app's Inter | Their goldens are rendered and kept but not compared (Linux fonts in the container). |
+| GDI+ (`System.Drawing`) of the classic effects (`ShareX.ImageEffectsLib`, the task settings' presets) | The same operations written out over Skia-style rasterisation (`modlight_effects::classic::gdi`) | System.Drawing exists only on Windows in .NET 10, so no goldens can be made in a container: the classic effects are covered by unit tests of their arithmetic and a contact sheet (`contact_sheet` test, ignored). Bicubic resampling is Catmull-Rom with GDI+'s widened kernel; text is drawn with the fonts above. |
+| `%ShareXImageEffects%`, `Documents\Modlight\ImageEffects` | `~/Library/Application Support/Modlight/ImageEffects` | Packages (`.sxie`) unpack there; imported presets keep picture paths only inside it. |
+| `TryGetSafeLocalPath`: no reparse point on the way to a picture | No symbolic link on the way, except macOS's own `/tmp`, `/var` and `/etc` (links into `/private` that every temporary path passes through) | |
+| `.sxie` file association and `ShareX.exe -ImageEffect <file>` | Dropping a `.sxie` on the Image effects window | The app has no document types or command line yet; `AppState::import_image_effect` (unpack, presets window, "enable image effects?") is ready for them. |
+| `ColorView` in the options panel and the gradient flyout | The editor's colour panel (see the editor rows) | |
+| "Image effects page..." (getsharex.com) | Not drawn | As the other help buttons. |
+| Tray: "Add image effects" with its presets as children of a checked item | A submenu whose first item is the "Enable add image effects" check | Menu bar menus cannot both check an item and open a submenu from it. |
+
 ## Components, downloads and updates (phase 3, media)
 
 | Windows (upstream) | macOS (this port) | Notes |

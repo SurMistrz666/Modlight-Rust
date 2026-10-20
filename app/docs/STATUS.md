@@ -20,7 +20,7 @@ Snapshots of every screen below that is drawn live in
 | Download tab (`DownloadView`, yt-dlp) | done | Queue with pause/resume/cancel/retry/remove, format and destination strip, folder, ffmpeg and yt-dlp notices, error wording, update-and-retry, upload through the task flow. Not run against a real yt-dlp in a window yet. Snapshots `tab-download`, `tab-download-busy`, `tab-download-missing`, `download-youtube`. |
 | YouTube sign-in (`YouTubeSignInForm`, `YouTubeCookies`) | partial | WKWebView window; never opened by automation; real-window check needed. |
 | Capture tab (`IsCreateSelected`) | done | Tiles with their shortcuts, the capture menu, every capture kind (`capture_flow`). Snapshots `tab-create`, `tab-create-problem`, `capture-menu`. |
-| Tools tab cards | done | Cards drawn from the same list as upstream; every card runs its tool (phase 5, see "ShareX tools" below); the Image effects card belongs to the effects branch. |
+| Tools tab cards | done | Cards drawn from the same list as upstream; every card runs its tool (phase 5, see "ShareX tools" and "Image effects" below). |
 | Server tab (`AdminView`, disk report) | done | Read when opened (fresh for 2 min) and on Refresh; 404 settled through `/api/me`. Snapshots `tab-server`, `tab-server-problem`, `tab-server-loading`. |
 | Hotkey problem notice (`HotkeyProblemViewModel`) | done | On the Capture tab, with "Change shortcut". Snapshot `tab-create-problem`. |
 
@@ -53,7 +53,7 @@ Snapshots of every screen below that is drawn live in
 | Appearance: theme and colours | done |
 | Application: language and tray (with tray actions, updates card when a release host is built in), macOS integration, components, local folders, backup and cleanup, print, proxy, advanced | done (print's "Image print settings" waits for printing; proxy settings are stored, not applied) |
 | Sharing: copy formats (with their editor), from clipboard, upload limits, history | done |
-| Capture: region, screenshots (preconfigured region through the overlay), image format, effects, thumbnails, file names (previews) | done (effects configuration is phase 5) |
+| Capture: region, screenshots (preconfigured region through the overlay), image format, effects, thumbnails, file names (previews) | done ("Image effects configuration..." opens the presets window, see "Image effects") |
 | Screen recording page and FFmpeg options window (`FFmpegOptionsWindow`) | done; snapshots `settings-recorder`, `ffmpeg-options*` |
 | Text from image | done (Vision's languages; see "ShareX tools") |
 | Sounds and notifications (with the notification buttons editor) | done |
@@ -74,7 +74,8 @@ Snapshots of every screen below that is drawn live in
 | Region capture overlay, recording frame and toolbar, scrolling capture window | done in drawing and behaviour with the fake desktop; real-window checks listed in `docs/handoff/app-3.md` (snapshots `region-capture*`, `recording-toolbar*`, `scrolling-capture`) |
 | History and image history windows (`ShareX.HistoryLib` views) | done (phase 5; see "ShareX tools") |
 | Image editor | done in drawing and behaviour headlessly; see "Image editor" below |
-| ShareX tools | done (phase 5; see "ShareX tools"); the image effects window is the effects branch's |
+| ShareX tools | done (phase 5; see "ShareX tools") |
+| Image effects window, after-capture "Add image effects" | done (phase 5; see "Image effects") |
 
 ## ShareX tools (phase 5: crate `modlight-tools`, windows in `modlight-app/src/tools/`)
 
@@ -103,6 +104,23 @@ checks and the permissions they need are in `docs/handoff/app-5-tools.md`.
 | History, image history | done | On `History.db`. Snapshots `history*`, `image-history*`. |
 | Toggle tray menu (`HotkeyType.ToggleTrayMenu`) | not done | Says "later". |
 
+## Image effects (phase 5: crate `modlight-effects`, window in `modlight-app/src/tools/image_effects.rs`)
+
+Pixel code is in `modlight-effects` (no GUI); what differs from Windows is in `MACOS.md`
+("Image effects"). Handoff: `docs/handoff/app-5-effects.md`.
+
+| Upstream | State | Notes |
+|---|---|---|
+| Editor effects (`ShareX.ImageEditor/Core/ImageEffects`): Adjustments 32, Manipulations 33, Filters 149, Drawings 16 | done | Ids, names, categories, icons, parameters, ranges and defaults as upstream; pixels against SkiaSharp goldens (677 cases, `tests/golden.rs`, every effect required). Remove background is upstream's classic algorithm (the model is the Background remover's). |
+| Classic effects (`ShareX.ImageEffectsLib`, 51 classes) and `ImageEffectPreset` | done | Presets read and written in upstream's Newtonsoft JSON (`$type`, TypeConverter strings), stored in `ImageSettings.ImageEffectPresets`. No goldens (GDI+ is Windows-only); unit tests and the contact sheet. |
+| `ImageEffectPackager` (`.sxie`) | done | Export of `Config.json` and the assets folder's pictures; import refuses entries that leave the folder, links and non-pictures, 100 MB ceiling. |
+| `ImageEffectsWindow` (presets, tool and editor modes), options panel, gradient flyout, packager and confirmation windows | done | Snapshots `image-effects*`. |
+| Image effects hotkey, Tools menu and Tools tab card (`OpenImageEffects`) | done | |
+| Task settings "Image effects configuration..." (`OpenImageEffectsSingleton`) | done | One presets window at a time. |
+| After capture "Add image effects" (`ApplyImageEffects`): the window first when asked, random or selected preset | done | `TaskQuestion::ImageEffects`; no picture ends the task as upstream. |
+| Tray: "Add image effects" presets submenu (`BuildImageEffectPresetMenu`) | done | See `MACOS.md`. |
+| `.sxie` import (`ImportImageEffect`) | partial | By dropping on the window; no file association or command line yet (`MACOS.md`). |
+
 ## Image editor (`ShareX.ImageEditor`, crate `modlight-editor`)
 
 The map of the crate and the effect registry contract are in `EDITOR.md`. Snapshots:
@@ -116,7 +134,7 @@ The map of the crate and the effect registry contract are in `EDITOR.md`. Snapsh
 | Editor window (`EditorWindow`, `EditorView`, built-in toolbars) | done | Canvas with zoom levels, Cmd+wheel, pinch, middle-button pan, scroll; overlay chrome; text boxes; context menu; toast; options persisted in `ToolsSettings.ImageEditorOptions`. Real-window checks in `docs/handoff/app-4.md`. |
 | Annotation toolbar, tool options row and every picker (colour with `ColorView`, width, border style, corner radius, font family, alignment, arrow style, cursor type, font size, bold, italic, step type, start number, strength, spotlight blur, ellipse, tail, shadow with its options) | done | `ColorView` is an approximation (see `MACOS.md`). |
 | Background panel (margin, padding, smart padding, corner, shadow, ratio, gradient presets, colour, image, wallpaper) | done | Wallpaper through `NSWorkspace`. |
-| Effect browser, schema-driven dialog, preview | done | Registry with the editor operations and three sample effects; the effect library plugs in (`EDITOR.md`). |
+| Effect browser, schema-driven dialog, preview | done | All 230 effects of `modlight-effects`, registered at start (`EDITOR.md`). Snapshots `image-editor-effects`, `image-editor-effect-dialog`. |
 | Dialogs: start screen, new image, insert image, emoji picker, exit confirmation, toolbar customisation | done | |
 | Integration: Image editor hotkey and selector, after-capture "Annotate image" (task mode), "Beautify image" (Background panel open), the notice's "Annotate image", save, copy, upload, open, URL, clipboard, print, pin to screen, the screen colour picker | done | Print, pin and the screen colour picker are phase 5's tools. |
 | Region capture's annotation tools (`EditorView` as the overlay's workspace) | done | The editor under the overlay (one canvas per display), the tool strip beside the region tool with the options row, keys to the editor first; the annotations go with the captured picture. Snapshot `region-capture-annotate`. |
