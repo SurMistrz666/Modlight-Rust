@@ -566,6 +566,10 @@ python3 server/tests/parity_media/media_parity.py cards            # all 155 emb
 python3 server/tests/parity_media/convert_actions.py               # the convert RPC module, 20 checks
 ```
 
+Through the routes: part B's `tests/parity/media_serve.py` on the merged
+binary, 1113/1113 (with the reference image's ffmpeg; encoder-dependent
+bytes compared by decoded content).
+
 Measured on 2026-10-20 (libvips 8.18.7 here, 8.17.3 in the reference):
 statuses, meaningful headers and ffmpeg/ffprobe argument vectors identical
 in all 595 cases; outputs byte-identical for every JPEG, WebP (still and
