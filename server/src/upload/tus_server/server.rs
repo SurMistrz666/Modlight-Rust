@@ -113,6 +113,13 @@ pub struct ServerOptions {
     pub lock_drain_timeout: Duration,
     /// `MemoryLocker` acquire timeout (30 s by default).
     pub lock_timeout: Duration,
+    /// `disableTerminationForFinishedUploads` (false by default): DELETE on a
+    /// finished upload answers 400 instead of removing it.
+    pub disable_termination_for_finished_uploads: bool,
+    /// Whether GET streams a finished upload back (`GetHandler`, always on in
+    /// `@tus/server`). Off in Modlight: a finished upload is a media item and
+    /// is served only by the media routes, with their privacy and view checks.
+    pub serve_finished_uploads: bool,
 }
 
 /// `Server`
@@ -775,7 +782,16 @@ impl TusServer {
     async fn delete(&self, req: &TusRequest, ctx: &Context, headers: Headers) -> Result<Response, StoreError> {
         let id = self.file_id(req).ok_or(StoreError::Tus(errors::FILE_NOT_FOUND))?;
         let lock = self.locker.lock(&id, ctx).await?;
-        let removed = self.datastore.remove(&id).await;
+        let removed = async {
+            if self.options.disable_termination_for_finished_uploads {
+                let upload = self.datastore.get_upload(&id).await?;
+                if Some(upload.offset) == upload.size {
+                    return Err(StoreError::Tus(errors::INVALID_TERMINATION));
+                }
+            }
+            self.datastore.remove(&id).await
+        }
+        .await;
         lock.unlock();
         removed?;
         Ok(base_write(204, headers, ""))
@@ -784,7 +800,7 @@ impl TusServer {
     /// `GetHandler.send`: the bytes of a FINISHED upload still in the store,
     /// with a content type from its metadata (an inline allowlist).
     async fn get(&self, req: &TusRequest, ctx: &Context, mut headers: Headers) -> Result<Response, StoreError> {
-        if !self.datastore.supports_read() {
+        if !self.options.serve_finished_uploads || !self.datastore.supports_read() {
             return Err(errors::FILE_NOT_FOUND.into());
         }
         let id = self.file_id(req).ok_or(StoreError::Tus(errors::FILE_NOT_FOUND))?;
@@ -893,6 +909,127 @@ mod tests {
         assert!(parse_int("abc").is_nan());
         assert_eq!(parse_int(" 7"), 7.0);
         assert_eq!(parse_int("-3"), -3.0);
+    }
+
+    struct NoHooks;
+
+    impl TusHooks for NoHooks {
+        fn max_size<'a>(&'a self, _req: &'a TusRequest) -> BoxFuture<'a, u64> {
+            Box::pin(async { 0 })
+        }
+        fn on_upload_create<'a>(
+            &'a self,
+            _req: &'a TusRequest,
+            _upload: &'a Upload,
+        ) -> BoxFuture<'a, Result<Option<Metadata>, StoreError>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn on_upload_finish<'a>(
+            &'a self,
+            _req: &'a TusRequest,
+            _upload: &'a Upload,
+        ) -> BoxFuture<'a, Result<FinishPatch, StoreError>> {
+            Box::pin(async { Ok(FinishPatch { status_code: None, body: None, headers: vec![] }) })
+        }
+    }
+
+    fn server(dir: &std::path::Path, modlight: bool) -> TusServer {
+        let store = super::super::file_store::FileStore::new(dir.to_str().unwrap(), 0);
+        TusServer::new(
+            Arc::new(store),
+            ServerOptions {
+                path: "/api/files".into(),
+                respect_forwarded_headers: false,
+                lock_drain_timeout: Duration::from_millis(100),
+                lock_timeout: Duration::from_secs(5),
+                disable_termination_for_finished_uploads: modlight,
+                serve_finished_uploads: !modlight,
+            },
+            Arc::new(NoHooks),
+        )
+    }
+
+    async fn send(server: &TusServer, req: Request<Body>) -> (u16, String) {
+        let res = server.handle(req).await;
+        let status = res.status().as_u16();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// Creates an upload of `len` bytes, writes `written` of them; its path.
+    async fn upload(server: &TusServer, len: usize, written: usize) -> String {
+        let created = server
+            .handle(
+                Request::post("/api/files")
+                    .header("host", "127.0.0.1")
+                    .header("tus-resumable", "1.0.0")
+                    .header("upload-length", len.to_string())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(created.status().as_u16(), 201);
+        let location = created.headers().get("location").unwrap().to_str().unwrap().to_string();
+        let path = url::Url::parse(&location).unwrap().path().to_string();
+        if written > 0 {
+            let res = server
+                .handle(
+                    Request::patch(path.as_str())
+                        .header("tus-resumable", "1.0.0")
+                        .header("upload-offset", "0")
+                        .header("content-type", "application/offset+octet-stream")
+                        .body(Body::from(vec![b'x'; written]))
+                        .unwrap(),
+                )
+                .await;
+            assert_eq!(res.status().as_u16(), 204);
+        }
+        path
+    }
+
+    /// Security fix 7a (SKELETON.md 9): a finished upload is never streamed back
+    /// at its tus URL nor terminated there; an unfinished one still resumes and
+    /// can still be terminated. Upstream's defaults are kept for comparison.
+    #[tokio::test]
+    async fn finished_uploads_are_not_served_or_terminated() {
+        let dir = tempfile::tempdir().unwrap();
+        let upstream = server(dir.path(), false);
+        let done = upload(&upstream, 5, 5).await;
+        assert_eq!(
+            send(&upstream, Request::get(done.as_str()).body(Body::empty()).unwrap()).await,
+            (200, "xxxxx".into())
+        );
+
+        let modlight = server(dir.path(), true);
+        assert_eq!(
+            send(&modlight, Request::get(done.as_str()).body(Body::empty()).unwrap()).await,
+            (404, "The file for this url was not found\n".into())
+        );
+        let delete = || Request::delete(done.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap();
+        assert_eq!(send(&modlight, delete()).await, (400, "Cannot terminate an already completed upload".into()));
+        // Still there: the refusal removed nothing.
+        let head = Request::head(done.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap();
+        assert_eq!(send(&modlight, head).await.0, 200);
+
+        // Unfinished: HEAD reports the offset to resume from, PATCH resumes,
+        // GET serves nothing, DELETE terminates.
+        let partial = upload(&modlight, 10, 4).await;
+        let head = modlight
+            .handle(Request::head(partial.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap())
+            .await;
+        assert_eq!(head.headers().get("upload-offset").unwrap(), "4");
+        assert_eq!(send(&modlight, Request::get(partial.as_str()).body(Body::empty()).unwrap()).await.0, 404);
+        let resume = Request::patch(partial.as_str())
+            .header("tus-resumable", "1.0.0")
+            .header("upload-offset", "4")
+            .header("content-type", "application/offset+octet-stream")
+            .body(Body::from(vec![b'y'; 3]))
+            .unwrap();
+        assert_eq!(send(&modlight, resume).await.0, 204);
+        let terminate = Request::delete(partial.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap();
+        assert_eq!(send(&modlight, terminate).await.0, 204);
+        let head = Request::head(partial.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap();
+        assert_eq!(send(&modlight, head).await.0, 404);
     }
 
     #[test]
