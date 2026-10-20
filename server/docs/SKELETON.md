@@ -360,13 +360,9 @@ Deliberate, each for a reason:
 22. **`GET /api/link-info`** sends the handler's own `Vary: Authorization,
     Cookie` (Next replaces it with its `rsc, ...` list on every route handler;
     see 11).
-23. **Kept on purpose (upstream behaviour worth knowing)**: replacing or
-    removing an avatar or a wallpaper never deletes the previous object
-    (`UPDATE ... RETURNING` reads the NEW key, so `discard(old, key)` is a
-    no-op; confirmed on the reference); on S3 a finished tus upload stays
-    downloadable at its tus URL (`GET /api/files/<id>`), whatever the file's
-    later privacy or view limit, until the file is deleted; `listFolders`
+23. **Kept on purpose (upstream behaviour worth knowing)**: `listFolders`
     always reports `count: 0` (the subquery compares `uploads` with itself).
+    (This item also listed the two behaviours items 38 and 39 now fix.)
 24. **A thrown error in a route handler** answers 500 with
     `{"message":"Internal server error"}` (section 3); Next sends an empty
     500. Seen on `/api/duplicates` with an out-of-range count and on `/s/%00`.
@@ -452,6 +448,32 @@ Deliberate, each for a reason:
     and no motion tile (`not-animated`), on both servers.
 37. **Lookups by a caller's string** in `media/source_preview.rs` (paste
     language -> extension) use exact keys, as item 31 does for the card table.
+
+38. **Security fix: the tus URL of a finished upload** (integration,
+    2026-10-20). On S3 a finished tus upload IS the stored object (finalize
+    adopts the key in place) and its `<id>.info` record stayed, so upstream's
+    `GET /api/files/<id>` streamed the file to anybody holding the tus URL
+    whatever its later privacy, password or view limit, and `DELETE` (tus
+    termination, no authentication upstream) deleted the object from under
+    its media row. Now `GET` never serves a finished upload (404, as an
+    unknown id; the option `serve_finished_uploads`), `DELETE` of a finished
+    upload answers 400 "Cannot terminate an already completed upload"
+    (@tus/server's own `disableTerminationForFinishedUploads`), and once the
+    upload is finalized on S3 its tus record (`.info`, `.part`) is deleted, so
+    the URL answers 404 to HEAD/PATCH/DELETE exactly as on the local driver.
+    Unfinished uploads resume as before. Tests: `upload::tus_server::server`
+    `finished_uploads_are_not_served_or_terminated`, `tests/library_s3_e2e.rs`
+    (MinIO).
+39. **Replacing or removing an avatar or a wallpaper deletes the previous
+    object** (integration, 2026-10-20). Upstream's `UPDATE ... RETURNING`
+    read the NEW key, so `discard(old, key)` never deleted anything and every
+    replacement left an object behind for good. The previous key is now read
+    under the row lock of the same statement (`update ... from (select ... for
+    update) prev returning prev.<column>`), and its object is deleted after
+    the update; only this account's own keys (`avatars/<userId>-...`,
+    `backgrounds/<userId>-...`) are ever deleted, because `user.image` can also
+    be written through Better Auth's `update-user`. Test:
+    `tests/library_routes_db.rs` `replacing_avatar_or_wallpaper_deletes_the_previous_object`.
 
 ## 10. Verified on 2026-10-18
 
