@@ -11,6 +11,7 @@ pub mod admin;
 pub mod admin_library;
 pub mod authorize;
 pub mod avatar;
+pub mod convert;
 pub mod duplicates;
 pub mod folders;
 pub mod invite;
@@ -46,5 +47,6 @@ pub fn register_all(reg: &mut RpcRegistry) {
     shortlink_unlock::register(reg); // app/actions/shortlink-unlock.ts
     pastes::register(reg); // app/actions/pastes.ts
     admin_library::register(reg); // app/actions/admin.ts (orphans, account deletion, maintenance)
+    convert::register(reg); // app/actions/convert.ts
     unlock::register(reg); // app/actions/unlock.ts
 }

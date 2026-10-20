@@ -122,12 +122,26 @@ fn report_runtime_limits() {
     if cpu.is_none() && mem.is_none() {
         return; // not containerised; nothing to report
     }
-    let cpu = cpu.map(|c| c.to_string()).unwrap_or_else(|| "unlimited".into());
-    let mem = mem.map(|m| format!("{} MB", (m / (1024.0 * 1024.0)).round())).unwrap_or_else(|| "unlimited".into());
+    let cpu_text = cpu.map(|c| c.to_string()).unwrap_or_else(|| "unlimited".into());
+    let mb = |b: f64| (b / (1024.0 * 1024.0)).round();
+    let mem_text = mem.map(|m| format!("{} MB", mb(m))).unwrap_or_else(|| "unlimited".into());
+    // Upstream also printed the V8 heap and the libuv pool, which a Rust
+    // process does not have; the libvips thread count is the same setting.
     tracing::info!(
-        "> limits: cpu {cpu} core(s), memory {mem}, worker threads sized for {} core(s)",
+        "> limits: cpu {cpu_text} core(s), memory {mem_text}, libvips threads {}, worker threads sized for {} core(s)",
+        *modlight_server::media::sharp_runtime::SHARP_CONCURRENCY,
         effective_cpu_count()
     );
+    let budget = modlight_server::media::transform_cost::CONTAINER_MEMORY_BYTES as f64;
+    if let Some(m) = mem
+        && m != budget
+    {
+        tracing::warn!(
+            "> warning: the transform budget is sized for {} MB but this container has {} MB. Update CONTAINER_MEMORY_BYTES in src/media/transform_cost.rs.",
+            mb(budget),
+            mb(m)
+        );
+    }
 }
 
 async fn shutdown_signal() {

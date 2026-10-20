@@ -66,8 +66,8 @@ action errors), so upstream `.env` files keep their meaning.
 | `actions/admin_library.rs` | `app/actions/admin.ts` (loadOrphans, deleteOrphan, purgeAllOrphans, loadDeletionImpact, deleteUserAccount, recalculateEveryQuota, runStorageScan), `components/admin/confirm.ts` | done; registered as module `admin` beside the accounts port's own `actions/admin.rs` |
 | `js_value.rs` | (JavaScript operators on raw arguments) | done |
 | `actions/avatar.rs` | `app/actions/avatar.ts` | done (`myAvatar` is in CONTRACT 7.3 but unreachable on the reference build: no client component imports it) |
+| `actions/convert.rs` | `app/actions/convert.ts` | done (parity: `tests/parity_media/convert_actions.py`) |
 | `actions/unlock.rs` | `app/actions/unlock.ts` | done (`verifyMediaPassword`; parity `media_serve.py --only gates`) |
-| `actions/*` (others) | `app/actions/*.ts` | to do: `convert.ts` (convert in place) |
 | `pages/` | page data, SPA shell, metadata | done (framework + table of every page and route handler) |
 | `pages/root_layout.rs` | `app/layout.tsx` | done |
 | `pages/layout_app.rs`, `pages/layout_auth.rs`, account pages | `app/(app)/layout.tsx`, `app/(auth)/layout.tsx`, `/`, `/welcome`, `/download`, auth pages, `/dashboard/{profile,tokens,admin}` | done (accounts port; the `(app)` layout reads the library's data functions) |
@@ -89,16 +89,17 @@ action errors), so upstream `.env` files keep their meaning.
 | `upload/tus.rs`, `upload/tus_server/{server,store,file_store}.rs` | `lib/upload/tus.ts`, `@tus/server` 2.4.1, `@tus/utils` 0.7.0, `@tus/file-store` 2.1.0 | done (records interchangeable with the TS store; tus-js-client 4.3.1 resumes across both; `tests/parity/tus_client.cjs`) |
 | `upload/{finalize,disk,folder_target,duplicate_lookup,duplicate_check}.rs` | `lib/upload/*` | done |
 | `media/{sniff,mime,urls,paths,paste_type,actions,derived_cache,convert_targets,av_targets}.rs` | `lib/media/*` same names | done (`derived_cache`: keys, purge, `mayCacheDerived`; reading and writing cached conversions belongs to the media serving port) |
-| `media/motion_preview.rs` | `lib/media/motion-preview.ts` | partial: the row-level policy (`canMotionPreview`, `clampMotionEdge`); clip planning belongs to the processing port |
 | `media/serve.rs` | `lib/media/serve.ts` | done: `getMedia` (+ `lookup_media`, which tells a spent budget apart), `viewerRelation`, `consumeView`, `cacheHeadersFor`, `parseRange`, `streamMedia`; security fix 1 (the view grant, `ViewBudget`) |
-| `media/{bots,render_ticket,embed,card,link_formats,download_menu}.rs` | `lib/media/` same names | done (`card`: the mapping half; drawing the PNG is `card-render.ts`, the processing port's) |
-| `media/part_a.rs` | the processing half of `lib/media` as the serving half calls it | bridge: `docx-support`, `source-preview`, `timeline-preview`, `diagnosePlayback`, `conversionBudget`, `readDerived`/`writeDerived` complete; `videoPoster`, `motionPreview`, `timelineTrack/Sheet`, `avConvert`, `convertImageBuffer`, `docxToHtml`, `renderCard` wait for srv-media-a (they refuse or fail until wired) |
+| `media/{bots,render_ticket,embed,link_formats}.rs` | `lib/media/` same names | done (media serving port) |
+| `media/{convert,convert_plan,convert_size,convert_verdict,convert_notes,convert_in_place,download_menu,av_convert,av_action,motion,motion_preview,timeline,timeline_preview,poster,frame_step,source_preview,card,card_art,card_render,player_i18n,playback_health}.rs`, `media/pdf_lib.rs` | `lib/media/` same names, the part of pdf-lib 1.17.1 `convert.ts` uses | done (media processing port: section 12) |
+| `media/part_a.rs` | the processing half of `lib/media` as the serving half calls it | the serving port's adapter, wired to the processing modules (section 12) |
 | `crypto/envelope.rs` | `lib/crypto/envelope.ts` | server part: constants, `isEncryptedUpload` (the rest runs in the browser) |
 | `routes/media_action.rs` | `app/[userCode]/[mediaCode]/[action]/route.ts` | done: `raw`, `raw.<ext>`, `download`, `render`, `timeline.vtt/jpg`, `convert` (the engines through `part_a`) |
 | `routes/{media_delete,album_zip,embed_card,oembed}.rs`, `archiver.rs` | `app/[userCode]/[mediaCode]/delete/[token]`, `app/a/[userCode]/[slug]/zip`, `app/embed/[version]/[card]`, `app/oembed`; archiver 8 / zip-stream 7 / compress-commons 7 | done (security fixes 5 and 6; the ZIP writer is archiver's zip layout for stream entries) |
 | `http/web_response.rs` | Fetch `new Response(text)` defaults | done (`text/plain;charset=UTF-8`, headers object semantics) |
 | `media/vips.rs` + `media/vips/*`, `media/{image,probe,avif_brand,blurhash,sharp_runtime,transform_cost,transform_queue,avatar,abort}.rs` | sharp 0.34.5 / libvips 8.17, `lib/media/{image,probe,avif-brand,sharp-runtime,transform-cost,transform-queue,avatar}.ts`, blurhash 2.0.5 | done (section 11) |
-| `media/{ffmpeg,av_probe,av_cost,av_workspace,av_meta,playback_health}.rs` | `lib/media/*` same names | done (`playback_health`: all but `diagnosePlayback`) |
+| `media/{ffmpeg,av_probe,av_cost,av_workspace,av_meta}.rs` | `lib/media/*` same names | done |
+| `media/{docx,docx_support,zip_guard}.rs`, `media/mammoth/` | `lib/media/{docx,docx-support,zip-guard}.ts`, mammoth 1.12.1 (+ JSZip 3.10.1, @xmldom/xmldom 0.8.13, lop 0.4.2, dingbat-to-unicode 1.0.1) | done (section 13) |
 | `naming.rs`, `naming_words.rs`, `folders.rs`, `uploads.rs`, `shortlinks.rs`, `quota.rs`, `format.rs`, `avatar.rs`, `avatar_store.rs`, `background.rs`, `paste_languages.rs`, `js_date.rs`, `link_info/parse.rs`, `maintenance/trash.rs` | `lib/` same names (`js_date.rs`: V8's `new Date(string)`) | done |
 | `data/{uploads,upload_query,folders,duplicates,admin_files}.rs` | `lib/data/` same names | done |
 | `routes/api/{uploads,uploads_check,folders,duplicates,shortlinks,link_info,avatar,background,admin_disk}.rs`, `routes/{avatar,s_code,s_code_name}.rs` | `app/api/{uploads,uploads/check,folders,duplicates,shortlinks,link-info,avatar,background,admin/disk}`, `app/avatar/[userCode]`, `app/bg/[userCode]`, `app/s/[code]`, `app/s/[code]/[name]` | done (parity: `library.py`, `library_routes.py`) |
@@ -419,6 +420,39 @@ Deliberate, each for a reason:
 32. **Derived responses** (thumbnails, motion tiles) carry `Content-Length`;
     Next sent them chunked. Same bytes.
 
+33. **ffmpeg version (media processing)**: the argument vectors are upstream's
+    and identical to the reference's (verified, `tests/parity_media`), but
+    they were written for ffmpeg 5.1 (Debian 12, the production image). On
+    ffmpeg 7+ (Homebrew's 9 on the Mac): `-fflags +shortest` is no longer a
+    format flag, so audio -> MP4 fails; the mjpeg encoder refuses the
+    limited-range YUV the timeline sheet hands it, so `timeline.jpg` fails; a
+    clip offset past the end (`?t=9999`) fails writing the GIF trailer where
+    5.1 wrote a one-frame GIF; ffprobe measures VFR files, AVIF sequences and
+    MP3 padding differently, so a few plans differ (item 21). Homebrew's
+    build also has no libvorbis and no libwebp (`ogg`, and ffmpeg's animated
+    WebP of an AVIF sequence, fail). Run the server with the reference's
+    ffmpeg major (the Docker image on Debian 12) for identical behaviour; with
+    it, every status, header, argument vector and deterministic output matched.
+34. **Text on the embed card**: libvips' Pango is put on its fontconfig
+    backend (`PANGOCAIRO_BACKEND=fc`, set once at libvips start unless the
+    operator set it). It is the only backend Linux has; on macOS Pango would
+    otherwise pick CoreText, which never sees the `fontfile` and draws a
+    system face. With it every card is pixel-identical to the reference.
+35. **PDF output** (`media/pdf_lib.rs`): pdf-lib's file structure object for
+    object; the Flate streams are compressed by miniz rather than pako (they
+    inflate to the same bytes). Like pdf-lib, the info dates and the XObject
+    name (`Image-` + random) change on every call, so no two PDFs are equal
+    byte for byte on either server.
+36. **`HEVC_DECODE = false`**, decided exactly as upstream decides it: by
+    the libheif sharp-libvips 1.2.4 ships (1.20.2 with aom only, no libde265,
+    checked in the reference container: `metadata()` reads a HEIC's header
+    as `compression: hevc`, `toBuffer()` fails with "Support for this
+    compression format has not been built in"). So HEIC gets no blurhash, no
+    thumbnail of its own, no conversion target (convert-targets offers none)
+    and no motion tile (`not-animated`), on both servers.
+37. **Lookups by a caller's string** in `media/source_preview.rs` (paste
+    language -> extension) use exact keys, as item 31 does for the card table.
+
 ## 10. Verified on 2026-10-18
 
 - Fresh dev database -> `modlight-server migrate` -> `pg_dump --schema-only`
@@ -482,6 +516,148 @@ self).set("background", background).call()?.image("out")`. Scalars are
 newer libvips releases have go through `set_if_known` with a comment naming the
 release; encoders are `*save_buffer` operations passed to `Image::save_buffer`.
 Copy the order and arguments from sharp's `pipeline.cc` (sources in
-`_scratch/srv-library/ref-src/sharp@0.34.5`). Not ported yet (for convert,
-motion and card rendering): `flatten`, `join: { animated }`, `composite`, text
-input.
+`_scratch/srv-library/ref-src/sharp@0.34.5`). The media processing port
+added `flatten`, `join: { animated }`, `composite` and text input (section 12).
+
+## 12. Media processing API (for the media serving port)
+
+What the serving routes (`/[userCode]/[mediaCode]/[action]`: `convert`,
+`raw?motion=1`, `raw?w=` for a video, `timeline.vtt`, `timeline.jpg`; the
+`render` of a .docx; `/embed/[version]/[card]`) and the media page call, by
+upstream name. `MediaRow` is `db::models::Upload` (with `rowMimeType`
+applied, as `get_media` returns it). Engine errors that upstream let escape
+(`BusyError`, `TimeoutError`, `AbortedError` from the limiter;
+`AvTimeoutError`, `AvAbortedError` from ffmpeg/ffprobe) come back as
+`anyhow::Error`s to `downcast_ref` - the route's `transformRefusal`.
+
+| Upstream | Rust | Notes |
+|---|---|---|
+| `avConvert(req)` (av-action.ts) | `media::av_action::av_convert(&AppState, AvConvertRequest) -> anyhow::Result<Option<Response>>` | `None` = not audio/video, take the image branch. `AvConvertRequest { media, privileged, to: Option<String>, offset_seconds (?t=), clip_seconds (?d=), signal, admit: Option<AdmitHook> (consumeView, download: true), dry_run (?check=1) }`. Builds the whole response (refusals with `X-Convert-Refused`/`limit`, 204 with `X-Convert-Note`, streamed download); runs inside the limiter itself. |
+| `convertOptionFor`, `conversionBudget`, `probeImage`, `convertImageBuffer` (convert.ts) | `media::convert::{convert_option_for, conversion_budget_for(&ImageProbe, ConvertTarget), conversion_budget(animated, frame_pixels, total_pixels, to), probe_image(Bytes), convert_image_buffer(Bytes, ConvertTarget, ConvertOptions { animated, timeout_ms, signal }) -> anyhow::Result<Converted { buffer, mime, ext }>}` | the image branch of /convert; the `?check=1` row shortcut is `conversion_budget(frames > 1, w*h, w*h*frames, to)`. |
+| `derivedKey`, `contentHash`, `mayCacheDerived`, `readDerived`, `writeDerived`, `readDerivedStream`, `writeDerivedFile` | `media::derived_cache::*` (`read_derived(&Storage, key) -> Option<Bytes>`, `write_derived(&Storage, key, Bytes)`, ...) | best effort, as upstream. |
+| `motionPreview(media, opts, signal)` (motion.ts) | `media::motion::motion_preview(&AppState, &Upload, MotionOptions { width, height, fit: MotionFit }, AbortSignal) -> anyhow::Result<Result<(Bytes, u32 frames), MotionRefusal>>` | run it inside `image_transforms().run(.., MOTION_WEIGHT, MOTION_TIMEOUT_MS)`; `X-Motion-Frames` is the `u32`; refusal tokens `MotionRefusal::as_str()`. Query parsing: `motion_preview::{wants_motion, MOTION_DEFAULT_SIZE, clamp_motion_edge}`. |
+| `timelineTrack`, `timelineSheet` (timeline.ts) | `media::timeline::{timeline_track, timeline_sheet}(&AppState, &Upload, AbortSignal) -> anyhow::Result<Result<String / Bytes, TimelineRefusal>>` | inside the limiter with `TIMELINE_TRACK_*` / `TIMELINE_*`; actions `timeline_preview::{TIMELINE_TRACK_ACTION, TIMELINE_SHEET_ACTION}`. |
+| `videoPoster(media, signal)` (poster.ts) | `media::poster::video_poster(&AppState, &Upload, AbortSignal) -> Option<Bytes>` | `None` = no poster (the route answers 415, never the video). `open_video_source` is shared with the timeline. |
+| `docxToHtml(buf)`, `MAX_DOCX_BYTES`, `docxSupport` (docx.ts) | `media::docx::docx_to_html(Bytes) -> DocxResult`, `media::docx_support::{MAX_DOCX_BYTES, docx_support}` | section 13; run it inside the limiter at thumbnail weight with `DOCX_TIMEOUT_MS`, as the route does. |
+| `renderCard(choice)`, `parseCardFile`, `cardChoiceFor`, `cardUrl`, `EMBED_CARD_VERSION` (card-render.ts, card.ts) | `media::card_render::render_card(&CardChoice) -> Result<Bytes, String>`, `media::card::{parse_card_file, card_choice_for, card_path, card_url, EMBED_CARD_VERSION, CARD_WIDTH, CARD_HEIGHT}` | `render_card` caches every pair it drew for the life of the process (shared futures, failures not cached). |
+| `diagnosePlayback(media)` (playback-health.ts) | `media::playback_health::diagnose_playback(&PlaybackSource) -> Option<PlaybackDiagnosis>` (`PlaybackSource::from(&Upload)`) | serialises like upstream's object (`playback` prop of the media page). |
+| `showsSource`, `inlineTextPlan`, `sourceReadings`, `codeLanguageLabel`, `MAX_INLINE_TEXT` (source-preview.ts) | `media::source_preview::*` | |
+| `downloadOptionsFor`, `downloadHintKey`, `downloadLabelKey`, `sectionHeadingKey` (download-menu.ts) | `media::download_menu::*` (`DownloadOption` serialises as upstream's literals) | the media page's menu (`canEncode` = owner or admin). |
+| `estimateTargetSize`, `formatEstimate`, ... (convert-size.ts) | `media::convert_size::*` | |
+| `playerLang`, `buildPlayerDictionary` (player-i18n.ts) | `media::player_i18n::*` | |
+| `readVerdict`/`rememberVerdict`/`verdictKey` (convert-verdict.ts), `noteKey`/`REFUSAL_KEYS` (convert-notes.ts) | `media::convert_verdict::*`, `media::convert_notes::*` | process-wide memo, as upstream. |
+| `REASON_TEXT`, `refusal`, `verdictResponse` (av-action.ts) | `media::av_action::{REASON_TEXT, refusal, verdict_response, base_name, source_tag, source_kind_of}` | `base_name` is the download name rule (`filename.replace(/\.[^.]+$/, "") \|\| code`). |
+
+Also ported and used inside: `av_convert` (`planAv`, `runAvPlan`, `avVariant`,
+`frameOffset`, `animationFilters`, `webScaleFilter`, `audioCoverPath`),
+`convert_plan` and `convert_in_place` (`convertUploadInPlace` behind the
+`convert` RPC module), `frame_step` (the player's arithmetic, server twin),
+`pdf_lib` (section 9, item 35).
+
+Verification (re-runnable, see each script's header):
+
+```sh
+S=_scratch/srv-media-a      # scratch reference on 8446, Rust server on 8426
+python3 server/tests/parity_media/corpus.py $S/corpus
+python3 server/tests/parity_media/media_parity.py ref              # 595 cases on the reference
+python3 server/tests/parity_media/media_parity.py rust --ffmpeg ref # the reference image's ffmpeg 5.1
+python3 server/tests/parity_media/media_parity.py compare --ffmpeg ref
+python3 server/tests/parity_media/media_parity.py cards            # all 155 embed cards
+python3 server/tests/parity_media/convert_actions.py               # the convert RPC module, 20 checks
+```
+
+Through the routes: part B's `tests/parity/media_serve.py` on the merged
+binary, 1113/1113 (with the reference image's ffmpeg; encoder-dependent
+bytes compared by decoded content).
+
+Measured on 2026-10-20 (libvips 8.18.7 here, 8.17.3 in the reference):
+statuses, meaningful headers and ffmpeg/ffprobe argument vectors identical
+in all 595 cases; outputs byte-identical for every JPEG, WebP (still and
+animated, including every motion tile), GIF, MP4/MOV remux and encode, MP3,
+WAV, poster and timeline sheet and track; PNG and AVIF differ in their bytes
+only (encoder builds; same pixels), Matroska and Ogg differ by their random
+segment/serial ids (same streams), PDFs as item 35; CMYK input shifts colour
+by about 3/255 (section 11). All 155 embed cards are pixel-identical. With
+Homebrew's ffmpeg 9 instead, see item 33.
+
+## 13. Document preview (docx)
+
+`media::docx::docx_to_html(Bytes) -> DocxResult` is `docxToHtml`
+(`Result<DocxPreview { html, images, images_dropped }, DocxRefusal>`,
+`DocxRefusal::as_str()` gives upstream's token: `not-a-zip`, `malformed`,
+`too-big`, `too-many-entries`, `zip64`, `unsupported-method`, `too-large`,
+`legacy-doc`, `not-a-document`); `media::zip_guard::inspect_zip` and
+`media::docx_support::{docx_support, MAX_DOCX_BYTES}` are the two helpers.
+The route (`/{tag}/{code}/render`, gating, status codes) is not part of it.
+
+`media/mammoth/` is mammoth 1.12.1 ported file by file (`docx/body_reader.rs`
+= `lib/docx/body-reader.js`, ...), with what it runs of JSZip
+(`jszip.rs`: central directory, local names, size check, no CRC check),
+@xmldom/xmldom (`xml/xmldom.rs`: sax.js and the DOM rules, every
+warning/error is a failure because mammoth throws on them), lop
+(`lop.rs`, the style-map grammar's combinators) and dingbat-to-unicode.
+`mammoth/js.rs` holds the JavaScript semantics it needs (`parseInt`,
+`ToNumber`, `{}` as a map with `Object.prototype` showing through, UTF-16
+strings). The conversion runs on a thread of its own (256 MB stack, the
+readers recurse); pictures go through the libvips binding one at a time in
+document order (`mapSeries` upstream), so the 3 MB budget drops the same ones.
+New dependency: `flate2` on `zlib-rs` (zlib's inflate semantics, as node:zlib
+and pako).
+
+Verified by `tests/parity_media/`: `docx_corpus.py` builds 229 documents
+(hand-built OOXML per mammoth feature, embedded style maps, pictures, hostile
+archives, xmldom edge cases, `Object.prototype` names, macOS textutil output,
+mammoth's own Word/LibreOffice test documents); `docx_parity.py` runs each
+through upstream's own `docx.ts`, `zip-guard.ts`, `docx-support.ts`,
+`sharp-runtime.ts` and `limits.ts` inside the reference container (node 24
+strips the types; imports rewritten to the container's packages) and through
+`docx_to_html` (`tests/media_docx.rs`, ignored test `parity_dump`), and
+compares the JSON. On 2026-10-20: 222 identical byte for byte, pictures
+included (libvips 8.18 here and 8.17.3 in the reference wrote the same
+WebP); 3 known differences (items 3 and 4 below); 4 that never finish
+upstream (item 1). `docx_route_e2e.py` fetches a sample through the
+reference's real `/render` route with minted tickets: same bytes as the
+harness.
+
+To repeat (from the main checkout; the reference app runs on 8446, see
+`_scratch/srv-media-a/`):
+
+```sh
+python3 server/tests/parity_media/docx_corpus.py _scratch/srv-media-a/docx/corpus
+python3 server/tests/parity_media/docx_parity.py --corpus _scratch/srv-media-a/docx/corpus \
+  --work _scratch/srv-media-a/docx/run --container modlight-srvmedia-a-ref-app-1
+python3 server/tests/parity_media/docx_route_e2e.py --corpus _scratch/srv-media-a/docx/corpus \
+  --work _scratch/srv-media-a/docx/run f-basic.docx i-budget.docx h-bomb-lying.docx
+```
+
+Differences, all deliberate or unavoidable:
+
+1. **Hangs.** Upstream never finishes on some inputs the guard lets
+   through; the port answers. JSZip loops forever on ZIP64 "extensible data"
+   whose length walks the reader backwards (`not-a-document` here); xmldom's
+   error recovery is quadratic (the port stops at the first report, which is
+   the same answer); some error-free scans are quadratic (many unterminated
+   `<?` or CDATA sections, many distinct element names: memoised here, same
+   tree).
+2. **Entries the guard never inflated** (a central record beyond the
+   declared count, or the directory JSZip finds after its prepended-data
+   shift) are expanded with a ceiling of 40 MiB + 1 (JSZip: none) and fail
+   past it.
+3. **Prototype pollution not reproduced.** A style with `w:type="__proto__"`
+   writes itself onto `Object.prototype` in upstream (every object in the
+   Node process gains a property, for the rest of its life: e.g. a style id
+   `w:type` removes every `<w:br/>`). Here such a style is ignored. An object
+   assigned to a `__proto__` key of mammoth's maps does not become the
+   prototype of the other keys (inherited `Object.prototype` members are
+   reproduced: `constructor`, `toString`, ... as ids, element names,
+   relationship types).
+4. **Nesting depth.** Upstream runs out of V8 stack at a depth that depends
+   on what nests and on JIT warm-up (fresh process: 1898 nested elements in a
+   paragraph, 909 nested `w:sdt`, 306 nested tables; warm: 2499, 1249, 312).
+   The port fails an XML part nested deeper than 1901 elements (the fresh
+   limit for plain nesting); deeper `w:sdt`/table nesting below that renders
+   here and fails upstream.
+5. **Lone UTF-16 surrogates** (from character references) are carried as
+   U+10F800..U+10FFFF inside the port and resolved at the end exactly as the
+   JavaScript string would be encoded; a document containing those private-use
+   code points literally would see them treated as surrogates.
