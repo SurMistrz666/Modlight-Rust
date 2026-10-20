@@ -42,7 +42,7 @@ Ostatnia aktualizacja: 2026-10-18 (koniec dnia 1, praca wstrzymana na prośbę w
 | `app-5-effects` | `_wt/app-5-effects` | W TOKU: biblioteka efektów obrazu (ImageEditor/Core/ImageEffects + ImageEffectsLib) na bazie edytora |
 | przegląd bezpieczeństwa serwera | `docs/audyt/rust-serwer.md` (d665cb6) | brak luk krytycznych i wysokich, brak wysyłania danych, 7 poprawek skutecznych; porównanie kodu 2FA już w stałym czasie |
 | `app-5-tools` | `_wt/app-5-tools` | W TOKU: narzędzia ShareX (pipety, przypinanie, przeglądarka, łączenie obrazów, konwerter wideo, metadane, indeks folderu, QR, OCR przez Vision, analiza AI, usuwanie tła ONNX, okna historii) |
-| `app-4` | `_wt/app-4` | W TOKU: edytor obrazów (rdzeń, adnotacje, historia, interfejs, rejestr efektów) |
+| `app-4` | scalona do `main` (e303cd9) | edytor obrazów: wszystkie adnotacje, historia, przybliżanie, interfejs, rejestr efektów, adnotacje w nakładce zrzutu obszaru, „Beautify”; 544 testy w app/. Lista do sprawdzenia w oknie: `docs/handoff/app-4.md` |
 | `srv-media-b` | scalona do `main` (e549b53) | serwowanie plików, strony publiczne, osadzenia, oEmbed, albumy z zip, usuwanie tokenem; poprawki 1 (limit wyświetleń: przepustka `ml_view_<id>`), 5, 6; 1080 testów, 1064 porównań zgodnych. Czeka na podpięcie części A w `media/part_a.rs`. Znaleziony błąd oryginału: zip albumu zawsze 500 |
 
 Gotowe polecenia dla kolejnych agentów: `_scratch/prompts/` (`common-server.md`,
