@@ -25,6 +25,9 @@ pub const SCREENS: &[&str] = &[
     "pinned-image",
     "image-combiner",
     "image-combiner-empty",
+    "video-converter",
+    "video-converter-encoding",
+    "video-converter-empty",
 ];
 
 /// How the fixture files are shown (their real folder is a temporary one).
@@ -248,6 +251,34 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                 window.qa_names = fixture_names();
             }
             Some(vec2(980.0, 650.0))
+        }
+        "video-converter" | "video-converter-encoding" | "video-converter-empty" => {
+            let settings = state.default_task_settings();
+            let input = (screen != "video-converter-empty")
+                .then(|| "/Users/alex/Movies/screen-recording.mov".to_string());
+            let key = state.tools.open_keyed(|key| {
+                Box::new(super::video::VideoWindow::new(
+                    key,
+                    settings,
+                    Some(std::path::PathBuf::from("/opt/homebrew/bin/ffmpeg")),
+                    input,
+                ))
+            });
+            if screen == "video-converter-encoding"
+                && let Some(window) = state.tools.window_mut::<super::video::VideoWindow>(key)
+            {
+                window
+                    .conversion
+                    .set_codec(modlight_tools::settings::ConverterVideoCodecs::Vp9);
+                window.conversion.use_bitrate = true;
+                window.encoding = true;
+                window.progress = 42.0;
+                window.status = modlight_core::l10n::t(
+                    modlight_core::l10n::tools::VideoConverterViewModel_Converting,
+                )
+                .to_string();
+            }
+            Some(vec2(850.0, 475.0))
         }
         _ => None,
     }

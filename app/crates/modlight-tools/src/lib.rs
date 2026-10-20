@@ -11,3 +11,4 @@ pub mod images;
 pub mod pin;
 pub mod qr;
 pub mod settings;
+pub mod video;

@@ -26,6 +26,7 @@ pub mod qa;
 pub mod qr;
 pub mod region;
 pub mod screen_picker;
+pub mod video;
 
 /// How a tool window opens.
 #[derive(Clone, Debug, PartialEq)]
