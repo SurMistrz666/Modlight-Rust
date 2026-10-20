@@ -507,11 +507,17 @@ impl Canvas {
             return;
         };
         let zoom_px = g.z * g.ppp;
-        let scaled = zoom_px < 0.999;
+        // A picture beyond the GPU's largest texture (a long scrolling capture) is shown
+        // scaled down to fit it.
+        let max_side = ui.input(|i| i.max_texture_side).max(1024) as f32;
+        let longest = image.width().max(image.height()) as f32;
+        let fit = (max_side / longest).min(1.0);
+        let factor = zoom_px.min(fit);
+        let scaled = factor < 0.999;
         let (tw, th) = if scaled {
             (
-                ((image.width() as f32 * zoom_px).round() as u32).max(1),
-                ((image.height() as f32 * zoom_px).round() as u32).max(1),
+                ((image.width() as f32 * factor).round() as u32).max(1),
+                ((image.height() as f32 * factor).round() as u32).max(1),
             )
         } else {
             (image.width(), image.height())
