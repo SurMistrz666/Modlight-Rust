@@ -1,0 +1,1298 @@
+//! `SKCanvas` and `SKPaint` as the effects use them. Shapes, strokes and gradients are
+//! rasterised with tiny-skia (a port of Skia's raster pipeline); bitmaps are sampled and
+//! blended here in floats as Skia's highp pipeline does (nearest, linear and the cubic
+//! resamplers with their B and C), so `SKSamplingOptions` behave as upstream asks.
+
+use tiny_skia::{
+    FillRule, GradientStop, LineCap, LineJoin, Mask, Path, PathBuilder, Pixmap, Point, Rect,
+    SpreadMode, Stroke, StrokeDash, Transform,
+};
+
+use super::bitmap::{Bitmap, premul, unpremul};
+use super::blend::Blend;
+use super::blur;
+use super::color::C;
+use super::filters::{F4, Tile, unorm};
+
+/// `SKPaintStyle`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Style {
+    #[default]
+    Fill,
+    Stroke,
+    StrokeAndFill,
+}
+
+/// `SKStrokeCap`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Cap {
+    #[default]
+    Butt,
+    Round,
+    Square,
+}
+
+/// `SKStrokeJoin`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Join {
+    #[default]
+    Miter,
+    Round,
+    Bevel,
+}
+
+/// `SKSamplingOptions`.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum Sampling {
+    #[default]
+    Nearest,
+    Linear,
+    /// `SKCubicResampler` (B, C): Mitchell is (1/3, 1/3), CatmullRom (0, 1/2).
+    Cubic(f32, f32),
+}
+
+impl Sampling {
+    pub const CATMULL_ROM: Sampling = Sampling::Cubic(0.0, 0.5);
+    pub const MITCHELL: Sampling = Sampling::Cubic(1.0 / 3.0, 1.0 / 3.0);
+}
+
+/// `SKShader`.
+#[derive(Clone, Debug)]
+pub enum Shader {
+    Linear {
+        p0: (f32, f32),
+        p1: (f32, f32),
+        colors: Vec<C>,
+        pos: Option<Vec<f32>>,
+        tile: Tile,
+    },
+    Radial {
+        center: (f32, f32),
+        radius: f32,
+        colors: Vec<C>,
+        pos: Option<Vec<f32>>,
+        tile: Tile,
+    },
+    Sweep {
+        center: (f32, f32),
+        colors: Vec<C>,
+        pos: Option<Vec<f32>>,
+    },
+    /// `SKShader.CreateBitmap` / `CreateImage`.
+    Image {
+        bitmap: std::sync::Arc<Bitmap>,
+        tile_x: Tile,
+        tile_y: Tile,
+        matrix: Transform,
+        sampling: Sampling,
+    },
+}
+
+/// `SKPaint`.
+#[derive(Clone, Debug)]
+pub struct Paint {
+    pub color: C,
+    pub style: Style,
+    pub stroke_width: f32,
+    pub cap: Cap,
+    pub join: Join,
+    pub miter: f32,
+    pub aa: bool,
+    pub blend: Blend,
+    pub shader: Option<Shader>,
+    /// `SKMaskFilter.CreateBlur(Normal, sigma)`.
+    pub mask_blur: Option<f32>,
+    /// `SKImageFilter.CreateBlur(sx, sy)`.
+    pub image_blur: Option<(f32, f32)>,
+    /// `SKPathEffect.CreateDash(intervals, phase)`.
+    pub dash: Option<(Vec<f32>, f32)>,
+    pub color_filter: Option<ColorFilter>,
+}
+
+impl Default for Paint {
+    fn default() -> Self {
+        Paint {
+            color: C::BLACK,
+            style: Style::Fill,
+            stroke_width: 0.0,
+            cap: Cap::Butt,
+            join: Join::Miter,
+            miter: 4.0,
+            aa: false,
+            blend: Blend::SrcOver,
+            shader: None,
+            mask_blur: None,
+            image_blur: None,
+            dash: None,
+            color_filter: None,
+        }
+    }
+}
+
+impl Paint {
+    pub fn fill(color: C) -> Paint {
+        Paint {
+            color,
+            ..Paint::default()
+        }
+    }
+
+    pub fn fill_aa(color: C) -> Paint {
+        Paint {
+            color,
+            aa: true,
+            ..Paint::default()
+        }
+    }
+
+    pub fn stroke(color: C, width: f32) -> Paint {
+        Paint {
+            color,
+            style: Style::Stroke,
+            stroke_width: width,
+            ..Paint::default()
+        }
+    }
+
+    pub fn stroke_aa(color: C, width: f32) -> Paint {
+        Paint {
+            color,
+            style: Style::Stroke,
+            stroke_width: width,
+            aa: true,
+            ..Paint::default()
+        }
+    }
+
+    pub fn aa(mut self, aa: bool) -> Paint {
+        self.aa = aa;
+        self
+    }
+
+    pub fn with_blend(mut self, blend: Blend) -> Paint {
+        self.blend = blend;
+        self
+    }
+
+    pub fn with_shader(mut self, shader: Shader) -> Paint {
+        self.shader = Some(shader);
+        self
+    }
+
+    pub fn with_cap(mut self, cap: Cap) -> Paint {
+        self.cap = cap;
+        self
+    }
+
+    pub fn with_join(mut self, join: Join) -> Paint {
+        self.join = join;
+        self
+    }
+
+    pub fn with_mask_blur(mut self, sigma: f32) -> Paint {
+        self.mask_blur = Some(sigma);
+        self
+    }
+
+    pub fn with_image_blur(mut self, sx: f32, sy: f32) -> Paint {
+        self.image_blur = Some((sx, sy));
+        self
+    }
+
+    /// The paint used for bitmap draws: only alpha, blend, filters matter.
+    pub fn alpha(a: u8) -> Paint {
+        Paint {
+            color: C::new(255, 255, 255, a),
+            ..Paint::default()
+        }
+    }
+}
+
+/// `SKColorFilter`.
+#[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum ColorFilter {
+    Matrix([f32; 20]),
+    /// `CreateBlendMode(color, mode)`.
+    Blend(C, Blend),
+    /// `CreateCompose(outer, inner)`: inner first.
+    Compose(Box<ColorFilter>, Box<ColorFilter>),
+    Table([u8; 256], [u8; 256], [u8; 256]),
+}
+
+impl ColorFilter {
+    /// Applies the filter to one premultiplied pixel.
+    pub fn apply(&self, p: F4) -> F4 {
+        match self {
+            ColorFilter::Matrix(m) => super::filters::color_matrix_pixel(p, m),
+            ColorFilter::Blend(c, mode) => super::filters::blend_filter_pixel(p, *c, *mode),
+            ColorFilter::Compose(outer, inner) => outer.apply(inner.apply(p)),
+            ColorFilter::Table(r, g, b) => {
+                let u = p.unpremul();
+                F4 {
+                    r: r[unorm(u.r) as usize] as f32 / 255.0,
+                    g: g[unorm(u.g) as usize] as f32 / 255.0,
+                    b: b[unorm(u.b) as usize] as f32 / 255.0,
+                    a: u.a,
+                }
+                .premul()
+            }
+        }
+    }
+}
+
+/// `new SKRect(l, t, r, b)`.
+pub fn rect(l: f32, t: f32, r: f32, b: f32) -> Rect {
+    Rect::from_ltrb(l, t, r.max(l + f32::EPSILON), b.max(t + f32::EPSILON))
+        .unwrap_or_else(|| Rect::from_ltrb(0.0, 0.0, 1.0, 1.0).unwrap())
+}
+
+/// `SKRect.Create(x, y, w, h)`.
+pub fn rect_xywh(x: f32, y: f32, w: f32, h: f32) -> Rect {
+    rect(x, y, x + w, y + h)
+}
+
+#[derive(Clone)]
+struct State {
+    matrix: Transform,
+    clip: Option<Mask>,
+}
+
+/// `SKCanvas` over an 8888 premultiplied surface.
+pub struct Canvas {
+    pub pm: Pixmap,
+    state: State,
+    stack: Vec<State>,
+}
+
+impl Canvas {
+    pub fn new(w: i32, h: i32) -> Canvas {
+        Canvas {
+            pm: Pixmap::new(w.max(1) as u32, h.max(1) as u32).unwrap(),
+            state: State {
+                matrix: Transform::identity(),
+                clip: None,
+            },
+            stack: Vec::new(),
+        }
+    }
+
+    /// A canvas drawing into a copy of `bitmap` (`new SKCanvas(bitmap)` on a copy).
+    pub fn from_bitmap(bitmap: &Bitmap) -> Canvas {
+        Canvas {
+            pm: bitmap.to_pixmap(),
+            state: State {
+                matrix: Transform::identity(),
+                clip: None,
+            },
+            stack: Vec::new(),
+        }
+    }
+
+    pub fn width(&self) -> i32 {
+        self.pm.width() as i32
+    }
+
+    pub fn height(&self) -> i32 {
+        self.pm.height() as i32
+    }
+
+    pub fn into_bitmap(self) -> Bitmap {
+        Bitmap::from_pixmap(&self.pm)
+    }
+
+    pub fn to_bitmap(&self) -> Bitmap {
+        Bitmap::from_pixmap(&self.pm)
+    }
+
+    /// `Clear(color)`: replaces every pixel (ignores the clip, as Skia's clear of the
+    /// whole device does when nothing is clipped).
+    pub fn clear(&mut self, c: C) {
+        let p = premul(c);
+        if let Some(mask) = &self.state.clip {
+            let mask = mask.clone();
+            let data = self.pm.data_mut();
+            for (i, m) in mask.data().iter().enumerate() {
+                if *m == 0 {
+                    continue;
+                }
+                let t = *m as f32 / 255.0;
+                for (k, v) in [p.r, p.g, p.b, p.a].iter().enumerate() {
+                    let d = data[i * 4 + k] as f32;
+                    data[i * 4 + k] = (d + (*v as f32 - d) * t).round() as u8;
+                }
+            }
+            return;
+        }
+        for px in self.pm.data_mut().chunks_exact_mut(4) {
+            px.copy_from_slice(&[p.r, p.g, p.b, p.a]);
+        }
+    }
+
+    // ---------- matrix and clip ----------
+
+    pub fn save(&mut self) {
+        self.stack.push(self.state.clone());
+    }
+
+    pub fn restore(&mut self) {
+        if let Some(s) = self.stack.pop() {
+            self.state = s;
+        }
+    }
+
+    pub fn translate(&mut self, dx: f32, dy: f32) {
+        self.state.matrix = self.state.matrix.pre_translate(dx, dy);
+    }
+
+    pub fn scale(&mut self, sx: f32, sy: f32) {
+        self.state.matrix = self.state.matrix.pre_scale(sx, sy);
+    }
+
+    /// `Scale(sx, sy, px, py)`.
+    pub fn scale_about(&mut self, sx: f32, sy: f32, px: f32, py: f32) {
+        self.translate(px, py);
+        self.scale(sx, sy);
+        self.translate(-px, -py);
+    }
+
+    pub fn rotate_degrees(&mut self, deg: f32) {
+        self.state.matrix = self.state.matrix.pre_concat(rotation(deg));
+    }
+
+    /// `RotateDegrees(deg, px, py)`.
+    pub fn rotate_degrees_about(&mut self, deg: f32, px: f32, py: f32) {
+        self.translate(px, py);
+        self.rotate_degrees(deg);
+        self.translate(-px, -py);
+    }
+
+    pub fn skew(&mut self, sx: f32, sy: f32) {
+        self.state.matrix = self
+            .state
+            .matrix
+            .pre_concat(Transform::from_row(1.0, sy, sx, 1.0, 0.0, 0.0));
+    }
+
+    pub fn concat(&mut self, m: Transform) {
+        self.state.matrix = self.state.matrix.pre_concat(m);
+    }
+
+    pub fn set_matrix(&mut self, m: Transform) {
+        self.state.matrix = m;
+    }
+
+    pub fn reset_matrix(&mut self) {
+        self.state.matrix = Transform::identity();
+    }
+
+    pub fn total_matrix(&self) -> Transform {
+        self.state.matrix
+    }
+
+    fn clip_with(&mut self, path: &Path, aa: bool) {
+        let (w, h) = (self.pm.width(), self.pm.height());
+        let mut mask = Mask::new(w, h).unwrap();
+        mask.fill_path(path, FillRule::Winding, aa, self.state.matrix);
+        if let Some(old) = &self.state.clip {
+            for (m, o) in mask.data_mut().iter_mut().zip(old.data()) {
+                *m = ((*m as u32 * *o as u32 + 127) / 255) as u8;
+            }
+        }
+        self.state.clip = Some(mask);
+    }
+
+    pub fn clip_rect(&mut self, r: Rect, aa: bool) {
+        let path = PathBuilder::from_rect(r);
+        self.clip_with(&path, aa);
+    }
+
+    pub fn clip_path(&mut self, path: &Path, aa: bool) {
+        self.clip_with(path, aa);
+    }
+
+    pub fn clip_round_rect(&mut self, r: Rect, rx: f32, ry: f32, aa: bool) {
+        if let Some(path) = round_rect_path(r, rx, ry) {
+            self.clip_with(&path, aa);
+        }
+    }
+
+    // ---------- shapes ----------
+
+    pub fn draw_rect(&mut self, r: Rect, paint: &Paint) {
+        let path = PathBuilder::from_rect(r);
+        self.draw_path(&path, paint);
+    }
+
+    pub fn draw_rect_ltrb(&mut self, l: f32, t: f32, r: f32, b: f32, paint: &Paint) {
+        if r <= l || b <= t {
+            // Skia sorts the rect; an empty one draws nothing when filled.
+            if paint.style == Style::Fill {
+                return;
+            }
+        }
+        let (l2, r2) = if l <= r { (l, r) } else { (r, l) };
+        let (t2, b2) = if t <= b { (t, b) } else { (b, t) };
+        if let Some(rc) = Rect::from_ltrb(l2, t2, r2, b2) {
+            self.draw_rect(rc, paint);
+        } else if paint.style != Style::Fill {
+            let mut pb = PathBuilder::new();
+            pb.move_to(l2, t2);
+            pb.line_to(r2, t2);
+            pb.line_to(r2, b2);
+            pb.line_to(l2, b2);
+            pb.close();
+            if let Some(p) = pb.finish() {
+                self.draw_path(&p, paint);
+            }
+        }
+    }
+
+    pub fn draw_round_rect(&mut self, r: Rect, rx: f32, ry: f32, paint: &Paint) {
+        if let Some(path) = round_rect_path(r, rx, ry) {
+            self.draw_path(&path, paint);
+        }
+    }
+
+    pub fn draw_circle(&mut self, cx: f32, cy: f32, radius: f32, paint: &Paint) {
+        if radius <= 0.0 {
+            return;
+        }
+        if let Some(path) = PathBuilder::from_circle(cx, cy, radius) {
+            self.draw_path(&path, paint);
+        }
+    }
+
+    pub fn draw_oval(&mut self, r: Rect, paint: &Paint) {
+        if let Some(path) = PathBuilder::from_oval(r) {
+            self.draw_path(&path, paint);
+        }
+    }
+
+    pub fn draw_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, paint: &Paint) {
+        let mut pb = PathBuilder::new();
+        pb.move_to(x0, y0);
+        pb.line_to(x1, y1);
+        if let Some(path) = pb.finish() {
+            let mut p = paint.clone();
+            if p.style == Style::Fill {
+                // Lines are always stroked.
+                p.style = Style::Stroke;
+            }
+            self.draw_path(&path, &p);
+        }
+    }
+
+    /// `DrawPaint`: fills the whole canvas.
+    pub fn draw_paint(&mut self, paint: &Paint) {
+        let (w, h) = (self.pm.width() as f32, self.pm.height() as f32);
+        let save = self.state.matrix;
+        self.state.matrix = Transform::identity();
+        let mut p = paint.clone();
+        p.style = Style::Fill;
+        if let Some(shader) = &mut p.shader {
+            // The shader keeps the canvas matrix.
+            let _ = shader;
+        }
+        let path = PathBuilder::from_rect(rect(0.0, 0.0, w, h));
+        self.draw_path_with(&path, &p, save);
+        self.state.matrix = save;
+    }
+
+    pub fn draw_path(&mut self, path: &Path, paint: &Paint) {
+        let m = self.state.matrix;
+        self.draw_path_with(path, paint, m);
+    }
+
+    fn draw_path_with(&mut self, path: &Path, paint: &Paint, shader_matrix: Transform) {
+        let matrix = self.state.matrix;
+        let (w, h) = (self.pm.width(), self.pm.height());
+        if let Some(Shader::Image {
+            bitmap,
+            tile_x,
+            tile_y,
+            matrix: local,
+            sampling,
+        }) = &paint.shader
+        {
+            self.fill_with_image(path, paint, bitmap, *tile_x, *tile_y, *local, *sampling);
+            return;
+        }
+        let Some(ts_paint) = self.ts_paint(paint, shader_matrix, matrix) else {
+            return;
+        };
+        let stroke = self.ts_stroke(paint);
+        let needs_layer =
+            paint.mask_blur.is_some() || paint.image_blur.is_some() || paint.color_filter.is_some();
+        if !needs_layer {
+            let clip = self.state.clip.clone();
+            if paint.style != Style::Stroke {
+                self.pm
+                    .fill_path(path, &ts_paint, FillRule::Winding, matrix, clip.as_ref());
+            }
+            if paint.style != Style::Fill {
+                self.pm
+                    .stroke_path(path, &ts_paint, &stroke, matrix, clip.as_ref());
+            }
+            return;
+        }
+        // Draw into a layer, filter it, then composite through the clip.
+        let mut layer = Pixmap::new(w, h).unwrap();
+        let mut lp = ts_paint.clone();
+        lp.blend_mode = tiny_skia::BlendMode::SourceOver;
+        if paint.style != Style::Stroke {
+            layer.fill_path(path, &lp, FillRule::Winding, matrix, None);
+        }
+        if paint.style != Style::Fill {
+            layer.stroke_path(path, &lp, &stroke, matrix, None);
+        }
+        let mut px = pixmap_pixels(&layer);
+        if let Some(sigma) = paint.mask_blur {
+            px = blur::mask_blur_layer(&px, w as i32, h as i32, sigma);
+        }
+        if let Some((sx, sy)) = paint.image_blur {
+            px = blur::blur_premul(&px, w as i32, h as i32, 0, 0, w as i32, h as i32, sx, sy);
+        }
+        self.composite(&px, paint.blend, paint.color_filter.as_ref(), 1.0);
+    }
+
+    /// A path filled (or stroked) with an image shader.
+    #[allow(clippy::too_many_arguments)]
+    fn fill_with_image(
+        &mut self,
+        path: &Path,
+        paint: &Paint,
+        bitmap: &Bitmap,
+        tile_x: Tile,
+        tile_y: Tile,
+        local: Transform,
+        sampling: Sampling,
+    ) {
+        let matrix = self.state.matrix;
+        let (w, h) = (self.pm.width() as i32, self.pm.height() as i32);
+        let mut cover = Mask::new(w as u32, h as u32).unwrap();
+        if paint.style != Style::Stroke {
+            cover.fill_path(path, FillRule::Winding, paint.aa, matrix);
+        }
+        if paint.style != Style::Fill {
+            // Stroke coverage through a white layer.
+            let mut layer = Pixmap::new(w as u32, h as u32).unwrap();
+            let p = tiny_skia::Paint {
+                anti_alias: paint.aa,
+                ..Default::default()
+            };
+            layer.stroke_path(path, &p, &self.ts_stroke(paint), matrix, None);
+            for (m, q) in cover
+                .data_mut()
+                .iter_mut()
+                .zip(layer.data().chunks_exact(4))
+            {
+                *m = (*m).max(q[3]);
+            }
+        }
+        let Some(inv) = matrix.pre_concat(local).invert() else {
+            return;
+        };
+        let src: Vec<[u8; 4]> = bitmap
+            .px
+            .iter()
+            .map(|c| {
+                let p = premul(*c);
+                [p.r, p.g, p.b, p.a]
+            })
+            .collect();
+        let alpha = paint.color.a as f32 / 255.0;
+        let mut layer = vec![[0u8; 4]; (w * h) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) as usize;
+                let cov = cover.data()[i];
+                if cov == 0 {
+                    continue;
+                }
+                let mut pt = Point::from_xy(x as f32 + 0.5, y as f32 + 0.5);
+                inv.map_points(std::slice::from_mut(&mut pt));
+                let s = sample_tiled(
+                    &src, bitmap.w, bitmap.h, pt.x, pt.y, sampling, tile_x, tile_y,
+                );
+                let k = alpha * cov as f32 / 255.0;
+                layer[i] = [
+                    unorm(s.r * k),
+                    unorm(s.g * k),
+                    unorm(s.b * k),
+                    unorm(s.a * k),
+                ];
+            }
+        }
+        let mut layer_px = layer;
+        if let Some(sigma) = paint.mask_blur {
+            layer_px = blur::mask_blur_layer(&layer_px, w, h, sigma);
+        }
+        if let Some((sx, sy)) = paint.image_blur {
+            layer_px = blur::blur_premul(&layer_px, w, h, 0, 0, w, h, sx, sy);
+        }
+        self.composite(&layer_px, paint.blend, paint.color_filter.as_ref(), 1.0);
+    }
+
+    fn ts_stroke(&self, paint: &Paint) -> Stroke {
+        Stroke {
+            width: paint.stroke_width,
+            miter_limit: paint.miter,
+            line_cap: match paint.cap {
+                Cap::Butt => LineCap::Butt,
+                Cap::Round => LineCap::Round,
+                Cap::Square => LineCap::Square,
+            },
+            line_join: match paint.join {
+                Join::Miter => LineJoin::Miter,
+                Join::Round => LineJoin::Round,
+                Join::Bevel => LineJoin::Bevel,
+            },
+            dash: paint
+                .dash
+                .as_ref()
+                .and_then(|(i, phase)| StrokeDash::new(i.clone(), *phase)),
+        }
+    }
+
+    fn ts_paint(
+        &self,
+        paint: &Paint,
+        shader_matrix: Transform,
+        _matrix: Transform,
+    ) -> Option<tiny_skia::Paint<'static>> {
+        let mut p = tiny_skia::Paint {
+            anti_alias: paint.aa,
+            blend_mode: paint.blend.to_skia(),
+            ..Default::default()
+        };
+        // tiny-skia applies the paint's transform to the shader through `fill_path`'s
+        // transform, so gradients are given in local coordinates.
+        let _ = shader_matrix;
+        match &paint.shader {
+            None => p.shader = tiny_skia::Shader::SolidColor(paint.color.to_skia()),
+            Some(shader) => {
+                let mut s = make_shader(shader)?;
+                if paint.color.a != 255 {
+                    s.apply_opacity(paint.color.a as f32 / 255.0);
+                }
+                p.shader = s;
+            }
+        }
+        Some(p)
+    }
+
+    /// Blends premultiplied pixels (canvas-sized) onto the canvas through the clip.
+    pub fn composite(
+        &mut self,
+        src: &[[u8; 4]],
+        mode: Blend,
+        filter: Option<&ColorFilter>,
+        alpha: f32,
+    ) {
+        let clip = self.state.clip.clone();
+        let data = self.pm.data_mut();
+        for (i, s) in src.iter().enumerate() {
+            let cov = clip.as_ref().map_or(1.0, |m| m.data()[i] as f32 / 255.0);
+            if cov == 0.0 {
+                continue;
+            }
+            let mut sp = F4 {
+                r: s[0] as f32 / 255.0,
+                g: s[1] as f32 / 255.0,
+                b: s[2] as f32 / 255.0,
+                a: s[3] as f32 / 255.0,
+            };
+            if alpha != 1.0 {
+                sp = F4 {
+                    r: sp.r * alpha,
+                    g: sp.g * alpha,
+                    b: sp.b * alpha,
+                    a: sp.a * alpha,
+                };
+            }
+            if let Some(f) = filter {
+                sp = f.apply(sp);
+            }
+            if sp.a == 0.0 && matches!(mode, Blend::SrcOver | Blend::Plus | Blend::Screen) {
+                continue;
+            }
+            blend_into(&mut data[i * 4..i * 4 + 4], sp, mode, cov);
+        }
+    }
+
+    // ---------- bitmaps ----------
+
+    /// `DrawBitmap(bitmap, x, y, paint)`.
+    pub fn draw_bitmap(&mut self, bitmap: &Bitmap, x: f32, y: f32, paint: &Paint) {
+        let m = Transform::from_translate(x, y);
+        self.draw_image_matrix(bitmap, m, Sampling::Nearest, paint);
+    }
+
+    /// `DrawBitmap(bitmap, srcRect, dstRect, paint)` / `DrawImage(image, src, dst,
+    /// sampling, paint)`.
+    pub fn draw_bitmap_rect(
+        &mut self,
+        bitmap: &Bitmap,
+        src: Rect,
+        dst: Rect,
+        sampling: Sampling,
+        paint: &Paint,
+    ) {
+        let sx = dst.width() / src.width();
+        let sy = dst.height() / src.height();
+        let m = Transform::from_row(
+            sx,
+            0.0,
+            0.0,
+            sy,
+            dst.left() - src.left() * sx,
+            dst.top() - src.top() * sy,
+        );
+        // Only the source rectangle is drawn (strict constraint off: Skia's fast
+        // constraint may sample just outside it with filtering, which clamps here).
+        let sub = sub_bitmap(bitmap, src);
+        match sub {
+            Some((b, ox, oy)) => {
+                let m2 = m.pre_translate(ox as f32, oy as f32);
+                self.draw_image_clipped(&b, m2, sampling, paint, Some(dst));
+            }
+            None => self.draw_image_clipped(bitmap, m, sampling, paint, Some(dst)),
+        }
+    }
+
+    /// `DrawImage(image, dst, sampling, paint)`.
+    pub fn draw_bitmap_to(
+        &mut self,
+        bitmap: &Bitmap,
+        dst: Rect,
+        sampling: Sampling,
+        paint: &Paint,
+    ) {
+        let src = rect(0.0, 0.0, bitmap.w as f32, bitmap.h as f32);
+        self.draw_bitmap_rect(bitmap, src, dst, sampling, paint);
+    }
+
+    /// Draws `bitmap` mapped by `local` (then the canvas matrix).
+    pub fn draw_image_matrix(
+        &mut self,
+        bitmap: &Bitmap,
+        local: Transform,
+        sampling: Sampling,
+        paint: &Paint,
+    ) {
+        self.draw_image_clipped(bitmap, local, sampling, paint, None);
+    }
+
+    fn draw_image_clipped(
+        &mut self,
+        bitmap: &Bitmap,
+        local: Transform,
+        sampling: Sampling,
+        paint: &Paint,
+        dst_rect: Option<Rect>,
+    ) {
+        if bitmap.is_empty() {
+            return;
+        }
+        let total = self.state.matrix.pre_concat(local);
+        let Some(inv) = total.invert() else {
+            return;
+        };
+        let (w, h) = (self.pm.width() as i32, self.pm.height() as i32);
+        let src: Vec<[u8; 4]> = bitmap
+            .px
+            .iter()
+            .map(|c| {
+                let p = premul(*c);
+                [p.r, p.g, p.b, p.a]
+            })
+            .collect();
+        // Device bounds of the image (or the destination rectangle).
+        let bounds = {
+            let r = dst_rect.unwrap_or_else(|| rect(0.0, 0.0, bitmap.w as f32, bitmap.h as f32));
+            if dst_rect.is_some() {
+                // dst_rect is in canvas-local space.
+                map_rect(self.state.matrix, r)
+            } else {
+                map_rect(total, r)
+            }
+        };
+        // Coverage of the image's area (anti-aliasing off: pixel centres inside).
+        let area = if let Some(r) = dst_rect {
+            let mut pb = PathBuilder::new();
+            pb.push_rect(r);
+            pb.finish().map(|p| (p, self.state.matrix))
+        } else {
+            let mut pb = PathBuilder::new();
+            pb.push_rect(rect(0.0, 0.0, bitmap.w as f32, bitmap.h as f32));
+            pb.finish().map(|p| (p, total))
+        };
+        let mut cover = Mask::new(w as u32, h as u32).unwrap();
+        if let Some((p, m)) = area {
+            cover.fill_path(&p, FillRule::Winding, paint.aa, m);
+        }
+        let x0 = (bounds.left().floor() as i32).max(0);
+        let y0 = (bounds.top().floor() as i32).max(0);
+        let x1 = (bounds.right().ceil() as i32).min(w);
+        let y1 = (bounds.bottom().ceil() as i32).min(h);
+        let mut layer = vec![[0u8; 4]; (w * h) as usize];
+        let mut layer_f: Vec<F4> = Vec::new();
+        let filtered = paint.color_filter.is_some() || paint.color.a != 255;
+        if filtered {
+            layer_f = vec![F4::default(); (w * h) as usize];
+        }
+        let alpha = paint.color.a as f32 / 255.0;
+        let mut any = false;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = (y * w + x) as usize;
+                let cov = cover.data()[i];
+                if cov == 0 {
+                    continue;
+                }
+                let mut pt = Point::from_xy(x as f32 + 0.5, y as f32 + 0.5);
+                inv.map_points(std::slice::from_mut(&mut pt));
+                let mut s = sample(&src, bitmap.w, bitmap.h, pt.x, pt.y, sampling, Tile::Decal);
+                if s.a == 0.0 && s.r == 0.0 && s.g == 0.0 && s.b == 0.0 && !filtered {
+                    continue;
+                }
+                if alpha != 1.0 {
+                    s = F4 {
+                        r: s.r * alpha,
+                        g: s.g * alpha,
+                        b: s.b * alpha,
+                        a: s.a * alpha,
+                    };
+                }
+                if let Some(f) = &paint.color_filter {
+                    s = f.apply(s);
+                }
+                if cov != 255 {
+                    let c = cov as f32 / 255.0;
+                    s = F4 {
+                        r: s.r * c,
+                        g: s.g * c,
+                        b: s.b * c,
+                        a: s.a * c,
+                    };
+                }
+                any = true;
+                if filtered {
+                    layer_f[i] = s;
+                } else {
+                    layer[i] = [unorm(s.r), unorm(s.g), unorm(s.b), unorm(s.a)];
+                }
+            }
+        }
+        if !any {
+            return;
+        }
+        if let Some((sx, sy)) = paint.image_blur {
+            if filtered {
+                for (d, s) in layer.iter_mut().zip(&layer_f) {
+                    *d = [unorm(s.r), unorm(s.g), unorm(s.b), unorm(s.a)];
+                }
+            }
+            let blurred = blur::blur_premul(&layer, w, h, 0, 0, w, h, sx, sy);
+            self.composite(&blurred, paint.blend, None, 1.0);
+            return;
+        }
+        let clip = self.state.clip.clone();
+        let data = self.pm.data_mut();
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = (y * w + x) as usize;
+                if cover.data()[i] == 0 {
+                    continue;
+                }
+                let ccov = clip.as_ref().map_or(1.0, |m| m.data()[i] as f32 / 255.0);
+                if ccov == 0.0 {
+                    continue;
+                }
+                let s = if filtered {
+                    layer_f[i]
+                } else {
+                    let p = layer[i];
+                    if p == [0, 0, 0, 0] && paint.blend == Blend::SrcOver {
+                        continue;
+                    }
+                    F4 {
+                        r: p[0] as f32 / 255.0,
+                        g: p[1] as f32 / 255.0,
+                        b: p[2] as f32 / 255.0,
+                        a: p[3] as f32 / 255.0,
+                    }
+                };
+                blend_into(&mut data[i * 4..i * 4 + 4], s, paint.blend, ccov);
+            }
+        }
+    }
+}
+
+/// Blends a premultiplied float source into one stored pixel with clip coverage.
+#[inline]
+pub fn blend_into(dst: &mut [u8], s: F4, mode: Blend, cov: f32) {
+    let d = F4 {
+        r: dst[0] as f32 / 255.0,
+        g: dst[1] as f32 / 255.0,
+        b: dst[2] as f32 / 255.0,
+        a: dst[3] as f32 / 255.0,
+    };
+    let mut o = mode.apply(s, d);
+    if cov < 1.0 {
+        o = F4 {
+            r: d.r + (o.r - d.r) * cov,
+            g: d.g + (o.g - d.g) * cov,
+            b: d.b + (o.b - d.b) * cov,
+            a: d.a + (o.a - d.a) * cov,
+        };
+    }
+    let a = unorm(o.a);
+    dst[0] = unorm(o.r).min(a);
+    dst[1] = unorm(o.g).min(a);
+    dst[2] = unorm(o.b).min(a);
+    dst[3] = a;
+}
+
+fn pixmap_pixels(pm: &Pixmap) -> Vec<[u8; 4]> {
+    pm.data()
+        .chunks_exact(4)
+        .map(|q| [q[0], q[1], q[2], q[3]])
+        .collect()
+}
+
+fn map_rect(m: Transform, r: Rect) -> Rect {
+    let mut pts = [
+        Point::from_xy(r.left(), r.top()),
+        Point::from_xy(r.right(), r.top()),
+        Point::from_xy(r.right(), r.bottom()),
+        Point::from_xy(r.left(), r.bottom()),
+    ];
+    m.map_points(&mut pts);
+    let l = pts.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
+    let t = pts.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
+    let rr = pts.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max);
+    let b = pts.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max);
+    rect(l, t, rr, b)
+}
+
+/// The part of `bitmap` inside `src` (whole pixels), with its offset.
+fn sub_bitmap(bitmap: &Bitmap, src: Rect) -> Option<(Bitmap, i32, i32)> {
+    let l = src.left().floor().max(0.0) as i32;
+    let t = src.top().floor().max(0.0) as i32;
+    let r = (src.right().ceil() as i32).min(bitmap.w);
+    let b = (src.bottom().ceil() as i32).min(bitmap.h);
+    if l == 0 && t == 0 && r == bitmap.w && b == bitmap.h {
+        return None;
+    }
+    if r <= l || b <= t {
+        return None;
+    }
+    let mut out = Bitmap::new(r - l, b - t);
+    for y in t..b {
+        for x in l..r {
+            out.px[((y - t) * (r - l) + (x - l)) as usize] = bitmap.get(x, y);
+        }
+    }
+    Some((out, l, t))
+}
+
+/// `SKMatrix.CreateRotationDegrees`.
+pub fn rotation(deg: f32) -> Transform {
+    let rad = deg.to_radians();
+    let (s, c) = sin_cos_snap(rad);
+    Transform::from_row(c, s, -s, c, 0.0, 0.0)
+}
+
+/// Skia's `SkScalarSinSnapToZero` / `CosSnapToZero`.
+fn sin_cos_snap(rad: f32) -> (f32, f32) {
+    let s = rad.sin();
+    let c = rad.cos();
+    let snap = |v: f32| {
+        if v.abs() <= f32::EPSILON * 16.0 {
+            0.0
+        } else {
+            v
+        }
+    };
+    (snap(s), snap(c))
+}
+
+/// `AddRoundRect` / `DrawRoundRect`.
+pub fn round_rect_path(r: Rect, rx: f32, ry: f32) -> Option<Path> {
+    let rx = rx.max(0.0).min(r.width() / 2.0);
+    let ry = ry.max(0.0).min(r.height() / 2.0);
+    if rx <= 0.0 || ry <= 0.0 {
+        return Some(PathBuilder::from_rect(r));
+    }
+    let k = 0.552_284_8;
+    let (l, t, rr, b) = (r.left(), r.top(), r.right(), r.bottom());
+    let mut pb = PathBuilder::new();
+    pb.move_to(l + rx, t);
+    pb.line_to(rr - rx, t);
+    pb.cubic_to(rr - rx + rx * k, t, rr, t + ry - ry * k, rr, t + ry);
+    pb.line_to(rr, b - ry);
+    pb.cubic_to(rr, b - ry + ry * k, rr - rx + rx * k, b, rr - rx, b);
+    pb.line_to(l + rx, b);
+    pb.cubic_to(l + rx - rx * k, b, l, b - ry + ry * k, l, b - ry);
+    pb.line_to(l, t + ry);
+    pb.cubic_to(l, t + ry - ry * k, l + rx - rx * k, t, l + rx, t);
+    pb.close();
+    pb.finish()
+}
+
+fn stops(colors: &[C], pos: &Option<Vec<f32>>) -> Vec<GradientStop> {
+    let n = colors.len();
+    colors
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let p = match pos {
+                Some(p) => p.get(i).copied().unwrap_or(1.0),
+                None => {
+                    if n <= 1 {
+                        0.0
+                    } else {
+                        i as f32 / (n - 1) as f32
+                    }
+                }
+            };
+            GradientStop::new(p, c.to_skia())
+        })
+        .collect()
+}
+
+fn spread(t: Tile) -> SpreadMode {
+    match t {
+        Tile::Clamp | Tile::Decal => SpreadMode::Pad,
+        Tile::Repeat => SpreadMode::Repeat,
+        Tile::Mirror => SpreadMode::Reflect,
+    }
+}
+
+fn make_shader(shader: &Shader) -> Option<tiny_skia::Shader<'static>> {
+    match shader {
+        Shader::Linear {
+            p0,
+            p1,
+            colors,
+            pos,
+            tile,
+        } => {
+            if (p0.0 - p1.0).abs() < 1e-6 && (p0.1 - p1.1).abs() < 1e-6 {
+                // Degenerate: Skia draws the last colour (clamp) or nothing.
+                return Some(tiny_skia::Shader::SolidColor(
+                    colors.last().copied().unwrap_or(C::TRANSPARENT).to_skia(),
+                ));
+            }
+            tiny_skia::LinearGradient::new(
+                Point::from_xy(p0.0, p0.1),
+                Point::from_xy(p1.0, p1.1),
+                stops(colors, pos),
+                spread(*tile),
+                Transform::identity(),
+            )
+        }
+        Shader::Radial {
+            center,
+            radius,
+            colors,
+            pos,
+            tile,
+        } => {
+            if *radius <= 0.0 {
+                return Some(tiny_skia::Shader::SolidColor(
+                    colors.last().copied().unwrap_or(C::TRANSPARENT).to_skia(),
+                ));
+            }
+            tiny_skia::RadialGradient::new(
+                Point::from_xy(center.0, center.1),
+                0.0,
+                Point::from_xy(center.0, center.1),
+                *radius,
+                stops(colors, pos),
+                spread(*tile),
+                Transform::identity(),
+            )
+        }
+        Shader::Sweep {
+            center,
+            colors,
+            pos,
+        } => tiny_skia::SweepGradient::new(
+            Point::from_xy(center.0, center.1),
+            0.0,
+            360.0,
+            stops(colors, pos),
+            SpreadMode::Pad,
+            Transform::identity(),
+        ),
+        Shader::Image { .. } => None,
+    }
+}
+
+// ---------- sampling ----------
+
+fn cubic_weights(t: f32, b: f32, c: f32) -> [f32; 4] {
+    // Mitchell-Netravali for the four taps at distances 1+t, t, 1-t, 2-t.
+    let k = |x: f32| -> f32 {
+        let x = x.abs();
+        if x < 1.0 {
+            ((12.0 - 9.0 * b - 6.0 * c) * x * x * x
+                + (-18.0 + 12.0 * b + 6.0 * c) * x * x
+                + (6.0 - 2.0 * b))
+                / 6.0
+        } else if x < 2.0 {
+            ((-b - 6.0 * c) * x * x * x
+                + (6.0 * b + 30.0 * c) * x * x
+                + (-12.0 * b - 48.0 * c) * x
+                + (8.0 * b + 24.0 * c))
+                / 6.0
+        } else {
+            0.0
+        }
+    };
+    [k(1.0 + t), k(t), k(1.0 - t), k(2.0 - t)]
+}
+
+fn tile_coord(v: i32, n: i32, tile: Tile) -> Option<i32> {
+    match tile {
+        Tile::Clamp => Some(v.clamp(0, n - 1)),
+        Tile::Repeat => Some(v.rem_euclid(n)),
+        Tile::Mirror => {
+            let period = 2 * n;
+            let m = v.rem_euclid(period);
+            Some(if m < n { m } else { period - 1 - m })
+        }
+        Tile::Decal => {
+            if v < 0 || v >= n {
+                None
+            } else {
+                Some(v)
+            }
+        }
+    }
+}
+
+/// Samples premultiplied pixels at `(u, v)` (pixel-centre convention), clamping texel
+/// reads to the edge for filtering and treating points outside as transparent when
+/// `outside` is `Decal`.
+pub fn sample(
+    src: &[[u8; 4]],
+    w: i32,
+    h: i32,
+    u: f32,
+    v: f32,
+    sampling: Sampling,
+    outside: Tile,
+) -> F4 {
+    sample_tiled(src, w, h, u, v, sampling, outside, outside)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn sample_tiled(
+    src: &[[u8; 4]],
+    w: i32,
+    h: i32,
+    u: f32,
+    v: f32,
+    sampling: Sampling,
+    tile_x: Tile,
+    tile_y: Tile,
+) -> F4 {
+    let texel = |x: i32, y: i32| -> F4 {
+        let (Some(x), Some(y)) = (tile_coord(x, w, tile_x), tile_coord(y, h, tile_y)) else {
+            return F4::default();
+        };
+        let p = src[(y * w + x) as usize];
+        F4 {
+            r: p[0] as f32 / 255.0,
+            g: p[1] as f32 / 255.0,
+            b: p[2] as f32 / 255.0,
+            a: p[3] as f32 / 255.0,
+        }
+    };
+    match sampling {
+        Sampling::Nearest => {
+            let x = u.floor() as i32;
+            let y = v.floor() as i32;
+            texel(x, y)
+        }
+        Sampling::Linear => {
+            let sx = u - 0.5;
+            let sy = v - 0.5;
+            let x0 = sx.floor();
+            let y0 = sy.floor();
+            let fx = sx - x0;
+            let fy = sy - y0;
+            let (x0, y0) = (x0 as i32, y0 as i32);
+            let c00 = texel(x0, y0);
+            let c10 = texel(x0 + 1, y0);
+            let c01 = texel(x0, y0 + 1);
+            let c11 = texel(x0 + 1, y0 + 1);
+            let l = |a: f32, b: f32, c: f32, d: f32| {
+                (a * (1.0 - fx) + b * fx) * (1.0 - fy) + (c * (1.0 - fx) + d * fx) * fy
+            };
+            F4 {
+                r: l(c00.r, c10.r, c01.r, c11.r),
+                g: l(c00.g, c10.g, c01.g, c11.g),
+                b: l(c00.b, c10.b, c01.b, c11.b),
+                a: l(c00.a, c10.a, c01.a, c11.a),
+            }
+        }
+        Sampling::Cubic(b, c) => {
+            let sx = u - 0.5;
+            let sy = v - 0.5;
+            let x0 = sx.floor();
+            let y0 = sy.floor();
+            let wx = cubic_weights(sx - x0, b, c);
+            let wy = cubic_weights(sy - y0, b, c);
+            let (x0, y0) = (x0 as i32, y0 as i32);
+            let mut acc = F4::default();
+            for (j, wyj) in wy.iter().enumerate() {
+                for (i, wxi) in wx.iter().enumerate() {
+                    let t = texel(x0 - 1 + i as i32, y0 - 1 + j as i32);
+                    let k = wxi * wyj;
+                    acc.r += t.r * k;
+                    acc.g += t.g * k;
+                    acc.b += t.b * k;
+                    acc.a += t.a * k;
+                }
+            }
+            let a = acc.a.clamp(0.0, 1.0);
+            F4 {
+                r: acc.r.clamp(0.0, a),
+                g: acc.g.clamp(0.0, a),
+                b: acc.b.clamp(0.0, a),
+                a,
+            }
+        }
+    }
+}
+
+/// A straight-colour helper over [`sample`] for effects that resample whole bitmaps.
+pub fn sample_bitmap(bitmap: &Bitmap, u: f32, v: f32, sampling: Sampling, tile: Tile) -> C {
+    let src: Vec<[u8; 4]> = bitmap
+        .px
+        .iter()
+        .map(|c| {
+            let p = premul(*c);
+            [p.r, p.g, p.b, p.a]
+        })
+        .collect();
+    let s = sample(&src, bitmap.w, bitmap.h, u, v, sampling, tile);
+    unpremul(C::new(unorm(s.r), unorm(s.g), unorm(s.b), unorm(s.a)))
+}
+
+/// `SKBitmap.Resize(info, sampling)` / scaling a bitmap onto a new canvas of `w` x `h`.
+pub fn resize(bitmap: &Bitmap, w: i32, h: i32, sampling: Sampling) -> Bitmap {
+    let mut canvas = Canvas::new(w, h);
+    canvas.draw_bitmap_to(
+        bitmap,
+        rect(0.0, 0.0, w as f32, h as f32),
+        sampling,
+        &Paint::default(),
+    );
+    canvas.into_bitmap()
+}
