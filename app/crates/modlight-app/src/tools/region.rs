@@ -22,6 +22,10 @@ use crate::state::AppState;
 pub enum RegionFor {
     /// The QR code window's "Scan screen" / "Scan region".
     QrScan(u64),
+    /// The pin startup window's "Select region".
+    PinStartup(u64),
+    /// `PinToScreenFromScreen`.
+    PinFromScreen(Box<TaskSettings>),
 }
 
 /// A picture of the screen and where it was (desktop points).
@@ -114,6 +118,10 @@ impl AppState {
     pub fn tool_picture(&mut self, target: RegionFor, picture: ScreenPicture) {
         match target {
             RegionFor::QrScan(key) => super::qr::scanned_picture(self, key, picture),
+            RegionFor::PinStartup(key) => self.pin_region_done(Some(key), None, picture),
+            RegionFor::PinFromScreen(settings) => {
+                self.pin_region_done(None, Some(*settings), picture)
+            }
         }
     }
 }

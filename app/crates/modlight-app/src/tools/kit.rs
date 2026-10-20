@@ -770,3 +770,61 @@ pub fn paint_checkered_big(ui: &Ui, colors: &Colors, rect: Rect) {
     );
     ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
 }
+
+/// `ToggleSwitch` (empty On/Off content): a 40 x 20 pill at the right of `rect`, the
+/// accent when on; returns true when clicked.
+pub fn toggle_at(
+    ui: &mut Ui,
+    colors: &Colors,
+    rect: Rect,
+    id: egui::Id,
+    value: &mut bool,
+    enabled: bool,
+) -> bool {
+    let pill = Rect::from_min_size(
+        pos2(rect.right() - 40.0, rect.center().y - 10.0),
+        vec2(40.0, 20.0),
+    );
+    let response = ui.interact(
+        pill,
+        id,
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    let painter = ui.painter();
+    let dim = if enabled { 1.0 } else { 0.35 };
+    if *value {
+        painter.rect_filled(pill, 10.0, colors.accent_start().gamma_multiply(dim));
+        painter.circle_filled(
+            pos2(pill.right() - 10.0, pill.center().y),
+            5.0,
+            colors.accent_foreground().gamma_multiply(dim),
+        );
+    } else {
+        let fill = if response.hovered() {
+            colors.control_background_hover()
+        } else {
+            colors.control_background()
+        };
+        painter.rect_filled(pill, 10.0, fill.gamma_multiply(dim));
+        painter.rect_stroke(
+            pill,
+            10.0,
+            Stroke::new(1.0, colors.text_secondary().gamma_multiply(dim)),
+            StrokeKind::Inside,
+        );
+        painter.circle_filled(
+            pos2(pill.left() + 10.0, pill.center().y),
+            5.0,
+            colors.text_secondary().gamma_multiply(dim),
+        );
+    }
+    if response.clicked() {
+        *value = !*value;
+        return true;
+    }
+    false
+}

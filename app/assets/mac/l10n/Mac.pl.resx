@@ -79,4 +79,7 @@
   <data name="FirstRunOptionsLater" xml:space="preserve">
     <value>Te opcje zmienisz później w Ustawieniach aplikacji → Integracja z macOS.</value>
   </data>
+  <data name="PinWheelHint" xml:space="preserve">
+    <value>Kółko myszy zmienia skalę, Cmd + kółko myszy zmienia nieprzezroczystość.</value>
+  </data>
 </root>

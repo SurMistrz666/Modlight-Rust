@@ -20,6 +20,7 @@ pub mod files;
 pub mod image_viewer;
 pub mod jobs;
 pub mod kit;
+pub mod pin;
 pub mod qa;
 pub mod qr;
 pub mod region;
@@ -96,6 +97,8 @@ pub struct Tools {
     pub screen_picker: Option<screen_picker::ScreenPicker>,
     /// Tool windows to bring back after they stepped aside (hidden or minimised).
     pub restore: Vec<u64>,
+    /// The pinned pictures (`PinToScreenManager.Windows`).
+    pub pins: Vec<pin::Pin>,
     /// What the open panels answer in QA and headless runs (tests queue paths here).
     pub qa_open: std::collections::VecDeque<std::path::PathBuf>,
 }
@@ -202,6 +205,7 @@ fn builder(spec: &WindowSpec, size: Vec2) -> ViewportBuilder {
 pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
     jobs::tick(state, ctx);
     screen_picker::viewports(ctx, state);
+    pin::viewports(ctx, state);
     for key in std::mem::take(&mut state.tools.restore) {
         let id = ViewportId::from_hash_of(("tool-window", key));
         ctx.send_viewport_cmd_to(id, ViewportCommand::Visible(true));

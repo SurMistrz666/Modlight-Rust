@@ -19,6 +19,10 @@ pub const SCREENS: &[&str] = &[
     "qr-code",
     "qr-code-empty",
     "image-viewer",
+    "pin-startup",
+    "pin-startup-error",
+    "pin-options",
+    "pinned-image",
 ];
 
 /// A picture to show: a sunset like the fixture library's, drawn here.
@@ -163,6 +167,32 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
             });
             Some(vec2(1040.0, 700.0))
         }
+        "pin-startup" | "pin-startup-error" => {
+            let settings = state.default_task_settings();
+            let error = screen == "pin-startup-error";
+            state.tools.open_keyed(|key| {
+                let mut window = super::pin::PinStartupWindow::new(key, settings);
+                if error {
+                    window.error = modlight_core::l10n::t(
+                        modlight_core::l10n::tools::PinToScreenStartupViewModel_Clipboard_no_image,
+                    )
+                    .to_string();
+                }
+                Box::new(window)
+            });
+            Some(vec2(560.0, 230.0))
+        }
+        "pin-options" => {
+            state.open_pin_options(None);
+            Some(vec2(760.0, 560.0))
+        }
+        "pinned-image" => {
+            let settings = state.default_task_settings();
+            state.pin_picture(Arc::new(sunset(420, 260)), &settings);
+            let pin = state.tools.pins.last_mut().expect("pinned");
+            pin.show_toolbar = true;
+            Some(pin.size)
+        }
         _ => None,
     }
 }
@@ -171,6 +201,17 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
 pub fn draw(screen: &str, ui: &mut Ui, state: &mut AppState) -> Option<Option<f32>> {
     if !is_dialog(screen) {
         return None;
+    }
+    if screen == "pinned-image" {
+        let colors = state.colors.clone();
+        let now = state.time;
+        if let Some(pin) = state.tools.pins.last_mut() {
+            // The desktop behind a transparent window.
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(58, 74, 120));
+            let _ = pin.ui(ui, &colors, now);
+        }
+        return Some(None);
     }
     if screen == "screen-color-picker" {
         let colors = state.colors.clone();
