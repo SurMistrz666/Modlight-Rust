@@ -1,6 +1,6 @@
 # Stan prac: Modlight w Rust
 
-Ostatnia aktualizacja: 2026-10-20: CAŁOŚĆ GOTOWA i scalona do `main`; serwer w Dockerze na 127.0.0.1:8430, `app/dist/Modlight.app` zbudowana. Zostało: sprawdzenie aplikacji w prawdziwym oknie z właścicielem (uprawnienia macOS) i prywatne repo na GitHubie.
+Ostatnia aktualizacja: 2026-10-20: CAŁOŚĆ GOTOWA i scalona do `main`; serwer w Dockerze na 127.0.0.1:8430, `app/dist/Modlight.app` zbudowana. Wysłane na prywatne repo https://github.com/SurMistrz666/Modlight-Rust (gałąź `main`). Zostało: sprawdzenie aplikacji w prawdziwym oknie z właścicielem (uprawnienia macOS; listy w `docs/handoff/app-3.md`, `app-4.md`, `app-5-tools.md`, `app-5-effects.md`).
 
 ## Cel (decyzje właściciela z 2026-10-18)
 
