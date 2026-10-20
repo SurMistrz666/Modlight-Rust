@@ -4,6 +4,12 @@
 //! Everything but the token is kept in `UploadersConfig.json`, in the shape the Windows
 //! client stores it. The token never goes into that file: it lives in the login Keychain
 //! (or, in QA mode, in a private file of the QA profile), behind [`CredentialStore`].
+//!
+//! The store keeps the token together with the origin it was issued for. The host in
+//! `UploadersConfig.json` can change behind the token's back (an edited file, a settings
+//! backup from somebody else), and on Windows that cannot happen because the token sits
+//! in the same file. Here a token is only ever paired with the host it was issued for:
+//! any other host reads as signed out until the person signs in there.
 
 use std::path::{Path, PathBuf};
 
@@ -120,11 +126,61 @@ struct UploadersFile {
     modlight_account: StoredAccount,
 }
 
+/// What the credential store holds: the token and the origin it was issued for.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct BoundToken {
+    host: String,
+    token: String,
+}
+
+/// Whether two account hosts name the same server: the same origin, or the same text.
+fn same_host(a: &str, b: &str) -> bool {
+    let (a, b) = (
+        a.trim().trim_end_matches('/'),
+        b.trim().trim_end_matches('/'),
+    );
+    !a.is_empty() && (a.eq_ignore_ascii_case(b) || modlight_api::host::same_origin(a, b))
+}
+
+/// The secret written to the credential store for a token issued by `host`.
+fn bind(host: &str, token: &str) -> String {
+    serde_json::to_string(&BoundToken {
+        host: host.to_string(),
+        token: token.to_string(),
+    })
+    .unwrap_or_default()
+}
+
+/// The token in a stored secret, when it was issued for `host`. A secret that does not
+/// name its host (written by a build before the binding) is not used either: nobody
+/// can tell any more which server it belongs to.
+fn token_for(secret: &str, host: &str) -> Option<String> {
+    let Ok(bound) = serde_json::from_str::<BoundToken>(secret) else {
+        log::warn!("Modlight: the saved token does not say which server issued it; sign in again.");
+        return None;
+    };
+    if bound.token.is_empty() {
+        return None;
+    }
+    if !same_host(&bound.host, host) {
+        log::warn!(
+            "Modlight: the saved token was issued by {}, not by {host}; sign in to {host} to use it.",
+            bound.host
+        );
+        return None;
+    }
+    Some(bound.token)
+}
+
 /// The signed-in account and its token.
 pub struct AccountStore {
     path: Option<PathBuf>,
     account: StoredAccount,
     token: String,
+    /// The origin `token` was issued for; the token is used only while the account's
+    /// host is this origin.
+    token_host: String,
     credentials: Box<dyn CredentialStore>,
 }
 
@@ -138,14 +194,21 @@ impl AccountStore {
             .map(|file| file.modlight_account)
             .unwrap_or_default();
         let token = if account.host.is_empty() {
-            String::new()
+            None
         } else {
-            credentials.load().unwrap_or_default()
+            credentials
+                .load()
+                .and_then(|secret| token_for(&secret, &account.host))
+        };
+        let (token, token_host) = match token {
+            Some(token) => (token, account.host.clone()),
+            None => (String::new(), String::new()),
         };
         AccountStore {
             path: Some(path),
             account,
             token,
+            token_host,
             credentials,
         }
     }
@@ -154,6 +217,7 @@ impl AccountStore {
     pub fn in_memory(account: StoredAccount, token: &str) -> AccountStore {
         AccountStore {
             path: None,
+            token_host: account.host.clone(),
             account,
             token: token.to_string(),
             credentials: Box::new(MemoryCredentialStore::default()),
@@ -170,7 +234,9 @@ impl AccountStore {
     }
 
     pub fn is_signed_in(&self) -> bool {
-        !self.account.host.is_empty() && !self.token.is_empty()
+        !self.account.host.is_empty()
+            && !self.token.is_empty()
+            && same_host(&self.token_host, &self.account.host)
     }
 
     /// What to send requests with, when signed in.
@@ -187,8 +253,10 @@ impl AccountStore {
     /// Keep a token that `/api/me` just accepted. The host is the one we signed in to,
     /// never the one the answer reported.
     pub fn save_sign_in(&mut self, signed: &SignedIn) -> Result<(), String> {
-        self.credentials.save(&signed.token)?;
+        self.credentials
+            .save(&bind(&signed.origin, &signed.token))?;
         self.token = signed.token.clone();
+        self.token_host = signed.origin.clone();
         self.account = StoredAccount {
             host: signed.origin.clone(),
             tag: signed.account.tag.clone().unwrap_or_default(),
@@ -205,6 +273,7 @@ impl AccountStore {
     pub fn sign_out(&mut self) -> Result<(), String> {
         let deleted = self.credentials.delete();
         self.token.clear();
+        self.token_host.clear();
         self.account.tag.clear();
         self.account.name.clear();
         self.account.email.clear();
@@ -372,6 +441,74 @@ mod tests {
         assert_eq!(store.host(), "http://127.0.0.1:8420");
         assert!(store.account().tag.is_empty());
         assert!(!credentials.exists());
+        let again = AccountStore::load(dir.path(), Box::new(FileCredentialStore::new(credentials)));
+        assert!(!again.is_signed_in());
+        assert_eq!(again.host(), "http://127.0.0.1:8420");
+    }
+
+    /// Point `UploadersConfig.json` of `profile` at another host, as an edited file or an
+    /// imported backup would, leaving the stored token alone.
+    fn swap_host(profile: &Path, host: &str) {
+        let path = profile.join(UPLOADERS_CONFIG_FILE);
+        let mut file: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        file["ModlightAccount"]["Host"] = serde_json::json!(host);
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_host_swapped_behind_the_token_never_gets_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = dir.path().join("credentials");
+        let store = || {
+            AccountStore::load(
+                dir.path(),
+                Box::new(FileCredentialStore::new(credentials.clone())),
+            )
+        };
+        store().save_sign_in(&signed("ToqOse")).unwrap();
+        assert!(store().is_signed_in());
+
+        swap_host(dir.path(), "https://attacker.example");
+        let swapped = store();
+        assert!(
+            !swapped.is_signed_in(),
+            "a token is never paired with another host"
+        );
+        assert!(swapped.credential().is_none());
+        assert_eq!(
+            swapped.host(),
+            "https://attacker.example",
+            "the sign-in box offers the host, which needs its own sign-in"
+        );
+
+        // The same origin written another way is still the host the token came from.
+        swap_host(dir.path(), "HTTP://127.0.0.1:8420/");
+        assert_eq!(store().credential().unwrap().token, "tok-123");
+
+        // A sign-in to the new host binds the new token to it.
+        swap_host(dir.path(), "https://attacker.example");
+        let mut again = store();
+        let mut other = signed("Other");
+        other.origin = "https://files.example.com".into();
+        other.token = "tok-456".into();
+        again.save_sign_in(&other).unwrap();
+        let reloaded = store();
+        assert_eq!(reloaded.host(), "https://files.example.com");
+        assert_eq!(reloaded.credential().unwrap().token, "tok-456");
+    }
+
+    #[test]
+    fn a_token_that_does_not_name_its_host_is_not_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = dir.path().join("credentials");
+        let mut store = AccountStore::load(
+            dir.path(),
+            Box::new(FileCredentialStore::new(credentials.clone())),
+        );
+        store.save_sign_in(&signed("ToqOse")).unwrap();
+        // What a build before the binding wrote: the bare token.
+        std::fs::write(&credentials, "tok-123").unwrap();
         let again = AccountStore::load(dir.path(), Box::new(FileCredentialStore::new(credentials)));
         assert!(!again.is_signed_in());
         assert_eq!(again.host(), "http://127.0.0.1:8420");

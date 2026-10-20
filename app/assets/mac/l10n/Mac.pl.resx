@@ -52,6 +52,22 @@
   <data name="DontShowPrintDialog" xml:space="preserve">
     <value>Nie pokazuj okna drukowania</value>
   </data>
+  <data name="BackupImportRefused" xml:space="preserve">
+    <value>Nie zaimportowano, bo kopia zapasowa Modlight nigdy ich nie zawiera: {0}</value>
+  </data>
+  <data name="BackupImportDisabled" xml:space="preserve">
+    <value>Te ustawienia działałyby same albo uruchamiały programy na tym Macu, więc zaimportowano je wyłączone albo z wartościami domyślnymi. Ustaw je ponownie w ustawieniach zadań tylko wtedy, gdy ufasz źródłu kopii:
+{0}</value>
+  </data>
+  <data name="BackupImportDefaultTask" xml:space="preserve">
+    <value>Ustawienia zadań</value>
+  </data>
+  <data name="BackupImportProgram" xml:space="preserve">
+    <value>akcja {0} ({1})</value>
+  </data>
+  <data name="BackupImportFFmpegPath" xml:space="preserve">
+    <value>ścieżka FFmpeg {0}, teraz FFmpeg z Komponentów</value>
+  </data>
   <data name="PageMacIntegration" xml:space="preserve">
     <value>Integracja z macOS</value>
   </data>
