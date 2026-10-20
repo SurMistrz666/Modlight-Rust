@@ -645,3 +645,85 @@ pub fn texture(
 pub fn size(width: f32, height: f32) -> Vec2 {
     vec2(width.round(), height.round())
 }
+
+/// `NumericUpDown ShowButtonSpinner="False"` with centred text: whole numbers between
+/// `min` and `max`; returns the new value when the text holds one that differs.
+#[allow(clippy::too_many_arguments)]
+pub fn plain_number_at(
+    ui: &mut Ui,
+    colors: &Colors,
+    rect: Rect,
+    id: egui::Id,
+    value: i64,
+    min: i64,
+    max: i64,
+    enabled: bool,
+) -> Option<i64> {
+    let focused = ui.memory(|m| m.has_focus(id));
+    let mut text: String = ui
+        .data(|d| d.get_temp::<String>(id.with("text")))
+        .filter(|_| focused)
+        .unwrap_or_else(|| value.to_string());
+    let response = text_box_at(ui, colors, rect, id, &mut text, "", enabled, true);
+    let mut out = None;
+    if response.changed() {
+        ui.data_mut(|d| d.insert_temp(id.with("text"), text.clone()));
+        if let Ok(v) = text.trim().parse::<i64>() {
+            let v = v.clamp(min, max);
+            if v != value {
+                out = Some(v);
+            }
+        }
+    }
+    if response.lost_focus() {
+        ui.data_mut(|d| d.remove::<String>(id.with("text")));
+    }
+    out
+}
+
+/// A small menu below `anchor`'s right edge (`MenuFlyout Placement="BottomEdgeAlignedRight"`);
+/// returns the index picked.
+pub fn flyout(
+    ui: &mut Ui,
+    colors: &Colors,
+    response: &Response,
+    id: &str,
+    items: &[String],
+) -> Option<usize> {
+    let width = items
+        .iter()
+        .map(|i| text_width(ui, i, 13.0, Weight::Normal))
+        .fold(120.0f32, f32::max)
+        + 32.0;
+    let mut picked = None;
+    egui::Popup::menu(response)
+        .id(egui::Id::new(("tool-flyout", id)))
+        .frame(crate::menus::frame(colors))
+        .align(egui::RectAlign::BOTTOM_END)
+        .gap(2.0)
+        .show(|ui| {
+            ui.set_min_width(width);
+            for (index, item) in items.iter().enumerate() {
+                let (r, row) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
+                if row.hovered() {
+                    ui.painter()
+                        .rect_filled(r, 4.0, colors.control_background_hover());
+                }
+                widgets::paint_text(
+                    ui,
+                    ui.painter(),
+                    r.shrink2(vec2(10.0, 0.0)),
+                    Align2::LEFT_CENTER,
+                    item,
+                    13.0,
+                    Weight::Normal,
+                    colors.text(),
+                );
+                if row.clicked() {
+                    picked = Some(index);
+                    ui.close();
+                }
+            }
+        });
+    picked
+}

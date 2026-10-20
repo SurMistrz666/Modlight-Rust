@@ -87,9 +87,17 @@ impl AppState {
 
 /// `ExecuteJob(job, filePath)` for the jobs `capture_flow` leaves to the tools.
 pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: Option<PathBuf>) {
-    let _ = (&settings, &file, job);
-    state.push(Command::NotYet);
+    let _ = &file;
+    use HotkeyType::*;
+    match job {
+        ColorPicker => state.open_color_picker(&settings),
+        ScreenColorPicker => state.open_screen_color_picker(settings),
+        // The image effects window, the tray menu toggle: other parts of the port.
+        _ => state.push(Command::NotYet),
+    }
 }
 
 /// Every frame: background results the tools wait for.
-pub fn tick(_state: &mut AppState, _ctx: &egui::Context) {}
+pub fn tick(state: &mut AppState, _ctx: &egui::Context) {
+    state.tick_screen_pick();
+}

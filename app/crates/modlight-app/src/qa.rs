@@ -139,6 +139,9 @@ pub const SCREENS: &[&str] = &[
     "ffmpeg-options-audio",
     "ffmpeg-options-advanced",
     // Phase 5, tools (`tools::qa::SCREENS`).
+    "color-picker",
+    "color-picker-standard",
+    "screen-color-picker",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.
