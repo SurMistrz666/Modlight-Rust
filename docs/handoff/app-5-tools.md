@@ -16,6 +16,15 @@ Scratch: `/path/to/modlight/_scratch/app-5-tools/`.
   (`TaskSettings.tools_settings`, the raw `ToolsSettings`), core `build.rs` (string tables
   of ShareX.Tools and ShareX.HistoryLib).
 
-## State
+## State (updated as tools land)
 
-In progress; see the commit log.
+Done and committed, each with QA screens and snapshots (4 looks):
+colour picker + screen colour picker (also the editor's screen picks), QR code, image
+viewer, pin to screen (pins, startup, options; after-capture task, notice action, editor
+request), image combiner, video converter (real-ffmpeg test), metadata + strip metadata
+(ExifTool via /usr/bin/perl; stand-in script test), input box, output box (recording
+failures), error window (panics off the UI thread), directory indexer (+ clipboard
+folder indexing).
+
+Next: OCR (Vision), analyze image, background remover (ort), borderless / top-most,
+history + image history, print, docs (STATUS.md, MACOS.md), full test run.
