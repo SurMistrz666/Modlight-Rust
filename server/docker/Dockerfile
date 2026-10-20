@@ -6,12 +6,15 @@
 #
 # Stages:
 #   web        the SPA (server/web, Vite) -> /src/web/dist
-#   toolchain  Debian 12 + Rust + the tools sharp-libvips' build script needs
 #   libvips    libvips 8.17.3 built by sharp-libvips 1.2.4's own build script
-#              (docker/sharp-libvips/posix.sh, unmodified): the same library,
-#              the same dependency versions and the same feature set as the
-#              libvips-cpp.so that the reference's sharp 0.34.5 loads
-#   server     the release binary, linked against that libvips-cpp.so
+#              (docker/sharp-libvips/posix.sh, unmodified) in the build image
+#              sharp-libvips uses (Amazon Linux 2, gcc 10): the same library,
+#              the same dependency versions, the same feature set and the
+#              same compiler as the libvips-cpp.so the reference's sharp
+#              0.34.5 loads, so even encoders whose output follows the
+#              compiler (libaom's AVIF) write the same bytes
+#   server     the release binary (Debian 12, Rust), linked against that
+#              libvips-cpp.so
 #   runtime    Debian 12 slim + ffmpeg 5.1 (the reference image's ffmpeg) +
 #              the binary, migrations, messages, public/, web/dist
 #
@@ -32,36 +35,56 @@ COPY web/ ./
 COPY messages/ /src/messages/
 RUN pnpm run build && test -f dist/index.html
 
-# ── toolchain: compilers for libvips' dependencies and for the server ─────────
-FROM rust:1.99.0-slim-bookworm AS toolchain
-# The packages sharp-libvips installs in its own build image
-# (platforms/linux-*/Dockerfile), Debian names. No -dev library packages: every
-# dependency of libvips is built from source by posix.sh, and a system copy
-# that a configure script could pick up instead would change the result.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      autoconf automake bzip2 ca-certificates cmake curl file g++ gcc gettext git gperf jq \
-      libssl-dev libtool make patch pkg-config python3 python3-venv tar xz-utils \
- && rm -rf /var/lib/apt/lists/*
-# meson and ninja from PyPI, as sharp-libvips does (Debian 12's meson is too old
-# for GLib 2.86); cargo-c for librsvg.
-RUN python3 -m venv /opt/meson \
- && /opt/meson/bin/pip install --no-cache-dir meson==1.9.1 ninja==1.13.0 tomli==2.2.1
-ENV PATH=/opt/meson/bin:$PATH
-RUN --mount=type=cache,id=modlight-cargo-registry,target=/usr/local/cargo/registry \
-    cargo install cargo-c --version 0.10.25 --locked
-
 # ── libvips: sharp-libvips 1.2.4's build, verbatim ────────────────────────────
-FROM toolchain AS libvips
+# The build image is platforms/linux-arm64v8 (or linux-x64)/Dockerfile of
+# sharp-libvips v1.2.4: Amazon Linux 2 (glibc 2.26) with gcc 10. Differences:
+# a pinned AL2 tag, a pinned stable Rust (sharp-libvips: nightly, for two
+# size-only -Z flags that are left out: librsvg keeps its panic strings,
+# nothing it renders changes) and pinned meson/ninja/cargo-c versions.
+FROM amazonlinux:2.0.20260930.0 AS libvips
 ARG TARGETARCH
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
+RUN set -e; \
+    yum update -y; \
+    amazon-linux-extras install epel -y; \
+    extra=""; [ "$TARGETARCH" = amd64 ] && extra="nasm"; \
+    yum install -y --setopt=tsflags=nodocs --exclude=gcc \
+      autoconf automake bzip2 cmake3 curl gcc10 gcc10-binutils gcc10-c++ gettext git gperf jq make \
+      patch pkgconfig python3 tar xz $extra; \
+    yum clean all; \
+    ln -s /usr/bin/gcc10-gcc /usr/bin/cc; \
+    ln -s /usr/bin/gcc10-g++ /usr/bin/c++; \
+    [ "$TARGETARCH" = arm64 ] && ln -s /usr/bin/gcc10-as /usr/bin/as; \
+    ln -s /usr/bin/gcc10-ar /usr/bin/ar; \
+    ln -s /usr/bin/gcc10-nm /usr/bin/nm; \
+    ln -s /usr/bin/gcc10-ld.bfd /usr/bin/ld; \
+    ln -s /usr/bin/gcc10-strip /usr/bin/strip; \
+    ln -s /usr/bin/gcc10-ranlib /usr/bin/ranlib; \
+    ln -s /usr/bin/gcc10-readelf /usr/bin/readelf; \
+    ln -sf /usr/bin/gcc10-ld.bfd /usr/bin/gcc10-ld; \
+    rm -f /usr/bin/gcc10-ld.gold; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal \
+      --default-toolchain 1.99.0; \
+    ln -s /usr/bin/cmake3 /usr/bin/cmake; \
+    pip3 install --no-cache-dir meson==1.9.1 ninja==1.11.1.4 tomli==2.0.1
+# cargo-c with its own OpenSSL 3 (`vendored-openssl`): the cargo it embeds
+# needs OpenSSL >= 1.1 and its vendored curl >= 3.0, and AL2 ships 1.0.2 (the
+# sharp-libvips image of 2025 built an older cargo-c against that). OpenSSL's
+# build needs Perl; Perl is removed again with what it brought along
+# (systemtap's dtrace, which GLib would otherwise pick up for its probes), so
+# posix.sh runs in the same image sharp-libvips used.
+RUN --mount=type=cache,id=modlight-al2-cargo-registry,target=/usr/local/cargo/registry \
+    set -e; \
+    yum install -y --setopt=tsflags=nodocs perl-core perl-IPC-Cmd; \
+    cargo install cargo-c --version 0.10.25 --locked --features vendored-openssl; \
+    yum history undo -y last; \
+    yum clean all; \
+    if command -v dtrace; then echo "dtrace still installed"; exit 1; fi
 COPY docker/sharp-libvips/ /packaging/
 RUN mkdir -p /packaging/build \
  && cp /packaging/posix.sh /packaging/build/posix.sh \
  && cp /packaging/meson.ini /packaging/Toolchain.cmake /root/
 # PLATFORM and FLAGS as platforms/linux-arm64v8 and platforms/linux-x64 set them.
-# RUSTFLAGS there also carry two nightly-only size flags (-Zlocation-detail,
-# -Zfmt-debug); this toolchain is stable, so they are left out (librsvg's panic
-# strings stay in the binary; nothing it renders changes).
 RUN set -e; \
     case "$TARGETARCH" in \
       arm64) export PLATFORM=linux-arm64v8 FLAGS="-march=armv8-a" ;; \
@@ -77,7 +100,10 @@ RUN set -e; \
     printf 'Name: vips\nDescription: libvips-cpp.so as sharp-libvips 1.2.4 ships it (libvips, GLib and GObject inside)\nVersion: 8.17.3\nLibs: -L/target/lib -lvips-cpp\n' > /target/pkgconfig/vips.pc
 
 # ── server: the release binary ────────────────────────────────────────────────
-FROM toolchain AS server
+FROM rust:1.99.0-slim-bookworm AS server
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends pkg-config \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=libvips /target/lib/ /target/lib/
 COPY --from=libvips /target/pkgconfig/ /target/pkgconfig/
 # build.rs links what `pkg-config --libs vips` names: here libvips-cpp.so.
