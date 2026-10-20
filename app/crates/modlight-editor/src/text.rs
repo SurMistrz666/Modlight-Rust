@@ -16,12 +16,13 @@ use tiny_skia::{Path, PathBuilder};
 /// The families the editor treats as Avalonia's `FontFamily.Default`.
 pub const DEFAULT_FAMILY: &str = "Inter";
 
-const INTER_REGULAR_LATIN: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular-latin.ttf");
-const INTER_REGULAR_EXT: &[u8] =
+pub(crate) const INTER_REGULAR_LATIN: &[u8] =
+    include_bytes!("../../../assets/fonts/Inter-Regular-latin.ttf");
+pub(crate) const INTER_REGULAR_EXT: &[u8] =
     include_bytes!("../../../assets/fonts/Inter-Regular-latin-ext.ttf");
-const INTER_SEMIBOLD_LATIN: &[u8] =
+pub(crate) const INTER_SEMIBOLD_LATIN: &[u8] =
     include_bytes!("../../../assets/fonts/Inter-SemiBold-latin.ttf");
-const INTER_SEMIBOLD_EXT: &[u8] =
+pub(crate) const INTER_SEMIBOLD_EXT: &[u8] =
     include_bytes!("../../../assets/fonts/Inter-SemiBold-latin-ext.ttf");
 
 type FontData = Arc<dyn AsRef<[u8]> + Send + Sync>;

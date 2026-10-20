@@ -580,9 +580,24 @@ impl WorkerTask {
         });
         let job = settings.after_capture_job;
 
-        // Beautify and effects arrive with phase 5; until then the picture goes on as
-        // it is.
         let mut image = image;
+        // `TaskHelpers.BeautifyImage`: the editor with the Background panel open; closing
+        // it without a picture ends the task.
+        if job.has(AfterCaptureTasks::BeautifyImage) {
+            match ctx
+                .channel
+                .ask(self.id, TaskQuestion::Beautify(image.clone()))
+                .await
+            {
+                Some(TaskAnswer::Annotated(Some(beautified))) => {
+                    image = beautified;
+                    self.with(|s| s.image = Some(image.clone()));
+                }
+                _ => return false,
+            }
+        }
+        // Image effects arrive with the effects library; until then the picture goes on
+        // as it is.
         if job.has(AfterCaptureTasks::AnnotateImage) {
             // `TaskHelpers.AnnotateImage`: the editor, waited for; closing it without a
             // picture ends the task.

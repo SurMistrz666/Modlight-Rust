@@ -240,12 +240,21 @@ pub fn totp(secret: &str, now_ms: i64) -> String {
 
 /// `createOTP(secret, { period: 30, digits: 6 }).verify(code)`: the codes of
 /// the previous, current and next step are accepted (exact string match).
+///
+/// Deliberate difference from upstream, which compares with `===`: the match
+/// is constant-time and all three steps are always computed, so the response
+/// time says nothing about how much of a guess was right or which step it hit.
 pub fn verify_totp(secret: &str, code: &str, now_ms: i64) -> bool {
     let counter = now_ms.div_euclid(TOTP_PERIOD * 1000);
-    (-1i64..=1).any(|i| {
+    let mut matched = false;
+    for i in -1i64..=1 {
         let c = counter + i;
-        c >= 0 && hotp(secret, c as u64, TOTP_DIGITS) == code
-    })
+        if c >= 0 {
+            let expected = hotp(secret, c as u64, TOTP_DIGITS);
+            matched |= constant_time_eq(expected.as_bytes(), code.as_bytes());
+        }
+    }
+    matched
 }
 
 /// RFC 4648 base32 (upper case), unpadded: `base32.encode(data, { padding: false })`.

@@ -50,6 +50,8 @@ pub enum Request {
     Upload,
     /// Pick an image to open (`OpenImageRequested`).
     OpenImage,
+    /// Open a file from the recent list (`OpenRecentImageCommand`).
+    OpenRecent(String),
     /// Pick an image to insert (`ImageInsertionRequested`).
     InsertImage,
     /// Pick an image to replace an image annotation's picture.
@@ -60,6 +62,8 @@ pub enum Request {
     LoadFromUrl(String),
     /// Pick a background image.
     BrowseBackgroundImage,
+    /// Pick a file for an effect's file parameter (the parameter's key).
+    BrowseEffectFile(String),
     /// Paste: the host looks at the system clipboard first (`OnPasteRequested`).
     Paste,
     /// Clear the system clipboard (copy/cut of an annotation does).
@@ -545,6 +549,34 @@ impl Editor {
             self.core.annotations(),
             blur.as_deref(),
         ))
+    }
+
+    /// What the canvas shows: the annotations with the one being drawn in its place, and
+    /// the text under an open text box left out (a balloon keeps its body, loses its
+    /// text, as the box over it has the balloon's fill).
+    pub fn scene_annotations(&self) -> (std::borrow::Cow<'_, [Annotation]>, Option<AnnotationId>) {
+        let editing = self.text_editing.as_ref();
+        let balloon_edit = editing.filter(|t| t.balloon).map(|t| t.id);
+        let hidden = editing.filter(|t| !t.balloon).map(|t| t.id);
+        if self.input.pending.is_none() && balloon_edit.is_none() {
+            return (std::borrow::Cow::Borrowed(self.core.annotations()), hidden);
+        }
+        let mut list = self.core.annotations().to_vec();
+        if let Some(p) = &self.input.pending {
+            let index = self
+                .input
+                .pending_index()
+                .unwrap_or(list.len())
+                .min(list.len());
+            list.insert(index, p.clone());
+        }
+        if let Some(id) = balloon_edit
+            && let Some(a) = list.iter_mut().find(|a| a.id == id)
+            && let Some(t) = a.text_data_mut()
+        {
+            t.text.clear();
+        }
+        (std::borrow::Cow::Owned(list), hidden)
     }
 
     /// `GetSource`: the image without annotations.
