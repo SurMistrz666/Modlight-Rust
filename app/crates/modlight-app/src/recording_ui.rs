@@ -656,20 +656,12 @@ impl AppState {
             return;
         };
         if let Some(error) = outcome.error.filter(|_| !outcome.aborted) {
-            // `ShowError`: ffmpeg's output in a box.
-            self.uploads.windows.messages.push_back(MessageBox::new(
-                &format!("Modlight - {}", t(s::FFmpeg_FFmpeg_error)),
-                &error
-                    .lines()
-                    .rev()
-                    .take(12)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                MessageIcon::Error,
-            ));
+            // `FFmpegCLIManager.ShowError`: ffmpeg's output in the output box (phase 5).
+            self.open_output_box(
+                &error,
+                modlight_core::l10n::t(modlight_core::l10n::helpers::FFmpegCLIManager_Error_title),
+                true,
+            );
             return;
         }
         let Some(path) = outcome.path else {

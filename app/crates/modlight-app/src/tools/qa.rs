@@ -28,7 +28,16 @@ pub const SCREENS: &[&str] = &[
     "video-converter",
     "video-converter-encoding",
     "video-converter-empty",
+    "metadata",
+    "metadata-strip",
+    "metadata-empty",
+    "input-box",
+    "output-box",
+    "error-window",
 ];
+
+/// ExifTool's `-G -t` output for the fixture photo.
+const METADATA_SAMPLE: &str = "ExifTool\tExifTool Version Number\t13.59\nFile\tFile Name\tmountain-sunset.jpg\nFile\tDirectory\t/Users/alex/Pictures\nFile\tFile Size\t52 kB\nFile\tFile Type\tJPEG\nFile\tMIME Type\timage/jpeg\nFile\tImage Width\t1600\nFile\tImage Height\t900\nEXIF\tMake\tApple\nEXIF\tCamera Model Name\tiPhone 15 Pro\nEXIF\tOrientation\tHorizontal (normal)\nEXIF\tDate/Time Original\t2026:09:14 19:42:07\nEXIF\tExposure Time\t1/120\nEXIF\tF Number\t1.8\nEXIF\tISO\t64\nXMP\tCreator Tool\tModlight https://files.example.com\nComposite\tImage Size\t1600x900\nComposite\tMegapixels\t1.4\n";
 
 /// How the fixture files are shown (their real folder is a temporary one).
 pub fn fixture_names() -> Vec<String> {
@@ -279,6 +288,48 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                 .to_string();
             }
             Some(vec2(850.0, 475.0))
+        }
+        "metadata" | "metadata-strip" | "metadata-empty" => {
+            let file = (screen != "metadata-empty")
+                .then(|| fixture_files()[0].to_string_lossy().into_owned());
+            let key = state
+                .tools
+                .open_keyed(|key| Box::new(super::metadata::MetadataWindow::new(key, file, None)));
+            if let Some(window) = state
+                .tools
+                .window_mut::<super::metadata::MetadataWindow>(key)
+            {
+                window.started = true;
+                if screen != "metadata-empty" {
+                    window.qa_display = Some("/Users/alex/Pictures/mountain-sunset.jpg".into());
+                    window.loaded(Ok(modlight_tools::metadata::parse(METADATA_SAMPLE)));
+                }
+                window.confirming_strip = screen == "metadata-strip";
+            }
+            Some(vec2(900.0, 650.0))
+        }
+        "input-box" => {
+            state.open_input_box(
+                "Image URL",
+                Some("https://files.example.com/alex/q8.png"),
+                None,
+                None,
+            );
+            Some(vec2(520.0, 120.0))
+        }
+        "output-box" => {
+            let text = "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers\n  built with Apple clang version 17.0.0\nInput #0, avfoundation, from 'Capture screen 0':\n  Duration: N/A, start: 0.000000, bitrate: N/A\n  Stream #0:0: Video: rawvideo (UYVY / 0x59565955), uyvy422, 2880x1800, 30 fps\n[libx264 @ 0x7fa1] height not divisible by 2 (2880x1799)\nError initializing output stream 0:0 -- Error while opening encoder for output stream #0:0\nConversion failed!";
+            state.open_output_box(
+                text,
+                modlight_core::l10n::t(modlight_core::l10n::helpers::FFmpegCLIManager_Error_title),
+                true,
+            );
+            Some(vec2(900.0, 650.0))
+        }
+        "error-window" => {
+            let details = "called `Option::unwrap()` on a `None` value\n   at crates/modlight-app/src/uploads.rs:812 (thread modlight-worker)\n\nModlight 0.7.7 Dev";
+            state.open_error_window("called `Option::unwrap()` on a `None` value", details, true);
+            Some(vec2(760.0, 560.0))
         }
         _ => None,
     }
