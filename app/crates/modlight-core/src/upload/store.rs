@@ -9,7 +9,7 @@
 //! able to take the app down with it.
 
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
@@ -168,16 +168,55 @@ impl QueueStore {
         Ok(path)
     }
 
-    /// Delete one spooled file. Only ever touches files the queue created.
+    /// Delete one spooled file. Only ever touches files the queue created: `OwnsSource`
+    /// alone is a word in `Queue.json`, which may come from anywhere (an edited file, an
+    /// old backup), so the path must also be one [`QueueStore::spool`] makes: straight
+    /// inside the spool folder and named after the item. Anything else is left alone.
     pub fn discard_spool(&self, item: &QueueItem) {
         if !item.owns_source || item.source_path.is_empty() {
             return;
         }
+        if !self.is_spool_file(item) {
+            log::warn!(
+                "Modlight queue: an item claims a file outside its own folder; it is not deleted."
+            );
+            return;
+        }
         let path = Path::new(&item.source_path);
-        if path.exists()
+        if std::fs::symlink_metadata(path).is_ok_and(|meta| !meta.is_dir())
             && let Err(error) = std::fs::remove_file(path)
         {
             log::warn!("Modlight queue could not delete a spooled file: {error}");
+        }
+    }
+
+    /// Whether `item.source_path` is a name [`QueueStore::spool`] gives: `{id}` plus the
+    /// original extension, directly inside the spool folder.
+    fn is_spool_file(&self, item: &QueueItem) -> bool {
+        let Some(folder) = self.spool_folder() else {
+            return false;
+        };
+        let path = Path::new(&item.source_path);
+        let plain = path.is_absolute()
+            && path
+                .components()
+                .all(|c| matches!(c, Component::RootDir | Component::Normal(_)));
+        if !plain || path.parent() != Some(folder.as_path()) {
+            return false;
+        }
+        let id = item.id.as_str();
+        if id.is_empty() || id.contains(['/', '\\', '.']) {
+            return false;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            return false;
+        };
+        match name.strip_prefix(id) {
+            Some("") => true,
+            Some(rest) => rest
+                .strip_prefix('.')
+                .is_some_and(|extension| !extension.contains('.')),
+            None => false,
         }
     }
 
@@ -290,6 +329,7 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"png");
 
         let mut owned = item("clip board.png", path.to_str().unwrap());
+        owned.id = "abc".into();
         owned.owns_source = true;
         let orphan = store.spool("zzz", "lost.txt", &mut &b"x"[..]).unwrap();
         store.sweep_spool(std::slice::from_ref(&owned));
@@ -304,6 +344,48 @@ mod tests {
         std::fs::write(&mine, "keep").unwrap();
         store.discard_spool(&item("mine.txt", mine.to_str().unwrap()));
         assert!(mine.exists());
+    }
+
+    /// W2: `OwnsSource` in `Queue.json` is not enough to delete a file; the path must be
+    /// one the spool gave out.
+    #[test]
+    fn only_spooled_names_are_ever_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let store = QueueStore::new(dir.path());
+        let spool = store.spool_folder().unwrap();
+        std::fs::create_dir_all(&spool).unwrap();
+        let victim = elsewhere.path().join("work.docx");
+        let beside = dir.path().join("beside.txt");
+        let in_spool_other = spool.join("someone-else.png");
+        for path in [&victim, &beside, &in_spool_other] {
+            std::fs::write(path, "keep").unwrap();
+        }
+        let owned = |id: &str, path: &Path| QueueItem {
+            id: id.into(),
+            owns_source: true,
+            ..item("x.png", path.to_str().unwrap())
+        };
+        for hostile in [
+            owned("work", &victim),
+            owned("beside", &spool.join("..").join("beside.txt")),
+            owned("beside", &beside),
+            owned("abc", &in_spool_other),
+            owned("", &in_spool_other),
+            owned("..", &spool.join("..")),
+        ] {
+            store.discard_spool(&hostile);
+        }
+        assert!(victim.exists(), "a file of the person's elsewhere");
+        assert!(
+            beside.exists(),
+            "a file next to the spool folder, reached with .."
+        );
+        assert!(in_spool_other.exists(), "a file not named after the item");
+
+        let path = store.spool("abc", "a.tar.gz", &mut &b"x"[..]).unwrap();
+        store.discard_spool(&owned("abc", &path));
+        assert!(!path.exists(), "the queue's own file still goes");
     }
 
     #[test]

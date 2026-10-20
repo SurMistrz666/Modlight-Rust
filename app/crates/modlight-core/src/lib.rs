@@ -14,6 +14,7 @@ pub mod format;
 pub mod history;
 pub mod hotkeys;
 pub mod icons;
+pub mod image_decode;
 pub mod l10n;
 pub mod library;
 pub mod messages;
