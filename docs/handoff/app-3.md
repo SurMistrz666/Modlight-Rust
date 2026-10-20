@@ -8,34 +8,39 @@ notes go to `docs/handoff/app-3-media.md` and are merged here when it is done.
 
 ## State (kept current while working)
 
-Done and committed:
+Done and committed (newest last):
 
-- Core (`modlight-core`): `capture/` (geometry, `RegionCaptureOptions` and
-  `TaskSettingsCapture` with upstream defaults, the region selection state machine of
-  `RegionCaptureWindow`/`RegionCaptureLightForm`, capture kinds, last region, fake
-  desktop source, scrolling stitcher and loop), `recording/` (`FFmpegOptions`, argument
-  VECTORS for recording/encoding/GIF palette/concat, ffmpeg process runner, the
-  recording session with start/stop/pause/restart/abort and two-pass GIF), `hotkeys`
-  (HotkeyType, WinForms `Keys` read/written like Newtonsoft, Mac modifier mapping and
-  defaults, the hotkeys document, `HotkeyManager` over a backend), `tasks::actions`
-  (ExternalProgram, "Perform actions" with argument vectors), the worker's
-  AnnotateImage/PinToScreen/SaveImageToFileWithDialog/PerformActions and `file_job`.
-- macOS (`modlight-macos`): `capture` (ScreenCaptureKit pictures and the recorder's
-  SCStream frames, CGWindowList, displays and pointer from CoreGraphics), `hotkeys`
-  (global-hotkey, Carbon registration, no permission), `integration` (SMAppService
-  login item, Finder service provider `uploadFiles:userData:error:`), `input` (posted
-  scroll/keys for scrolling capture, needs Accessibility), `windows::raise_overlay`.
-- App: `capture_flow` (delay, hiding the main window, picture off the UI thread,
-  overlay, sound, quick task menu, after-capture window, tasks; hotkeys and
-  `ExecuteJob`; auto capture), `region_overlay`, `recording_ui` (frame + toolbar),
-  `scrolling`, `capture_windows` (all viewports), dialogs `after_capture`,
-  `auto_capture`, `quick_task_menu`, `quick_task_editor`, `controls` (numeric box,
-  radio row).
+- Core (`modlight-core`): `capture/`, `recording/` (args incl. the custom-command
+  template `ffmpeg_args_text`, avfoundation `list_devices`), `hotkeys` (Mac `gesture`,
+  `set_default_settings`, `cleanup` on save), `tasks::actions`, `backup` (export,
+  import of plain json/xml names only, reset).
+- macOS (`modlight-macos`): capture, hotkeys, integration, input, windows.
+- App: capture flow, region overlay, recording UI, scrolling, auto capture, quick task
+  menu and editor, Capture tab, tray menus.
+- Merged `app-3-media` (components, Download tab, updates, YouTube sign-in); recording's
+  CheckFFmpeg offers the FFmpeg component and records when it arrives.
+- Settings: `settings_kit` (Binder by JSON path), `task_pages` (every task page, plus a
+  hotkey's Task/General/Upload/Modlight folder pages), `task_editors` (action, watch
+  folder, notification buttons), `ffmpeg_window` (FFmpegOptionsWindow), `app_pages`
+  (general, integration, paths, backup, main window, copy formats + editor, upload,
+  history, print, proxy, advanced), `hotkey_page` (hotkeys list, capture, reset) and the
+  hotkey settings window (`windows.hotkey_task`, drawn by swapping it into the settings
+  slot for the frame, `OVERRIDE_GROUPS`).
+- QA screens for all of the above in `qa_settings.rs` (rendered and looked at; no
+  snapshots committed for them yet).
 
-Not done yet (in order): Capture tab and capture menu wiring, tray menus, QA screens and
-snapshots for the new windows, settings pages, hotkey settings page, server tab/admin,
-first run, about, debug log, item 8 write-up, docs (MACOS.md, STATUS.md), merge of
-`app-3-media`.
+Not done yet (in order): server tab/admin view, first run, About, Debug log, image
+editor selector stub, Finder Services in Info.plist (`scripts/build-app.sh`),
+integration test (fake capture -> 8420 -> delete), snapshots of every new QA screen
+(4 looks), docs (MACOS.md, STATUS.md), final report.
+
+Decisions to carry into MACOS.md: screen source stored as upstream's `gdigrab`
+(ScreenCaptureKit; ddagrab/screen-capture-recorder/"GDI grab" read as the screen);
+F13/F14/F15 labels for Print Screen/Scroll Lock/Pause; hotkeys unregistered while one
+is typed; personal folder fixed; backup without UploadersConfig (token in Keychain);
+Lucide arrow for the missing right arrow of Inter; settings texts that name Windows or
+a PC replaced from `assets/mac/l10n/Mac.resx`; no "Get recorder devices"; NVENC/AMF/QSV
+not offered (VideoToolbox, bitrate only); printing and image effects are NotYet.
 
 ## Item 8 (the "decimal point" in the Polish My space snapshot)
 
