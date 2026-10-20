@@ -148,9 +148,64 @@ pub fn process_text_upload(
             return;
         }
     }
-    // Indexing a folder (`ClipboardUploadAutoIndexFolder`) arrives with the indexer tool
-    // (phase 5); until then the path is sent as the text it is.
-    upload_text(manager, text, settings, true, ctx);
+    let folder = std::path::Path::new(text);
+    if settings.upload_settings.clipboard_upload_auto_index_folder
+        && text.encode_utf16().count() <= 260
+        && folder.is_dir()
+        && FOLDER_INDEXER.get().is_some()
+    {
+        index_folder(manager, folder, settings, ctx);
+    } else {
+        upload_text(manager, text, settings, true, ctx);
+    }
+}
+
+/// The directory indexer: the folder's index and the extension its output takes. Set by
+/// the tools (`modlight_tools::indexer`), which this crate cannot depend on.
+pub type FolderIndexer =
+    fn(&std::path::Path, &TaskSettings, bool) -> Option<(String, &'static str)>;
+
+static FOLDER_INDEXER: std::sync::OnceLock<FolderIndexer> = std::sync::OnceLock::new();
+
+/// Install the directory indexer (once, at start).
+pub fn set_folder_indexer(indexer: FolderIndexer) {
+    let _ = FOLDER_INDEXER.set(indexer);
+}
+
+/// `UploadManager.IndexFolder(folderPath, taskSettings)`: the folder's index uploaded as
+/// text, named with the output's extension.
+pub fn index_folder(
+    manager: &mut TaskManager,
+    folder: &std::path::Path,
+    settings: &TaskSettings,
+    ctx: &TaskContext,
+) {
+    let Some(indexer) = FOLDER_INDEXER.get() else {
+        return;
+    };
+    if !folder.is_dir() {
+        return;
+    }
+    let binary = ctx.app_settings().binary_units;
+    if let Some((source, extension)) = indexer(folder, settings, binary) {
+        start_index_upload(manager, &source, extension, settings, ctx);
+    }
+}
+
+/// The text task of an index (`CreateTextUploaderTask` with the output's extension).
+pub fn start_index_upload(
+    manager: &mut TaskManager,
+    source: &str,
+    extension: &str,
+    settings: &TaskSettings,
+    ctx: &TaskContext,
+) {
+    if source.is_empty() {
+        return;
+    }
+    let task = WorkerTask::text_upload(source, settings.clone(), ctx);
+    task.with(|s| s.info.file_name = naming::change_extension(&s.info.file_name, extension));
+    manager.start(task, ctx);
 }
 
 /// `ProcessImageUpload`: a clipboard picture is uploaded as it is unless the settings

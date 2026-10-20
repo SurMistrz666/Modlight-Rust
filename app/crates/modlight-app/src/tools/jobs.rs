@@ -152,6 +152,7 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
         H::PinToScreenCloseAll => state.pin_close_all(settings),
         H::ImageCombiner => state.open_image_combiner(Vec::new(), settings),
         H::Metadata => state.open_metadata(file),
+        H::IndexFolder => state.index_folder(file, settings),
         H::StripMetadata => state.strip_metadata(file, settings),
         H::VideoConverter => match file {
             Some(file) => state.open_video_converter(Some(file), settings),
@@ -162,8 +163,60 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
     }
 }
 
+/// `Indexer.Index` with the task's `IndexerSettings` and the application's `BinaryUnits`.
+pub fn folder_indexer(
+    folder: &std::path::Path,
+    settings: &TaskSettings,
+    binary_units: bool,
+) -> Option<(String, &'static str)> {
+    let mut indexer: modlight_tools::settings::IndexerSettings =
+        tool_options(settings, "IndexerSettings");
+    indexer.binary_units = binary_units;
+    let text = modlight_tools::indexer::index(folder, &indexer, chrono::Utc::now());
+    (!text.is_empty()).then(|| (text, indexer.output.extension()))
+}
+
+impl AppState {
+    /// `UploadManager.IndexFolder()`: a folder chosen, indexed off the UI thread, uploaded.
+    pub fn index_folder(&mut self, folder: Option<PathBuf>, settings: TaskSettings) {
+        let folder = match folder {
+            Some(folder) => folder,
+            None => match self.tool_pick_folder(
+                modlight_core::l10n::t(
+                    modlight_core::l10n::tools::DirectoryIndexerWindow_Select_folder_to_index_dialog,
+                ),
+                None,
+            ) {
+                Some(folder) => folder,
+                None => return,
+            },
+        };
+        if !folder.is_dir() {
+            return;
+        }
+        let binary = self.app_upload_settings().binary_units;
+        self.rt.spawn_blocking(move || {
+            let index = folder_indexer(&folder, &settings, binary);
+            move |state: &mut AppState, _ctx: &egui::Context| {
+                if let Some((source, extension)) = index {
+                    let ctx = state.uploads.ctx.clone();
+                    modlight_core::tasks::upload_manager::start_index_upload(
+                        &mut state.uploads.tasks,
+                        &source,
+                        extension,
+                        &settings,
+                        &ctx,
+                    );
+                }
+            }
+        });
+    }
+}
+
 /// Every frame: background results the tools wait for.
 pub fn tick(state: &mut AppState, _ctx: &egui::Context) {
+    static INDEXER: std::sync::Once = std::sync::Once::new();
+    INDEXER.call_once(|| modlight_core::tasks::upload_manager::set_folder_indexer(folder_indexer));
     static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
     if state.mode == crate::app::Mode::Normal {
         PANIC_HOOK.call_once(super::boxes::install_panic_hook);
