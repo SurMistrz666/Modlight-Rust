@@ -608,39 +608,6 @@ pub fn qa_downloader(manifest: ReleaseManifest, done: bool) -> Downloader {
     downloader
 }
 
-/// The "Updates" card of Settings -> Application (`UpdatesVisible`): shown only when
-/// the build has a release channel. For the page's owner to place.
-pub fn settings_card(ui: &mut Ui, state: &mut AppState, colors: &Colors) {
-    if !update::has_release_channel() {
-        return;
-    }
-    let mut on = auto_check(state);
-    crate::widgets::text(
-        ui,
-        t(s::ApplicationSettingsWindow_Updates),
-        15.0,
-        Weight::SemiBold,
-        colors.text(),
-    );
-    if crate::widgets::checkbox(
-        ui,
-        colors,
-        &mut on,
-        Some(t(s::ApplicationSettingsWindow_AutomaticallyCheckForUpdates)),
-        true,
-    )
-    .changed()
-    {
-        state
-            .config
-            .set("AutoCheckUpdate", serde_json::Value::Bool(on));
-        state.save_config();
-        if on {
-            on_startup(state);
-        }
-    }
-}
-
 /// `button_at` in a child `Ui`: a hand-placed button must not move the layout's cursor.
 fn button_here(
     ui: &mut Ui,
