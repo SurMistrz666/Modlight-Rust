@@ -48,14 +48,7 @@ pub fn ui(ui: &mut Ui, state: &mut AppState, logo: Option<&egui::TextureHandle>)
         Tab::Download => crate::download_tab::ui(&mut child, state, content),
         Tab::Create => capture_tab(&mut child, state),
         Tab::Tools => tools_tab(&mut child, state),
-        Tab::Admin => plan_tab(
-            &mut child,
-            state,
-            icons::SERVER,
-            s::Admin_Title,
-            s::MainWindow_PlanLater,
-            None,
-        ),
+        Tab::Admin => crate::admin_tab::ui(&mut child, state, content),
     }
     toasts(ui, state, full);
     drop_overlay(ui, state, full);
@@ -447,38 +440,6 @@ pub fn settings_menu(state: &AppState) -> Vec<Entry> {
 }
 
 // ---------------------------------------------------------------------- other tabs
-
-/// A tab that arrives in a later phase: its plan card, saying so.
-fn plan_tab(
-    ui: &mut Ui,
-    state: &mut AppState,
-    glyph: char,
-    title: Key,
-    body: Key,
-    action: Option<Key>,
-) {
-    let colors = state.colors.clone();
-    let rect = ui.max_rect();
-    let action = action.map(|key| (icons::ELLIPSIS, t(key)));
-    let note = if body == s::MainWindow_PlanLater {
-        None
-    } else {
-        Some(t(s::MainWindow_PlanLater))
-    };
-    if crate::myspace::view::plan_card(
-        ui,
-        &colors,
-        rect,
-        glyph,
-        colors.accent_start(),
-        t(title),
-        t(body),
-        action,
-        note,
-    ) {
-        state.push(Command::NotYet);
-    }
-}
 
 /// The capture tab (`IsCreateSelected`): the hint, the notice when a hotkey could not be
 /// registered, four large buttons with their shortcuts, and the full menu under them.

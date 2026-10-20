@@ -83,6 +83,9 @@ pub const SCREENS: &[&str] = &[
     "hotkey-task-settings",
     "hotkey-task-folder",
     "hotkey-task-capture",
+    "tab-server",
+    "tab-server-problem",
+    "tab-server-loading",
     "ffmpeg-options",
     "ffmpeg-options-video",
     "ffmpeg-options-audio",
@@ -197,6 +200,27 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         state.windows.settings = Some(window);
         return Some(vec2(crate::settings::WIDTH, crate::settings::HEIGHT));
     }
+    if screen.starts_with("tab-server") {
+        state.tab = crate::state::Tab::Admin;
+        state.server_tab.host = "https://files.example.com".into();
+        state.server_tab.state = match screen {
+            "tab-server-problem" => modlight_core::admin::AdminState::NotAllowed,
+            "tab-server-loading" => modlight_core::admin::AdminState::Loading,
+            _ => {
+                let now = chrono::DateTime::parse_from_rfc3339("2026-10-20T09:41:00Z")
+                    .expect("time")
+                    .with_timezone(&chrono::Utc);
+                let clock = modlight_core::culture::local_time(&now);
+                state.server_tab.view = Some(modlight_core::admin::DiskView::build(
+                    &sample_disk_report(),
+                    now,
+                    &clock,
+                ));
+                modlight_core::admin::AdminState::Ready
+            }
+        };
+        return Some(crate::app::MAIN_SIZE);
+    }
     if screen.starts_with("hotkey-task") {
         state.captures.hotkeys = crate::qa_capture::registered_hotkeys(false);
         let index = 0;
@@ -251,7 +275,43 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
 }
 
 pub fn is_dialog(screen: &str) -> bool {
-    SCREENS.contains(&screen)
+    SCREENS.contains(&screen) && !screen.starts_with("tab-server")
+}
+
+/// A disk report like a small server's.
+fn sample_disk_report() -> modlight_api::DiskReport {
+    serde_json::from_value(json!({
+        "driver": "local",
+        "local": true,
+        "liveFiles": 1284, "liveBytes": 38_400_000_000i64,
+        "trashedFiles": 41, "trashedBytes": 2_100_000_000i64,
+        "disk": {"totalBytes": 250_000_000_000i64, "freeBytes": 21_000_000_000i64, "usedBytes": 229_000_000_000i64},
+        "minFreeBytes": 10_000_000_000i64,
+        "kinds": [
+            {"kind": "video", "files": 120, "bytes": 24_000_000_000i64},
+            {"kind": "image", "files": 1050, "bytes": 12_600_000_000i64},
+            {"kind": "archive", "files": 14, "bytes": 1_200_000_000i64},
+            {"kind": "pdf", "files": 100, "bytes": 600_000_000i64}
+        ],
+        "kindBytes": 38_400_000_000i64,
+        "accounts": [
+            {"name": "Alex Rivera", "liveFiles": 812, "liveBytes": 22_000_000_000i64, "trashedBytes": 1_500_000_000i64},
+            {"email": "sam@example.com", "liveFiles": 402, "liveBytes": 14_000_000_000i64},
+            {"rest": true, "accounts": 3, "liveFiles": 70, "liveBytes": 2_400_000_000i64, "trashedBytes": 600_000_000i64}
+        ],
+        "biggest": [
+            {"filename": "keynote-recording.mp4", "size": 4_200_000_000i64, "ownerName": "Alex Rivera", "createdAt": "2026-09-01T10:00:00Z", "views": 14},
+            {"filename": "site-backup.zip", "size": 1_100_000_000i64, "ownerTag": "sam", "createdAt": "2026-07-12T10:00:00Z", "views": 1}
+        ],
+        "cold": [
+            {"filename": "old-demo.mov", "size": 900_000_000i64, "ownerName": "Alex Rivera"},
+            {"filename": "scan-0042.pdf", "size": 12_000_000i64, "ownerTag": "sam", "lastAccessedAt": "2026-03-02T10:00:00Z"}
+        ],
+        "coldTotals": {"files": 2, "bytes": 912_000_000i64, "days": 180},
+        "trash": {"files": 41, "bytes": 2_100_000_000i64, "oldest": "2026-09-22T10:00:00Z", "dueSoonFiles": 6, "dueSoonBytes": 300_000_000i64, "overdueFiles": 0},
+        "trashRetentionDays": 30, "trashDueSoonDays": 3
+    }))
+    .expect("sample report")
 }
 
 /// Draw a screen of this module; `Some(height)` when it asks for its own height.

@@ -135,6 +135,8 @@ pub struct AppState {
     pub qa_clipboard: Option<modlight_core::tasks::upload_manager::ClipboardContent>,
     /// Captures, hotkeys, recording, auto capture.
     pub captures: crate::capture_flow::Captures,
+    /// The Server tab's disk report.
+    pub server_tab: crate::admin_tab::AdminTab,
     /// The scrolling capture window.
     pub scrolling: Option<crate::scrolling::ScrollingWindow>,
     /// The Download tab (phase 3, media).
@@ -233,6 +235,7 @@ impl AppState {
             queue_snapshot_at: f64::NEG_INFINITY,
             qa_clipboard: None,
             captures: crate::capture_flow::Captures::new(&env_profile, env_qa),
+            server_tab: Default::default(),
             scrolling: None,
             downloads: Default::default(),
             components: Default::default(),

@@ -230,5 +230,9 @@ impl AppState {
             return;
         }
         self.tab = tab;
+        // `AdminView` reads the server only when its tab is opened.
+        if tab == Tab::Admin {
+            self.server_tab_show();
+        }
     }
 }
