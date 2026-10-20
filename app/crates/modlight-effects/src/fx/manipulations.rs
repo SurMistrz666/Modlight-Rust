@@ -706,7 +706,7 @@ pub fn load_map(path: &str) -> Option<Bitmap> {
     if !p.is_file() {
         return None;
     }
-    let img = image::open(p).ok()?.to_rgba8();
+    let img = modlight_core::image_decode::open(p).ok()?.to_rgba8();
     if img.width() == 0 || img.height() == 0 {
         return None;
     }
