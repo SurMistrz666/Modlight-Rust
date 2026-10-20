@@ -42,9 +42,57 @@ pub fn number_box_at(
     decimals: usize,
     enabled: bool,
 ) -> bool {
+    number_box_impl(
+        ui, colors, id, rect, value, min, max, step, decimals, false, enabled,
+    )
+}
+
+/// `NumericUpDown` with `FormatString="0.###"`: up to `decimals` places, trailing zeros
+/// left out.
+#[allow(clippy::too_many_arguments)]
+pub fn number_box_trimmed_at(
+    ui: &mut Ui,
+    colors: &Colors,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    rect: Rect,
+    value: &mut f64,
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    enabled: bool,
+) -> bool {
+    number_box_impl(
+        ui, colors, id, rect, value, min, max, step, decimals, true, enabled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn number_box_impl(
+    ui: &mut Ui,
+    colors: &Colors,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    rect: Rect,
+    value: &mut f64,
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    trim: bool,
+    enabled: bool,
+) -> bool {
     let id = egui::Id::new("number-box").with(id);
     let culture = modlight_core::culture::Culture::current();
-    let format = |v: f64| culture.fixed(v, decimals);
+    let format = |v: f64| {
+        let text = culture.fixed(v, decimals);
+        if trim && text.contains(culture.decimal) {
+            text.trim_end_matches('0')
+                .trim_end_matches(culture.decimal)
+                .to_string()
+        } else {
+            text
+        }
+    };
     let text_id = id.with("text");
     let focused = ui.memory(|m| m.has_focus(text_id));
     let mut text: String = ui

@@ -726,6 +726,7 @@ impl AppState {
                 crate::components_window::remove_confirmed(self, &id)
             }
             ConfirmAction::ResetSettings => self.reset_settings_confirmed(),
+            ConfirmAction::EnableImageEffects => self.enable_image_effects(),
         }
     }
 
