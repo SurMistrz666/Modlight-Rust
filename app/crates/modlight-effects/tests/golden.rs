@@ -40,7 +40,7 @@ fn registry() -> EffectRegistry {
 }
 
 /// The categories ported so far (the port lands category by category).
-const PORTED: &[&str] = &["Adjustments"];
+const PORTED: &[&str] = &["Adjustments", "Manipulations"];
 
 fn ported(category: &str) -> bool {
     PORTED.contains(&category)
@@ -53,9 +53,12 @@ fn skipped(id: &str) -> Option<&'static str> {
 }
 
 /// Allowed share of mismatched pixels (and the per-pixel YIQ threshold) per effect.
-#[allow(clippy::match_single_binding)]
 fn threshold(id: &str) -> (f64, f64) {
     match id {
+        // Anti-aliased edges: Skia m119 fills with analytic AA whose edge stepping snaps
+        // to quarter pixels; the port computes the exact area. Edge pixels differ by up
+        // to 0.2 in alpha, interiors match.
+        "rounded_corners" => (0.03, 0.025),
         _ => (0.005, 0.025),
     }
 }
