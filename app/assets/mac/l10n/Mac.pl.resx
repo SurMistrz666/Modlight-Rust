@@ -52,6 +52,9 @@
   <data name="DontShowPrintDialog" xml:space="preserve">
     <value>Nie pokazuj okna drukowania</value>
   </data>
+  <data name="BackupImportRefused" xml:space="preserve">
+    <value>Nie zaimportowano, bo kopia zapasowa Modlight nigdy ich nie zawiera: {0}</value>
+  </data>
   <data name="PageMacIntegration" xml:space="preserve">
     <value>Integracja z macOS</value>
   </data>
