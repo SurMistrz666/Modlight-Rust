@@ -925,6 +925,82 @@ impl Canvas {
         self.draw_bitmap_rect(bitmap, src, dst, sampling, paint);
     }
 
+    /// Skia's sprite path (`SkDraw::drawBitmap` with `SkTreatAsSprite`, then
+    /// `Sprite_D32_S32`): an unscaled, untransformed bitmap drawn source-over with a paint
+    /// alpha below 255 is blended by the legacy row procs (`blit_row_s32a_blend`), which
+    /// scale by `alpha + 1` and shift by 8 instead of rounding. Returns whether it drew.
+    fn sprite_blend(
+        &mut self,
+        bitmap: &Bitmap,
+        total: Transform,
+        sampling: Sampling,
+        paint: &Paint,
+        dst_rect: Option<Rect>,
+    ) -> bool {
+        if paint.color.a == 255
+            || dst_rect.is_some()
+            || paint.blend != Blend::SrcOver
+            || paint.color_filter.is_some()
+            || paint.image_blur.is_some()
+            || paint.mask_blur.is_some()
+            || paint.shader.is_some()
+            || matches!(sampling, Sampling::Cubic(..))
+            || total.sx != 1.0
+            || total.sy != 1.0
+            || total.kx != 0.0
+            || total.ky != 0.0
+        {
+            return false;
+        }
+        let (tx, ty) = (total.tx, total.ty);
+        if paint.aa {
+            // Anti-aliased: only when the translation is whole to 1/16 of a pixel.
+            let q = |v: f32| ((v * 16.0) + 0.5).floor() == ((v + 0.5).floor() * 16.0);
+            if !q(tx) || !q(ty) {
+                return false;
+            }
+        }
+        if matches!(sampling, Sampling::Linear) && (tx != tx.trunc() || ty != ty.trunc()) {
+            return false;
+        }
+        if let Some(m) = &self.state.clip
+            && m.data().iter().any(|&v| v != 0 && v != 255)
+        {
+            return false;
+        }
+        let (ix, iy) = ((tx + 0.5).floor() as i32, (ty + 0.5).floor() as i32);
+        let (w, h) = (self.pm.width() as i32, self.pm.height() as i32);
+        let a256 = paint.color.a as u32 + 1;
+        let clip = self.state.clip.clone();
+        let data = self.pm.data_mut();
+        for sy in 0..bitmap.h {
+            let y = sy + iy;
+            if y < 0 || y >= h {
+                continue;
+            }
+            for sx in 0..bitmap.w {
+                let x = sx + ix;
+                if x < 0 || x >= w {
+                    continue;
+                }
+                let i = (y * w + x) as usize;
+                if clip.as_ref().is_some_and(|m| m.data()[i] == 0) {
+                    continue;
+                }
+                let sp = premul(bitmap.px[(sy * bitmap.w + sx) as usize]);
+                // SkAlphaMulInv256(srcA, alpha256).
+                let prod = 0xFFFF - sp.a as u32 * a256;
+                let ds = (prod + (prod >> 8)) >> 8;
+                let d = &mut data[i * 4..i * 4 + 4];
+                let s4 = [sp.r, sp.g, sp.b, sp.a];
+                for k in 0..4 {
+                    d[k] = ((s4[k] as u32 * a256 + d[k] as u32 * ds) >> 8) as u8;
+                }
+            }
+        }
+        true
+    }
+
     /// Draws `bitmap` mapped by `local` (then the canvas matrix).
     pub fn draw_image_matrix(
         &mut self,
@@ -948,6 +1024,9 @@ impl Canvas {
             return;
         }
         let total = self.state.matrix.pre_concat(local);
+        if self.sprite_blend(bitmap, total, sampling, paint, dst_rect) {
+            return;
+        }
         let Some(inv) = total.invert() else {
             return;
         };

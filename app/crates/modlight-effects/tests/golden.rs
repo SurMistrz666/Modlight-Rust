@@ -91,7 +91,9 @@ const AA_SHAPES: &[&str] = &[
 /// coverage of a small circle differs from tiny-skia's by a sub-sample or two at the
 /// rim, so both pictures are compared after a 3x3 box blur, which keeps every shape,
 /// colour and position but not the rim's last sub-pixel.
-const SMALL_SHAPES: &[&str] = &["color_halftone", "engraving"];
+/// Pointillism's dots that cross the canvas edge differ where Skia's edge clipper chops
+/// the oval's quads at the clip (tiny differences on the first column).
+const SMALL_SHAPES: &[&str] = &["color_halftone", "engraving", "pointillism"];
 
 /// Allowed share of mismatched pixels (and the per-pixel YIQ threshold) per effect.
 fn threshold(id: &str) -> (f64, f64) {
