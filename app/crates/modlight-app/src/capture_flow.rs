@@ -300,9 +300,8 @@ impl AppState {
             OpenScreenshotsFolder => self.open_screenshots_folder(),
             ExitShareX => self.quit_requested = true,
             ImageEditor => self.open_image_editor(),
-            // The tools, the image editor, pinning and the history windows arrive in
-            // phases 4 and 5.
-            _ => self.push(crate::commands::Command::NotYet),
+            // The tools, pinning and the history windows (phase 5).
+            _ => self.run_tool_job(job, settings),
         }
     }
 

@@ -133,6 +133,7 @@ pub const SCREENS: &[&str] = &[
     "ffmpeg-options-video",
     "ffmpeg-options-audio",
     "ffmpeg-options-advanced",
+    // Phase 5, tools (`tools::qa::SCREENS`).
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.
@@ -601,6 +602,9 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
     if let Some(size) = crate::qa_settings::prepare(screen, state) {
         return size;
     }
+    if let Some(size) = crate::tools::qa::prepare(screen, state, ctx) {
+        return size;
+    }
     match screen {
         "my-space" | "toasts" | "my-space-wide" => {
             load_library(state, ctx, files(), 9);
@@ -827,6 +831,7 @@ pub fn is_main_window(screen: &str) -> bool {
         && !crate::qa_capture::is_dialog(screen)
         && !crate::qa_media::is_dialog(screen)
         && !crate::qa_settings::is_dialog(screen)
+        && !crate::tools::qa::is_dialog(screen)
         && !matches!(
             screen,
             "sign-in"
@@ -886,6 +891,10 @@ impl eframe::App for ShotApp {
             return;
         }
         if let Some(wanted) = crate::qa_settings::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
+        if let Some(wanted) = crate::tools::qa::draw(&self.screen, ui, state) {
             self.wanted = wanted;
             return;
         }

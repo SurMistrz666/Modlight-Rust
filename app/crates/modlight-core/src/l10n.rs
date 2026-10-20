@@ -15,7 +15,7 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/strings.rs"));
 }
 
-pub use generated::{avalonia, capture, helpers, mac, s, uploaders};
+pub use generated::{avalonia, capture, helpers, history, mac, s, tools, uploaders};
 
 /// One entry of the string tables.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
