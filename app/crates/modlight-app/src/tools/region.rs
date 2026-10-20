@@ -30,6 +30,8 @@ pub enum RegionFor {
     Ocr(Box<TaskSettings>),
     /// The OCR window's "Select region".
     OcrWindow(u64),
+    /// The analyze image window's "Select region" (and its automatic start).
+    AnalyzeWindow(u64),
 }
 
 /// A picture of the screen and where it was (desktop points).
@@ -128,6 +130,7 @@ impl AppState {
             }
             RegionFor::Ocr(settings) => self.ocr_region_done(None, Some(*settings), picture),
             RegionFor::OcrWindow(key) => self.ocr_region_done(Some(key), None, picture),
+            RegionFor::AnalyzeWindow(key) => self.analyze_region_done(key, picture),
         }
     }
 }

@@ -14,6 +14,7 @@ use modlight_core::tasks::settings::TaskSettings;
 
 use crate::state::AppState;
 
+pub mod analyze;
 pub mod boxes;
 pub mod color_picker;
 pub mod combiner;
@@ -108,6 +109,8 @@ pub struct Tools {
     pub input_answers: Vec<(u64, Option<String>)>,
     /// QA runs: the text the OCR stand-in "recognises".
     pub qa_ocr_text: Option<String>,
+    /// QA runs: what the AI stand-in answers.
+    pub qa_ai_text: Option<String>,
     /// What the open panels answer in QA and headless runs (tests queue paths here).
     pub qa_open: std::collections::VecDeque<std::path::PathBuf>,
 }

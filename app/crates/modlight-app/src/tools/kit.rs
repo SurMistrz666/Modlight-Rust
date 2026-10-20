@@ -327,6 +327,95 @@ pub fn text_box_at(
     enabled: bool,
     centered: bool,
 ) -> Response {
+    line_box(ui, colors, rect, id, text, hint, enabled, centered, false)
+}
+
+/// A one-line box whose text shows as dots (`PasswordChar="●"`).
+pub fn password_box_at(
+    ui: &mut Ui,
+    colors: &Colors,
+    rect: Rect,
+    id: egui::Id,
+    text: &mut String,
+    enabled: bool,
+) -> Response {
+    line_box(ui, colors, rect, id, text, "", enabled, false, true)
+}
+
+/// An editable drop-down (`ComboBox IsEditable="True"`): a text box with the list
+/// behind its chevron; returns true when the text changed (typed or picked).
+pub fn editable_combo_at(
+    ui: &mut Ui,
+    colors: &Colors,
+    rect: Rect,
+    id: egui::Id,
+    text: &mut String,
+    options: &[String],
+    enabled: bool,
+) -> bool {
+    let focused = ui.memory(|m| m.has_focus(id));
+    text_frame(ui, colors, rect, focused, enabled);
+    let inner = Rect::from_min_max(
+        pos2(rect.left() + 8.0, rect.top()),
+        pos2(rect.right() - 34.0, rect.bottom()),
+    );
+    let mut field = child(ui, inner);
+    let edit = egui::TextEdit::singleline(text)
+        .id(id)
+        .frame(egui::Frame::NONE)
+        .font(FontId::new(13.0, FontFamily::Proportional))
+        .text_color(if enabled {
+            colors.text()
+        } else {
+            colors.text_secondary()
+        })
+        .vertical_align(egui::Align::Center)
+        .margin(egui::Margin::ZERO)
+        .desired_width(inner.width());
+    let mut changed = field.add_enabled(enabled, edit).changed();
+    let chevron = Rect::from_min_max(pos2(rect.right() - 34.0, rect.top()), rect.max);
+    let response = ui.interact(
+        chevron,
+        id.with("chevron"),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    paint_icon(
+        ui,
+        ui.painter(),
+        chevron.center(),
+        modlight_core::icons::CHEVRON_DOWN,
+        14.0,
+        if enabled {
+            colors.text_secondary()
+        } else {
+            colors.text_secondary().gamma_multiply(0.5)
+        },
+    );
+    if let Some(index) = flyout(ui, colors, &response, &format!("{id:?}"), options)
+        && let Some(picked) = options.get(index)
+    {
+        *text = picked.clone();
+        changed = true;
+    }
+    changed
+}
+
+#[allow(clippy::too_many_arguments)]
+fn line_box(
+    ui: &mut Ui,
+    colors: &Colors,
+    rect: Rect,
+    id: egui::Id,
+    text: &mut String,
+    hint: &str,
+    enabled: bool,
+    centered: bool,
+    password: bool,
+) -> Response {
     let focused = ui.memory(|m| m.has_focus(id));
     text_frame(ui, colors, rect, focused, enabled);
     let inner = rect.shrink2(vec2(8.0, 0.0));
@@ -346,6 +435,7 @@ pub fn text_box_at(
         .hint_text(hint)
         .vertical_align(egui::Align::Center)
         .margin(egui::Margin::ZERO)
+        .password(password)
         .desired_width(inner.width());
     if centered {
         edit = edit.horizontal_align(egui::Align::Center);

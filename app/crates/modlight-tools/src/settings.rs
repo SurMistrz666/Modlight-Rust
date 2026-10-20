@@ -453,7 +453,7 @@ impl AiProvider {
 #[serde(rename_all = "PascalCase", default)]
 pub struct AiOptions {
     pub provider: AiProvider,
-    #[serde(rename = "OpenAIAPIKey", skip_serializing)]
+    #[serde(skip)]
     pub openai_api_key: Option<String>,
     #[serde(rename = "OpenAIModel")]
     pub openai_model: String,
@@ -463,10 +463,10 @@ pub struct AiOptions {
     pub openai_reasoning_effort: String,
     #[serde(rename = "OpenAIVerbosity")]
     pub openai_verbosity: String,
-    #[serde(rename = "GeminiAPIKey", skip_serializing)]
+    #[serde(skip)]
     pub gemini_api_key: Option<String>,
     pub gemini_model: String,
-    #[serde(rename = "OpenRouterAPIKey", skip_serializing)]
+    #[serde(skip)]
     pub open_router_api_key: Option<String>,
     pub open_router_model: String,
     pub input: String,
@@ -825,5 +825,10 @@ mod tests {
         let text = serde_json::to_string(&options).unwrap();
         assert!(!text.contains("sk-secret"));
         assert!(!text.contains("APIKey"));
+        // Keys in an imported settings file (DPAPI blobs upstream) are not read either.
+        let read: AiOptions =
+            serde_json::from_str(r#"{"OpenAIAPIKey":"AQAAANCMnd8B","Provider":"Gemini"}"#).unwrap();
+        assert_eq!(read.openai_api_key, None);
+        assert_eq!(read.provider, AiProvider::Gemini);
     }
 }

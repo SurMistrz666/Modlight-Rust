@@ -169,6 +169,7 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
             None => state.ocr_region(settings),
         },
         H::IndexFolder => state.index_folder(file, settings),
+        H::AnalyzeImage => state.open_analyze_image(file, settings),
         H::StripMetadata => state.strip_metadata(file, settings),
         H::VideoConverter => match file {
             Some(file) => state.open_video_converter(Some(file), settings),
@@ -232,8 +233,7 @@ impl AppState {
 impl AppState {
     /// After-capture "Analyze image" (`TaskHelpers.AnalyzeImage(filePath)`).
     pub fn task_analyze_image(&mut self, file: PathBuf, settings: TaskSettings) {
-        let _ = (file, settings);
-        self.push(Command::NotYet);
+        self.open_analyze_image(Some(file), settings);
     }
 
     /// `TaskHelpers.PrintImage(image)`.
