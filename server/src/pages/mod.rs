@@ -360,6 +360,10 @@ impl PageRegistry {
     pub fn has_page(&self, path: &str) -> bool {
         self.pages.contains_key(path)
     }
+
+    pub fn has_layout(&self, layout: Layout) -> bool {
+        self.layouts.contains_key(&layout)
+    }
 }
 
 /// Every page and layout loader. ONE LINE PER MODULE: other agents add theirs
