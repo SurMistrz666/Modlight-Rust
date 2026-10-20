@@ -951,6 +951,8 @@ pub fn render(screen: &str, look: &Look) -> Result<RgbaImage, String> {
     set_thread_language(Some(look.language));
     set_thread_culture(Some(culture_for(look.language)));
     set_thread_utc(true);
+    // Random name codes (`%ra{10}`) draw the same characters in every render.
+    modlight_core::names::helpers::set_thread_seed(Some(20261020));
     let signed_in = !matches!(screen, "signed-out" | "sign-in");
     let mut size = MAIN_SIZE;
     let mut harness = egui_kittest::Harness::builder()

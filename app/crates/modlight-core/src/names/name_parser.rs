@@ -681,7 +681,7 @@ fn random_char(chars: &str) -> String {
 /// `Guid.NewGuid().ToString()`: a random version 4 GUID, "D" format, small letters.
 fn new_guid() -> String {
     let mut bytes = [0u8; 16];
-    rand::rng().fill(&mut bytes);
+    super::helpers::with_rng(|rng| rng.fill(&mut bytes));
     bytes[6] = (bytes[6] & 0x0F) | 0x40;
     bytes[8] = (bytes[8] & 0x3F) | 0x80;
     let hex = hex::encode(bytes);
