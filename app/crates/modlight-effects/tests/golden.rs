@@ -98,9 +98,6 @@ fn threshold(id: &str) -> (f64, f64) {
     match id {
         _ if AA_SHAPES.contains(&id) => (0.03, 0.025),
         "color_halftone" => (0.02, 0.025),
-        // Hundreds of short round-capped strokes of varying width: coverage differs where
-        // segments meet; mean difference 0.02 after the blur.
-        "engraving" => (0.16, 0.025),
         "embroidery" => (0.05, 0.025),
         _ => (0.005, 0.025),
     }
