@@ -231,9 +231,11 @@ pub fn defs() -> Vec<Def> {
     ]
 }
 
-/// `ConvolutionHelper.Apply3x3` (clamped edges, alpha kept).
+/// `ConvolutionHelper.Apply3x3`: alpha kept. The helper asks for clamped edges, but Skia
+/// m119 applies the tile mode to the filter's padded (transparent) input, so the image's
+/// edges read transparent neighbours, as upstream's output shows.
 pub fn convolve3x3(src: &Bitmap, kernel: &[f32; 9], gain: f32, bias: f32) -> Bitmap {
-    matrix_convolution(src, 3, 3, kernel, gain, bias, (1, 1), Tile::Clamp, false)
+    matrix_convolution(src, 3, 3, kernel, gain, bias, (1, 1), Tile::Decal, false)
 }
 
 fn convolution(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
