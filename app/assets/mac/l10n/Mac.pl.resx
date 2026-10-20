@@ -98,4 +98,10 @@
   <data name="PinWheelHint" xml:space="preserve">
     <value>Kółko myszy zmienia skalę, Cmd + kółko myszy zmienia nieprzezroczystość.</value>
   </data>
+  <data name="BorderlessNeedsAccessibility" xml:space="preserve">
+    <value>Aby przesunąć okno innej aplikacji i zmienić jego rozmiar, zezwól na to aplikacji Modlight w Ustawieniach systemowych &gt; Prywatność i ochrona &gt; Dostępność, a potem naciśnij skrót ponownie.</value>
+  </data>
+  <data name="TopMostUnavailable" xml:space="preserve">
+    <value>macOS nie pozwala jednej aplikacji trzymać okna innej aplikacji nad pozostałymi. Aby mieć obraz tego okna stale na widoku, użyj przypinania do ekranu.</value>
+  </data>
 </root>
