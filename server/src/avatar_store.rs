@@ -10,7 +10,7 @@ use bytes::Bytes;
 use rand::RngCore;
 use sqlx::PgPool;
 
-use crate::avatar::{avatar_key, avatar_url, is_avatar_key};
+use crate::avatar::{AVATAR_PREFIX, avatar_key, avatar_url, is_avatar_key};
 use crate::db::types::JsDate;
 use crate::media::abort::AbortSignal;
 use crate::media::avatar::{AvatarDegradation, AvatarEncodeResult, encode_avatar};
@@ -92,40 +92,54 @@ pub async fn save_avatar(
     let size = bytes.len();
     storage.write(&key, bytes_stream(bytes)).await?;
 
-    // `.returning({ old: users.image, ... })` returns the row AFTER the
-    // update, so `old` is the new key and the discard below is a no-op: the
-    // previous object is left behind (an upstream quirk, kept).
-    let previous: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        r#"update "user" set "image" = $1, "updated_at" = $2 where "user"."id" = $3 returning "image", "user_code""#,
-    )
-    .bind(&key)
-    .bind(JsDate::now())
-    .bind(user_id)
-    .fetch_optional(db)
-    .await?;
+    // Security/logic fix (SKELETON.md 9): upstream's `.returning({ old:
+    // users.image })` reads the row AFTER the update, so `old` was the new key
+    // and the previous object was never deleted. Read the previous key under
+    // the row lock and delete it once the new one is in place.
+    let previous = set_avatar_key(db, user_id, Some(&key)).await?;
     let (old, user_code) = previous.unwrap_or((None, None));
-    discard(storage, old.as_deref(), Some(&key)).await;
+    discard(storage, user_id, old.as_deref(), Some(&key)).await;
 
     Ok(Ok(SavedAvatar { url: avatar_url(user_code.as_deref(), Some(&key)), bytes: size, animated, degraded }))
 }
 
 /// `clearAvatar(userId)`: back to initials.
 pub async fn clear_avatar(db: &PgPool, storage: &dyn StorageDriver, user_id: &str) -> anyhow::Result<()> {
-    let previous: Option<Option<String>> = sqlx::query_scalar(
-        r#"update "user" set "image" = null, "updated_at" = $1 where "user"."id" = $2 returning "image""#,
-    )
-    .bind(JsDate::now())
-    .bind(user_id)
-    .fetch_optional(db)
-    .await?;
-    discard(storage, previous.flatten().as_deref(), None).await;
+    let previous = set_avatar_key(db, user_id, None).await?;
+    discard(storage, user_id, previous.and_then(|(old, _)| old).as_deref(), None).await;
     Ok(())
 }
 
-/// Delete the object a column used to point at. Never fails; only our own
-/// avatar keys are ever handed to the driver.
-async fn discard(storage: &dyn StorageDriver, old: Option<&str>, keep: Option<&str>) {
-    if !is_avatar_key(old) || old == keep {
+/// Point `user.image` at `key` (or clear it) and return the value it held
+/// BEFORE, with the account's user code; `None` when there is no such user.
+/// The previous value is read under the row lock taken by the same
+/// statement, so two concurrent replacements each get the key they replaced.
+pub async fn set_avatar_key(
+    db: &PgPool,
+    user_id: &str,
+    key: Option<&str>,
+) -> anyhow::Result<Option<(Option<String>, Option<String>)>> {
+    Ok(sqlx::query_as(
+        r#"update "user" as u set "image" = $1, "updated_at" = $2
+           from (select "id", "image" from "user" where "id" = $3 for update) as prev
+           where u."id" = prev."id"
+           returning prev."image", u."user_code""#,
+    )
+    .bind(key)
+    .bind(JsDate::now())
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// Delete the object a column used to point at. Never fails; only this
+/// account's own avatar keys (`avatars/<userId>-...`) are ever handed to the
+/// driver: `user.image` can also be written through Better Auth's
+/// `update-user`, so a stored value naming another account's object must not
+/// make a replacement delete it.
+async fn discard(storage: &dyn StorageDriver, user_id: &str, old: Option<&str>, keep: Option<&str>) {
+    let own = format!("{AVATAR_PREFIX}/{user_id}-");
+    if !is_avatar_key(old) || old == keep || !old.is_some_and(|o| o.starts_with(&own)) {
         return;
     }
     if let Some(old) = old {

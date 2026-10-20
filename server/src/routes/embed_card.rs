@@ -48,7 +48,7 @@ async fn card(Path((version, card)): Path<(String, String)>) -> Response {
         Ok(png) => png,
         Err(err) => {
             tracing::error!(error = ?err, "card render failed");
-            return crate::error::internal_error_response();
+            return crate::error::route_handler_error_response();
         }
     };
     let len = png.len();

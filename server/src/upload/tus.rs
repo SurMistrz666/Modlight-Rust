@@ -90,6 +90,14 @@ pub fn create_tus_server(state: &AppState) -> TusServer {
             respect_forwarded_headers: state.config.trust_proxy,
             lock_drain_timeout: Duration::from_millis(3000),
             lock_timeout: Duration::from_secs(30),
+            // Security fix (SKELETON.md 9): on S3 a finished upload IS the
+            // stored object (adopted in place), so upstream's GET streamed it
+            // to anybody holding the tus URL whatever the file's privacy or
+            // view limit, and DELETE (termination) removed it from under its
+            // media row. A finished upload is reachable only through the media
+            // routes; unfinished uploads resume as before (HEAD, PATCH).
+            disable_termination_for_finished_uploads: true,
+            serve_finished_uploads: false,
         },
         Arc::new(ModlightHooks { state: state.clone(), hard_max, datastore }),
     )
@@ -268,6 +276,10 @@ impl TusHooks for ModlightHooks {
             // FileStore still holds a sidecar .json describing a finished upload.
             if is_local {
                 discard_tus_upload(self.datastore.as_ref(), &upload.id).await;
+            } else if let Err(err) = self.datastore.delete_record(&upload.id).await {
+                // S3: the object now belongs to the media row; drop only its
+                // tus record, so the tus URL answers 404 as on the local driver.
+                tracing::warn!("[tus] could not drop upload record {}: {err}", upload.id);
             }
             Ok(FinishPatch {
                 status_code: Some(200),

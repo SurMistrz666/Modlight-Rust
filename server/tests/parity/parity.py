@@ -648,3 +648,42 @@ class Actions(object):
                                 for n, v, attrs in cookie_shape(b)]
         self.run.compare(name, ea, eb)
         return a, b
+
+
+# ── SMTP sinks for the Rust server ──────────────────────────────────────────
+
+class _ContainerSink(object):
+    """`smtp_sink.mjs` in a throwaway node container sharing the network
+    namespace of the Rust app container, so the server reaches it at
+    127.0.0.1:<port> exactly as a host-side server reaches a host-side sink.
+    The log is written to the same (bind-mounted) host path."""
+
+    def __init__(self, container, script, log, port, timeout):
+        here = os.path.dirname(os.path.abspath(script))
+        logdir = os.path.dirname(os.path.abspath(log))
+        self.name = "parity-sink-%d-%s" % (port, random_id(6).lower())
+        env = dict(os.environ, DOCKER_CONTEXT=os.environ.get("DOCKER_CONTEXT", "colima-modlight"))
+        subprocess.run(["docker", "run", "-d", "--rm", "--name", self.name, "--network", "container:" + container,
+                        "-u", "%d:%d" % (os.getuid(), os.getgid()), "-v", "%s:%s" % (here, here),
+                        "-v", "%s:%s" % (logdir, logdir), os.environ.get("PARITY_NODE_IMAGE", "node:24.22.0-bookworm-slim"),
+                        "node", os.path.abspath(script), os.path.abspath(log), str(port), str(timeout)],
+                       check=True, stdout=subprocess.DEVNULL, env=env)
+        self.env = env
+
+    def terminate(self):
+        subprocess.run(["docker", "rm", "-f", self.name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       env=self.env)
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def start_rust_sink(script, log, port, timeout):
+    """The Rust server's SMTP sink: a host process (the Rust server on the
+    host), or, with PARITY_RUST_NETNS=<Rust app container>, a sidecar in that
+    container's network namespace (the Rust server in Docker)."""
+    container = os.environ.get("PARITY_RUST_NETNS")
+    if container:
+        return _ContainerSink(container, script, log, port, timeout)
+    return subprocess.Popen(["node", script, log, str(port), str(timeout)], stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)

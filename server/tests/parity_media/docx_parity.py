@@ -120,6 +120,19 @@ def run_reference(container, name, timeout):
 
 
 def run_rust(corpus, out_path):
+    image = os.environ.get("DOCX_RUST_IMAGE")
+    if image:
+        # The production image (libvips-cpp 8.17.3) with the media_docx test
+        # binary added (_scratch/srv-integration/parity/probe/Dockerfile).
+        root = "/path/to/modlight"
+        p = docker("run", "--rm", "--network", "none", "--cpus", "2", "-u", "%d:%d" % (os.getuid(), os.getgid()),
+                   "-v", "%s:%s" % (root, root), "-e", "DOCX_CORPUS=" + corpus, "-e", "DOCX_OUT=" + out_path,
+                   "--entrypoint", "/usr/local/bin/media_docx_test", image, "parity_dump", "--ignored",
+                   capture_output=True, text=True)
+        if p.returncode != 0:
+            sys.stderr.write(p.stdout[-4000:] + p.stderr[-4000:])
+            raise SystemExit("rust run failed in " + image)
+        return json.load(open(out_path))
     env = dict(os.environ, DOCX_CORPUS=corpus, DOCX_OUT=out_path)
     env["PATH"] = "/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:" + env.get("PATH", "")
     p = subprocess.run(["cargo", "test", "-q", "--test", "media_docx", "parity_dump", "--", "--ignored"],
