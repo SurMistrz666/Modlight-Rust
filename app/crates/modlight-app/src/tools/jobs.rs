@@ -55,10 +55,18 @@ pub enum ToolContinuation {
         file: PathBuf,
         settings: Box<TaskSettings>,
     },
+    /// Opens whether or not a model came (upstream offers the download, then opens).
+    BackgroundRemover {
+        settings: Box<TaskSettings>,
+    },
 }
 
 /// The components window closed: the tool opens if what it needs is there now.
 pub fn after_components(state: &mut AppState, next: ToolContinuation, satisfied: bool) {
+    if let ToolContinuation::BackgroundRemover { settings } = next {
+        state.show_background_remover(*settings);
+        return;
+    }
     if !satisfied {
         return;
     }
@@ -69,6 +77,9 @@ pub fn after_components(state: &mut AppState, next: ToolContinuation, satisfied:
         ToolContinuation::Metadata { file } => state.open_metadata(file),
         ToolContinuation::StripMetadata { file, settings } => {
             state.strip_metadata(Some(file), *settings)
+        }
+        ToolContinuation::BackgroundRemover { settings } => {
+            state.show_background_remover(*settings)
         }
     }
 }
@@ -170,6 +181,7 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
         },
         H::IndexFolder => state.index_folder(file, settings),
         H::AnalyzeImage => state.open_analyze_image(file, settings),
+        H::BackgroundRemover => state.open_background_remover(settings),
         H::StripMetadata => state.strip_metadata(file, settings),
         H::VideoConverter => match file {
             Some(file) => state.open_video_converter(Some(file), settings),

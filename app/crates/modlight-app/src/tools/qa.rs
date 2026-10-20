@@ -42,6 +42,9 @@ pub const SCREENS: &[&str] = &[
     "analyze-image-error",
     "analyze-image-options",
     "analyze-image-options-gemini",
+    "background-remover",
+    "background-remover-source",
+    "background-remover-empty",
 ];
 
 /// ExifTool's `-G -t` output for the fixture photo.
@@ -446,6 +449,60 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                 window.status_success = true;
             }
             Some(vec2(650.0, 590.0))
+        }
+        "background-remover" | "background-remover-source" | "background-remover-empty" => {
+            use super::background::{BackgroundWindow, Notice};
+            let settings = state.default_task_settings();
+            let models = if screen == "background-remover-empty" {
+                Vec::new()
+            } else {
+                vec![modlight_tools::background::ModelFile {
+                    path:
+                        "/Users/alex/Library/Application Support/Modlight/Models/bria-rmbg-2.0.onnx"
+                            .into(),
+                    file_name: "bria-rmbg-2.0.onnx".into(),
+                    size: 1_024_331_469,
+                }]
+            };
+            let folder = state.models_folder();
+            let key = state
+                .tools
+                .open_keyed(|key| Box::new(BackgroundWindow::new(key, &settings, folder, models)));
+            if screen != "background-remover-empty"
+                && let Some(window) = state.tools.window_mut::<BackgroundWindow>(key)
+            {
+                let picture = sunset(640, 400);
+                window.set_source(picture.clone(), fixture_files()[0].clone());
+                window.qa_display = Some("/Users/alex/Pictures/mountain-sunset.png".into());
+                if screen == "background-remover" {
+                    // The "subject": a soft ellipse around the sun and the ridge.
+                    let (w, h) = picture.dimensions();
+                    let mask: Vec<u8> = (0..h)
+                        .flat_map(|y| (0..w).map(move |x| (x, y)))
+                        .map(|(x, y)| {
+                            let dx = (x as f32 - w as f32 * 0.45) / (w as f32 * 0.32);
+                            let dy = (y as f32 - h as f32 * 0.5) / (h as f32 * 0.36);
+                            let d = (dx * dx + dy * dy).sqrt();
+                            ((1.15 - d) * 4.0).clamp(0.0, 1.0).mul_add(255.0, 0.0) as u8
+                        })
+                        .collect();
+                    window.set_result(modlight_core::background_removal::apply_alpha_mask(
+                        &picture, &mask,
+                    ));
+                    window.slider = 0.5;
+                    window.notice = Some(Notice {
+                        message: modlight_core::l10n::format(
+                            modlight_core::l10n::t(
+                                modlight_core::l10n::tools::BackgroundRemoverViewModel_Background_removed_ms,
+                            ),
+                            &[modlight_core::l10n::Arg::Int(1834)],
+                        ),
+                        icon: modlight_core::icons::ERASER,
+                        until: f64::MAX,
+                    });
+                }
+            }
+            Some(vec2(1080.0, 720.0))
         }
         _ => None,
     }
