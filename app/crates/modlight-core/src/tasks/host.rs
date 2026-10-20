@@ -87,6 +87,17 @@ pub enum TaskEffect {
     ShowSignIn,
     /// `PinToScreen`: the picture pinned to the screen (phase 5).
     PinToScreen(Arc<image::RgbaImage>),
+    /// `TaskHelpers.OCRImage(image, taskSettings)` (`DoOCR`, phase 5).
+    Ocr(
+        Arc<image::RgbaImage>,
+        Box<crate::tasks::settings::TaskSettings>,
+    ),
+    /// `TaskHelpers.AnalyzeImage(filePath, taskSettings)` (phase 5).
+    AnalyzeImage(PathBuf, Box<crate::tasks::settings::TaskSettings>),
+    /// `TaskHelpers.OpenQRCodeScanFromImageFile(filePath)` (phase 5).
+    ScanQrCode(PathBuf),
+    /// `TaskHelpers.PrintImage(image)` (`SendImageToPrinter`, phase 5).
+    PrintImage(Arc<image::RgbaImage>),
     /// The large-file warning's "don't show again".
     DisableLargeFileWarning,
     /// The name parser's counter moved (`NameParserAutoIncrementNumber`).

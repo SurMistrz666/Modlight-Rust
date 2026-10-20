@@ -18,5 +18,7 @@ pub mod system;
 pub mod windows;
 // Phase 3, media: the YouTube sign-in window.
 pub mod webview;
+// Phase 5, tools: text recognition.
+pub mod ocr;
 
 pub use keychain::KeychainStore;

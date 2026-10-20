@@ -38,6 +38,8 @@ pub struct ColorPickerWindow {
     pub options: ColorPickerOptions,
     pub screen_options: ScreenColorPickerOptions,
     pub recent: Vec<Color>,
+    /// Where the palette choice is saved (`CaptureSettingsReference`).
+    pub home: super::jobs::OptionsHome,
     hex_text: String,
     dragging: Option<bool>,
     textures: Option<((DrawStyle, Color), TextureHandle, TextureHandle)>,
@@ -68,6 +70,7 @@ impl ColorPickerWindow {
             options,
             screen_options,
             recent,
+            home: super::jobs::OptionsHome::Defaults,
             hex_text: format!("#{}", color::to_hex(current, ColorFormat::Rgb)),
             dragging: None,
             textures: None,
@@ -611,7 +614,11 @@ impl ToolWindow for ColorPickerWindow {
         ) && !self.options.recent_colors_selected
         {
             self.options.recent_colors_selected = true;
-            state.save_capture_options(&["SurfaceOptions", "ColorPickerOptions"], &self.options);
+            state.save_capture_options(
+                &self.home,
+                &["SurfaceOptions", "ColorPickerOptions"],
+                &self.options,
+            );
         }
         let standard_w = kit::radio_width(ui, t(h::ColorPickerWindow_Standard_colors));
         if kit::radio_at(
@@ -627,7 +634,11 @@ impl ToolWindow for ColorPickerWindow {
         ) && self.options.recent_colors_selected
         {
             self.options.recent_colors_selected = false;
-            state.save_capture_options(&["SurfaceOptions", "ColorPickerOptions"], &self.options);
+            state.save_capture_options(
+                &self.home,
+                &["SurfaceOptions", "ColorPickerOptions"],
+                &self.options,
+            );
         }
         for (i, sw) in list.iter().enumerate() {
             let x = pin.left() + (i % swatches_per_row) as f32 * 21.0;
@@ -769,23 +780,21 @@ impl AppState {
 
     /// `ShowScreenColorPickerDialog`.
     pub fn open_color_picker(&mut self, settings: &modlight_core::tasks::settings::TaskSettings) {
-        let options: ColorPickerOptions = modlight_tools::settings::read(
-            self.config
-                .get("DefaultTaskSettings")
-                .and_then(|d| d.pointer("/CaptureSettings/SurfaceOptions/ColorPickerOptions")),
-        );
+        let options: ColorPickerOptions = modlight_tools::settings::read(Some(
+            &settings
+                .capture_settings
+                .surface_options
+                .color_picker_options,
+        ));
+        let home = super::jobs::OptionsHome::of_capture(settings);
         let screen: ScreenColorPickerOptions =
             super::jobs::tool_options(settings, "ScreenColorPickerOptions");
         let recent = self.recent_colors();
         self.tools.open_keyed(|key| {
-            Box::new(ColorPickerWindow::new(
-                key,
-                Purpose::Tool,
-                Color::RED,
-                options,
-                screen,
-                recent,
-            ))
+            let mut window =
+                ColorPickerWindow::new(key, Purpose::Tool, Color::RED, options, screen, recent);
+            window.home = home;
+            Box::new(window)
         });
     }
 }

@@ -160,6 +160,9 @@ pub const SCREENS: &[&str] = &[
     "input-box",
     "output-box",
     "error-window",
+    "ocr",
+    "ocr-services",
+    "ocr-error",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

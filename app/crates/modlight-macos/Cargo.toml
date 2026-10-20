@@ -31,3 +31,5 @@ dispatch2 = "0.3"
 global-hotkey = "0.9"
 # Phase 3, media: the YouTube sign-in window (WKWebView, non-persistent data store).
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKHTTPCookieStore", "WKNavigationDelegate", "WKNavigation", "objc2-core-foundation"] }
+# Phase 5, tools: text recognition (Windows OCR on Windows).
+objc2-vision = "0.3"

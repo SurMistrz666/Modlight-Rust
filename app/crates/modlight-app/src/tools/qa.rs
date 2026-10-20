@@ -34,6 +34,9 @@ pub const SCREENS: &[&str] = &[
     "input-box",
     "output-box",
     "error-window",
+    "ocr",
+    "ocr-services",
+    "ocr-error",
 ];
 
 /// ExifTool's `-G -t` output for the fixture photo.
@@ -330,6 +333,41 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
             let details = "called `Option::unwrap()` on a `None` value\n   at crates/modlight-app/src/uploads.rs:812 (thread modlight-worker)\n\nModlight 0.7.7 Dev";
             state.open_error_window("called `Option::unwrap()` on a `None` value", details, true);
             Some(vec2(760.0, 560.0))
+        }
+        "ocr" | "ocr-services" | "ocr-error" => {
+            let settings = state.default_task_settings();
+            let options = modlight_tools::settings::OcrOptions::default();
+            let languages = state.ocr_languages();
+            let text = "Quarterly report 2026\nRevenue grew 18% over the third quarter, led by uploads from\nthe desktop app and the new sharing links.\n\nNext review: 14 November";
+            let key = state.tools.open_keyed(|key| {
+                Box::new(super::ocr::OcrWindow::new(
+                    key,
+                    settings,
+                    options,
+                    languages,
+                    Arc::new(sunset(200, 100)),
+                    super::ocr::Recognizer::Fixed(String::new()),
+                    None,
+                ))
+            });
+            if let Some(window) = state.tools.window_mut::<super::ocr::OcrWindow>(key) {
+                window.qa_started();
+                if screen == "ocr-error" {
+                    window.error = modlight_core::l10n::format(
+                        modlight_core::l10n::t(
+                            modlight_core::l10n::tools::OCRHelper_Language_unavailable,
+                        ),
+                        &[modlight_core::l10n::Arg::from("Klingon")],
+                    );
+                } else {
+                    window.result = text.to_string();
+                }
+                if screen == "ocr-services" {
+                    window.editing_services = true;
+                    window.editing = Some(1);
+                }
+            }
+            Some(vec2(940.0, 600.0))
         }
         _ => None,
     }

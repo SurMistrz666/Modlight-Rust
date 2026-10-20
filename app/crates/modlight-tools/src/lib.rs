@@ -11,6 +11,7 @@ pub mod dotnet;
 pub mod images;
 pub mod indexer;
 pub mod metadata;
+pub mod ocr;
 pub mod pin;
 pub mod qr;
 pub mod settings;
