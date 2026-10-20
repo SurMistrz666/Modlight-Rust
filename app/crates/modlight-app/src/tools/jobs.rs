@@ -118,6 +118,7 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
             None => state.pin_from_file(settings),
         },
         H::PinToScreenCloseAll => state.pin_close_all(settings),
+        H::ImageCombiner => state.open_image_combiner(Vec::new(), settings),
         // The image effects window, the tray menu toggle: other parts of the port.
         _ => state.push(Command::NotYet),
     }

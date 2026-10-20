@@ -23,7 +23,40 @@ pub const SCREENS: &[&str] = &[
     "pin-startup-error",
     "pin-options",
     "pinned-image",
+    "image-combiner",
+    "image-combiner-empty",
 ];
+
+/// How the fixture files are shown (their real folder is a temporary one).
+pub fn fixture_names() -> Vec<String> {
+    [
+        "mountain-sunset.png",
+        "aurora-wallpaper.png",
+        "brand-palette.png",
+    ]
+    .iter()
+    .map(|n| format!("/Users/alex/Pictures/{n}"))
+    .collect()
+}
+
+/// Fixture pictures on disk (a temporary folder), made once.
+pub fn fixture_files() -> Vec<std::path::PathBuf> {
+    let folder = std::env::temp_dir().join("modlight-qa-tools");
+    let _ = std::fs::create_dir_all(&folder);
+    let mut out = Vec::new();
+    for (name, w, h) in [
+        ("mountain-sunset.png", 640u32, 400u32),
+        ("aurora-wallpaper.png", 480, 400),
+        ("brand-palette.png", 320, 200),
+    ] {
+        let path = folder.join(name);
+        if !path.is_file() {
+            let _ = modlight_tools::images::save(&sunset(w, h), &path);
+        }
+        out.push(path);
+    }
+    out
+}
 
 /// A picture to show: a sunset like the fixture library's, drawn here.
 pub fn sunset(w: u32, h: u32) -> image::RgbaImage {
@@ -192,6 +225,29 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
             let pin = state.tools.pins.last_mut().expect("pinned");
             pin.show_toolbar = true;
             Some(pin.size)
+        }
+        "image-combiner" | "image-combiner-empty" => {
+            let settings = state.default_task_settings();
+            let files = if screen == "image-combiner" {
+                fixture_files()
+            } else {
+                Vec::new()
+            };
+            let key = state.tools.open_keyed(|key| {
+                Box::new(super::combiner::CombinerWindow::new(key, settings, files))
+            });
+            if let Some(window) = state
+                .tools
+                .window_mut::<super::combiner::CombinerWindow>(key)
+            {
+                window.options.space = 10;
+                window.options.wrap_after = 2;
+                window.selected = vec![1];
+                window.current = Some(1);
+                window.preview_now(ctx);
+                window.qa_names = fixture_names();
+            }
+            Some(vec2(980.0, 650.0))
         }
         _ => None,
     }

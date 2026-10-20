@@ -149,6 +149,8 @@ pub const SCREENS: &[&str] = &[
     "pin-startup-error",
     "pin-options",
     "pinned-image",
+    "image-combiner",
+    "image-combiner-empty",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.
