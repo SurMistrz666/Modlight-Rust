@@ -96,6 +96,8 @@ pub struct RegionCaptureOptions {
     pub switch_to_drawing_tool_after_selection: bool,
     pub switch_to_selection_tool_after_drawing: bool,
     pub active_monitor_mode: bool,
+    /// `ColorPickerOptions`, as the file has it (the colour picker tool reads it).
+    pub color_picker_options: Value,
 }
 
 impl Default for RegionCaptureOptions {
@@ -139,6 +141,7 @@ impl Default for RegionCaptureOptions {
             switch_to_drawing_tool_after_selection: false,
             switch_to_selection_tool_after_drawing: false,
             active_monitor_mode: false,
+            color_picker_options: Value::Null,
         }
     }
 }

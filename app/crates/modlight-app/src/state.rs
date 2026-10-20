@@ -147,6 +147,8 @@ pub struct AppState {
     pub components: crate::components_window::Components,
     /// The app's own update check and its windows (phase 3, media).
     pub updates: crate::update_window::Updates,
+    /// The tool windows (phase 5, tools).
+    pub tools: crate::tools::Tools,
 }
 
 /// A request to the platform layer, handled after the frame is drawn.
@@ -243,6 +245,7 @@ impl AppState {
             downloads: Default::default(),
             components: Default::default(),
             updates: Default::default(),
+            tools: Default::default(),
         }
     }
 

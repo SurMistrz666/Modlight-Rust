@@ -45,6 +45,9 @@ pub enum AfterClose {
         crate::capture_flow::RecordStartMethod,
         Box<modlight_core::tasks::settings::TaskSettings>,
     ),
+    /// A tool found its component missing (`CheckFFmpeg`, `CheckExifTool`, the
+    /// background model): it opens when the component is there (phase 5).
+    Tool(Box<crate::tools::jobs::ToolContinuation>),
 }
 
 /// The window, when it is open.
@@ -858,6 +861,7 @@ pub fn window_closed(state: &mut AppState) {
                     state.start_screen_recording(output, method, *settings);
                 }
             }
+            AfterClose::Tool(next) => crate::tools::jobs::after_components(state, *next, satisfied),
             then => crate::download_tab::after_components(state, then, satisfied),
         }
     }

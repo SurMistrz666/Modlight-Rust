@@ -29,6 +29,9 @@ zip = { version = "6", default-features = false, features = ["deflate-flate2"] }
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
 libc = "0.2"
+# Phase 5, the background remover's model (`background_removal`).
+anyhow.workspace = true
+ort.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -3,6 +3,7 @@
 
 pub mod account;
 pub mod admin;
+pub mod background_removal;
 pub mod backup;
 pub mod capture;
 pub mod config;
