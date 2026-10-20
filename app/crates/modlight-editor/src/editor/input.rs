@@ -253,6 +253,11 @@ impl InputState {
         self.drawing
     }
 
+    /// Where the annotation being drawn goes in the list.
+    pub fn pending_index(&self) -> Option<usize> {
+        self.pending_index
+    }
+
     pub fn is_interacting(&self) -> bool {
         self.sel.dragging_handle.is_some() || self.sel.dragging_shape || self.crop.is_dragging()
     }

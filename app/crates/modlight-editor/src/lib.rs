@@ -21,6 +21,7 @@ pub mod history;
 pub mod model;
 pub mod ops;
 pub mod options;
+pub mod qa;
 pub mod raster;
 pub mod render;
 pub mod text;
