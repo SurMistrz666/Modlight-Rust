@@ -3318,8 +3318,7 @@ impl crate::state::AppState {
                         )
                     })
                     .collect();
-                    let mut index = 0;
-                    for picker in state.folder_pickers() {
+                    for (index, picker) in state.folder_pickers().enumerate() {
                         picker.loading = false;
                         match &answer {
                             Ok(Ok(list)) => {
@@ -3351,7 +3350,6 @@ impl crate::state::AppState {
                                     t(s::TaskSettingsWindow_ModlightFolderFailed).to_string()
                             }
                         }
-                        index += 1;
                     }
                 },
             ) as Box<dyn FnOnce(&mut crate::state::AppState, &egui::Context) + Send>
