@@ -468,15 +468,17 @@ fn compare(ours: &image::RgbaImage, theirs: &image::RgbaImage, t: f64) -> Option
 /// pixels (within 25 percentage points) and channel means within 12 levels.
 fn compare_stats(
     input: &image::RgbaImage,
-    ours: &image::RgbaImage,
+    ours: &[image::RgbaImage],
     theirs: &image::RgbaImage,
 ) -> Result<String, String> {
-    if ours.dimensions() != theirs.dimensions() {
-        return Err(format!(
-            "size {:?}, upstream {:?}",
-            ours.dimensions(),
-            theirs.dimensions()
-        ));
+    for o in ours {
+        if o.dimensions() != theirs.dimensions() {
+            return Err(format!(
+                "size {:?}, upstream {:?}",
+                o.dimensions(),
+                theirs.dimensions()
+            ));
+        }
     }
     let mean = |img: &image::RgbaImage| {
         let mut m = [0f64; 4];
@@ -501,11 +503,35 @@ fn compare_stats(
             .count();
         n as f64 / (img.width() * img.height()).max(1) as f64
     };
-    let (mo, mt) = (mean(ours), mean(theirs));
-    let (co, ct) = (changed(ours), changed(theirs));
-    let worst = (0..4).map(|k| (mo[k] - mt[k]).abs()).fold(0.0, f64::max);
-    let line = format!("changed {co:.3} vs {ct:.3}, mean diff {worst:.2}");
-    if (co - ct).abs() > 0.25 || worst > 12.0 {
+    // Upstream's one render must look like one of ours: its changed share and channel
+    // means inside the range our renders (each with its own seed) span, plus a margin.
+    let (mt, ct) = (mean(theirs), changed(theirs));
+    let cs: Vec<f64> = ours.iter().map(changed).collect();
+    let ms: Vec<[f64; 4]> = ours.iter().map(mean).collect();
+    let lo = |v: &[f64]| v.iter().cloned().fold(f64::MAX, f64::min);
+    let hi = |v: &[f64]| v.iter().cloned().fold(f64::MIN, f64::max);
+    let (clo, chi) = (lo(&cs), hi(&cs));
+    let mut worst = 0f64;
+    for k in 0..4 {
+        let v: Vec<f64> = ms.iter().map(|m| m[k]).collect();
+        let d = if mt[k] < lo(&v) {
+            lo(&v) - mt[k]
+        } else if mt[k] > hi(&v) {
+            mt[k] - hi(&v)
+        } else {
+            0.0
+        };
+        worst = worst.max(d);
+    }
+    let cd = if ct < clo {
+        clo - ct
+    } else if ct > chi {
+        ct - chi
+    } else {
+        0.0
+    };
+    let line = format!("changed {clo:.3}..{chi:.3} vs {ct:.3}, mean outside by {worst:.2}");
+    if cd > 0.1 || worst > 8.0 {
         return Err(line);
     }
     Ok(line)
@@ -570,7 +596,13 @@ fn pixels_match_upstream() {
         compared += 1;
         if case["deterministic"] == Value::Bool(false) || RANDOM_SEEDED.contains(&id) {
             // Upstream seeds these from Random.Shared: compare what is drawn statistically.
-            match compare_stats(&input, &ours, &expected) {
+            let mut renders = vec![ours.clone()];
+            for _ in 0..5 {
+                if let Ok(img) = effect.apply(&input, &values, &Default::default()) {
+                    renders.push(img);
+                }
+            }
+            match compare_stats(&input, &renders, &expected) {
                 Ok(line) => report.push(format!("{name}\tstats\t{line}")),
                 Err(e) => failures.push(format!("{name}: {e}")),
             }

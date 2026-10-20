@@ -145,6 +145,137 @@ pub fn shared_random() -> DotNetRandom {
     DotNetRandom::new(shared_next(0, i32::MAX))
 }
 
+/// `Array.Sort(array, comparison)`: .NET's introspective sort (`ArraySortHelper<T>`), which
+/// is not stable, so equal keys end up where .NET puts them.
+pub fn sort_by<T: Copy>(keys: &mut [T], cmp: &impl Fn(&T, &T) -> std::cmp::Ordering) {
+    if keys.len() > 1 {
+        let depth = 2 * ((keys.len() as u32).ilog2() as i32 + 1);
+        intro_sort(keys, depth, cmp);
+    }
+}
+
+fn swap_if_greater<T: Copy>(
+    keys: &mut [T],
+    cmp: &impl Fn(&T, &T) -> std::cmp::Ordering,
+    i: usize,
+    j: usize,
+) {
+    if cmp(&keys[i], &keys[j]) == std::cmp::Ordering::Greater {
+        keys.swap(i, j);
+    }
+}
+
+fn intro_sort<T: Copy>(
+    keys: &mut [T],
+    mut depth: i32,
+    cmp: &impl Fn(&T, &T) -> std::cmp::Ordering,
+) {
+    use std::cmp::Ordering::Less;
+    let mut size = keys.len();
+    while size > 1 {
+        if size <= 16 {
+            if size == 2 {
+                swap_if_greater(keys, cmp, 0, 1);
+                return;
+            }
+            if size == 3 {
+                swap_if_greater(keys, cmp, 0, 1);
+                swap_if_greater(keys, cmp, 0, 2);
+                swap_if_greater(keys, cmp, 1, 2);
+                return;
+            }
+            // Insertion sort.
+            let k = &mut keys[..size];
+            for i in 0..k.len() - 1 {
+                let t = k[i + 1];
+                let mut j = i as isize;
+                while j >= 0 && cmp(&t, &k[j as usize]) == Less {
+                    k[(j + 1) as usize] = k[j as usize];
+                    j -= 1;
+                }
+                k[(j + 1) as usize] = t;
+            }
+            return;
+        }
+        if depth == 0 {
+            heap_sort(&mut keys[..size], cmp);
+            return;
+        }
+        depth -= 1;
+        // Median of three, then partition.
+        let k = &mut keys[..size];
+        let hi = k.len() - 1;
+        let middle = hi >> 1;
+        swap_if_greater(k, cmp, 0, middle);
+        swap_if_greater(k, cmp, 0, hi);
+        swap_if_greater(k, cmp, middle, hi);
+        let pivot = k[middle];
+        k.swap(middle, hi - 1);
+        let (mut left, mut right) = (0usize, hi - 1);
+        while left < right {
+            loop {
+                left += 1;
+                if cmp(&k[left], &pivot) != Less {
+                    break;
+                }
+            }
+            loop {
+                right -= 1;
+                if cmp(&pivot, &k[right]) != Less {
+                    break;
+                }
+            }
+            if left >= right {
+                break;
+            }
+            k.swap(left, right);
+        }
+        if left != hi - 1 {
+            k.swap(left, hi - 1);
+        }
+        let p = left;
+        intro_sort(&mut keys[p + 1..size], depth, cmp);
+        size = p;
+    }
+}
+
+fn heap_sort<T: Copy>(keys: &mut [T], cmp: &impl Fn(&T, &T) -> std::cmp::Ordering) {
+    let n = keys.len();
+    let mut i = n >> 1;
+    while i >= 1 {
+        down_heap(keys, i, n, cmp);
+        i -= 1;
+    }
+    let mut i = n;
+    while i > 1 {
+        keys.swap(0, i - 1);
+        down_heap(keys, 1, i - 1, cmp);
+        i -= 1;
+    }
+}
+
+fn down_heap<T: Copy>(
+    keys: &mut [T],
+    mut i: usize,
+    n: usize,
+    cmp: &impl Fn(&T, &T) -> std::cmp::Ordering,
+) {
+    use std::cmp::Ordering::Less;
+    let d = keys[i - 1];
+    while i <= n >> 1 {
+        let mut child = 2 * i;
+        if child < n && cmp(&keys[child - 1], &keys[child]) == Less {
+            child += 1;
+        }
+        if cmp(&d, &keys[child - 1]) != Less {
+            break;
+        }
+        keys[i - 1] = keys[child - 1];
+        i = child;
+    }
+    keys[i - 1] = d;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +288,14 @@ mod tests {
         assert_eq!(r.next_int(), 302596119);
         let mut r = DotNetRandom::new(0);
         assert_eq!(r.next_int(), 1559595546);
+    }
+
+    #[test]
+    fn sort_by_orders_like_a_sort() {
+        let mut v: Vec<i32> = (0..500).map(|i| (i * 7919) % 211).collect();
+        let mut w = v.clone();
+        super::sort_by(&mut v, &|a: &i32, b: &i32| a.cmp(b));
+        w.sort();
+        assert_eq!(v, w);
     }
 }

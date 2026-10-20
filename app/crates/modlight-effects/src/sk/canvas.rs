@@ -1205,26 +1205,62 @@ fn path_length(path: &Path) -> f32 {
 }
 
 /// The scale a matrix applies (the stroker's resolution scale).
-/// Draws a hairline the way Skia does near the top and left edges. tiny-skia's
-/// anti-aliased hairline blitters clamp rows and columns above or left of the pixmap to
-/// zero (Skia keeps them negative and clips them away), which paints stray coverage on the
-/// first row or column; so a hairline reaching there is drawn on a copy of that corner of
-/// the canvas padded by a few pixels, and the copy is put back.
+/// `SkScan::AntiHairPath` and friends: a stroke drawn as a hairline, segment by segment,
+/// the way Skia's `hair_path` walks the device-space path. Round and square caps push the
+/// open ends out (`extend_pts`), and a closing segment runs between the pushed-out points
+/// (tiny-skia closes to the original ones). Each segment goes through tiny-skia's hairline
+/// rasteriser on its own. Its anti-aliased blitters clamp rows and columns above or left of
+/// the pixmap to zero (Skia keeps them negative and clips them away), so a hairline
+/// reaching the top or left edge is drawn on a padded copy of that corner of the canvas.
 fn stroke_hairline(
     pm: &mut Pixmap,
     path: &Path,
     paint: &tiny_skia::Paint,
-    stroke: &tiny_skia::Stroke,
+    stroke: &Stroke,
     m: Transform,
     clip: Option<&Mask>,
 ) {
-    const PAD: i32 = 3;
-    let Some(dev) = path.clone().transform(m) else {
+    let local = match &stroke.dash {
+        Some(d) => match path.dash(d, matrix_scale(m)) {
+            Some(p) => p,
+            None => return,
+        },
+        None => path.clone(),
+    };
+    let Some(dev) = local.transform(m) else {
         return;
     };
+    // The shader keeps the canvas matrix; the segments are already in device space.
+    let mut paint = paint.clone();
+    paint.shader.transform(m);
+    // `SkDrawTreatAsHairline`'s coverage, handed to tiny-skia as the width of an
+    // untransformed hairline (it scales the paint the same way).
+    let coverage_width = if stroke.width <= 0.0 {
+        0.0
+    } else {
+        let fast_len = |x: f32, y: f32| {
+            let (mut a, mut b) = (x.abs(), y.abs());
+            if a < b {
+                std::mem::swap(&mut a, &mut b);
+            }
+            a + b * 0.5
+        };
+        let l0 = fast_len(m.sx * stroke.width, m.ky * stroke.width);
+        let l1 = fast_len(m.kx * stroke.width, m.sy * stroke.width);
+        (l0 + l1) * 0.5
+    };
     let b = dev.bounds();
+    const PAD: i32 = 3;
     if b.left() >= 2.0 && b.top() >= 2.0 {
-        pm.stroke_path(path, paint, stroke, m, clip);
+        hair_segments(
+            pm,
+            &dev,
+            &paint,
+            stroke.line_cap,
+            coverage_width,
+            (0.0, 0.0),
+            clip,
+        );
         return;
     }
     let (w, h) = (pm.width() as i32, pm.height() as i32);
@@ -1255,14 +1291,186 @@ fn stroke_hairline(
             }
         }
     }
-    let shifted = m.post_translate(PAD as f32, PAD as f32);
-    tmp.stroke_path(path, paint, stroke, shifted, tmp_mask.as_ref());
+    let shift = PAD as f32;
+    paint
+        .shader
+        .transform(Transform::from_translate(shift, shift));
+    hair_segments(
+        &mut tmp,
+        &dev,
+        &paint,
+        stroke.line_cap,
+        coverage_width,
+        (shift, shift),
+        tmp_mask.as_ref(),
+    );
     let src = tmp.data();
     let dst = pm.data_mut();
     for y in 0..rh {
         let d0 = ((y * w) * 4) as usize;
         let s0 = (((y + PAD) * tw + PAD) * 4) as usize;
         dst[d0..d0 + (rw * 4) as usize].copy_from_slice(&src[s0..s0 + (rw * 4) as usize]);
+    }
+}
+
+/// `extend_pts<capStyle>`: moves a segment's open ends outward along their tangents.
+fn extend_pts(cap: LineCap, prev_move: bool, next_ends: bool, pts: &mut [Point]) {
+    let outset = if cap == LineCap::Square {
+        0.5
+    } else {
+        std::f32::consts::PI / 8.0
+    };
+    let n = pts.len();
+    let normalize = |v: Point| -> Point {
+        let (xx, yy) = (v.x as f64, v.y as f64);
+        let scale = 1.0 / (xx * xx + yy * yy).sqrt();
+        let (x, y) = ((v.x as f64 * scale) as f32, (v.y as f64 * scale) as f32);
+        if !x.is_finite() || !y.is_finite() {
+            Point::zero()
+        } else {
+            Point::from_xy(x, y)
+        }
+    };
+    if prev_move {
+        let mut ctrl = 0;
+        let mut controls = n - 1;
+        let mut tangent;
+        loop {
+            ctrl += 1;
+            tangent = pts[0] - pts[ctrl];
+            if !(tangent.x == 0.0 && tangent.y == 0.0) {
+                break;
+            }
+            controls -= 1;
+            if controls == 0 {
+                break;
+            }
+        }
+        if tangent.x == 0.0 && tangent.y == 0.0 {
+            tangent = Point::from_xy(1.0, 0.0);
+            controls = n - 1;
+        } else {
+            tangent = normalize(tangent);
+        }
+        let mut i = 0;
+        loop {
+            pts[i].x += tangent.x * outset;
+            pts[i].y += tangent.y * outset;
+            i += 1;
+            controls += 1;
+            if controls >= n {
+                break;
+            }
+        }
+    }
+    if next_ends {
+        let last = n - 1;
+        let mut ctrl = last;
+        let mut controls = n - 1;
+        let mut tangent;
+        loop {
+            ctrl -= 1;
+            tangent = pts[last] - pts[ctrl];
+            if !(tangent.x == 0.0 && tangent.y == 0.0) {
+                break;
+            }
+            controls -= 1;
+            if controls == 0 {
+                break;
+            }
+        }
+        if tangent.x == 0.0 && tangent.y == 0.0 {
+            tangent = Point::from_xy(-1.0, 0.0);
+            controls = n - 1;
+        } else {
+            tangent = normalize(tangent);
+        }
+        let mut i = last as isize;
+        loop {
+            pts[i as usize].x += tangent.x * outset;
+            pts[i as usize].y += tangent.y * outset;
+            i -= 1;
+            controls += 1;
+            if controls >= n {
+                break;
+            }
+        }
+    }
+}
+
+/// `hair_path<capStyle>`: each segment of the device-space path as its own hairline.
+fn hair_segments(
+    pm: &mut Pixmap,
+    dev: &Path,
+    paint: &tiny_skia::Paint,
+    cap: LineCap,
+    width: f32,
+    shift: (f32, f32),
+    clip: Option<&Mask>,
+) {
+    use tiny_skia::PathSegment as S;
+    let segs: Vec<S> = dev.segments().collect();
+    let butt = Stroke {
+        width,
+        line_cap: LineCap::Butt,
+        ..Stroke::default()
+    };
+    let ts = Transform::from_translate(shift.0, shift.1);
+    let mut draw = |pts: &[Point]| {
+        let mut pb = PathBuilder::new();
+        pb.move_to(pts[0].x, pts[0].y);
+        match pts.len() {
+            2 => pb.line_to(pts[1].x, pts[1].y),
+            3 => pb.quad_to(pts[1].x, pts[1].y, pts[2].x, pts[2].y),
+            _ => pb.cubic_to(pts[1].x, pts[1].y, pts[2].x, pts[2].y, pts[3].x, pts[3].y),
+        }
+        if let Some(p) = pb.finish() {
+            pm.stroke_path(&p, paint, &butt, ts, clip);
+        }
+    };
+    let mut first = Point::zero();
+    let mut last = Point::zero();
+    let mut cur = Point::zero();
+    // 0 move, 1 line/quad/cubic, 2 close.
+    let mut prev_move = true;
+    for (i, seg) in segs.iter().enumerate() {
+        let next_ends = matches!(segs.get(i + 1), None | Some(S::MoveTo(_)) | Some(S::Close));
+        let mut pts: Vec<Point> = Vec::new();
+        let curve = !matches!(seg, S::MoveTo(_) | S::Close);
+        match *seg {
+            S::MoveTo(p) => {
+                cur = p;
+                first = p;
+                last = p;
+            }
+            S::LineTo(p) => pts.extend([cur, p]),
+            S::QuadTo(a, p) => pts.extend([cur, a, p]),
+            S::CubicTo(a, b, p) => pts.extend([cur, a, b, p]),
+            S::Close => {
+                let mut c = [last, first];
+                if cap != LineCap::Butt && prev_move {
+                    extend_pts(cap, true, next_ends, &mut c);
+                }
+                draw(&c);
+                cur = first;
+            }
+        }
+        if curve {
+            let k = pts.len() - 1;
+            cur = pts[k];
+            if cap != LineCap::Butt {
+                extend_pts(cap, prev_move, next_ends, &mut pts);
+            }
+            draw(&pts);
+            last = pts[k];
+        }
+        if cap != LineCap::Butt {
+            if prev_move && curve {
+                // The segment moved the initial point, so close to it instead.
+                first = pts[0];
+            }
+            prev_move = matches!(seg, S::MoveTo(_));
+        }
     }
 }
 
