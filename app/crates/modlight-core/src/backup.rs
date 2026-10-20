@@ -2,9 +2,12 @@
 //! `ApplicationConfig.json`, `HotkeysConfig.json` and (when asked) `History.db`.
 //!
 //! On a Mac there is no `UploadersConfig.json` to put in it: the token lives in the
-//! Keychain and never leaves it. Import takes only `.json` and `.xml` entries, as
-//! upstream does, and only plain names: an entry with a folder in its name, `..`, or an
-//! absolute path is skipped instead of being written somewhere else.
+//! Keychain and never leaves it. Import takes exactly the settings files export writes,
+//! by name, and nothing else: upstream took any `.json` or `.xml` entry, which let a
+//! backup from somebody else replace the account's host (`UploadersConfig.json`, while
+//! the token stays in the Keychain) or the upload queue (`Queue.json`, whose spooled
+//! files the queue deletes). Every other entry, and any name with a folder, `..` or an
+//! absolute path in it, is left out and named in the report.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -47,20 +50,55 @@ pub fn export(profile: &Path, archive: &Path, settings: bool, history: bool) -> 
     Ok(())
 }
 
-/// `Import(archivePath)`: the `.json` and `.xml` entries go into `profile`, replacing
-/// what is there. Returns the names written.
-pub fn import(archive: &Path, profile: &Path) -> Result<Vec<String>, String> {
+/// The entries `import` restores: the settings files `export` writes.
+const RESTORED: [&str; 2] = [APPLICATION_CONFIG_FILE, HOTKEYS_CONFIG_FILE];
+
+/// Written by `export` and passed over by `import`: upstream restores only the settings
+/// files, never the history database.
+const PASSED_OVER: [&str; 1] = [HISTORY_FILE_NAME];
+
+/// What an import did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportReport {
+    /// The files written into the personal folder.
+    pub written: Vec<String>,
+    /// Entries left out because a backup of this app never holds them, as the archive
+    /// names them.
+    pub refused: Vec<String>,
+}
+
+impl ImportReport {
+    /// What the person has to be told after the import, one paragraph each.
+    pub fn notes(&self) -> Vec<String> {
+        let mut notes = Vec::new();
+        if !self.refused.is_empty() {
+            notes.push(crate::l10n::tf(
+                crate::l10n::mac::BackupImportRefused,
+                &[self.refused.join(", ").into()],
+            ));
+        }
+        notes
+    }
+}
+
+/// `Import(archivePath)`: the settings files of the backup go into `profile`, replacing
+/// what is there. Nothing is written unless the whole archive could be read.
+pub fn import(archive: &Path, profile: &Path) -> Result<ImportReport, String> {
     let file = std::fs::File::open(archive).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     let mut total: u64 = 0;
-    let mut written = Vec::new();
+    let mut report = ImportReport::default();
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index).map_err(|e| e.to_string())?;
-        if entry.is_dir() {
-            continue;
-        }
         let name = entry.name().to_string();
-        if !is_plain_name(&name) || !has_extension(&name, &["json", "xml"]) {
+        let restored = !entry.is_dir()
+            && RESTORED.contains(&name.as_str())
+            && !files.iter().any(|(taken, _)| *taken == name);
+        if !restored {
+            if !PASSED_OVER.contains(&name.as_str()) {
+                report.refused.push(name);
+            }
             continue;
         }
         total = total.saturating_add(entry.size());
@@ -73,10 +111,13 @@ pub fn import(archive: &Path, profile: &Path) -> Result<Vec<String>, String> {
             .take(IMPORT_MAX_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
-        crate::config::write_atomically(&profile.join(&name), &bytes).map_err(|e| e.to_string())?;
-        written.push(name);
+        files.push((name, bytes));
     }
-    Ok(written)
+    for (name, bytes) in files {
+        crate::config::write_atomically(&profile.join(&name), &bytes).map_err(|e| e.to_string())?;
+        report.written.push(name);
+    }
+    Ok(report)
 }
 
 /// `ResetSettings`: the settings files go; the next load starts from the defaults.
@@ -90,25 +131,23 @@ pub fn reset(profile: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn is_plain_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains('/')
-        && !name.contains('\\')
-        && name != "."
-        && name != ".."
-        && !name.starts_with('.')
-}
-
-fn has_extension(name: &str, extensions: &[&str]) -> bool {
-    Path::new(name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| extensions.iter().any(|x| x.eq_ignore_ascii_case(e)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `.sxb` holding `entries`, as somebody else's tool might have built it.
+    fn archive(dir: &Path, entries: &[(&str, &[u8])]) -> PathBuf {
+        let path = dir.join("hostile.sxb");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, bytes) in entries {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
 
     #[test]
     fn export_then_import_round_trips_the_settings() {
@@ -123,9 +162,13 @@ mod tests {
         std::fs::write(from.path().join(HISTORY_FILE_NAME), b"sqlite").unwrap();
         let archive = from.path().join(default_file_name("1.0.0"));
         export(from.path(), &archive, true, true).unwrap();
-        let written = import(&archive, to.path()).unwrap();
-        // History.db is in the backup, but import takes only json and xml (upstream).
-        assert_eq!(written, [APPLICATION_CONFIG_FILE, HOTKEYS_CONFIG_FILE]);
+        let report = import(&archive, to.path()).unwrap();
+        // History.db is in the backup, but import restores only the settings (upstream).
+        assert_eq!(
+            report.written,
+            [APPLICATION_CONFIG_FILE, HOTKEYS_CONFIG_FILE]
+        );
+        assert!(report.refused.is_empty(), "{:?}", report.refused);
         assert_eq!(
             std::fs::read(to.path().join(APPLICATION_CONFIG_FILE)).unwrap(),
             b"{\"ShowTray\":false}"
@@ -134,29 +177,89 @@ mod tests {
     }
 
     #[test]
-    fn import_skips_paths_and_other_files() {
+    fn import_takes_only_the_files_export_writes() {
         let dir = tempfile::tempdir().unwrap();
-        let archive = dir.path().join("evil.sxb");
-        let file = std::fs::File::create(&archive).unwrap();
-        let mut zip = zip::ZipWriter::new(file);
-        let options = zip::write::SimpleFileOptions::default();
-        for name in [
+        let refused = [
             "../escape.json",
             "sub/inner.json",
             "/abs.json",
             "run.sh",
             ".hidden.json",
             "ok.xml",
-        ] {
-            zip.start_file(name, options).unwrap();
-            zip.write_all(b"x").unwrap();
-        }
-        zip.finish().unwrap();
+            "sub/ApplicationConfig.json",
+            "../HotkeysConfig.json",
+            "applicationconfig.json",
+        ];
+        let mut entries: Vec<(&str, &[u8])> = refused.iter().map(|n| (*n, &b"{}"[..])).collect();
+        entries.push((HOTKEYS_CONFIG_FILE, b"{\"Hotkeys\":[]}"));
+        let archive = archive(dir.path(), &entries);
         let target = dir.path().join("profile");
         std::fs::create_dir_all(&target).unwrap();
-        let written = import(&archive, &target).unwrap();
-        assert_eq!(written, ["ok.xml"]);
+        let report = import(&archive, &target).unwrap();
+        assert_eq!(report.written, [HOTKEYS_CONFIG_FILE]);
+        assert_eq!(report.refused, refused, "named, in the archive's order");
+        assert_eq!(
+            std::fs::read(target.join(HOTKEYS_CONFIG_FILE)).unwrap(),
+            b"{\"Hotkeys\":[]}"
+        );
         assert!(!dir.path().join("escape.json").exists());
+        assert!(!target.join("ok.xml").exists());
+        assert!(!target.join("sub").exists());
+        assert!(!target.join(APPLICATION_CONFIG_FILE).exists());
+    }
+
+    /// W1: an `UploadersConfig.json` in a backup would name another host, while the
+    /// token stays in the Keychain and would be sent there.
+    #[test]
+    fn a_backup_cannot_repoint_the_account() {
+        use crate::account::{AccountStore, FileCredentialStore, UPLOADERS_CONFIG_FILE};
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        let credentials = profile.join("credentials");
+        let load = || {
+            AccountStore::load(
+                &profile,
+                Box::new(FileCredentialStore::new(credentials.clone())),
+            )
+        };
+        load()
+            .save_sign_in(&modlight_api::SignedIn {
+                origin: "http://127.0.0.1:8420".into(),
+                token: "tok-123".into(),
+                account: modlight_api::AccountInfo {
+                    tag: Some("T".into()),
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        let before = std::fs::read(profile.join(UPLOADERS_CONFIG_FILE)).unwrap();
+
+        let hostile = archive(
+            dir.path(),
+            &[
+                (APPLICATION_CONFIG_FILE, b"{}"),
+                (
+                    UPLOADERS_CONFIG_FILE,
+                    br#"{"ModlightAccount":{"Host":"https://attacker.example","Tag":"T"}}"#,
+                ),
+            ],
+        );
+        let report = import(&hostile, &profile).unwrap();
+        assert_eq!(report.written, [APPLICATION_CONFIG_FILE]);
+        assert_eq!(report.refused, [UPLOADERS_CONFIG_FILE]);
+        assert_eq!(
+            std::fs::read(profile.join(UPLOADERS_CONFIG_FILE)).unwrap(),
+            before,
+            "the account file is untouched"
+        );
+        let account = load();
+        assert_eq!(account.host(), "http://127.0.0.1:8420");
+        assert_eq!(
+            account.credential().unwrap().host,
+            "http://127.0.0.1:8420",
+            "the token still goes only where it came from"
+        );
     }
 
     #[test]
