@@ -633,8 +633,8 @@ impl RegionSession {
                 }
             }
             RegionCaptureAction::SwapToolType => {
-                // The annotation tools come with the image editor (phase 4); until then
-                // there is only the region tool to swap to.
+                // Between the region tool and the editor's annotation tools; a host without
+                // the editor keeps the region tool.
                 if self.request.enable_annotations && crate::capture::ANNOTATION_TOOLS_AVAILABLE {
                     self.region_tool_active = !self.region_tool_active;
                 }

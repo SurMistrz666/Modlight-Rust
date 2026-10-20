@@ -66,6 +66,7 @@ pub const SCREENS: &[&str] = &[
     "capture-menu",
     "region-capture",
     "region-capture-hover",
+    "region-capture-annotate",
     "region-capture-light",
     "recording-toolbar",
     "recording-toolbar-compact",
@@ -85,6 +86,10 @@ pub const SCREENS: &[&str] = &[
     "settings-components",
     "update-available",
     "update-download",
+    // Phase 4, the image editor (`qa_editor::SCREENS`).
+    "image-editor",
+    "image-editor-start",
+    "image-editor-annotate",
     // Phase 3, settings (`qa_settings::SCREENS`).
     "settings-capture-region",
     "settings-capture",
@@ -602,6 +607,9 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
     if let Some(size) = crate::qa_settings::prepare(screen, state) {
         return size;
     }
+    if let Some(size) = crate::qa_editor::prepare(screen, state) {
+        return size;
+    }
     if let Some(size) = crate::tools::qa::prepare(screen, state, ctx) {
         return size;
     }
@@ -831,6 +839,7 @@ pub fn is_main_window(screen: &str) -> bool {
         && !crate::qa_capture::is_dialog(screen)
         && !crate::qa_media::is_dialog(screen)
         && !crate::qa_settings::is_dialog(screen)
+        && !crate::qa_editor::is_dialog(screen)
         && !crate::tools::qa::is_dialog(screen)
         && !matches!(
             screen,
@@ -891,6 +900,10 @@ impl eframe::App for ShotApp {
             return;
         }
         if let Some(wanted) = crate::qa_settings::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
+        if let Some(wanted) = crate::qa_editor::draw(&self.screen, ui, state) {
             self.wanted = wanted;
             return;
         }

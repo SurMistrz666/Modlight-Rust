@@ -48,6 +48,8 @@ pub struct Windows {
     pub debug_log: Option<crate::about_window::DebugLogWindow>,
     pub first_run: Option<crate::first_run::FirstRunWindow>,
     pub editor_selector: Option<crate::first_run::EditorSelector>,
+    /// The image editor's windows (phase 4).
+    pub editors: crate::editor_window::EditorWindows,
 }
 
 impl Windows {

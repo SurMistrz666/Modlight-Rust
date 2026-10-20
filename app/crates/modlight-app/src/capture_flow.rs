@@ -409,12 +409,10 @@ impl AppState {
             CaptureStep::Region(request) => {
                 let mut session = RegionSession::new(request);
                 session.render_scale = session.request.scale;
-                self.captures.overlay = Some(RegionOverlay::new(
-                    session,
-                    OverlayPurpose::Capture,
-                    settings,
-                    self.time,
-                ));
+                let mut overlay =
+                    RegionOverlay::new(session, OverlayPurpose::Capture, settings, self.time);
+                overlay.enable_workspace(self.editor_options());
+                self.captures.overlay = Some(overlay);
             }
             CaptureStep::Message(text) => self.uploads.windows.messages.push_back(MessageBox::new(
                 "Modlight",
@@ -441,13 +439,19 @@ impl AppState {
         }
     }
 
-    fn overlay_closed(&mut self, overlay: RegionOverlay, ctx: &egui::Context) {
+    fn overlay_closed(&mut self, mut overlay: RegionOverlay, ctx: &egui::Context) {
+        // The annotations drawn on the desktop go with the picture (`GetSnapshot`).
+        let annotated = overlay.annotated_image();
         let RegionOverlay {
-            session,
+            mut session,
             purpose,
             settings,
             ..
         } = overlay;
+        let modified = annotated.is_some();
+        if let Some(image) = annotated {
+            session.request.image = Some(image);
+        }
         let Some(outcome) = session.outcome.clone() else {
             return;
         };
@@ -475,7 +479,7 @@ impl AppState {
                     &session.request,
                     &outcome,
                     self.captures.source.as_ref(),
-                    false,
+                    modified,
                 ) {
                     self.after_capture(captured, settings);
                 }

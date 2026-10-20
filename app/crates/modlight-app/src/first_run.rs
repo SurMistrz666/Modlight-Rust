@@ -6,8 +6,8 @@
 //! Services by itself.
 //!
 //! The image editor selector opens the first time the image editor is asked for
-//! (`ShowImageEditorSelector`); the editors themselves arrive in phase 4, so the choice
-//! is stored and the request then says so.
+//! (`ShowImageEditorSelector`); the choice is stored and the editor opens (the legacy
+//! editor is not ported, so both choices open the same one).
 
 use egui::{Align, Layout, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use serde_json::json;
@@ -61,8 +61,7 @@ impl AppState {
         if show {
             self.windows.editor_selector = Some(EditorSelector::default());
         } else {
-            // The editor itself is phase 4.
-            self.push(crate::commands::Command::NotYet);
+            self.open_image_editor_window();
         }
     }
 
@@ -81,7 +80,9 @@ impl AppState {
                 json!(false),
             );
         }
-        self.push(crate::commands::Command::NotYet);
+        // The legacy editor (Greenshot's WinForms one) is not ported: either choice opens
+        // the editor (MACOS.md).
+        self.open_image_editor_window();
     }
 }
 

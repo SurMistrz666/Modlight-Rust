@@ -19,6 +19,7 @@ path = "src/lib.rs"
 modlight-api.workspace = true
 modlight-core.workspace = true
 modlight-macos.workspace = true
+modlight-editor.workspace = true
 modlight-tools.workspace = true
 anyhow.workspace = true
 serde.workspace = true

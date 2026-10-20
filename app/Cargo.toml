@@ -4,6 +4,7 @@ members = [
     "crates/modlight-core",
     "crates/modlight-macos",
     "crates/modlight-app",
+    "crates/modlight-editor",
     "crates/modlight-tools",
 ]
 resolver = "3"
@@ -19,6 +20,7 @@ publish = false
 modlight-api = { path = "crates/modlight-api" }
 modlight-core = { path = "crates/modlight-core" }
 modlight-macos = { path = "crates/modlight-macos" }
+modlight-editor = { path = "crates/modlight-editor" }
 modlight-tools = { path = "crates/modlight-tools" }
 
 anyhow = "1"
