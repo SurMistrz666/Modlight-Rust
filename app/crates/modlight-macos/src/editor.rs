@@ -143,12 +143,7 @@ mod mac {
         use objc2::{ClassType, sel};
         use objc2_app_kit::{NSCursorFrameResizeDirections, NSCursorFrameResizePosition};
         let class: &AnyClass = NSCursor::class();
-        if class
-            .class_method(sel!(frameResizeCursorFromPosition:inDirections:))
-            .is_none()
-        {
-            return None;
-        }
+        class.class_method(sel!(frameResizeCursorFromPosition:inDirections:))?;
         let position = match cursor_type {
             "SizeNWSE" | "PanNW" | "PanSE" => NSCursorFrameResizePosition::TopLeft,
             _ => NSCursorFrameResizePosition::TopRight,
