@@ -56,7 +56,7 @@
     <value>Not imported, because a Modlight backup never holds them: {0}</value>
   </data>
   <data name="BackupImportDisabled" xml:space="preserve">
-    <value>These would run on their own, so they came in turned off. Turn them on again in the task settings only if you trust where the backup came from:
+    <value>These would run on their own or start programs on this Mac, so they came in turned off or back to their defaults. Set them again in the task settings only if you trust where the backup came from:
 {0}</value>
   </data>
   <data name="BackupImportDefaultTask" xml:space="preserve">
@@ -64,6 +64,9 @@
   </data>
   <data name="BackupImportProgram" xml:space="preserve">
     <value>action {0} ({1})</value>
+  </data>
+  <data name="BackupImportFFmpegPath" xml:space="preserve">
+    <value>FFmpeg path {0}, now the FFmpeg from Components</value>
   </data>
   <data name="PageMacIntegration" xml:space="preserve">
     <value>macOS integration</value>

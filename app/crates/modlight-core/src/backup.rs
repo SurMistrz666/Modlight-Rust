@@ -9,11 +9,12 @@
 //! files the queue deletes). Every other entry, and any name with a folder, `..` or an
 //! absolute path in it, is left out and named in the report.
 //!
-//! What is restored is restored whole, except for what runs by itself: an external
-//! program ("Perform actions"), the after-capture step that runs those programs, and
-//! watch folders. Any of those the backup switches on that this installation did not
-//! already have switched on for the same task comes in switched off and is named in the
-//! report, so a backup from somebody else cannot start a program on the next capture
+//! What is restored is restored whole, except for what runs by itself or names a program
+//! to start: an external program ("Perform actions"), the after-capture step that runs
+//! those programs, watch folders, and a custom FFmpeg path. Any of those the backup
+//! switches on that this installation did not already have for the same task comes in
+//! switched off (the FFmpeg path back to the FFmpeg from Components) and is named in the
+//! report, so a backup from somebody else cannot start a program of its choosing
 //! (MACOS.md, behaviour that differs on purpose).
 
 use std::io::{Read, Write};
@@ -96,6 +97,9 @@ pub enum DisabledKind {
     PerformActions,
     /// `WatchFolderEnabled`: upload whatever appears in the watched folders.
     WatchFolders,
+    /// `FFmpegOptions.OverrideCLIPath` with `CLIPath`: the program recordings start
+    /// instead of the FFmpeg from Components.
+    FfmpegPath { path: String },
 }
 
 impl DisabledStep {
@@ -112,6 +116,7 @@ impl DisabledStep {
             }
             DisabledKind::PerformActions => t(helpers::AfterCaptureTasks_PerformActions).into(),
             DisabledKind::WatchFolders => t(s::TaskSettingsWindow_WatchFolders).into(),
+            DisabledKind::FfmpegPath { path } => tf(mac::BackupImportFFmpegPath, &[path.into()]),
         };
         format!("{task}: {what}")
     }
@@ -325,7 +330,37 @@ fn disable_task(
             kinds.push(DisabledKind::WatchFolders);
         }
     }
+    // The FFmpeg recordings start: a custom path stays only when this task already
+    // started that very path; otherwise it is back to the FFmpeg from Components.
+    let custom_ffmpeg = custom_ffmpeg_path(Some(task));
+    if let Some(path) = custom_ffmpeg
+        && custom_ffmpeg_path(before).as_deref() != Some(path.as_str())
+        && let Some(Value::Object(options)) = task
+            .get_mut("CaptureSettings")
+            .and_then(|c| c.get_mut("FFmpegOptions"))
+    {
+        options.insert("OverrideCLIPath".into(), Value::Bool(false));
+        options.insert("CLIPath".into(), Value::String(String::new()));
+        kinds.push(DisabledKind::FfmpegPath { path });
+    }
     kinds
+}
+
+/// The FFmpeg a TaskSettings node starts instead of the component (`FFmpegPath`): its
+/// `CLIPath` while `OverrideCLIPath` is on.
+fn custom_ffmpeg_path(task: Option<&Map<String, Value>>) -> Option<String> {
+    let options = task?
+        .get("CaptureSettings")?
+        .get("FFmpegOptions")?
+        .as_object()?;
+    if !is_on_in(Some(options), "OverrideCLIPath") {
+        return None;
+    }
+    options
+        .get("CLIPath")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
 }
 
 fn is_on(node: &Value, member: &str) -> bool {
@@ -690,6 +725,118 @@ mod tests {
         let notes = report.notes().join("\n");
         assert!(notes.contains("/bin/sh"), "{notes}");
         assert!(notes.contains("Evil"), "{notes}");
+    }
+
+    fn with_ffmpeg(override_path: bool, path: &str) -> Value {
+        serde_json::json!({"CaptureSettings": {"FFmpegOptions": {
+            "OverrideCLIPath": override_path, "CLIPath": path, "VideoCodec": "libx264"
+        }}})
+    }
+
+    /// W3, executable paths: a backup's custom FFmpeg path would be started by the next
+    /// recording. One this installation did not already use comes back to the FFmpeg
+    /// from Components.
+    #[test]
+    fn an_ffmpeg_path_a_backup_brings_goes_back_to_the_component() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        let mine = "/opt/homebrew/bin/ffmpeg";
+        std::fs::write(
+            profile.join(APPLICATION_CONFIG_FILE),
+            serde_json::to_vec(&serde_json::json!({
+                "DefaultTaskSettings": with_ffmpeg(true, mine)
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            profile.join(HOTKEYS_CONFIG_FILE),
+            serde_json::to_vec(&serde_json::json!({"Hotkeys": [
+                {"TaskSettings": {"Job": "ScreenRecorder", "UseDefaultCaptureSettings": false}},
+                {"TaskSettings": {"Job": "ScreenRecorderGIF", "UseDefaultCaptureSettings": false}}
+            ]}))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut recorder = with_ffmpeg(true, "/bin/sh");
+        recorder["Job"] = serde_json::json!("ScreenRecorder");
+        recorder["UseDefaultCaptureSettings"] = serde_json::json!(false);
+        // Off: never started, and the path is in plain sight next to its switch.
+        let mut gif = with_ffmpeg(false, "/tmp/other-ffmpeg");
+        gif["Job"] = serde_json::json!("ScreenRecorderGIF");
+        let application = serde_json::to_vec(&serde_json::json!({
+            "DefaultTaskSettings": with_ffmpeg(true, "/Users/Shared/ffmpeg")
+        }))
+        .unwrap();
+        let hotkeys = serde_json::to_vec(&serde_json::json!({"Hotkeys": [
+            {"TaskSettings": recorder}, {"TaskSettings": gif}
+        ]}))
+        .unwrap();
+        let hostile = archive(
+            dir.path(),
+            &[
+                (APPLICATION_CONFIG_FILE, &application),
+                (HOTKEYS_CONFIG_FILE, &hotkeys),
+            ],
+        );
+        let report = import(&hostile, &profile).unwrap();
+        assert_eq!(
+            report.disabled,
+            [
+                DisabledStep {
+                    task: None,
+                    kind: DisabledKind::FfmpegPath {
+                        path: "/Users/Shared/ffmpeg".into()
+                    }
+                },
+                DisabledStep {
+                    task: Some(crate::hotkeys::HotkeyType::ScreenRecorder.text()),
+                    kind: DisabledKind::FfmpegPath {
+                        path: "/bin/sh".into()
+                    }
+                },
+            ]
+        );
+        let app = read(&profile, APPLICATION_CONFIG_FILE);
+        let options: crate::recording::FFmpegOptions = serde_json::from_value(
+            app["DefaultTaskSettings"]["CaptureSettings"]["FFmpegOptions"].clone(),
+        )
+        .unwrap();
+        let component = PathBuf::from("/Profile/Tools/ffmpeg");
+        assert_eq!(
+            options.ffmpeg_path(Some(component.clone())),
+            Some(component),
+            "recordings start the FFmpeg from Components"
+        );
+        let keys = read(&profile, HOTKEYS_CONFIG_FILE);
+        let recorder = &keys["Hotkeys"][0]["TaskSettings"]["CaptureSettings"]["FFmpegOptions"];
+        assert_eq!(recorder["OverrideCLIPath"], serde_json::json!(false));
+        assert_eq!(recorder["CLIPath"], serde_json::json!(""));
+        assert_eq!(
+            recorder["VideoCodec"],
+            serde_json::json!("libx264"),
+            "the rest of the options are restored"
+        );
+        assert_eq!(
+            keys["Hotkeys"][1]["TaskSettings"]["CaptureSettings"]["FFmpegOptions"]["CLIPath"],
+            serde_json::json!("/tmp/other-ffmpeg")
+        );
+        assert!(report.notes().join("\n").contains("/bin/sh"));
+
+        // The path this installation already starts comes back as it was.
+        let own = serde_json::to_vec(&serde_json::json!({
+            "DefaultTaskSettings": with_ffmpeg(true, mine)
+        }))
+        .unwrap();
+        std::fs::write(profile.join(APPLICATION_CONFIG_FILE), &own).unwrap();
+        let backup = archive(dir.path(), &[(APPLICATION_CONFIG_FILE, &own)]);
+        assert!(import(&backup, &profile).unwrap().disabled.is_empty());
+        assert_eq!(
+            std::fs::read(profile.join(APPLICATION_CONFIG_FILE)).unwrap(),
+            own
+        );
     }
 
     /// Restoring one's own backup changes nothing here; on another Mac, what runs by
