@@ -1900,7 +1900,7 @@ pub fn task_page_ask(
         A::SelectRegion => state.select_custom_region(target),
         A::ScreenRecordingOptions => state.open_ffmpeg_options(target),
         A::WatchFoldersChanged => state.update_watch_folders(),
-        A::ImageEffects => state.push(Command::NotYet),
+        A::ImageEffects => state.open_image_effects_presets(target, None),
         A::LoadModlightFolders => state.load_modlight_folders(),
         // Handled by the pages themselves.
         A::NotificationButtons

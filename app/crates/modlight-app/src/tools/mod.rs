@@ -23,6 +23,7 @@ pub mod editor_hooks;
 pub mod files;
 pub mod history;
 pub mod history_list;
+pub mod image_effects;
 pub mod image_history;
 pub mod image_viewer;
 pub mod jobs;

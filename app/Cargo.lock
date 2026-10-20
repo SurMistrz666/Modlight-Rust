@@ -2866,6 +2866,7 @@ dependencies = [
  "modlight-api",
  "modlight-core",
  "modlight-editor",
+ "modlight-effects",
  "modlight-macos",
  "modlight-tools",
  "rfd",

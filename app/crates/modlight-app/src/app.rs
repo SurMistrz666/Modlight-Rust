@@ -57,6 +57,13 @@ impl ModlightApp {
         ctx.set_fonts(crate::theme::fonts());
         state.rt.attach(ctx);
         crate::theme::apply_style(ctx, &state.colors);
+        // The image effects library: the editor's effects, and `%ShareXImageEffects%`
+        // (`HelpersOptions.ShareXSpecialFolders`) for the presets' pictures.
+        modlight_effects::register();
+        modlight_core::names::file_helpers::set_custom_special_folders(vec![(
+            "ShareXImageEffects".to_string(),
+            state.image_effects_folder().to_string_lossy().into_owned(),
+        )]);
         let logo = app_icon().map(|icon| {
             let small =
                 image::imageops::resize(&icon, 34, 34, image::imageops::FilterType::Lanczos3);

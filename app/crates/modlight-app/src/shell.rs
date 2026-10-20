@@ -421,7 +421,10 @@ pub fn settings_menu(state: &AppState) -> Vec<Entry> {
             t(s::MainMenuBuilder_AfterCaptureTasks),
             icons::IMAGE_UP,
             true,
-            crate::uploads::after_capture_menu(defaults.after_capture_job),
+            crate::tools::image_effects::after_capture_menu_with_presets(
+                state,
+                defaults.after_capture_job,
+            ),
         ),
         Entry::submenu(
             t(s::MainMenuBuilder_AfterUploadTasks),

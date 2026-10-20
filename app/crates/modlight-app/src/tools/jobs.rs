@@ -194,7 +194,8 @@ pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: 
             Some(file) => state.open_video_converter(Some(file), settings),
             None => state.open_video_converter(None, settings),
         },
-        // The image effects window, the tray menu toggle: other parts of the port.
+        H::ImageEffects => state.open_image_effects(file, settings),
+        // The tray menu toggle: another part of the port.
         _ => state.push(Command::NotYet),
     }
 }

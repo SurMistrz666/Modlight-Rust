@@ -417,6 +417,10 @@ impl AppState {
                 self.annotate_for_task(image, true, reply);
                 return;
             }
+            TaskQuestion::ImageEffects(image, settings) => {
+                self.image_effects_for_task(image, *settings, reply);
+                return;
+            }
             _ => {}
         }
         self.uploads.asks.push_back(PendingAsk {
@@ -478,7 +482,8 @@ impl AppState {
             TaskQuestion::SignIn
             | TaskQuestion::SaveAs { .. }
             | TaskQuestion::Annotate(_)
-            | TaskQuestion::Beautify(_) => {}
+            | TaskQuestion::Beautify(_)
+            | TaskQuestion::ImageEffects(..) => {}
         }
     }
 
