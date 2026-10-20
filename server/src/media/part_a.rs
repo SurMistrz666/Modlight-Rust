@@ -10,7 +10,7 @@
 //!
 //! | here | processing module |
 //! |---|---|
-//! | [`docx_support`], [`MAX_DOCX_BYTES`] | `lib/media/docx-support.ts` (kept here until the docx port lands) |
+//! | [`docx_support`], [`MAX_DOCX_BYTES`] | `media::docx_support` |
 //! | [`shows_source`], [`inline_text_plan`] | `media::source_preview` |
 //! | [`can_timeline_preview`], `TIMELINE_*_ACTION`, [`TimelineRefusal`] | `media::timeline_preview` |
 //! | [`diagnose_playback`], [`playback_source`] | `media::playback_health` |
@@ -20,7 +20,7 @@
 //! | [`motion_preview`], [`MotionRefusal`] | `media::motion`, `media::motion_preview` |
 //! | [`timeline_track`], [`timeline_sheet`] | `media::timeline` |
 //! | [`av_convert`] | `media::av_action` |
-//! | [`docx_to_html`] | `lib/media/docx.ts` (the docx port; until it lands, an error) |
+//! | [`docx_to_html`] | `media::docx` |
 //! | [`render_card`] | `media::card_render` |
 
 use axum::response::Response;
@@ -42,28 +42,10 @@ pub use crate::media::timeline_preview::{TIMELINE_SHEET_ACTION, TIMELINE_TRACK_A
 
 // ── docx-support.ts ─────────────────────────────────────────────────────────
 
-/// Largest .docx offered a preview (it is a ZIP that expands).
-pub const MAX_DOCX_BYTES: i64 = 10 * 1024 * 1024;
+pub use crate::media::docx_support::{DocxKind, docx_support};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DocxKind {
-    Docx,
-    LegacyDoc,
-}
-
-/// `docxSupport(mime, ext)`
-pub fn docx_support(mime: Option<&str>, ext: Option<&str>) -> Option<DocxKind> {
-    let e = ext.unwrap_or("");
-    let e = e.strip_prefix('.').unwrap_or(e).to_lowercase();
-    let m = crate::config::js_trim(mime.unwrap_or("").split(';').next().unwrap_or("")).to_lowercase();
-    if e == "docx" || m == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
-        return Some(DocxKind::Docx);
-    }
-    if e == "doc" || m == "application/msword" {
-        return Some(DocxKind::LegacyDoc);
-    }
-    None
-}
+/// Largest .docx offered a preview, as the serving code compares sizes (`i64`).
+pub const MAX_DOCX_BYTES: i64 = crate::media::docx_support::MAX_DOCX_BYTES as i64;
 
 // ── source-preview.ts ───────────────────────────────────────────────────────
 
@@ -274,9 +256,13 @@ pub enum DocxResult {
     },
 }
 
-/// `docxToHtml(buf)`. The docx port has not landed on this branch yet.
-pub async fn docx_to_html(_buf: Bytes) -> anyhow::Result<DocxResult> {
-    anyhow::bail!("docxToHtml is not wired yet (srv-media-a)")
+/// `docxToHtml(buf)`: never fails for a bad document, every failure is a
+/// refusal token.
+pub async fn docx_to_html(buf: Bytes) -> anyhow::Result<DocxResult> {
+    Ok(match crate::media::docx::docx_to_html(buf).await {
+        Ok(preview) => DocxResult::Ok { html: preview.html },
+        Err(refusal) => DocxResult::Refused { reason: refusal.as_str().to_string() },
+    })
 }
 
 // ── card-render.ts ──────────────────────────────────────────────────────────
