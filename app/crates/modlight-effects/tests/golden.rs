@@ -85,7 +85,6 @@ const AA_SHAPES: &[&str] = &[
     "celtic_knot_border",
     "circuit_board_border",
     "chain_link_border",
-    "embroidery",
 ];
 
 /// Effects made of many small anti-aliased shapes (dots, sparks): Skia's supersampled
