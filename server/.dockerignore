@@ -1,0 +1,16 @@
+# Build context of docker/Dockerfile is server/: send only what the image needs.
+target/
+data/
+docs/
+tests/
+scripts/
+.env
+.env.*
+docker/.env
+docker/.env.*
+docker/docker-compose*.yml
+docker/setup-local.sh
+web/node_modules/
+web/dist/
+**/.DS_Store
+**/*.log
