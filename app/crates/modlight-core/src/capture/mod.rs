@@ -21,9 +21,9 @@ use source::{CaptureError, CaptureSource, WindowCapture, WindowInfo};
 use crate::tasks::info::TaskMetadata;
 use crate::tasks::settings::{AfterCaptureTasks, TaskSettings};
 
-/// Whether the region capture can switch to annotation tools. They belong to the image
-/// editor (phase 4); the overlay shows its region tool only until then.
-pub const ANNOTATION_TOOLS_AVAILABLE: bool = false;
+/// Whether the region capture can switch to annotation tools (the image editor's,
+/// drawn on the frozen desktop; the app's overlay hosts the editor).
+pub const ANNOTATION_TOOLS_AVAILABLE: bool = true;
 
 /// `CaptureType` plus the parameters some kinds carry.
 #[derive(Clone, Debug, PartialEq)]

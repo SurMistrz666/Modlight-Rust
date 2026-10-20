@@ -40,8 +40,9 @@ Ostatnia aktualizacja: 2026-10-18 (koniec dnia 1, praca wstrzymana na prośbę w
 | `srv-media-a` | scalona do `main` (78eee7c) | konwersje, podglądy ruchome i osi czasu, okładki, docx (mammoth), karty OG, pdf; 1212 testów; przy ffmpeg 5.1 wyjścia bajt w bajt jak w oryginale, karty co do piksela |
 | `srv-integration` | scalona do `main` (0933c6d) | serwer GOTOWY: obraz Dockera (libvips 8.17.3 jak w sharp, ffmpeg 5.1.9), stos `modlight-rust` na 127.0.0.1:8430 (działa, pusta baza: pierwsze konto = admin), wszystkie porównania z oryginałem zielone, e2e 12/15 jak na oryginale, wszystkie 7 poprawek z testami, `server/README.md` po polsku, `server/docs/COVERAGE.md` |
 | `app-5-effects` | `_wt/app-5-effects` | W TOKU: biblioteka efektów obrazu (ImageEditor/Core/ImageEffects + ImageEffectsLib) na bazie edytora |
-| przegląd bezpieczeństwa serwera | raport `docs/audyt/rust-serwer.md` | W TOKU |
-| `app-4` | `_wt/app-4` | W TOKU: edytor obrazów (rdzeń, adnotacje, historia, interfejs, rejestr efektów) |
+| przegląd bezpieczeństwa serwera | `docs/audyt/rust-serwer.md` (d665cb6) | brak luk krytycznych i wysokich, brak wysyłania danych, 7 poprawek skutecznych; porównanie kodu 2FA już w stałym czasie |
+| `app-5-tools` | `_wt/app-5-tools` | W TOKU: narzędzia ShareX (pipety, przypinanie, przeglądarka, łączenie obrazów, konwerter wideo, metadane, indeks folderu, QR, OCR przez Vision, analiza AI, usuwanie tła ONNX, okna historii) |
+| `app-4` | scalona do `main` (e303cd9) | edytor obrazów: wszystkie adnotacje, historia, przybliżanie, interfejs, rejestr efektów, adnotacje w nakładce zrzutu obszaru, „Beautify”; 544 testy w app/. Lista do sprawdzenia w oknie: `docs/handoff/app-4.md` |
 | `srv-media-b` | scalona do `main` (e549b53) | serwowanie plików, strony publiczne, osadzenia, oEmbed, albumy z zip, usuwanie tokenem; poprawki 1 (limit wyświetleń: przepustka `ml_view_<id>`), 5, 6; 1080 testów, 1064 porównań zgodnych. Czeka na podpięcie części A w `media/part_a.rs`. Znaleziony błąd oryginału: zip albumu zawsze 500 |
 
 Gotowe polecenia dla kolejnych agentów: `_scratch/prompts/` (`common-server.md`,

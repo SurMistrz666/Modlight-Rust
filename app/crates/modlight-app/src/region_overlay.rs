@@ -52,6 +52,15 @@ pub struct RegionOverlay {
     magnifier: Option<(TextureHandle, (i64, i64, i64))>,
     /// The press that opened a double click (UI seconds and image point).
     last_click: Option<(f64, Point)>,
+    /// The image editor under the overlay (`EditorWorkspace`) when annotations are on.
+    pub workspace: Option<RegionWorkspace>,
+}
+
+/// `RegionCaptureWindow`'s editor workspace: the frozen desktop in an editor without
+/// its toolbars, drawn by one canvas per display.
+pub struct RegionWorkspace {
+    pub editor: modlight_editor::editor::Editor,
+    canvases: std::collections::HashMap<u32, modlight_editor::ui::canvas::Canvas>,
 }
 
 const MAGNIFIER_SIZE: f32 = 150.0;
@@ -72,6 +81,58 @@ impl RegionOverlay {
             cursor_texture: None,
             magnifier: None,
             last_click: None,
+            workspace: None,
+        }
+    }
+
+    /// `InitializeCaptureWorkspace`: the editor under the overlay, for a region capture
+    /// over a frozen desktop with annotations allowed.
+    pub fn enable_workspace(&mut self, options: modlight_editor::options::ImageEditorOptions) {
+        let request = &self.session.request;
+        if !request.enable_annotations
+            || !modlight_core::capture::ANNOTATION_TOOLS_AVAILABLE
+            || request.kind != RegionKind::Default
+        {
+            return;
+        }
+        let Some(image) = request.image.clone() else {
+            return;
+        };
+        let config = modlight_editor::editor::EditorConfig {
+            show_file_menu: false,
+            show_options_button: false,
+            show_task_buttons: false,
+            use_continue_workflow: false,
+            show_bottom_toolbar: false,
+            show_start_screen: false,
+            open_background_panel: false,
+        };
+        let mut editor = modlight_editor::editor::Editor::new(options, config);
+        editor.show_toolbars = false;
+        editor.load_image((*image).clone(), None);
+        let _ = editor.take_requests();
+        self.workspace = Some(RegionWorkspace {
+            editor,
+            canvases: std::collections::HashMap::new(),
+        });
+    }
+
+    /// The picture the capture hands on: the frozen desktop with the annotations when
+    /// any were drawn (`GetSnapshot`).
+    pub fn annotated_image(&mut self) -> Option<Arc<RgbaImage>> {
+        let workspace = self.workspace.as_mut()?;
+        if !workspace.editor.has_annotations() {
+            return None;
+        }
+        workspace.editor.snapshot().map(Arc::new)
+    }
+
+    /// Back to the region tool (`ActivateRegionTool`): the editor's selection goes.
+    fn activate_region_tool(&mut self) {
+        self.session.region_tool_active = true;
+        if let Some(w) = self.workspace.as_mut() {
+            modlight_editor::editor::input::clear_selection(&mut w.editor);
+            modlight_editor::editor::input::commit_text_edit(&mut w.editor);
         }
     }
 
@@ -146,7 +207,46 @@ impl RegionOverlay {
         let origin = ui.max_rect().min;
         let events = ui.input(|i| i.events.clone());
         let modifiers = ui.input(|i| i.modifiers);
+        // With an annotation tool the pointer belongs to the editor (its canvas reads the
+        // events while drawing); keys go to the editor first.
+        let annotating = self.workspace.is_some() && !self.session.region_tool_active;
         for event in events {
+            if annotating {
+                if let (
+                    Some(w),
+                    egui::Event::Key {
+                        key,
+                        pressed,
+                        modifiers: m,
+                        ..
+                    },
+                ) = (self.workspace.as_mut(), &event)
+                {
+                    if w.editor.text_editing.is_some() {
+                        continue;
+                    }
+                    if *key == egui::Key::Escape && *pressed && w.editor.has_selection() {
+                        modlight_editor::editor::input::clear_selection(&mut w.editor);
+                        continue;
+                    }
+                    let handled = if *pressed {
+                        modlight_editor::editor::input::key_down(&mut w.editor, *key, *m)
+                    } else {
+                        false
+                    };
+                    if handled {
+                        continue;
+                    }
+                }
+                if matches!(
+                    event,
+                    egui::Event::PointerMoved(_)
+                        | egui::Event::PointerButton { .. }
+                        | egui::Event::MouseWheel { .. }
+                ) {
+                    continue;
+                }
+            }
             match event {
                 egui::Event::PointerMoved(pos) => {
                     let point = self.to_image(screen, pos - origin.to_vec2());
@@ -208,6 +308,10 @@ impl RegionOverlay {
                 }
                 _ => {}
             }
+        }
+        // `SwapToolType` with nothing to swap to keeps the region tool.
+        if self.workspace.is_none() {
+            self.session.region_tool_active = true;
         }
     }
 
@@ -276,6 +380,15 @@ impl RegionOverlay {
                 Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
                 Color32::WHITE,
             );
+        }
+        // The editor workspace's annotations (under the region's dim, as upstream's
+        // `EditorWorkspace` lies under `RegionTransform`).
+        let origin = self.to_local(screen, full.min, Point::new(0.0, 0.0));
+        let annotating = !self.session.region_tool_active;
+        if let Some(w) = self.workspace.as_mut() {
+            let canvas = w.canvases.entry(screen.id).or_default();
+            canvas.show_fixed(ui, &mut w.editor, full, origin, 1.0 / scale, annotating);
+            let _ = w.editor.take_requests();
         }
         let session = &self.session;
 
@@ -432,10 +545,15 @@ impl RegionOverlay {
         let full = ui.max_rect();
         let painter = ui.painter().clone();
         // `Border Padding="4,4,0,4" BorderThickness="1,1,0,1" CornerRadius="0,0,0,4"`, a
-        // 40 by 40 toolbar button inside. The annotation toolbar beside it arrives with
-        // the image editor (phase 4).
+        // 40 by 40 toolbar button inside, and the annotation toolbar beside it.
         let size = vec2(1.0 + 4.0 + 40.0, 1.0 + 4.0 + 40.0 + 4.0 + 1.0);
-        let r = Rect::from_min_size(pos2(full.center().x - size.x / 2.0, full.top()), size);
+        let strip_width = self
+            .workspace
+            .as_ref()
+            .map(|w| strip_width(&w.editor))
+            .unwrap_or(0.0);
+        let total = size.x + strip_width;
+        let r = Rect::from_min_size(pos2(full.center().x - total / 2.0, full.top()), size);
         painter.rect_filled(
             r,
             egui::CornerRadius {
@@ -474,9 +592,53 @@ impl RegionOverlay {
             .icon(18.0, None);
         let button = Rect::from_min_size(r.min + vec2(1.0 + 4.0, 1.0 + 4.0), vec2(40.0, 40.0));
         let _ = screen;
-        button_at(ui, colors, &look, Content::icon(icons::SCAN), true, button)
+        let region_active = self.session.region_tool_active;
+        let look = if region_active {
+            look
+        } else {
+            Look::button(colors)
+                .width(40.0)
+                .padding(0.0)
+                .icon(18.0, Some(colors.text()))
+        };
+        let clicked = button_at(ui, colors, &look, Content::icon(icons::SCAN), true, button)
             .on_hover_text("Rectangle region")
-            .clicked()
+            .clicked();
+        if clicked {
+            self.activate_region_tool();
+        }
+        if let Some(w) = self.workspace.as_mut() {
+            let editor_colors = modlight_editor::ui::Colors {
+                dark: colors.dark,
+                palette: colors.palette,
+            };
+            let (strip, tool) = modlight_editor::ui::toolbars::tool_strip(
+                ui,
+                &editor_colors,
+                &w.editor,
+                pos2(r.right(), r.top()),
+                !region_active,
+            );
+            if let Some(tool) = tool {
+                // `ToolSelectionRequested` → `ActivateAnnotationTool`.
+                w.editor.select_tool(tool);
+                self.session.region_tool_active = false;
+            } else if !region_active && w.editor.visibility().any() {
+                // `ShowToolOptions` while an annotation tool is in use.
+                let view = Rect::from_center_size(
+                    pos2(strip.center().x, strip.bottom()),
+                    vec2(full.width(), 1.0),
+                );
+                modlight_editor::ui::toolbars::options_row(
+                    ui,
+                    &editor_colors,
+                    &mut w.editor,
+                    view,
+                    strip.bottom() - 1.0,
+                );
+            }
+        }
+        clicked
     }
 
     fn image_rect_local(
@@ -673,6 +835,29 @@ pub fn shared(image: RgbaImage) -> Arc<RgbaImage> {
     Arc::new(image)
 }
 
+/// The annotation strip's width, for centring the whole capture toolbar.
+fn strip_width(editor: &modlight_editor::editor::Editor) -> f32 {
+    let items: Vec<_> = editor
+        .visible_toolbar_items()
+        .filter(|i| {
+            i.tool.is_some_and(|t| {
+                !matches!(
+                    t,
+                    modlight_editor::model::EditorTool::Crop
+                        | modlight_editor::model::EditorTool::CutOut
+                )
+            })
+        })
+        .collect();
+    let separators = items
+        .iter()
+        .skip(1)
+        .filter(|i| i.separator_visible())
+        .count() as f32;
+    let n = items.len() as f32;
+    40.0 * n + 4.0 * (n - 1.0).max(0.0) + separators * 5.0 + 8.0 + 1.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,5 +892,62 @@ mod tests {
             4
         );
         assert_eq!(outside(bounds, bounds).len(), 0);
+    }
+
+    #[test]
+    fn annotations_drawn_on_the_desktop_go_with_the_picture() {
+        use modlight_core::capture::region::{RegionKind, RegionRequest};
+        use modlight_core::capture::source::{CaptureSource, FakeSource};
+        use modlight_editor::editor::input as ei;
+        let source = FakeSource::sample();
+        let bounds = source.screen_bounds();
+        let request = RegionRequest {
+            kind: RegionKind::Default,
+            screen_bounds: bounds,
+            scale: 1.0,
+            image: Some(Arc::new(source.capture_rect(bounds, false).unwrap())),
+            options: Default::default(),
+            enable_annotations: true,
+            windows: source.windows(),
+            screens: source.screens(),
+            cursor: None,
+            last_region: IRect::default(),
+            pointer: (10, 10),
+        };
+        let session = RegionSession::new(request);
+        let mut overlay = RegionOverlay::new(
+            session,
+            OverlayPurpose::Capture,
+            TaskSettings::default(),
+            0.0,
+        );
+        overlay.enable_workspace(modlight_editor::options::ImageEditorOptions::default());
+        assert!(overlay.annotated_image().is_none(), "nothing drawn yet");
+        let w = overlay
+            .workspace
+            .as_mut()
+            .expect("a workspace over a frozen desktop");
+        w.editor
+            .select_tool(modlight_editor::model::EditorTool::Rectangle);
+        let m = ei::Modifiers::NONE;
+        let p = modlight_editor::geom::Point::new;
+        ei::pointer_pressed(&mut w.editor, p(20.0, 20.0), ei::Button::Left, m, 1);
+        ei::pointer_moved(&mut w.editor, p(120.0, 90.0), false, m);
+        ei::pointer_released(&mut w.editor, p(120.0, 90.0), ei::Button::Left, m);
+        let image = overlay.annotated_image().expect("the annotated desktop");
+        // The rectangle's red border is in the picture now.
+        let px = image.get_pixel(20, 50).0;
+        assert!(px[0] > 200 && px[1] < 90 && px[2] < 90, "{px:?}");
+        // A light capture has no workspace.
+        let mut light = overlay.session.request.clone();
+        light.kind = RegionKind::Light;
+        let mut other = RegionOverlay::new(
+            RegionSession::new(light),
+            OverlayPurpose::Capture,
+            TaskSettings::default(),
+            0.0,
+        );
+        other.enable_workspace(modlight_editor::options::ImageEditorOptions::default());
+        assert!(other.workspace.is_none());
     }
 }
