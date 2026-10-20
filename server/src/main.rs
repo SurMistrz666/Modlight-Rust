@@ -4,6 +4,9 @@
 //! modlight-server [serve]   migrate the database, then serve (what the
 //!                           upstream container did: migrate.js, then server.js)
 //! modlight-server migrate   only migrate + seed, like `pnpm db:migrate`
+//! modlight-server health    GET /api/health on this container's own port;
+//!                           exit 0 on a 2xx (the compose healthcheck, which
+//!                           upstream ran with `node -e fetch(...)`)
 //! ```
 //!
 //! Both load `.env` from the working directory first without overriding
@@ -19,7 +22,7 @@ use modlight_server::paths::Paths;
 use modlight_server::runtime::limits::{cgroup_cpu_limit, cgroup_memory_limit, effective_cpu_count};
 use modlight_server::state::AppState;
 
-const USAGE: &str = "usage: modlight-server [serve|migrate]";
+const USAGE: &str = "usage: modlight-server [serve|migrate|health]";
 
 fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -34,6 +37,9 @@ fn main() -> ExitCode {
     init_tracing();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str).unwrap_or("serve");
+    if command == "health" {
+        return health();
+    }
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(err) => {
@@ -57,6 +63,45 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             tracing::error!("{err:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The container healthcheck: `fetch('http://127.0.0.1:3000/api/health')`
+/// with `r.ok`, on the port this process would listen on (`PORT`, default
+/// 3000 as in the image). No runtime, no TLS: one HTTP/1.1 request.
+fn health() -> ExitCode {
+    use std::io::{Read, Write};
+    use std::time::Duration;
+    let port = std::env::var("PORT").ok().and_then(|p| p.trim().parse::<u16>().ok()).unwrap_or(3000);
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let probe = || -> std::io::Result<bool> {
+        let mut stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        write!(stream, "GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")?;
+        let mut head = [0u8; 16];
+        let mut read = 0;
+        while read < head.len() {
+            let n = stream.read(&mut head[read..])?;
+            if n == 0 {
+                break;
+            }
+            read += n;
+        }
+        // "HTTP/1.1 200 OK": the status code is bytes 9..12.
+        let status = std::str::from_utf8(&head[..read])
+            .ok()
+            .and_then(|line| line.get(9..12))
+            .and_then(|code| code.parse::<u16>().ok());
+        Ok(matches!(status, Some(200..=299)))
+    };
+    match probe() {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
+        Err(err) => {
+            eprintln!("health: {err}");
             ExitCode::FAILURE
         }
     }
