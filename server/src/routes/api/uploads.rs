@@ -297,7 +297,7 @@ async fn patch(State(state): State<AppState>, Sessions(session): Sessions, req: 
     if wants_expiry && !(body["expiresAt"].is_null() || body["expiresAt"].is_string()) {
         return Ok(message(StatusCode::BAD_REQUEST, "`expiresAt` must be an ISO date string or null."));
     }
-    if wants_max_views && !(body["maxViews"].is_null() || body["maxViews"].is_number()) {
+    if wants_max_views && !(body["maxViews"].is_null() || crate::api_json::is_js_number(&body["maxViews"])) {
         return Ok(message(StatusCode::BAD_REQUEST, "`maxViews` must be a number or null."));
     }
     if wants_password && !(body["password"].is_null() || body["password"].is_string()) {

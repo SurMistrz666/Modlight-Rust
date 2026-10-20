@@ -80,8 +80,10 @@ async fn shortener_host_rewrites_to_s() {
     // it looks the code up, and this state's database is unreachable, so the
     // lookup fails as a 500. The redirect itself is checked against a real
     // database in tests/library_routes_db.rs.
+    // A thrown error in a route handler: Next's bare 500 (SKELETON.md 9.24).
     assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(a.json(), serde_json::json!({ "message": "Internal server error" }));
+    assert!(a.body.is_empty());
+    assert_eq!(a.header("content-type"), None);
     // The same path on the main host is a tagless media page.
     let req = Request::get("/promo").header("host", "host.example.com").body(Body::empty()).unwrap();
     let b = call(&app, req).await;

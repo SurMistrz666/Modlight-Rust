@@ -48,14 +48,29 @@ async fn login(ctx: PageCtx) -> PageResult {
     })
 }
 
+async fn app_layout(_ctx: PageCtx) -> Result<Value, PageError> {
+    Ok(json!({ "theme": null }))
+}
+
+async fn admin_page(_ctx: PageCtx) -> PageResult {
+    Err(PageError::redirect("/dashboard"))
+}
+
+async fn folders_page(_ctx: PageCtx) -> PageResult {
+    Err(PageError::NotFound)
+}
+
 fn app() -> App {
     let mut state = state();
     let mut reg = PageRegistry::default();
     reg.layout(Layout::Root, root_layout::load);
     reg.layout(Layout::Auth, auth_layout);
+    reg.layout(Layout::App, app_layout);
     reg.page("/u/[userCode]", gallery);
     reg.page("/download", download);
     reg.page("/login", login);
+    reg.page("/dashboard/admin", admin_page);
+    reg.page("/dashboard/folders", folders_page);
     state.pages = Arc::new(reg);
     App::new(state)
 }
@@ -112,8 +127,77 @@ async fn redirects_and_not_found() {
     let doc = get(&app, "/download").await;
     assert_eq!(doc.status.as_u16(), 307);
     assert_eq!(doc.header("location").as_deref(), Some("/welcome"));
+    // Like Next, the 307 carries a whole document (SKELETON.md 9.41): the
+    // shell with the redirect payload.
+    assert_eq!(doc.header("content-type").as_deref(), Some("text/html; charset=utf-8"));
+    assert!(doc.text().contains(r#""redirect":"/welcome""#), "{}", doc.text());
     let doc = get(&app, "/u/nobody").await;
     assert_eq!(doc.status.as_u16(), 404);
+}
+
+/// Inside `app/(app)/dashboard/` (its `loading.tsx` boundary) a page's own
+/// `redirect()` / `notFound()` answers 200, as on the reference (SKELETON.md
+/// 9.41); `/_page` is unchanged.
+#[tokio::test]
+async fn the_dashboard_boundary_answers_200() {
+    use axum::body::Body;
+    use axum::http::Request;
+    let app = app();
+    // proxy.ts lets /dashboard through when a session cookie is present
+    // (the test `(app)` layout does not look at it).
+    let get = |app: &App, uri: &str| {
+        let req = Request::get(uri)
+            .header("host", "127.0.0.1:8421")
+            .header("cookie", "better-auth.session_token=x")
+            .body(Body::empty())
+            .unwrap();
+        let app = app.clone();
+        async move { common::call(&app, req).await }
+    };
+    let doc = get(&app, "/dashboard/admin").await;
+    assert_eq!(doc.status.as_u16(), 200);
+    assert_eq!(doc.header("location"), None);
+    let html = doc.text();
+    assert!(html.contains("<title>Admin - Modlight</title>"), "{html}");
+    assert!(html.contains(
+        r#"<noscript><meta id="__next-page-redirect" http-equiv="refresh" content="1;url=/dashboard"/></noscript>"#
+    ));
+    assert!(html.contains(r#""redirect":"/dashboard""#));
+    assert_eq!(
+        get(&app, "/_page?path=/dashboard/admin").await.json(),
+        json!({ "redirect": "/dashboard", "status": 307 })
+    );
+    let doc = get(&app, "/dashboard/folders").await;
+    assert_eq!(doc.status.as_u16(), 200);
+    let html = doc.text();
+    assert!(html.contains(r#"<meta name="robots" content="noindex"/>"#), "{html}");
+    assert!(html.contains(r#""notFound":true"#));
+}
+
+/// Documents and page data are compressed as Next compresses them (SKELETON
+/// 9.42); route handlers are not.
+#[tokio::test]
+async fn documents_and_page_data_are_compressed_route_handlers_not() {
+    use axum::body::Body;
+    use axum::http::Request;
+    let app = app();
+    for uri in ["/login", "/_page?path=/login", "/u/nobody"] {
+        let req = Request::get(uri)
+            .header("host", "127.0.0.1:8421")
+            .header("accept-encoding", "gzip, deflate, br")
+            .body(Body::empty())
+            .unwrap();
+        let a = common::call(&app, req).await;
+        assert_eq!(a.header("content-encoding").as_deref(), Some("gzip"), "{uri}");
+        assert_eq!(a.header("vary").as_deref(), Some("Accept-Encoding"), "{uri}");
+    }
+    let req = Request::get("/api/health")
+        .header("host", "127.0.0.1:8421")
+        .header("accept-encoding", "gzip")
+        .body(Body::empty())
+        .unwrap();
+    let a = common::call(&app, req).await;
+    assert_eq!(a.header("content-encoding"), None);
 }
 
 #[tokio::test]

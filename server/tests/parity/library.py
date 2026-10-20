@@ -566,9 +566,8 @@ def link_info(run, lib):
         text = re.sub(r"localhost%3A\d+", "localhost%3A<port>", text)
         text = text.replace(sfx, "<sfx>")
         if r.status == 500:
-            # An uncaught error: Next answers with an empty body, the Rust
-            # framework with {"message":"Internal server error"} (SKELETON).
-            return {"status": 500}
+            # An uncaught error: an empty body on both (SKELETON 9.24).
+            return {"status": 500, "content-type": r.header("content-type"), "body": r.text()}
         return {"status": r.status, "content-type": r.header("content-type"),
                 "cache-control": r.header("cache-control"), "body": parity.normalize_text(text)}
 
