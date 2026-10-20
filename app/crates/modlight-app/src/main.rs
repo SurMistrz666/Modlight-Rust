@@ -125,6 +125,9 @@ fn main() -> ExitCode {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
+    let first_launch = !profile
+        .join(modlight_core::config::APPLICATION_CONFIG_FILE)
+        .exists();
     let config = AppConfig::load(&profile);
     // `CleanupManager`: old log files, when asked for.
     if config.get("AutoCleanupLogFiles").and_then(|v| v.as_bool()) == Some(true) {
@@ -157,7 +160,8 @@ fn main() -> ExitCode {
         system_dark: None,
     };
     let bounds = config.main_window();
-    let state = AppState::new(env, config, account);
+    let mut state = AppState::new(env, config, account);
+    state.first_launch = first_launch && !qa_mode;
 
     let mut viewport = ViewportBuilder::default()
         .with_title(modlight_core::title())

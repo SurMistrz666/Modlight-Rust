@@ -127,6 +127,8 @@ pub const SCREENS: &[&str] = &[
     "about",
     "debug-log",
     "debug-log-upload",
+    "first-run",
+    "editor-selector",
     "ffmpeg-options",
     "ffmpeg-options-video",
     "ffmpeg-options-audio",

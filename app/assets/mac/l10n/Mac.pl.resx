@@ -73,4 +73,10 @@
   <data name="AccountSignedOutSync" xml:space="preserve">
     <value>Skórka i ustawienia wędrują z Tobą na inny komputer.</value>
   </data>
+  <data name="FirstRunSubtitle" xml:space="preserve">
+    <value>Wybierz, jak Modlight ma współpracować z macOS.</value>
+  </data>
+  <data name="FirstRunOptionsLater" xml:space="preserve">
+    <value>Te opcje zmienisz później w Ustawieniach aplikacji → Integracja z macOS.</value>
+  </data>
 </root>

@@ -46,6 +46,8 @@ pub struct Windows {
     pub notification: Option<Notification>,
     pub about: Option<crate::about_window::AboutWindow>,
     pub debug_log: Option<crate::about_window::DebugLogWindow>,
+    pub first_run: Option<crate::first_run::FirstRunWindow>,
+    pub editor_selector: Option<crate::first_run::EditorSelector>,
 }
 
 impl Windows {

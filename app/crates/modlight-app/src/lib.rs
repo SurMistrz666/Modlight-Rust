@@ -13,6 +13,7 @@ pub mod commands;
 pub mod controls;
 pub mod dialogs;
 pub mod ffmpeg_window;
+pub mod first_run;
 pub mod hotkey_page;
 pub mod media;
 pub mod menus;

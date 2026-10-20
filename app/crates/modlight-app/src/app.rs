@@ -105,6 +105,14 @@ impl ModlightApp {
         state.start_uploads();
         state.start_hotkeys();
         crate::media_windows::on_start(state);
+        // A Mac has no installer to open the first-time configuration; the first
+        // launch of the app bundle does.
+        if state.first_launch
+            && state.mode == Mode::Normal
+            && modlight_macos::integration::in_app_bundle()
+        {
+            state.show_first_run();
+        }
     }
 
     /// Everything that is not drawing, before the frame.
