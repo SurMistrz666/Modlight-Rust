@@ -106,6 +106,7 @@ pub struct Canvas {
     /// The geometry of the last frame (tests, the host's coordinate questions).
     pub geometry: Option<Geometry>,
     text_box_focus: Option<crate::model::AnnotationId>,
+    text_box_guard: bool,
     /// The overlay was re-rendered this frame (tests).
     pub overlay_renders: u64,
 }
@@ -246,7 +247,15 @@ impl Canvas {
                         }
                         let clicks = self.click_count(time, pos, button);
                         self.pressed = Some(button);
+                        // A press on the canvas takes the focus from an open text box
+                        // (`LostFocus` commits it) before the tool sees the press.
+                        if editor.text_editing.is_some() && button == Button::Left {
+                            input::commit_text_edit(editor);
+                            self.text_box_focus = None;
+                        }
                         input::pointer_pressed(editor, g.to_image(pos), button, m, clicks);
+                        // A box this press opened keeps the focus when it is released.
+                        self.text_box_guard = editor.text_editing.is_some();
                     } else {
                         if button == Button::Middle && self.panning.is_some() {
                             self.panning = None;
@@ -785,7 +794,14 @@ impl Canvas {
         if let Some(e) = editor.text_editing.as_mut() {
             e.text = text;
         }
-        let lost = output.response.lost_focus();
+        let mut lost = output.response.lost_focus();
+        if self.text_box_guard && ui.input(|i| i.pointer.any_released()) {
+            self.text_box_guard = false;
+            if lost {
+                output.response.request_focus();
+                lost = false;
+            }
+        }
         if finish || lost {
             self.text_box_focus = None;
             input::commit_text_edit(editor);

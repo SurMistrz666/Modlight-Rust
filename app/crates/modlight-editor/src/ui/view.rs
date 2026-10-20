@@ -150,7 +150,9 @@ impl EditorView {
 
     fn context_menu(&mut self, ui: &mut Ui, colors: &Colors, editor: &mut Editor) {
         let id = Id::new("editor-context-menu");
-        if let Some(p) = editor.input.context_menu.take() {
+        // The menu opens when the right button comes up (`ContextRequested`).
+        let held = ui.input(|i| i.pointer.secondary_down());
+        if !held && let Some(p) = editor.input.context_menu.take() {
             let at = self
                 .canvas
                 .geometry
