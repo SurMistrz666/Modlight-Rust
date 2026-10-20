@@ -85,6 +85,9 @@ impl ModlightApp {
                 modlight_macos::system::active_window_fullscreen,
             );
         }
+        if mode == Mode::Normal {
+            modlight_macos::integration::install_services_provider();
+        }
         if mode == Mode::Normal && app.state.config.show_tray() {
             app.tray = crate::tray::Tray::new(ctx, &app.state);
         }
@@ -100,6 +103,16 @@ impl ModlightApp {
         state.space_refresh_account();
         state.sync_skin();
         state.start_uploads();
+        state.start_hotkeys();
+        crate::media_windows::on_start(state);
+        // A Mac has no installer to open the first-time configuration; the first
+        // launch of the app bundle does.
+        if state.first_launch
+            && state.mode == Mode::Normal
+            && modlight_macos::integration::in_app_bundle()
+        {
+            state.show_first_run();
+        }
     }
 
     /// Everything that is not drawing, before the frame.
@@ -111,6 +124,8 @@ impl ModlightApp {
         }
         if self.mode != Mode::Shot {
             state.pump_uploads(ctx);
+            state.pump_hotkeys();
+            state.tick_captures(ctx);
         }
         // The system appearance, when following it.
         let system = ctx
@@ -455,6 +470,8 @@ impl ModlightApp {
         }
 
         self.upload_viewports(ctx, main);
+        self.capture_viewports(ctx, main);
+        crate::media_windows::viewports(ctx, &mut self.state);
 
         if self.state.windows.notification.is_some() {
             self.notification(ctx);
@@ -823,6 +840,7 @@ impl eframe::App for ModlightApp {
     }
 
     fn on_exit(&mut self) {
+        self.state.downloads_shutdown();
         self.state.save_config();
     }
 }
@@ -844,20 +862,20 @@ impl AppState {
 /// Where a dialog opens: centred on an area (the main window for `CenterOwner`, the
 /// screen's visible frame for `CenterScreen`), and whether it stays on top (`Topmost`).
 #[derive(Clone, Copy, Debug)]
-struct Placement {
+pub(crate) struct Placement {
     area: Option<Rect>,
     topmost: bool,
 }
 
 impl Placement {
-    fn owner(main: Option<Rect>) -> Placement {
+    pub(crate) fn owner(main: Option<Rect>) -> Placement {
         Placement {
             area: main,
             topmost: false,
         }
     }
 
-    fn screen(topmost: bool) -> Placement {
+    pub(crate) fn screen(topmost: bool) -> Placement {
         Placement {
             area: modlight_macos::system::visible_frame()
                 .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h))),
@@ -889,7 +907,7 @@ fn builder(title: &str, size: Vec2, place: Placement, resizable: bool) -> Viewpo
 
 /// A fixed-size dialog whose height follows its content. Returns what `add` returned
 /// and whether its window was closed.
-fn dialog<R>(
+pub(crate) fn dialog<R>(
     ctx: &egui::Context,
     id: &str,
     title: &str,
@@ -916,7 +934,7 @@ fn dialog<R>(
 }
 
 /// A resizable window (settings, duplicates).
-fn dialog_resizable<R>(
+pub(crate) fn dialog_resizable<R>(
     ctx: &egui::Context,
     id: &str,
     title: &str,

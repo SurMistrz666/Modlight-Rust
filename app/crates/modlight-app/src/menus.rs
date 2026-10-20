@@ -60,6 +60,17 @@ impl Entry {
         }
     }
 
+    /// An item without an icon.
+    pub fn plain(label: impl Into<String>, command: Command) -> Entry {
+        Entry::Item {
+            label: label.into(),
+            icon: None,
+            enabled: true,
+            toggle: Toggle::None,
+            command: Some(command),
+        }
+    }
+
     /// A line that only says something (`isEnabled: false`, no action).
     pub fn header(label: impl Into<String>, icon: Option<char>) -> Entry {
         Entry::Item {
@@ -347,6 +358,33 @@ pub fn popup_open(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .frame(frame(colors))
         .align(egui::RectAlign::BOTTOM_END)
+        .gap(4.0)
+        .show(|ui| {
+            let list = list();
+            entries(ui, colors, &list)
+        })
+        .and_then(|r| r.inner);
+    *open = is_open;
+    result
+}
+
+/// A menu kept open by the caller, under `anchor` with left edges aligned
+/// (`PlacementMode.BottomEdgeAlignedLeft`).
+pub fn popup_open_left(
+    colors: &Colors,
+    anchor: &egui::Response,
+    open: &mut bool,
+    list: impl FnOnce() -> Vec<Entry>,
+) -> Option<Command> {
+    let mut is_open = *open;
+    let result = egui::Popup::from_response(anchor)
+        .open_bool(&mut is_open)
+        .kind(egui::PopupKind::Menu)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .style(egui::containers::menu::menu_style)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .frame(frame(colors))
+        .align(egui::RectAlign::BOTTOM_START)
         .gap(4.0)
         .show(|ui| {
             let list = list();

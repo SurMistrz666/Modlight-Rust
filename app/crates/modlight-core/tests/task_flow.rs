@@ -294,6 +294,14 @@ impl Host {
                             self.questions.push("file exists".into());
                             TaskAnswer::FileExists(Some(path))
                         }
+                        TaskQuestion::SaveAs { folder, file_name } => {
+                            self.questions.push("save as".into());
+                            TaskAnswer::SaveAs(Some(folder.join(format!("saved-{file_name}"))))
+                        }
+                        TaskQuestion::Annotate(image) => {
+                            self.questions.push("annotate".into());
+                            TaskAnswer::Annotated(Some(image))
+                        }
                     };
                     let _ = reply.send(answer);
                 }

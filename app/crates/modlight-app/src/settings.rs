@@ -6,11 +6,11 @@
 //! their header and description, and are filled in the phases that bring their
 //! features (see `docs/STATUS.md`).
 
-use egui::{Color32, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use modlight_api::AccountInfo;
 use modlight_core::format::cloud_size;
 use modlight_core::icons;
-use modlight_core::l10n::{Arg, Key, LanguageSetting, avalonia, format, helpers, s, t};
+use modlight_core::l10n::{Arg, Key, avalonia, format, s, t};
 use modlight_core::theme::{SKINS, resolve_skin};
 
 use crate::commands::Command;
@@ -128,7 +128,7 @@ pub static GROUPS: [Group; 11] = [
                 "task.upload-file-naming",
                 s::SettingsWindow_PageFileNames,
                 icons::FILE_PEN,
-                s::SettingsWindow_HintFileNames,
+                modlight_core::l10n::mac::HintFileNames,
                 "file naming name pattern name format filename"
             ),
         ],
@@ -233,7 +233,7 @@ pub static GROUPS: [Group; 11] = [
                 "task.watch-folders",
                 s::TaskSettingsWindow_WatchFolders,
                 icons::FOLDER_SEARCH,
-                s::SettingsWindow_HintWatchFolders,
+                modlight_core::l10n::mac::HintWatchFolders,
                 "watch folders watch folder"
             ),
         ],
@@ -271,10 +271,10 @@ pub static GROUPS: [Group; 11] = [
             ),
             section!(
                 "application.integration",
-                s::SettingsWindow_PageWindowsIntegration,
+                modlight_core::l10n::mac::PageMacIntegration,
                 icons::PLUG,
-                s::SettingsWindow_HintWindowsIntegration,
-                "integration windows startup context menu send to steam chrome extension firefox addon"
+                modlight_core::l10n::mac::HintMacIntegration,
+                "integration login startup open at login finder services"
             ),
             section!(
                 "application.components",
@@ -285,9 +285,9 @@ pub static GROUPS: [Group; 11] = [
             ),
             section!(
                 "application.paths",
-                s::SettingsWindow_PageLocalFolders,
+                modlight_core::l10n::mac::PageLocalFolders,
                 icons::FOLDER,
-                s::SettingsWindow_HintLocalFolders,
+                modlight_core::l10n::mac::HintLocalFolders,
                 "paths personal folder screenshots folder sub folder pattern"
             ),
             section!(
@@ -335,9 +335,180 @@ pub static GROUPS: [Group; 11] = [
     },
 ];
 
+/// `SettingsSections.ForTaskOverrides()`: one hotkey's settings window. The Task group
+/// first (task, general, upload, Modlight folder), then the task sections of every group
+/// of the full window, under the same group names.
+pub static OVERRIDE_GROUPS: [Group; 8] = [
+    Group {
+        title: s::TaskSettingsWindow_Task,
+        icon: icons::KEYBOARD,
+        sections: &[
+            section!(
+                "task.task",
+                s::TaskSettingsWindow_Task,
+                icons::KEYBOARD,
+                s::SettingsWindow_HintTask,
+                "task job description after capture after upload destinations"
+            ),
+            section!(
+                "task.general",
+                s::TaskSettingsWindow_General,
+                icons::SETTINGS,
+                s::SettingsWindow_HintTaskGeneral,
+                "general"
+            ),
+            section!(
+                "task.upload",
+                s::TaskSettingsWindow_Upload,
+                icons::UPLOAD,
+                s::SettingsWindow_HintTaskUpload,
+                "upload"
+            ),
+            section!(
+                "task.upload-modlight",
+                s::TaskSettingsWindow_ModlightDestination,
+                icons::FOLDER_UP,
+                s::SettingsWindow_HintTaskFolder,
+                "folder modlight folder destination"
+            ),
+        ],
+    },
+    Group {
+        title: s::SettingsWindow_GroupCapture,
+        icon: icons::CAMERA,
+        sections: &[
+            section!(
+                "task.capture-region",
+                s::SettingsWindow_PageRegion,
+                icons::CROP,
+                s::SettingsWindow_HintRegion,
+                "region capture rectangle capture crop"
+            ),
+            section!(
+                "task.capture",
+                s::SettingsWindow_PageScreenshots,
+                icons::CAMERA,
+                s::SettingsWindow_HintScreenshots,
+                "capture screenshot screen capture window capture cursor"
+            ),
+            section!(
+                "task.image",
+                s::SettingsWindow_PageImageFormat,
+                icons::IMAGE,
+                s::SettingsWindow_HintImageFormat,
+                "image format quality png jpeg jpg gif"
+            ),
+            section!(
+                "task.image-effects",
+                s::SettingsWindow_PageEffects,
+                icons::WAND_SPARKLES,
+                s::SettingsWindow_HintEffects,
+                "effects image effects watermark"
+            ),
+            section!(
+                "task.image-thumbnail",
+                s::SettingsWindow_PageFileThumbnails,
+                icons::IMAGES,
+                s::SettingsWindow_HintFileThumbnails,
+                "thumbnail thumbnails"
+            ),
+            section!(
+                "task.upload-file-naming",
+                s::SettingsWindow_PageFileNames,
+                icons::FILE_PEN,
+                modlight_core::l10n::mac::HintFileNames,
+                "file naming name pattern name format filename"
+            ),
+        ],
+    },
+    Group {
+        title: s::SettingsWindow_GroupRecording,
+        icon: icons::VIDEO,
+        sections: &[section!(
+            "task.capture-screen-recorder",
+            s::SettingsWindow_GroupRecording,
+            icons::VIDEO,
+            s::SettingsWindow_HintRecording,
+            "screen recorder recording ffmpeg gif"
+        )],
+    },
+    Group {
+        title: s::SettingsWindow_GroupTextFromImage,
+        icon: icons::SCAN_TEXT,
+        sections: &[section!(
+            "task.capture-ocr",
+            s::SettingsWindow_GroupTextFromImage,
+            icons::SCAN_TEXT,
+            s::SettingsWindow_HintOcr,
+            "ocr text capture"
+        )],
+    },
+    Group {
+        title: s::SettingsWindow_GroupSharing,
+        icon: icons::UPLOAD,
+        sections: &[section!(
+            "task.upload-clipboard",
+            s::SettingsWindow_PageFromClipboard,
+            icons::CLIPBOARD,
+            s::SettingsWindow_HintFromClipboard,
+            "clipboard upload clipboard"
+        )],
+    },
+    Group {
+        title: s::SettingsWindow_GroupSounds,
+        icon: icons::BELL,
+        sections: &[section!(
+            "task.general-notifications",
+            s::SettingsWindow_GroupSounds,
+            icons::BELL,
+            s::SettingsWindow_HintSounds,
+            "sound sounds notification toast"
+        )],
+    },
+    Group {
+        title: s::SettingsWindow_GroupTools,
+        icon: icons::WRENCH,
+        sections: &[
+            section!(
+                "task.tools",
+                s::SettingsWindow_PageEditor,
+                icons::WRENCH,
+                s::SettingsWindow_HintEditor,
+                "image editor tools"
+            ),
+            section!(
+                "task.actions",
+                s::SettingsWindow_PageExternalPrograms,
+                icons::ZAP,
+                s::SettingsWindow_HintExternalPrograms,
+                "actions external programs"
+            ),
+            section!(
+                "task.watch-folders",
+                s::TaskSettingsWindow_WatchFolders,
+                icons::FOLDER_SEARCH,
+                modlight_core::l10n::mac::HintWatchFolders,
+                "watch folders watch folder"
+            ),
+        ],
+    },
+    Group {
+        title: s::SettingsWindow_GroupAdvanced,
+        icon: icons::SLIDERS_HORIZONTAL,
+        sections: &[section!(
+            "task.advanced",
+            s::SettingsWindow_AdvancedTasks,
+            icons::ZAP,
+            s::SettingsWindow_HintAllCapture,
+            "advanced"
+        )],
+    },
+];
+
 pub fn find_section(id: &str) -> Option<(&'static Group, &'static Section)> {
     GROUPS
         .iter()
+        .chain(OVERRIDE_GROUPS.iter())
         .find_map(|g| g.sections.iter().find(|s| s.id == id).map(|s| (g, s)))
 }
 
@@ -358,6 +529,22 @@ pub struct SettingsWindow {
     pub account: AccountPage,
     /// The skin when the window opened: pushed to the server on close if it changed.
     pub opened_skin: String,
+    /// The task pages' selections and open editor.
+    pub task_pages: crate::task_pages::TaskPagesState,
+    /// The application pages' selections, editor and backup status.
+    pub app_pages: crate::app_pages::AppPagesState,
+    /// `StartupManager.State`, read when the integration page opens.
+    pub startup: Option<modlight_macos::integration::StartupState>,
+    /// Where the page is drawn (the editors' veil covers it).
+    pub page_area: Rect,
+    /// The keyboard shortcuts page.
+    pub hotkeys: crate::hotkey_page::HotkeyPageState,
+    /// The sections this window lists: the full window or one hotkey's.
+    pub groups: &'static [Group],
+    /// The task settings the task pages edit.
+    pub target: crate::task_pages::TaskTarget,
+    /// The window title of a hotkey's settings (`ShareXTaskSettingsFor0`).
+    pub title: String,
 }
 
 impl SettingsWindow {
@@ -365,17 +552,36 @@ impl SettingsWindow {
         let mut window = SettingsWindow {
             section: section.to_string(),
             search: String::new(),
-            expanded: vec![false; GROUPS.len()],
+            expanded: vec![false; GROUPS.len().max(OVERRIDE_GROUPS.len())],
             account: AccountPage::default(),
             opened_skin: skin.to_string(),
+            task_pages: Default::default(),
+            app_pages: Default::default(),
+            startup: None,
+            page_area: Rect::NOTHING,
+            hotkeys: Default::default(),
+            groups: &GROUPS,
+            target: crate::task_pages::TaskTarget::Defaults,
+            title: t(s::SettingsWindow_WindowTitle).to_string(),
         };
         window.reveal(section);
         window
     }
 
+    /// The same window holding one hotkey's overrides (`SettingsWindow(TaskSettings)`).
+    pub fn for_hotkey(index: usize, title: String, skin: &str) -> SettingsWindow {
+        let mut window = SettingsWindow::new("task.task", skin);
+        window.groups = &OVERRIDE_GROUPS;
+        window.target = crate::task_pages::TaskTarget::Hotkey(index);
+        window.title = title;
+        window.expanded = vec![false; OVERRIDE_GROUPS.len()];
+        window.reveal("task.task");
+        window
+    }
+
     /// Expand the group holding `section` so the selection is on screen.
     pub fn reveal(&mut self, section: &str) {
-        for (index, group) in GROUPS.iter().enumerate() {
+        for (index, group) in self.groups.iter().enumerate() {
             if group.sections.len() > 1 && group.sections.iter().any(|s| s.id == section) {
                 self.expanded[index] = true;
             }
@@ -479,6 +685,10 @@ pub enum SettingsAsk {
     Refresh,
     OpenOnServer(&'static str),
     SignOut,
+    /// What a task page asked of the app.
+    TaskPage(crate::task_pages::TaskPageAsk),
+    /// What an application page asked of the app.
+    AppPage(crate::app_pages::AppPageAsk),
 }
 
 pub fn ui(ui: &mut Ui, state: &mut AppState) -> Vec<SettingsAsk> {
@@ -495,12 +705,17 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Vec<SettingsAsk> {
         return asks;
     };
     let section_id = window.section.clone();
-    let any_match = GROUPS
+    let any_match = window
+        .groups
         .iter()
         .any(|g| g.sections.iter().any(|sec| window.matches(g, sec)));
     if !any_match {
         no_results(ui, state, &colors, right);
         return asks;
+    }
+    let editor_open = window.task_pages.editor.is_some() || window.app_pages.editor.is_some();
+    if let Some(window) = state.windows.settings.as_mut() {
+        window.page_area = right;
     }
     let header_h = header(ui, &colors, right, &section_id);
     let body = Rect::from_min_max(pos2(right.left(), right.top() + header_h), right.max);
@@ -525,7 +740,7 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Vec<SettingsAsk> {
             });
             ui.add_space(36.0);
         });
-    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if !editor_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         asks.push(SettingsAsk::Close);
     }
     asks
@@ -603,7 +818,7 @@ fn navigation(ui: &mut Ui, state: &mut AppState, colors: &Colors, rect: Rect) {
         .auto_shrink([false, false])
         .show(&mut list_ui, |ui| {
             let width = list.width();
-            for (index, group) in GROUPS.iter().enumerate() {
+            for (index, group) in window.groups.iter().enumerate() {
                 let visible: Vec<&Section> = group
                     .sections
                     .iter()
@@ -973,9 +1188,155 @@ fn page(
         "account.links" => links_page(ui, state, colors, asks),
         "account.storage" => storage_page(ui, colors),
         "application.theme" => theme_page(ui, state, colors),
-        "application.general" => general_page(ui, state, colors),
+        "application.general"
+        | "application.integration"
+        | "application.paths"
+        | "application.settings"
+        | "application.main-window"
+        | "application.clipboard-formats"
+        | "application.upload"
+        | "application.history"
+        | "application.print"
+        | "application.proxy"
+        | "application.advanced" => app_page(ui, state, colors, section, asks),
+        "application.components" => crate::components_window::settings_page(ui, state, colors),
+        "hotkeys.list" => {
+            let area = state
+                .windows
+                .settings
+                .as_ref()
+                .map(|w| w.page_area)
+                .unwrap_or(Rect::NOTHING);
+            crate::hotkey_page::page(ui, state, colors, area)
+        }
+        task if task.starts_with("task.") => task_page(ui, state, colors, task, asks),
         _ => {}
     }
+}
+
+/// An application page over the settings document.
+fn app_page(
+    ui: &mut Ui,
+    state: &mut AppState,
+    colors: &Colors,
+    section: &str,
+    asks: &mut Vec<SettingsAsk>,
+) {
+    use crate::app_pages::{AppPagesCtx, format_editor, page};
+    use crate::settings_kit::Binder;
+    let qa = state.env.qa || state.mode != crate::app::Mode::Normal;
+    let screenshots_preview = state.screenshots_folder_preview();
+    let personal_folder = state.env.profile.display().to_string();
+    let language = state.config.language();
+    let Some(window) = state.windows.settings.as_mut() else {
+        return;
+    };
+    if section == "application.integration" && window.startup.is_none() {
+        window.startup = Some(if qa {
+            modlight_macos::integration::StartupState::NotAvailable
+        } else {
+            modlight_macos::integration::startup_state()
+        });
+    }
+    let startup = window
+        .startup
+        .unwrap_or(modlight_macos::integration::StartupState::NotAvailable);
+    let mut pages = std::mem::take(&mut window.app_pages);
+    let area = window.page_area;
+    let mut ctx = AppPagesCtx {
+        colors,
+        state: &mut pages,
+        asks: Vec::new(),
+        language,
+        personal_folder,
+        screenshots_preview,
+        startup,
+        updates_visible: modlight_core::update::has_release_channel(),
+        dialogs: !qa,
+    };
+    let mut root = std::mem::take(state.config.values_mut());
+    let mut binder = Binder::new(&mut root);
+    page(ui, &mut ctx, &mut binder, section);
+    format_editor(ui, colors, ctx.state, &mut binder, area);
+    let changed = binder.changed;
+    let page_asks = std::mem::take(&mut ctx.asks);
+    *state.config.values_mut() = root;
+    if let Some(window) = state.windows.settings.as_mut() {
+        window.app_pages = pages;
+    }
+    if changed {
+        state.sync_upload_settings();
+        state.save_config();
+    }
+    asks.extend(page_asks.into_iter().map(SettingsAsk::AppPage));
+}
+
+/// A task page over `DefaultTaskSettings` (every card enabled, no override cards).
+fn task_page(
+    ui: &mut Ui,
+    state: &mut AppState,
+    colors: &Colors,
+    section: &str,
+    asks: &mut Vec<SettingsAsk>,
+) {
+    use crate::settings_kit::Binder;
+    use crate::task_pages::{TaskPagesCtx, TaskTarget, editors, page};
+    let Some(window) = state.windows.settings.as_mut() else {
+        return;
+    };
+    let mut pages = std::mem::take(&mut window.task_pages);
+    let area = window.page_area;
+    let target = window.target;
+    let mut object = state.task_object(target);
+    let mut auto_increment = state
+        .config
+        .get("NameParserAutoIncrementNumber")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    let mut ctx = TaskPagesCtx {
+        colors,
+        is_default: target == TaskTarget::Defaults,
+        state: &mut pages,
+        asks: Vec::new(),
+        auto_increment: &mut auto_increment,
+        auto_increment_changed: false,
+        dev_mode: state.config.dev_mode(),
+        dialogs: !state.env.qa && state.mode == crate::app::Mode::Normal,
+    };
+    let mut binder = Binder::new(&mut object);
+    page(ui, &mut ctx, &mut binder, section);
+    editors(ui, &mut ctx, &mut binder, area);
+    let changed = binder.changed;
+    let page_asks = std::mem::take(&mut ctx.asks);
+    let auto_changed = ctx.auto_increment_changed;
+    if let Some(window) = state.windows.settings.as_mut() {
+        window.task_pages = pages;
+    }
+    if changed {
+        match target {
+            TaskTarget::Defaults => {
+                state
+                    .config
+                    .set("DefaultTaskSettings", serde_json::Value::Object(object));
+            }
+            TaskTarget::Hotkey(index) => {
+                if let Some(hotkey) = state.captures.hotkeys.hotkeys.get_mut(index) {
+                    hotkey.task = serde_json::Value::Object(object);
+                }
+                state.save_hotkeys();
+            }
+        }
+    }
+    if auto_changed {
+        state.config.set(
+            "NameParserAutoIncrementNumber",
+            serde_json::json!(auto_increment),
+        );
+    }
+    if (changed && target == TaskTarget::Defaults) || auto_changed {
+        state.save_config();
+    }
+    asks.extend(page_asks.into_iter().map(SettingsAsk::TaskPage));
 }
 
 fn signed_out_card(ui: &mut Ui, colors: &Colors, asks: &mut Vec<SettingsAsk>, tall: bool) {
@@ -1007,7 +1368,10 @@ fn signed_out_card(ui: &mut Ui, colors: &Colors, asks: &mut Vec<SettingsAsk>, ta
                 for (glyph, key) in [
                     (icons::UPLOAD, s::SettingsWindow_AccountSignedOutUploads),
                     (icons::IMAGES, s::SettingsWindow_AccountSignedOutLibrary),
-                    (icons::PALETTE, s::SettingsWindow_AccountSignedOutSync),
+                    (
+                        icons::PALETTE,
+                        modlight_core::l10n::mac::AccountSignedOutSync,
+                    ),
                 ] {
                     let text = layout(
                         ui,
@@ -1489,79 +1853,6 @@ fn theme_page(ui: &mut Ui, state: &mut AppState, colors: &Colors) {
     }
 }
 
-fn general_page(ui: &mut Ui, state: &mut AppState, colors: &Colors) {
-    section_card(ui, colors, |ui| {
-        section_title(ui, colors, t(s::ApplicationSettingsWindow_Application));
-        ui.add_space(4.0);
-        let current = state.config.language();
-        let options = vec![
-            (
-                LanguageSetting::Automatic,
-                t(helpers::SupportedLanguage_Automatic).to_string(),
-            ),
-            (LanguageSetting::English, "English".to_string()),
-            (LanguageSetting::Polish, "Polski (Polish)".to_string()),
-        ];
-        label_row(
-            ui,
-            colors,
-            t(s::ApplicationSettingsWindow_LanguageLabel),
-            |ui| {
-                if let Some(language) = combo(ui, colors, "language", 250.0, &current, &options) {
-                    state.set_language_setting(language);
-                }
-            },
-        );
-        ui.add_space(4.0);
-        let mut tray = state.config.show_tray();
-        if checkbox(
-            ui,
-            colors,
-            &mut tray,
-            Some(t(s::ApplicationSettingsWindow_ShowTrayIcon)),
-            true,
-        )
-        .changed()
-        {
-            state.config.set_show_tray(tray);
-            state.save_config();
-        }
-        let bounds = state.config.main_window();
-        let mut position = bounds.remember_position;
-        if checkbox(
-            ui,
-            colors,
-            &mut position,
-            Some(t(s::ApplicationSettingsWindow_RememberMainWindowPosition)),
-            true,
-        )
-        .changed()
-        {
-            state.config.set(
-                "RememberMainFormPosition",
-                serde_json::Value::Bool(position),
-            );
-            state.save_config();
-        }
-        let mut size = bounds.remember_size;
-        if checkbox(
-            ui,
-            colors,
-            &mut size,
-            Some(t(s::ApplicationSettingsWindow_RememberMainWindowSize)),
-            true,
-        )
-        .changed()
-        {
-            state
-                .config
-                .set("RememberMainFormSize", serde_json::Value::Bool(size));
-            state.save_config();
-        }
-    });
-    let _ = Color32::TRANSPARENT;
-}
-
 /// Carry out what the window asked for.
 pub fn handle(state: &mut AppState, asks: Vec<SettingsAsk>) {
     for ask in asks {
@@ -1584,6 +1875,38 @@ pub fn handle(state: &mut AppState, asks: Vec<SettingsAsk>) {
                     window.account = AccountPage::default();
                 }
             }
+            SettingsAsk::AppPage(ask) => state.app_page_ask(ask),
+            SettingsAsk::TaskPage(ask) => {
+                let target = state
+                    .windows
+                    .settings
+                    .as_ref()
+                    .map(|w| w.target)
+                    .unwrap_or(crate::task_pages::TaskTarget::Defaults);
+                task_page_ask(state, target, ask)
+            }
         }
+    }
+}
+
+/// What a task page asked of the app, for the settings `target` it edits.
+pub fn task_page_ask(
+    state: &mut AppState,
+    target: crate::task_pages::TaskTarget,
+    ask: crate::task_pages::TaskPageAsk,
+) {
+    use crate::task_pages::TaskPageAsk as A;
+    match ask {
+        A::SelectRegion => state.select_custom_region(target),
+        A::ScreenRecordingOptions => state.open_ffmpeg_options(target),
+        A::WatchFoldersChanged => state.update_watch_folders(),
+        A::ImageEffects => state.push(Command::NotYet),
+        A::LoadModlightFolders => state.load_modlight_folders(),
+        // Handled by the pages themselves.
+        A::NotificationButtons
+        | A::PickSound(_)
+        | A::EditAction(_)
+        | A::EditWatchFolder(_)
+        | A::PickScreenshotsFolder => {}
     }
 }

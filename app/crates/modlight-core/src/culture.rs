@@ -206,6 +206,14 @@ impl Culture {
         }
     }
 
+    /// The "t" pattern: the short time.
+    pub fn short_time<Tz: TimeZone>(&self, at: &DateTime<Tz>) -> String {
+        match self.id {
+            CultureId::EnglishUs => english_time(at.hour(), at.minute()),
+            CultureId::PolishPl => format!("{:02}:{:02}", at.hour(), at.minute()),
+        }
+    }
+
     /// The "f" pattern: long date and short time.
     pub fn full_date_time<Tz: TimeZone>(&self, at: &DateTime<Tz>) -> String {
         let weekday = at.weekday().num_days_from_monday() as usize;
@@ -248,6 +256,14 @@ pub fn local_short<Tz: TimeZone>(at: &DateTime<Tz>) -> String {
         return Culture::current().short_date_time(&at.with_timezone(&chrono::Utc));
     }
     Culture::current().short_date_time(&at.with_timezone(&Local))
+}
+
+/// The time of day of a UTC timestamp in local time, "t" pattern of the current culture.
+pub fn local_time<Tz: TimeZone>(at: &DateTime<Tz>) -> String {
+    if thread_utc() {
+        return Culture::current().short_time(&at.with_timezone(&chrono::Utc));
+    }
+    Culture::current().short_time(&at.with_timezone(&Local))
 }
 
 /// A UTC timestamp in local time, "f" pattern of the current culture.

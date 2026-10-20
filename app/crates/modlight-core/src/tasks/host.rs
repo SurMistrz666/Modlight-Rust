@@ -85,6 +85,8 @@ pub enum TaskEffect {
     },
     /// Open the sign-in window without waiting for it (`GetInvalidConfigResult`).
     ShowSignIn,
+    /// `PinToScreen`: the picture pinned to the screen (phase 5).
+    PinToScreen(Arc<image::RgbaImage>),
     /// The large-file warning's "don't show again".
     DisableLargeFileWarning,
     /// The name parser's counter moved (`NameParserAutoIncrementNumber`).
@@ -106,6 +108,11 @@ pub enum TaskQuestion {
     BeforeUpload(Box<TaskInfo>),
     /// `FileExistWindow`: the file to write already exists.
     FileExists { path: PathBuf },
+    /// `SaveImageToFileWithDialog`: where to save the picture (a save panel).
+    SaveAs { folder: PathBuf, file_name: String },
+    /// `AnnotateImage`: the picture through the image editor (phase 4 hands it back
+    /// unchanged until the editor exists).
+    Annotate(Arc<image::RgbaImage>),
 }
 
 /// The answer to a [`TaskQuestion`].
@@ -122,6 +129,10 @@ pub enum TaskAnswer {
     },
     /// The path to write to, or `None` to not write the file.
     FileExists(Option<PathBuf>),
+    /// The chosen path, or `None` when the save panel was cancelled.
+    SaveAs(Option<PathBuf>),
+    /// The annotated picture, or `None` when the editor was closed without it.
+    Annotated(Option<Arc<image::RgbaImage>>),
 }
 
 /// What happened to a task (the `WorkerTask` events the task list follows).

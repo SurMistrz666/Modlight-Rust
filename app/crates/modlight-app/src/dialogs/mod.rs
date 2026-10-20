@@ -2,7 +2,9 @@
 //! settings, duplicates, confirm. Each is a state struct plus a `ui` function that draws
 //! it filling its window and returns what the person decided.
 
+pub mod after_capture;
 pub mod after_upload;
+pub mod auto_capture;
 pub mod before_upload;
 pub mod chrome;
 pub mod clipboard_upload;
@@ -15,6 +17,8 @@ pub mod link_settings;
 pub mod message;
 pub mod paste;
 pub mod prompt;
+pub mod quick_task_editor;
+pub mod quick_task_menu;
 pub mod shorten_url;
 pub mod text_upload;
 pub mod upload_confirm;
@@ -32,12 +36,18 @@ use crate::theme::Colors;
 pub struct Windows {
     pub sign_in: Option<SignInWindow>,
     pub settings: Option<SettingsWindow>,
+    /// One hotkey's settings, in the same shell (`SettingsWindow(TaskSettings)`).
+    pub hotkey_task: Option<SettingsWindow>,
     pub prompt: Option<prompt::Prompt>,
     pub folder_delete: Option<folder_delete::FolderDelete>,
     pub link_settings: Option<link_settings::LinkSettings>,
     pub duplicates: Option<duplicates::Duplicates>,
     pub confirm: Option<confirm::Confirm>,
     pub notification: Option<Notification>,
+    pub about: Option<crate::about_window::AboutWindow>,
+    pub debug_log: Option<crate::about_window::DebugLogWindow>,
+    pub first_run: Option<crate::first_run::FirstRunWindow>,
+    pub editor_selector: Option<crate::first_run::EditorSelector>,
 }
 
 impl Windows {

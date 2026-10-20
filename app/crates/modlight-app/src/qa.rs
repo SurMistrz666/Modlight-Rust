@@ -62,6 +62,77 @@ pub const SCREENS: &[&str] = &[
     "file-exists",
     "message-box",
     "notification-upload",
+    "tab-create-problem",
+    "capture-menu",
+    "region-capture",
+    "region-capture-hover",
+    "region-capture-light",
+    "recording-toolbar",
+    "recording-toolbar-compact",
+    "after-capture",
+    "after-capture-recording",
+    "auto-capture",
+    "quick-task-menu",
+    "quick-task-editor",
+    "scrolling-capture",
+    "my-space-wide",
+    // Phase 3, media (`qa_media::SCREENS`).
+    "tab-download",
+    "tab-download-busy",
+    "tab-download-missing",
+    "download-youtube",
+    "components",
+    "settings-components",
+    "update-available",
+    "update-download",
+    // Phase 3, settings (`qa_settings::SCREENS`).
+    "settings-capture-region",
+    "settings-capture",
+    "settings-image",
+    "settings-image-effects",
+    "settings-thumbnail",
+    "settings-file-naming",
+    "settings-recorder",
+    "settings-ocr",
+    "settings-clipboard-upload",
+    "settings-notifications",
+    "settings-tools",
+    "settings-actions",
+    "settings-watch-folders",
+    "settings-task-advanced",
+    "settings-action-editor",
+    "settings-watch-folder-editor",
+    "settings-notification-buttons",
+    "settings-integration",
+    "settings-paths",
+    "settings-backup",
+    "settings-main-window",
+    "settings-copy-formats",
+    "settings-copy-format-editor",
+    "settings-upload-limits",
+    "settings-history",
+    "settings-print",
+    "settings-proxy",
+    "settings-advanced",
+    "settings-hotkeys",
+    "settings-hotkeys-capturing",
+    "settings-hotkeys-reset",
+    "settings-hotkeys-disabled",
+    "hotkey-task-settings",
+    "hotkey-task-folder",
+    "hotkey-task-capture",
+    "tab-server",
+    "tab-server-problem",
+    "tab-server-loading",
+    "about",
+    "debug-log",
+    "debug-log-upload",
+    "first-run",
+    "editor-selector",
+    "ffmpeg-options",
+    "ffmpeg-options-video",
+    "ffmpeg-options-audio",
+    "ffmpeg-options-advanced",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.
@@ -521,8 +592,17 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
     if let Some(size) = crate::qa_uploads::prepare(screen, state, picture("8")) {
         return size;
     }
+    if let Some(size) = crate::qa_capture::prepare(screen, state) {
+        return size;
+    }
+    if let Some(size) = crate::qa_media::prepare(screen, state) {
+        return size;
+    }
+    if let Some(size) = crate::qa_settings::prepare(screen, state) {
+        return size;
+    }
     match screen {
-        "my-space" | "toasts" => {
+        "my-space" | "toasts" | "my-space-wide" => {
             load_library(state, ctx, files(), 9);
             if screen == "toasts" {
                 use modlight_core::l10n::{Arg, format, s, t, uploaders};
@@ -732,6 +812,8 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
             crate::dialogs::duplicates::HEIGHT,
         ),
         "notification" => vec2(428.0, 160.0),
+        // The size of upstream's library screenshot, where every card is whole.
+        "my-space-wide" => vec2(1486.0, 943.0),
         "settings-profile" | "settings-theme" | "settings-general" => {
             vec2(crate::settings::WIDTH, crate::settings::HEIGHT)
         }
@@ -742,6 +824,9 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
 /// Whether the screen is a whole main window (as opposed to one dialog).
 pub fn is_main_window(screen: &str) -> bool {
     !crate::qa_uploads::is_dialog(screen)
+        && !crate::qa_capture::is_dialog(screen)
+        && !crate::qa_media::is_dialog(screen)
+        && !crate::qa_settings::is_dialog(screen)
         && !matches!(
             screen,
             "sign-in"
@@ -772,6 +857,7 @@ impl eframe::App for ShotApp {
         set_thread_language(Some(self.app.state.language));
         if is_main_window(&self.screen) {
             self.app.frame(ui);
+            crate::qa_capture::draw_over_main(&self.screen, &ctx, &self.app.state);
             if self.screen == "my-space-menu" {
                 // Popups do not open headlessly: the card's menu is drawn where it opens.
                 let entries = crate::myspace::menus::file(&self.app.state, "4");
@@ -788,6 +874,18 @@ impl eframe::App for ShotApp {
         let state = &mut self.app.state;
         state.time = ctx.input(|i| i.time);
         if let Some(wanted) = crate::qa_uploads::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
+        if let Some(wanted) = crate::qa_capture::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
+        if let Some(wanted) = crate::qa_media::draw(&self.screen, ui, state) {
+            self.wanted = wanted;
+            return;
+        }
+        if let Some(wanted) = crate::qa_settings::draw(&self.screen, ui, state) {
             self.wanted = wanted;
             return;
         }
@@ -853,6 +951,8 @@ pub fn render(screen: &str, look: &Look) -> Result<RgbaImage, String> {
     set_thread_language(Some(look.language));
     set_thread_culture(Some(culture_for(look.language)));
     set_thread_utc(true);
+    // Random name codes (`%ra{10}`) draw the same characters in every render.
+    modlight_core::names::helpers::set_thread_seed(Some(20261020));
     let signed_in = !matches!(screen, "signed-out" | "sign-in");
     let mut size = MAIN_SIZE;
     let mut harness = egui_kittest::Harness::builder()

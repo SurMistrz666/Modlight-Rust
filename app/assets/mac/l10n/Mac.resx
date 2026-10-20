@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- Texts of the macOS port where upstream's text names Windows (see app/docs/MACOS.md). -->
+  <data name="HotkeyProblem" xml:space="preserve">
+    <value>macOS would not give up {0}, so that shortcut does nothing. Another app on this Mac already holds it.</value>
+  </data>
+  <data name="FFmpegMultipleDevicesFound" xml:space="preserve">
+    <value>{0} AVFoundation devices found.</value>
+  </data>
+  <data name="FFmpegOneDeviceFound" xml:space="preserve">
+    <value>{0} AVFoundation device found.</value>
+  </data>
+  <data name="FFmpegNoDevicesFound" xml:space="preserve">
+    <value>No AVFoundation devices found. Screen capture is ready.</value>
+  </data>
+  <data name="FFmpegDeviceEnumerationFailed" xml:space="preserve">
+    <value>FFmpeg could not list the AVFoundation devices. Screen capture is still available.</value>
+  </data>
+  <data name="FFmpegVideoToolbox" xml:space="preserve">
+    <value>On this Mac the hardware encoder is VideoToolbox; only the bitrate applies.</value>
+  </data>
+  <data name="FFmpegPathPlaceholder" xml:space="preserve">
+    <value>Path to ffmpeg</value>
+  </data>
+  <data name="MacTitle" xml:space="preserve">
+    <value>macOS</value>
+  </data>
+  <data name="StartAtLogin" xml:space="preserve">
+    <value>Open Modlight when you log in</value>
+  </data>
+  <data name="StartAtLoginDisabledByUser" xml:space="preserve">
+    <value>Opening at login is turned off in System Settings, Login Items</value>
+  </data>
+  <data name="StartAtLoginRequiresApproval" xml:space="preserve">
+    <value>Opening at login waits for approval in System Settings, Login Items</value>
+  </data>
+  <data name="StartAtLoginNotAvailable" xml:space="preserve">
+    <value>Only Modlight.app can open at login; this copy is not an app bundle</value>
+  </data>
+  <data name="OpenLoginItems" xml:space="preserve">
+    <value>Login Items...</value>
+  </data>
+  <data name="FinderServiceHint" xml:space="preserve">
+    <value>Upload with Modlight is in the Services menu of Finder: right-click files, then Services. Its keyboard shortcut is set in System Settings.</value>
+  </data>
+  <data name="FinderServiceButton" xml:space="preserve">
+    <value>Services shortcuts...</value>
+  </data>
+  <data name="PersonalFolderFixed" xml:space="preserve">
+    <value>On a Mac the personal folder is always this folder; it cannot be moved.</value>
+  </data>
+  <data name="DontShowPrintDialog" xml:space="preserve">
+    <value>Don't show the print dialog</value>
+  </data>
+  <data name="PageMacIntegration" xml:space="preserve">
+    <value>macOS integration</value>
+  </data>
+  <data name="HintMacIntegration" xml:space="preserve">
+    <value>Opening at login, and Upload with Modlight in Finder's Services menu.</value>
+  </data>
+  <data name="PageLocalFolders" xml:space="preserve">
+    <value>Folders on this Mac</value>
+  </data>
+  <data name="HintLocalFolders" xml:space="preserve">
+    <value>Where the settings, the history and the saved screenshots sit on this Mac. The pattern here names the FOLDER - the file's own name is under Screenshots, File names.</value>
+  </data>
+  <data name="HintWatchFolders" xml:space="preserve">
+    <value>Folders on this Mac where every newly created file is uploaded on its own.</value>
+  </data>
+  <data name="HintFileNames" xml:space="preserve">
+    <value>The pattern that names a captured file - the copy saved on this Mac and the uploaded one alike - the time zone in it, and replacing the finished link with a regular expression.</value>
+  </data>
+  <data name="AccountSignedOutSync" xml:space="preserve">
+    <value>Your skin and your settings follow you to another computer.</value>
+  </data>
+  <data name="FirstRunSubtitle" xml:space="preserve">
+    <value>Choose how Modlight works with macOS.</value>
+  </data>
+  <data name="FirstRunOptionsLater" xml:space="preserve">
+    <value>You can change these options later in Application settings → macOS integration.</value>
+  </data>
+</root>
