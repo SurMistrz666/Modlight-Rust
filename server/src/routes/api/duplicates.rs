@@ -69,7 +69,8 @@ pub fn js_to_number(value: Option<&Value>) -> f64 {
         Some(Value::Number(n)) => n.as_f64().unwrap_or(f64::NAN),
         Some(Value::String(s)) => crate::config::js_number(s),
         Some(Value::Array(items)) => crate::config::js_number(&js_array_string(items)),
-        Some(Value::Object(_)) => f64::NAN,
+        // Infinity from `JSON.parse("1e400")` (api_json::js_object_to_map).
+        Some(v @ Value::Object(_)) => crate::rpc::tagged::raw_num(v).unwrap_or(f64::NAN),
     }
 }
 

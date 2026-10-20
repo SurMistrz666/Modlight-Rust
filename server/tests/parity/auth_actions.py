@@ -150,9 +150,7 @@ class Sinks(object):
 
     def start(self):
         open(self.host_log, "w").close()
-        self.proc = subprocess.Popen(["node", os.path.join(HERE, "smtp_sink.mjs"), self.host_log,
-                                      str(args.sink_port), "1800"], stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL)
+        self.proc = parity.start_rust_sink(os.path.join(HERE, "smtp_sink.mjs"), self.host_log, args.sink_port, 1800)
         subprocess.run(["docker", "cp", os.path.join(HERE, "smtp_sink.mjs"), args.ref_app + ":/tmp/smtp_sink.mjs"],
                        check=True, stdout=subprocess.DEVNULL)
         subprocess.run(["docker", "exec", args.ref_app, "sh", "-c", ": > " + self.ref_log], check=True)

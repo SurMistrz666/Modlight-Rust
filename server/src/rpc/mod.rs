@@ -305,7 +305,8 @@ fn envelope_response(status: StatusCode, body: Value) -> Response {
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, no-cache, no-store, max-age=0, must-revalidate"),
     );
-    res
+    // A server action's answer is an RSC payload upstream: compressed by Next.
+    crate::http::compression::mark(res, crate::http::compression::Compress::Rendered)
 }
 
 fn refusal(status: StatusCode, message: &str) -> Response {

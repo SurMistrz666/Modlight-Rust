@@ -113,11 +113,9 @@ class Area(object):
             out.append(br.request(method, o.get("path", path), **kw))
         shapes = [self.shape(r, extra, tidy=tidy) for r in out]
         if internal_error:
-            # A thrown error: Next answers an empty 500, the port's
-            # AppError::Internal a JSON `{"message":"Internal server error"}`
-            # (crate-wide convention, SKELETON section 3). Only the status
-            # is compared.
-            shapes = [{"status": sh["status"]} for sh in shapes]
+            # A thrown error: an empty 500 without a content type on both
+            # (SKELETON 9.24); the status, the type and the body compared.
+            shapes = [{"status": r.status, "content-type": r.header("content-type"), "body": r.text()} for r in out]
         if not compare_body:
             for sh in shapes:
                 sh["body"] = "<not compared>"

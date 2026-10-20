@@ -69,6 +69,8 @@ fn cache_layer<B>(value: &'static str) -> impl Fn(Response<B>) -> Response<B> + 
         if res.status().is_success() || res.status() == axum::http::StatusCode::NOT_MODIFIED {
             res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(value));
         }
+        // Next's static files go through its compression (from 1 KiB).
+        res.extensions_mut().insert(crate::http::compression::Compress::Static);
         res
     }
 }
