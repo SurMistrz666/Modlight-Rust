@@ -122,11 +122,15 @@ Everything not listed behaves as upstream does. The per-screen state is in
   program of "Perform actions", the "Perform actions" step after capture, and watch
   folders, whenever the backup switches one on that this installation did not already
   have switched on for the same task (the default task settings; a hotkey by its place
-  in the list; a program only when the very same one was on). A message after the
-  import names each one, and they are turned on again in the task settings. Upstream
-  restores the file whole, so a backup from somebody else could start a program on the
-  next capture. Restoring one's own backup on the same Mac changes nothing; on another
-  Mac these wait to be turned on.
+  in the list; a program only when the very same one was on). A custom FFmpeg path
+  (`OverrideCLIPath` with `CLIPath`) that this task did not already start comes back to
+  the FFmpeg from Components. It is the only path to a program the settings hold: yt-dlp
+  and ExifTool are found in Tools and the usual places, never read from the settings, and
+  `BrowserPath` is stored but never started (links go through `/usr/bin/open`). A
+  message after the import names each one, and they are set again in the task
+  settings. Upstream restores the file whole, so a backup from somebody else could start
+  a program on the next capture or recording. Restoring one's own backup on the same Mac
+  changes nothing; on another Mac these wait to be set again.
 - **Pictures from outside the app** (thumbnails, previews and the account picture from
   the server, Upload from URL previews, the editor's "open from URL", the clipboard,
   files opened, inserted or uploaded) are decoded under limits
