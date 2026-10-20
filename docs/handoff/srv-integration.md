@@ -11,11 +11,11 @@ build files as downloaded).
 
 | # | Task | State |
 |---|---|---|
-| 2 | Production image `server/docker/Dockerfile` | written; first build running (`logs/build1.log`) |
-| 3 | Local stack `server/docker/docker-compose.yml` + `setup-local.sh` | written, not yet up |
-| 7a | S3: finished upload unreachable at `GET /api/files/<id>` | todo |
-| 7b | Delete the previous avatar / wallpaper object | todo |
-| 7c | PORT.md 12 fixes 1-7 re-checked, each with a test | todo |
+| 2 | Production image `server/docker/Dockerfile` | builds (libvips stage 193 s on 8 cores); 208 MB compressed, 776 MB unpacked (reference image 2.14 GB) |
+| 3 | Local stack `server/docker/docker-compose.yml` + `setup-local.sh` | UP on 127.0.0.1:8430 (`server/docker/.env` generated, no accounts) |
+| 7a | S3: finished upload unreachable at `GET /api/files/<id>` | done feb3b4b (SKELETON 9.38) |
+| 7b | Delete the previous avatar / wallpaper object | done ca4c342 (SKELETON 9.39) |
+| 7c | PORT.md 12 fixes 1-7 re-checked, each with a test | done c014150 (SKELETON 9.40, tests/security_fixes_db.rs) |
 | 4 | Parity suites against the Docker image | todo |
 | 5 | Upstream e2e (Playwright) on both servers | todo |
 | 6 | Compression, redirect bodies, 500 bodies, /dashboard, JSON.parse | todo |
@@ -48,4 +48,14 @@ build files as downloaded).
 
 ## Fixes (task 7)
 
-(none yet)
+- 7a: tus server options `serve_finished_uploads=false`,
+  `disable_termination_for_finished_uploads=true`; S3 `delete_record` drops
+  `.info`/`.part` after finalize. Unit test in `upload/tus_server/server.rs`,
+  `tests/library_s3_e2e.rs` (run `_scratch/srv-integration/s3-e2e.sh -q --test
+  library_s3_e2e` with MinIO from `_scratch/srv-library/s3/minio/up.sh`).
+- 7b: `avatar_store::set_avatar_key`, `routes/api/background::set_background_key`
+  (previous key under the row lock), discard limited to the account's own keys.
+  Test `tests/library_routes_db.rs` `replacing_avatar_or_wallpaper_deletes_the_previous_object`.
+  Parity scripts that count stored objects after a replacement must expect
+  the reference to keep the old object.
+- 7c: SKELETON 9.40 maps each PORT.md 12 fix to its test.
