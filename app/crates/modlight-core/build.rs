@@ -33,6 +33,7 @@ const PROJECTS: &[(&str, &str)] = &[
     ("ShareX.UploadersLib", "uploaders"),
     ("ShareX.HelpersLib", "helpers"),
     ("ShareX.ScreenCaptureLib", "capture"),
+    ("ShareX.ImageEditor", "editor"),
     // The macOS port's own texts, where upstream's name Windows (assets/mac/l10n).
     ("Mac", "mac"),
 ];
