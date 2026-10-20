@@ -2852,6 +2852,7 @@ dependencies = [
 name = "modlight-effects"
 version = "0.7.7"
 dependencies = [
+ "chrono",
  "image",
  "log",
  "modlight-core",
