@@ -9,6 +9,7 @@ pub mod canvas;
 pub mod color;
 pub mod filters;
 pub mod raster;
+pub mod rect_aa;
 pub mod text;
 
 pub use bitmap::{Bitmap, pixel_op, premul, store, unpremul};

@@ -79,13 +79,7 @@ const RANDOM_SEEDED: &[&str] = &[
 /// Effects whose pictures are mostly anti-aliased shapes and strokes: Skia m119 fills
 /// them with analytic AA whose edge stepping snaps to quarter pixels while the port
 /// computes exact areas, so edge pixels differ by up to 0.2 in alpha.
-const AA_SHAPES: &[&str] = &[
-    "rounded_corners",
-    "art_deco_border",
-    "celtic_knot_border",
-    "circuit_board_border",
-    "chain_link_border",
-];
+const AA_SHAPES: &[&str] = &["rounded_corners", "art_deco_border", "celtic_knot_border"];
 
 /// Effects made of many small anti-aliased shapes (dots, sparks): Skia's supersampled
 /// coverage of a small circle differs from tiny-skia's by a sub-sample or two at the
