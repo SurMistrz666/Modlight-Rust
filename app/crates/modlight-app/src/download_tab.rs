@@ -535,7 +535,7 @@ pub fn after_components(state: &mut AppState, then: AfterClose, _satisfied: bool
                 state.downloads_continue_start();
             }
         }
-        AfterClose::Recording(..) => {}
+        AfterClose::Recording(..) | AfterClose::Tool(..) => {}
     }
 }
 

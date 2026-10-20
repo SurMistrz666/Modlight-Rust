@@ -37,7 +37,7 @@ pub fn set_thread_utc(utc: bool) {
     THREAD_UTC.with(|cell| cell.set(utc));
 }
 
-fn thread_utc() -> bool {
+pub fn thread_utc() -> bool {
     THREAD_UTC.with(Cell::get)
 }
 

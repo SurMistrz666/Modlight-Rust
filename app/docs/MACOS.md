@@ -41,7 +41,7 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | Installer's first-time configuration (`FirstTimeConfigWindow`) | Opens on the first launch of the app bundle (no settings file yet) | Its Windows options become the login item and the note on the Finder service. |
 | Settings backup (`.sxb`: ApplicationConfig, UploadersConfig, HotkeysConfig, History) | ApplicationConfig.json, HotkeysConfig.json and History.db | There is no UploadersConfig.json on a Mac (the token stays in the Keychain). Import restores exactly `ApplicationConfig.json` and `HotkeysConfig.json`, by name; `History.db` is passed over as upstream does. Upstream took any `.json`/`.xml` entry: every other entry (`UploadersConfig.json`, `Queue.json`, any name with a folder, `..` or a dot first) is left out and named in a message after the import. |
 | Personal folder setting (`PersonalPath.cfg` next to the exe) | Fixed at `~/Library/Application Support/Modlight` | The page shows it with Open; Browse stays off. |
-| Windows OCR | Vision | Phase 5. |
+| Windows OCR | Vision | See "ShareX tools". |
 | Import of ShareX settings | Not applicable | There is no ShareX on macOS. |
 | `CaptureHelpers.IsActiveWindowFullscreen` (`DisableNotificationsOnFullscreen`) | The active app's presentation options include full screen (`NSApplication.currentSystemPresentationOptions`) | Read on the main thread when a task finishes. |
 | `FileHelpers.DeleteFile(path, sendToRecycleBin)` (the notice's "Delete file") | `NSFileManager.trashItemAtURL` (to the Trash) | After the same Yes/No question. |
@@ -50,6 +50,25 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | `SystemSounds` / `SoundPlayer` (task sounds) | `NSSound` with upstream's WAV files | Normal mode only. |
 | Drag-and-drop upload window (`DragDropUploadWindow`) | An undecorated, always-on-top viewport at the configured screen corner | Text dragged onto it is not accepted: winit delivers only files. |
 | Proxy settings for uploads | Stored, not applied | The proxy page edits upstream's `ProxySettings`; uploads and downloads still go direct. |
+
+## ShareX tools (phase 5)
+
+| Windows (upstream) | macOS (this port) | Notes |
+|---|---|---|
+| Windows OCR (`Windows.Media.Ocr`) | Apple Vision (`VNRecognizeTextRequest`, accurate level) | No permission of its own. Languages are Vision's BCP 47 tags, named in the app's language and sorted by name; a tag saved on Windows ("en", "pl") selects the Vision language with the same language subtag. Upstream's help button (getsharex.com) is not drawn. |
+| Screen colour picker on a GDI copy of the desktop | A frozen desktop from ScreenCaptureKit, one texture per display | Screen Recording permission (as captures). `Ctrl` keys are `Cmd`. |
+| Pinned pictures (layered top-most forms) | Transparent, undecorated, always-on-top viewports | Opacity with Cmd+wheel (Ctrl+wheel upstream). |
+| ZXing.Net | rxing 0.9.3 (a Rust port of ZXing) | Same formats and hints; SVG output written like ZXing.Net's. |
+| Video converter: `ffmpeg.exe` with NVENC, AMF, Quick Sync | ffmpeg from Components (or the recorder's own ffmpeg path, which a backup import resets) | The Windows hardware encoders are not offered; a saved one encodes with VideoToolbox (`h264_videotoolbox`, `hevc_videotoolbox`). Arguments are passed as a vector, never through a shell. |
+| Metadata: `exiftool.exe` | ExifTool's Perl distribution from Components, run with `/usr/bin/perl` | Upstream's arguments (`-G -t -m -q`; strip `-all= -overwrite_original -q`). |
+| Analyze image keys: `[JsonEncrypt]` (DPAPI) inside the settings file | The login Keychain only: service `Modlight`, accounts `ai-openai-api-key`, `ai-gemini-api-key`, `ai-openrouter-api-key`, written through `/usr/bin/security` | The settings file never holds a key and a key found in one (an import) is not read. QA runs keep keys in memory. Requests go out only when the person runs an analysis, "Test connection" or "Load models". |
+| Background remover: ONNX Runtime with DirectML on the adapter with the most video memory | ONNX Runtime 1.31 through `ort` 2.0.0-rc.15, linked statically (the build fetches Microsoft's library from pyke's CDN and checks its pinned SHA-256); "GPU" is Core ML, "Auto" Core ML then the CPU | Same pre- and post-processing (Skia's Catmull-Rom without mipmaps, ImageNet normalisation, sigmoid for logits, `DstIn`); the picture is decoded without EXIF turning, as `SKBitmap.Decode`. WebP saves are lossless (Skia's were lossy at quality 100). The guide button (getsharex.com) is not drawn. |
+| Active window borderless (window styles off, `SetWindowPos` to the screen) | The frontmost app's focused window moved and sized to its screen (or the area free of the menu bar and Dock, "exclude taskbar area") through the Accessibility API; the same hotkey on that window puts it back | Another app's title bar cannot be taken off without private APIs, so the frame stays. Needs Accessibility permission (the system asks once; the hotkey then explains where to allow it). |
+| Active window top-most (`WS_EX_TOPMOST`) | Not possible: the hotkey says so and points at Pin to screen | Window levels belong to the app that owns the window; changing another app's needs private APIs (`CGSSetWindowLevel` from that app's connection) or code injection. |
+| History windows: shell thumbnails, Avalonia date pickers, dragging rows out | Thumbnails decoded from the files (no Quick Look); the date range as text in the culture's short date; no dragging out (egui has no drag source) | "Delete file and history item" deletes the file for good, as upstream (the dialog says so). The preview of an uploaded picture is fetched (30 s, 32 MB at most) and decoded under the app's limits. |
+| Printing: `PrintDocument`, `PrintDialog`, `PrintPreviewDialog` | `NSPrintOperation` (with the print panel when "Show print dialog" is on); the preview is the page as a PDF opened in Preview | Placement in .NET's hundredths of an inch, turned into points, so a picture prints at the size it printed on Windows. The printer override is a printer's name (`NSPrinter`). |
+| `ImageHelpers.LoadImage` on files, the clipboard and URLs | `modlight_core::image_decode`'s limits, EXIF orientation applied | |
+| Unhandled exceptions window | Panics on background threads open the error window | |
 
 ## Components, downloads and updates (phase 3, media)
 
@@ -104,8 +123,8 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **About** keeps the team and the project page; upstream's links to getsharex.com and
   ShareX's stores and social accounts are left out (PORT.md). The logo's clicker game is
   not ported.
-- **Printing**, **image effects** and the **OCR** engine are later phases; their settings
-  are edited and stored, and their buttons say "later".
+- **Image effects** is the effects branch's; until it lands its settings are edited and
+  stored and its buttons say "later". Printing and OCR are phase 5's tools.
 - **The image editor selector** stores the choice the first time the editor is asked
   for; both choices open the same editor, because the legacy (Greenshot) editor is a
   WinForms program and is not ported.
@@ -163,8 +182,7 @@ Everything not listed behaves as upstream does. The per-screen state is in
   window closes.
 - **Paste window**: the hint says "Ctrl+Enter" as upstream does; Cmd+Enter works too.
 - **Desktop notice actions**: "Annotate image" opens the editor on the file; "Pin to
-  screen" does nothing until the pin tool arrives (phase 5); every other action is
-  upstream's.
+  screen" pins it (phase 5); every other action is upstream's.
 - **GIF bit depth 4** is written as a 256-colour GIF (the encoder has no 16-colour
   palette mode). A custom time zone other than UTC in file name patterns falls back to
   local time.
@@ -180,8 +198,8 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | Emoji (`EmojiPreviewImage`, Segoe UI Emoji / Noto) | Apple Color Emoji `sbix` strikes | |
 | Cursor annotation (`WindowsCursorBitmapRenderer`, Windows cursors; nothing on a Mac) | `NSCursor` pictures at 2x, trimmed to the cursor | Arrow, Default, AppStarting, Help and WaitCursor are the arrow; SizeAll/NoMove2D the open hand; vertical and horizontal kinds the resize cursors; diagonals macOS 15's frame-resize cursors (crosshair before). |
 | Wallpaper background (`MacOSDesktopWallpaperService`: `osascript` to System Events, `defaults read`) | `NSWorkspace.desktopImageURL`/`desktopImageOptions` of the main screen, read through `NSImage` (HEIC) | Upstream's way needs the Automation permission; this one needs none. Scaling none = Center, axes independently = Stretch, proportionally down = Fit, up or down = Fill (Fit without clipping). |
-| `ColorView` (Avalonia's colour picker) | Same three tabs (spectrum, palette, components), `FluentColorPalette` with `ColorPickerPanel`'s three replacements, the previewer with accent shades, "Pick colour from screen" | Drawn by the port; sizes approximate Avalonia's template. The screen colour picker is phase 5. |
+| `ColorView` (Avalonia's colour picker) | Same three tabs (spectrum, palette, components), `FluentColorPalette` with `ColorPickerPanel`'s three replacements, the previewer with accent shades, "Pick colour from screen" | Drawn by the port; sizes approximate Avalonia's template. "Pick colour from screen" is the tools' screen colour picker. |
 | Font picker previews in each family | Drawn with the editor's text engine | egui renders only its own fonts. |
 | Text box over a text annotation (Avalonia `TextBox` in the family) | egui text box in Inter at the annotation's size | The annotation itself is drawn in its family once the box closes. Rotated text is edited unrotated. |
-| Printing, pin to screen | "Later" notice | Phase 5. |
+| Printing, pin to screen | The tools' print window and pinned picture | See "ShareX tools". |
 | `EditorWindow` maximised (`WindowState="Maximized"`) | Zoomed window (`with_maximized`) | "Remember window state" keeps size and zoom. |

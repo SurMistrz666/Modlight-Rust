@@ -5,6 +5,7 @@
 //! app becomes the owner of a Keychain item (an item created by the app binary is tied
 //! to that exact build, and every rebuild would stop at a password prompt).
 
+pub mod ax;
 pub mod capture;
 pub mod editor;
 pub mod hotkeys;
@@ -14,10 +15,13 @@ pub mod keychain;
 pub mod keys;
 pub mod network;
 pub mod pasteboard;
+pub mod print;
 pub mod sound;
 pub mod system;
 pub mod windows;
 // Phase 3, media: the YouTube sign-in window.
 pub mod webview;
+// Phase 5, tools: text recognition.
+pub mod ocr;
 
 pub use keychain::KeychainStore;

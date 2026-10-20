@@ -300,9 +300,8 @@ impl AppState {
             OpenScreenshotsFolder => self.open_screenshots_folder(),
             ExitShareX => self.quit_requested = true,
             ImageEditor => self.open_image_editor(),
-            // The tools, the image editor, pinning and the history windows arrive in
-            // phases 4 and 5.
-            _ => self.push(crate::commands::Command::NotYet),
+            // The tools, pinning and the history windows (phase 5).
+            _ => self.run_tool_job(job, settings),
         }
     }
 
@@ -484,6 +483,21 @@ impl AppState {
                 ) {
                     self.after_capture(captured, settings);
                 }
+            }
+            OverlayPurpose::Tool(target) => {
+                // A tool's picture: the area as the overlay left it, with where it was.
+                let picture = match &outcome {
+                    RegionOutcome::Completed { screen_rect, .. } => capture::finish_region(
+                        &session.request,
+                        &outcome,
+                        self.captures.source.as_ref(),
+                        modified,
+                    )
+                    .and_then(|captured| captured.metadata.image)
+                    .map(|image| (image, *screen_rect)),
+                    _ => None,
+                };
+                self.tool_region_closed(target, picture);
             }
             OverlayPurpose::AutoCaptureRegion => {
                 if let RegionOutcome::Completed { screen_rect, .. } = outcome {
