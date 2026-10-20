@@ -599,7 +599,7 @@ fn pixels_match_upstream() {
         if case["deterministic"] == Value::Bool(false) || RANDOM_SEEDED.contains(&id) {
             // Upstream seeds these from Random.Shared: compare what is drawn statistically.
             let mut renders = vec![ours.clone()];
-            for _ in 0..5 {
+            for _ in 0..39 {
                 if let Ok(img) = effect.apply(&input, &values, &Default::default()) {
                     renders.push(img);
                 }
