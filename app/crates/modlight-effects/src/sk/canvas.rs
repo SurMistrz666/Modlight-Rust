@@ -14,6 +14,7 @@ use super::blur;
 use super::color::C;
 use super::filters::{F4, Tile, unorm};
 use super::raster;
+use super::rect_aa;
 
 /// `SKPaintStyle`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -441,6 +442,34 @@ impl Canvas {
             && paint.miter > std::f32::consts::SQRT_2
             && m.kx == 0.0
             && m.ky == 0.0;
+        // `SkScan::AntiFillRect` / `AntiFrameRect`: plain anti-aliased rects get exact
+        // 1/256 coverage, not the path rasteriser's quarter-pixel rows.
+        let plain = paint.aa
+            && frame
+            && paint.image_blur.is_none()
+            && paint.color_filter.is_none()
+            && !matches!(paint.shader, Some(Shader::Image { .. }));
+        if plain {
+            let dev = map_rect(m, r);
+            let cov = match paint.style {
+                Style::Fill => Some(rect_aa::fill(dev)),
+                Style::Stroke if paint.stroke_width > 0.0 => {
+                    let sw = (
+                        paint.stroke_width * m.sx.abs(),
+                        paint.stroke_width * m.sy.abs(),
+                    );
+                    Some(rect_aa::frame(dev, sw))
+                }
+                _ => None,
+            };
+            if let Some(cov) = cov {
+                if let Some(ts_paint) = self.ts_paint(paint, m, m) {
+                    let clip = self.state.clip.clone();
+                    self.fill_coverage(&cov, &ts_paint, m, clip.as_ref());
+                }
+                return;
+            }
+        }
         self.draw_path_impl(&path, paint, m, frame);
     }
 
@@ -667,19 +696,62 @@ impl Canvas {
         }
         let (bw, bh) = ((bx2 - bx) as u32, (by2 - by) as u32);
         let shift = Transform::from_translate(-bx as f32, -by as f32);
-        let mut cov = if analytic {
+        let cov = if analytic {
             raster::coverage(&raster::flatten_analytic(&device, shift), bw, bh)
         } else {
             raster::supersampled(&raster::flatten(&device, shift), bw, bh)
         };
+        self.fill_coverage(
+            &rect_aa::Coverage {
+                x: bx,
+                y: by,
+                mask: cov,
+            },
+            ts_paint,
+            matrix,
+            clip,
+        );
+    }
+
+    /// Fills the paint through a coverage mask placed on the canvas (and the clip).
+    fn fill_coverage(
+        &mut self,
+        cov: &rect_aa::Coverage,
+        ts_paint: &tiny_skia::Paint<'static>,
+        matrix: Transform,
+        clip: Option<&Mask>,
+    ) {
+        let (cw, ch) = (self.pm.width() as i32, self.pm.height() as i32);
+        let (mw, mh) = (cov.mask.width() as i32, cov.mask.height() as i32);
+        // The part of the mask on the canvas.
+        let bx = cov.x.max(0);
+        let by = cov.y.max(0);
+        let bx2 = (cov.x + mw).min(cw);
+        let by2 = (cov.y + mh).min(ch);
+        if bx2 <= bx || by2 <= by {
+            return;
+        }
+        let (bw, bh) = ((bx2 - bx) as u32, (by2 - by) as u32);
+        let mut m = Mask::new(bw, bh).unwrap();
+        {
+            let src = cov.mask.data();
+            let data = m.data_mut();
+            for y in 0..bh as i32 {
+                for x in 0..bw as i32 {
+                    let sx = (bx + x - cov.x) as usize;
+                    let sy = (by + y - cov.y) as usize;
+                    data[(y as u32 * bw + x as u32) as usize] = src[sy * mw as usize + sx];
+                }
+            }
+        }
         if let Some(c) = clip {
             let cd = c.data();
-            let data = cov.data_mut();
+            let data = m.data_mut();
             for y in 0..bh as usize {
                 for x in 0..bw as usize {
-                    let m = cd[(by as usize + y) * cw as usize + bx as usize + x] as u32;
+                    let k = cd[(by as usize + y) * cw as usize + bx as usize + x] as u32;
                     let v = &mut data[y * bw as usize + x];
-                    *v = ((*v as u32 * m + 127) / 255) as u8;
+                    *v = ((*v as u32 * k + 127) / 255) as u8;
                 }
             }
         }
@@ -697,7 +769,7 @@ impl Canvas {
         p.shader
             .transform(Transform::from_translate(-bx as f32, -by as f32).pre_concat(matrix));
         if let Some(r) = Rect::from_xywh(0.0, 0.0, bw as f32, bh as f32) {
-            sub.fill_rect(r, &p, Transform::identity(), Some(&cov));
+            sub.fill_rect(r, &p, Transform::identity(), Some(&m));
         }
         let src = sub.data();
         let dst = self.pm.data_mut();
