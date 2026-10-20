@@ -180,6 +180,15 @@ Watch folders z importowanego configu też uruchamiają zadania.
   własny hotkey z `PerformActions`, nowy watch folder),
   `backup::tests::ones_own_backup_comes_back_as_it_was`,
   `backup::tests::a_settings_file_that_is_not_json_fails_the_import`.
+- Ścieżki programów (commit `da9b31e`): własna ścieżka FFmpeg
+  (`FFmpegOptions.OverrideCLIPath` + `CLIPath`, w ustawieniach domyślnych i hotkeyów),
+  której to zadanie wcześniej nie uruchamiało, wraca do FFmpeg z Komponentów
+  (`OverrideCLIPath = false`, `CLIPath = ""`) i jest wymieniona w komunikacie po imporcie;
+  ścieżka z wyłączonym przełącznikiem nie jest uruchamiana i zostaje bez zmian. To jedyna
+  ścieżka do programu w ustawieniach: yt-dlp i ExifTool są wyszukiwane w `Tools` i
+  typowych miejscach, nie czytane z configu, a `BrowserPath` jest tylko przechowywany
+  (linki idą przez `/usr/bin/open`). Test:
+  `backup::tests::an_ffmpeg_path_a_backup_brings_goes_back_to_the_component`.
 
 ### [Średnia] S3 — brak limitów przy dekodowaniu obrazów z serwera i z adresów usera (DoS pamięcią)
 `modlight-app/src/media.rs:75` (`decode_still`), `:100,:107` (animacje),
@@ -356,6 +365,6 @@ nie tworzy (`UploadersConfig.json`, `Queue.json`) i stosuje config w całości. 
 naprawa W1+W2: biała lista nazw dozwolonych do importu = dokładnie to, co eksport zapisuje.
 
 Stan po poprawkach (gałąź `app-secfix`): W1 `735b6a4`, W2 `735b6a4` + `ce46e09`,
-W3 `ece123a`, S3 `efb151c`; S4 bez zmian (bez działania). `cargo fmt`, `cargo clippy
---workspace --all-targets -- -D warnings` i `cargo test --workspace` zielone (557 zdanych,
-0 niezdanych, 1 pominięty ręczny).
+W3 `ece123a` + `da9b31e` (ścieżka FFmpeg), S3 `efb151c`; S4 bez zmian (bez działania).
+`cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` i `cargo test
+--workspace` zielone (558 zdanych, 0 niezdanych, 1 pominięty ręczny).
