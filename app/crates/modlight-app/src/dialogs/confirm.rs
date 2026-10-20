@@ -22,6 +22,10 @@ pub enum ConfirmAction {
     DuplicatesTrash,
     /// A file on this Mac, to the Trash (the desktop notice's "Delete file").
     DeleteLocalFile(std::path::PathBuf),
+    /// A component we fetched, deleted from its folder (Settings -> Components, Remove).
+    RemoveComponent(String),
+    /// Settings -> Backup, Reset settings (`ResetAsync`).
+    ResetSettings,
 }
 
 #[derive(Clone, Debug, PartialEq)]

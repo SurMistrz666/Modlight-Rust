@@ -17,15 +17,36 @@ use egui::{
 use crate::theme::{Colors, Weight, icon_family};
 
 /// A text run: size, weight and colour.
+///
+/// Inter's Latin subsets have no "→" (upstream's hints use it for menu paths, "After
+/// capture tasks → Perform actions"); it is drawn with Lucide's arrow instead.
 pub fn job(text: &str, size: f32, weight: Weight, color: Color32) -> LayoutJob {
-    LayoutJob::single_section(
-        text.to_string(),
-        TextFormat {
-            font_id: FontId::new(size, weight.family()),
-            color,
-            ..Default::default()
-        },
-    )
+    let format = TextFormat {
+        font_id: FontId::new(size, weight.family()),
+        color,
+        ..Default::default()
+    };
+    if !text.contains('\u{2192}') {
+        return LayoutJob::single_section(text.to_string(), format);
+    }
+    let arrow = TextFormat {
+        font_id: FontId::new(size, icon_family()),
+        color,
+        valign: egui::Align::Center,
+        ..Default::default()
+    };
+    let mut job = LayoutJob::default();
+    for (index, part) in text.split('\u{2192}').enumerate() {
+        if index > 0 {
+            job.append(
+                &modlight_core::icons::ARROW_RIGHT.to_string(),
+                0.0,
+                arrow.clone(),
+            );
+        }
+        job.append(part, 0.0, format.clone());
+    }
+    job
 }
 
 /// A text run trimmed to `max_width` on at most `max_rows` lines, with an ellipsis.
@@ -436,6 +457,11 @@ impl Look {
     pub fn icon(mut self, size: f32, color: Option<Color32>) -> Look {
         self.icon_size = size;
         self.icon_color = color;
+        self
+    }
+
+    pub fn spacing(mut self, spacing: f32) -> Look {
+        self.spacing = spacing;
         self
     }
 

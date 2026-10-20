@@ -71,3 +71,36 @@ pub fn active_window_fullscreen() -> bool {
 pub fn active_window_fullscreen() -> bool {
     false
 }
+
+/// Raise a window of this app, found by its title, above the menu bar and the Dock and
+/// onto every Space, as the region capture overlay must be (upstream's overlay covers the
+/// taskbar). Main thread only; returns whether the window was found.
+#[cfg(target_os = "macos")]
+pub fn raise_overlay(title: &str) -> bool {
+    use objc2_app_kit::{NSApplication, NSWindowCollectionBehavior};
+    use objc2_foundation::MainThreadMarker;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let mut found = false;
+    for window in app.windows().iter() {
+        if window.title().to_string() == title {
+            // NSScreenSaverWindowLevel: over the menu bar, the Dock and full-screen apps.
+            window.setLevel(1000);
+            window.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary
+                    | NSWindowCollectionBehavior::Stationary,
+            );
+            found = true;
+        }
+    }
+    found
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn raise_overlay(_title: &str) -> bool {
+    false
+}

@@ -104,13 +104,8 @@ impl AppState {
                 if adopted {
                     // The adopted document can carry the skin, the language and the
                     // library's switches: read them back as the rest of the app sees them.
-                    state.options = state.config.theme_options();
-                    state.library_panel = state.config.library_panel();
-                    state.folders_section = state.config.folders_section();
-                    state.files_section = state.config.files_section();
-                    let language = state.config.language();
-                    state.set_language_setting(language);
-                    state.refresh_theme(Some(ctx));
+                    // Hotkeys, watch folders and upload limits follow too.
+                    state.apply_settings_document(Some(ctx));
                 }
                 if !matches!(report.apply, SyncApply::None)
                     && let Err(error) = state.config.save()

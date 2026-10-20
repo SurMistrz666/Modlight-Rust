@@ -93,6 +93,26 @@ pub fn hour_to_12(hour: u32) -> String {
     add_zeroes_number(i64::from(hour), 2)
 }
 
+thread_local! {
+    /// A fixed generator for QA renders (`set_thread_seed`); the system one otherwise.
+    static SEEDED: std::cell::RefCell<Option<rand::rngs::StdRng>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Draw from this thread's QA generator when one is set (pictures that must not change
+/// between runs), from the operating system's otherwise.
+pub fn set_thread_seed(seed: Option<u64>) {
+    use rand::SeedableRng;
+    SEEDED.with(|cell| *cell.borrow_mut() = seed.map(rand::rngs::StdRng::seed_from_u64));
+}
+
+/// Run `f` with this thread's generator.
+pub fn with_rng<R>(f: impl FnOnce(&mut dyn rand::RngCore) -> R) -> R {
+    SEEDED.with(|cell| match cell.borrow_mut().as_mut() {
+        Some(rng) => f(rng),
+        None => f(&mut rand::rng()),
+    })
+}
+
 /// `Helpers.GetRandomChar`: one character of `chars`, every one equally likely.
 ///
 /// Upstream draws from `RandomNumberGenerator`; `rand`'s thread generator is a CSPRNG
@@ -103,7 +123,9 @@ pub fn get_random_char(chars: &str) -> Option<char> {
     if count == 0 {
         return None;
     }
-    chars.chars().nth(rand::rng().random_range(0..count))
+    chars
+        .chars()
+        .nth(with_rng(|rng| rng.random_range(0..count)))
 }
 
 /// `Helpers.GetRandomString`: `length` characters of `chars`.
@@ -113,7 +135,7 @@ pub fn get_random_string(chars: &str, length: usize) -> String {
 
 /// `RandomCrypto.Pick`: one element, every one equally likely; `None` when empty.
 pub fn pick<T>(items: &[T]) -> Option<&T> {
-    items.choose(&mut rand::rng())
+    with_rng(|rng| items.choose(rng))
 }
 
 /// `Helpers.RepeatGenerator`: `count` results of `generator` one after another; nothing

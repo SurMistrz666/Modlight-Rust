@@ -79,6 +79,26 @@ pub enum Command {
     CopyText(String),
     /// Open a file with its app (`FileHelpers.OpenFile`).
     OpenFile(std::path::PathBuf),
+
+    // Capturing (`MainMenuBuilder.BuildCaptureMenu`, the Capture tab, the hotkeys).
+    /// A capture with the default task settings; `true` hides the main window first.
+    Capture(modlight_core::capture::CaptureKind, bool),
+    StartRecording(
+        modlight_core::recording::ScreenRecordOutput,
+        crate::capture_flow::RecordStartMethod,
+    ),
+    RunJob(modlight_core::hotkeys::HotkeyType),
+    ToggleHotkeys,
+    ToggleShowCursor,
+    SetScreenshotDelay(i64),
+    OpenAutoCapture,
+    OpenScrollingCapture,
+    /// An entry of the quick task menu, by position.
+    QuickTask(usize),
+    /// An entry of a menu whose owner reads the position itself; never run.
+    Local(usize),
+    /// `MainFormCommand.About`.
+    ShowAbout,
 }
 
 impl AppState {
@@ -167,6 +187,41 @@ impl AppState {
             Command::OpenScreenshotsFolder => self.open_screenshots_folder(),
             Command::CopyText(text) => self.copy_text(&text),
             Command::OpenFile(path) => self.effects.push(crate::state::Effect::OpenFile(path)),
+            Command::Capture(kind, auto_hide) => self.capture(kind, auto_hide),
+            Command::StartRecording(output, method) => {
+                let settings = self.default_task_settings();
+                self.start_screen_recording(output, method, settings);
+            }
+            Command::RunJob(job) => {
+                let settings = self.default_task_settings();
+                self.execute_job(job, settings);
+            }
+            Command::ToggleHotkeys => self.toggle_hotkeys(),
+            Command::ToggleShowCursor => self.toggle_show_cursor(),
+            Command::SetScreenshotDelay(seconds) => self.set_screenshot_delay(seconds as f64),
+            Command::OpenAutoCapture => {
+                let settings = self.default_task_settings();
+                self.open_auto_capture(settings);
+            }
+            Command::OpenScrollingCapture => {
+                let settings = self.default_task_settings();
+                self.open_scrolling_capture(settings);
+            }
+            Command::Local(_) => {}
+            Command::ShowAbout => self.show_about(),
+            Command::QuickTask(index) => {
+                let choice = self
+                    .captures
+                    .quick_menu
+                    .as_ref()
+                    .map(|(menu, _)| menu.choice(index));
+                match choice {
+                    Some(Some(choice)) => self.quick_menu_finished(choice),
+                    // "Edit this menu...": the editor window (`QuickTaskMenuEditor`).
+                    Some(None) => self.open_quick_task_menu_editor(),
+                    None => {}
+                }
+            }
         }
     }
 
@@ -178,5 +233,9 @@ impl AppState {
             return;
         }
         self.tab = tab;
+        // `AdminView` reads the server only when its tab is opened.
+        if tab == Tab::Admin {
+            self.server_tab_show();
+        }
     }
 }

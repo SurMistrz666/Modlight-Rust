@@ -2,21 +2,31 @@
 //! formats, skins, icons, settings and their sync, the account, and the library's logic.
 
 pub mod account;
+pub mod admin;
+pub mod backup;
+pub mod capture;
 pub mod config;
 pub mod culture;
+pub mod debug_log;
 pub mod dotnet;
 pub mod format;
 pub mod history;
+pub mod hotkeys;
 pub mod icons;
 pub mod l10n;
 pub mod library;
 pub mod messages;
 pub mod names;
+pub mod recording;
 pub mod sync;
 pub mod tasks;
 pub mod theme;
 pub mod upload;
 pub mod watch;
+// Phase 3, media: components, the Download tab, the app's own updates.
+pub mod components;
+pub mod download;
+pub mod update;
 
 /// The product's name, as upstream's `Program.AppName`.
 pub const APP_NAME: &str = "Modlight";

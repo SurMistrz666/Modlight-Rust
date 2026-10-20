@@ -722,6 +722,10 @@ impl AppState {
                     log::warn!("Modlight: {} could not be deleted: {error}", path.display());
                 }
             }
+            ConfirmAction::RemoveComponent(id) => {
+                crate::components_window::remove_confirmed(self, &id)
+            }
+            ConfirmAction::ResetSettings => self.reset_settings_confirmed(),
         }
     }
 

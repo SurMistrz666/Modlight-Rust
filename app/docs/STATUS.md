@@ -13,15 +13,16 @@ Snapshots of every screen below that is drawn live in
 | Upstream | State | Notes |
 |---|---|---|
 | Shell: title band, tab strip, storage chip, account button and menu, settings menu | done | |
-| Tray icon and menu (`TrayIconService`) | partial | Account, Upload, after-capture and after-upload tasks, Settings, screenshots folder, recent items, Show Modlight, Exit, built from the same entries as the window's menus. Capture, Tools and the hotkey switch come with phase 3. Not yet checked in a real window. |
+| Tray icon and menu (`TrayIconService`) | partial | Account, Capture, Upload, Tools, after-capture and after-upload tasks, the hotkey switch, Settings, screenshots folder, recent items, Show Modlight, Exit, built from the same entries as the window's menus. Not yet checked in a real window. |
 | Toasts in the window corner (`UploadToastViewModel`) | done | |
 | My space tab | done | See below. |
 | Upload tab (`UploadView`) | done | Transfers with progress, speed and time left; the offline queue with countdowns, Send now and Cancel; history from `History.db` and this session's tasks, with copy, open and Try again. Snapshots `tab-upload`, `tab-upload-busy`. |
-| Download tab (`DownloadView`, yt-dlp) | phase 3 | The tab shows its plan card. |
-| Capture tab tiles | partial | Tiles drawn; the captures are phase 3. |
-| Tools tab cards | partial | Cards drawn from the same list as upstream; the tools are phases 3 to 5. |
-| Server tab (`AdminView`, disk report) | phase 3 | The tab shows its plan card; the API call is ported (`get_disk_report`). |
-| Hotkey problem banner (`HotkeyProblemViewModel`) | phase 3 | |
+| Download tab (`DownloadView`, yt-dlp) | done | Queue with pause/resume/cancel/retry/remove, format and destination strip, folder, ffmpeg and yt-dlp notices, error wording, update-and-retry, upload through the task flow. Not run against a real yt-dlp in a window yet. Snapshots `tab-download`, `tab-download-busy`, `tab-download-missing`, `download-youtube`. |
+| YouTube sign-in (`YouTubeSignInForm`, `YouTubeCookies`) | partial | WKWebView window; never opened by automation; real-window check needed. |
+| Capture tab (`IsCreateSelected`) | done | Tiles with their shortcuts, the capture menu, every capture kind (`capture_flow`). Snapshots `tab-create`, `tab-create-problem`, `capture-menu`. |
+| Tools tab cards | partial | Cards drawn from the same list as upstream; scrolling capture, auto capture, screen recording and the image editor selector run; the other tools are phases 4 and 5. |
+| Server tab (`AdminView`, disk report) | done | Read when opened (fresh for 2 min) and on Refresh; 404 settled through `/api/me`. Snapshots `tab-server`, `tab-server-problem`, `tab-server-loading`. |
+| Hotkey problem notice (`HotkeyProblemViewModel`) | done | On the Capture tab, with "Change shortcut". Snapshot `tab-create-problem`. |
 
 ## My space (`Presentation/MySpace`)
 
@@ -50,10 +51,15 @@ Snapshots of every screen below that is drawn live in
 | Navigation, search box, every page's header | done |
 | Account: profile, links, storage | done |
 | Appearance: theme and colours | done |
-| Application: language and tray | done |
-| Sharing: copy formats, from clipboard, upload limits, history | phase 3 (the settings are read and honoured; their page is not drawn yet) |
-| Tools: watch folders | phase 3 (watch folders run from the settings file; the page to edit them is not drawn yet) |
-| Capture, recording, text from image, file names, shortcuts, sounds, editor, external programs, main window tiles, integration, components, local folders, backup, print, proxy, advanced | phase 3 |
+| Application: language and tray (with tray actions, updates card when a release host is built in), macOS integration, components, local folders, backup and cleanup, print, proxy, advanced | done (print's "Image print settings" waits for printing; proxy settings are stored, not applied) |
+| Sharing: copy formats (with their editor), from clipboard, upload limits, history | done |
+| Capture: region, screenshots (preconfigured region through the overlay), image format, effects, thumbnails, file names (previews) | done (effects configuration is phase 5) |
+| Screen recording page and FFmpeg options window (`FFmpegOptionsWindow`) | done; snapshots `settings-recorder`, `ffmpeg-options*` |
+| Text from image | done as upstream's "languages unavailable" state until OCR (phase 5) |
+| Sounds and notifications (with the notification buttons editor) | done |
+| Tools: editor, colour picker, external programs (with the action editor), watch folders (with their editor) | done |
+| Keyboard shortcuts (`HotkeySettingsView`) and one hotkey's settings window (`SettingsWindow(TaskSettings)`) | done; snapshots `settings-hotkeys*`, `hotkey-task-*` |
+| Advanced: application options, capture options | done |
 
 ## Windows reached from the task flow
 
@@ -63,9 +69,10 @@ Snapshots of every screen below that is drawn live in
 | Desktop notice after a task, with its image, buttons and click actions | done (snapshot `notification-upload`) |
 | Before upload, after upload, large file warning, multi-upload confirmation, file exists, message box | done (snapshots) |
 | Drag and drop upload, clipboard upload, paste (text with language), text upload, shorten URL, URL upload | done (snapshots) |
-| After capture, auto capture, image editor selector, quick task menu editor | phase 3 |
-| First run (`FirstTimeConfig`), about, debug log, components | phase 3 |
-| History and image history windows (`ShareX.HistoryLib` views) | phase 3 |
+| After capture, auto capture, image editor selector, quick task menu and its editor | done (snapshots `after-capture*`, `auto-capture`, `editor-selector`, `quick-task-*`) |
+| First run (`FirstTimeConfig`), about, debug log, components | done (snapshots `first-run`, `about`, `debug-log*`, `components`) |
+| Region capture overlay, recording frame and toolbar, scrolling capture window | done in drawing and behaviour with the fake desktop; real-window checks listed in `docs/handoff/app-3.md` (snapshots `region-capture*`, `recording-toolbar*`, `scrolling-capture`) |
+| History and image history windows (`ShareX.HistoryLib` views) | not done (outside the phase 3 brief; the history store and the Upload tab's history are done) |
 | Image editor | phase 4 |
 | Image effects and the other ShareX tools | phase 5 |
 
@@ -81,11 +88,12 @@ Snapshots of every screen below that is drawn live in
 | Offline queue (`ModlightUploadQueue`, `ModlightQueueStore`, `Queue.json`) and resumable uploads (tus) | done; resume after a cut and after a restart tested against the reference server |
 | History store (`History.db`) | done (same table and value shapes as the Windows app) |
 | Watch folders | done (FSEvents; see `MACOS.md`) |
-| Captures, recording, hotkeys, components with pinned SHA-256, yt-dlp | phase 3 |
+| Captures (fullscreen, monitor, window, region, last/custom region and window, auto, scrolling), recording (video and GIF through ffmpeg, two-pass, pause), hotkeys, components with pinned SHA-256, yt-dlp | done; captures tested from the fake desktop through upload to the reference server and back (`modlight-app/tests/capture_upload.rs`), recording against Homebrew's ffmpeg (`modlight-core/tests/recording.rs`) |
 
 ## Packaging
 
 | Upstream | State |
 |---|---|
 | Installer | done as `scripts/build-app.sh` (`MACOS.md`) |
-| Update check (`ModlightUpdateChecker`, fixed host) | phase 3 |
+| Update check (`ModlightUpdateChecker`, fixed host) | done, off unless `MODLIGHT_DEFAULT_HOST` is set at build time; `.dmg`/`.zip` only, revealed in Finder |
+| Settings backup (`SettingManager.Export/Import/ResetSettings`) | done (`modlight_core::backup`) |
