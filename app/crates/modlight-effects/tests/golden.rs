@@ -537,10 +537,6 @@ fn pixels_match_upstream() {
         if case.get("error").is_some() || !ported(id) {
             continue;
         }
-        if let Some(why) = skipped(id) {
-            report.push(format!("{name}\tskipped\t{why}"));
-            continue;
-        }
         let Some(effect) = reg.get(id) else {
             failures.push(format!("{name}: effect missing"));
             continue;
@@ -568,6 +564,11 @@ fn pixels_match_upstream() {
         if let Some(o) = &out {
             ours.save(o.join("actual").join(format!("{name}.png")))
                 .unwrap();
+        }
+        if let Some(why) = skipped(id) {
+            // Rendered (and saved for review) but not compared.
+            report.push(format!("{name}\tskipped\t{why}"));
+            continue;
         }
         compared += 1;
         if case["deterministic"] == Value::Bool(false) || RANDOM_SEEDED.contains(&id) {
