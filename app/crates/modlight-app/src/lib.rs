@@ -3,6 +3,7 @@
 //! `modlight-api`, the rules and texts in `modlight-core`, the platform in
 //! `modlight-macos`.
 
+pub mod admin_tab;
 pub mod app;
 pub mod app_pages;
 pub mod capture_flow;
