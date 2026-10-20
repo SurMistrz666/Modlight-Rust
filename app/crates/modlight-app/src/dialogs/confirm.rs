@@ -24,6 +24,8 @@ pub enum ConfirmAction {
     DeleteLocalFile(std::path::PathBuf),
     /// A component we fetched, deleted from its folder (Settings -> Components, Remove).
     RemoveComponent(String),
+    /// Settings -> Backup, Reset settings (`ResetAsync`).
+    ResetSettings,
 }
 
 #[derive(Clone, Debug, PartialEq)]

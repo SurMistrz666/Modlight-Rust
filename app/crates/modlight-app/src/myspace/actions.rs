@@ -725,6 +725,7 @@ impl AppState {
             ConfirmAction::RemoveComponent(id) => {
                 crate::components_window::remove_confirmed(self, &id)
             }
+            ConfirmAction::ResetSettings => self.reset_settings_confirmed(),
         }
     }
 

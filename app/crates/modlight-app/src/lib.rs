@@ -4,6 +4,7 @@
 //! `modlight-macos`.
 
 pub mod app;
+pub mod app_pages;
 pub mod capture_flow;
 pub mod capture_windows;
 pub mod commands;

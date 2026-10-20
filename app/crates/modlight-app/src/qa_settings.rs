@@ -30,6 +30,20 @@ pub const PAGES: &[(&str, &str)] = &[
         "settings-notification-buttons",
         "task.general-notifications",
     ),
+    ("settings-integration", "application.integration"),
+    ("settings-paths", "application.paths"),
+    ("settings-backup", "application.settings"),
+    ("settings-main-window", "application.main-window"),
+    ("settings-copy-formats", "application.clipboard-formats"),
+    (
+        "settings-copy-format-editor",
+        "application.clipboard-formats",
+    ),
+    ("settings-upload-limits", "application.upload"),
+    ("settings-history", "application.history"),
+    ("settings-print", "application.print"),
+    ("settings-proxy", "application.proxy"),
+    ("settings-advanced", "application.advanced"),
 ];
 
 /// The screens this module draws.
@@ -51,6 +65,17 @@ pub const SCREENS: &[&str] = &[
     "settings-action-editor",
     "settings-watch-folder-editor",
     "settings-notification-buttons",
+    "settings-integration",
+    "settings-paths",
+    "settings-backup",
+    "settings-main-window",
+    "settings-copy-formats",
+    "settings-copy-format-editor",
+    "settings-upload-limits",
+    "settings-history",
+    "settings-print",
+    "settings-proxy",
+    "settings-advanced",
     "ffmpeg-options",
     "ffmpeg-options-video",
     "ffmpeg-options-audio",
@@ -94,6 +119,18 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         if matches!(screen, "settings-actions" | "settings-action-editor") {
             sample_lists(state);
         }
+        if matches!(
+            screen,
+            "settings-copy-formats" | "settings-copy-format-editor"
+        ) {
+            state.config.set(
+                "ClipboardContentFormats",
+                json!([
+                    {"Description": "Markdown link", "Format": "[$filename]($url)"},
+                    {"Description": "HTML image", "Format": "<img src=\"$url\" alt=\"$filenamenoext\">"}
+                ]),
+            );
+        }
         let mut window = crate::settings::SettingsWindow::new(section, &state.options.skin);
         window.task_pages.selected_action = (screen == "settings-actions").then_some(0);
         window.task_pages.editor = match screen {
@@ -115,6 +152,20 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
             "settings-notification-buttons" => Some(TaskEditor::Buttons(ButtonsEditor::new(None))),
             _ => None,
         };
+        if screen == "settings-copy-formats" {
+            window.app_pages.selected_format = Some(0);
+        }
+        if screen == "settings-copy-format-editor" {
+            let format = state
+                .config
+                .get("ClipboardContentFormats")
+                .and_then(|l| l.get(0))
+                .cloned();
+            window.app_pages.editor = Some(crate::app_pages::FormatEditor::new(
+                Some(0),
+                format.as_ref(),
+            ));
+        }
         state.windows.settings = Some(window);
         return Some(vec2(crate::settings::WIDTH, crate::settings::HEIGHT));
     }
