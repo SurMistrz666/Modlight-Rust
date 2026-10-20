@@ -73,4 +73,10 @@
   <data name="AccountSignedOutSync" xml:space="preserve">
     <value>Your skin and your settings follow you to another computer.</value>
   </data>
+  <data name="FirstRunSubtitle" xml:space="preserve">
+    <value>Choose how Modlight works with macOS.</value>
+  </data>
+  <data name="FirstRunOptionsLater" xml:space="preserve">
+    <value>You can change these options later in Application settings → macOS integration.</value>
+  </data>
 </root>

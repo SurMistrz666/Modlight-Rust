@@ -89,6 +89,8 @@ pub const SCREENS: &[&str] = &[
     "about",
     "debug-log",
     "debug-log-upload",
+    "first-run",
+    "editor-selector",
     "ffmpeg-options",
     "ffmpeg-options-video",
     "ffmpeg-options-audio",
@@ -202,6 +204,21 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         window.hotkeys.confirm_reset = screen == "settings-hotkeys-reset";
         state.windows.settings = Some(window);
         return Some(vec2(crate::settings::WIDTH, crate::settings::HEIGHT));
+    }
+    if screen == "first-run" {
+        state.show_first_run();
+        if let Some(window) = state.windows.first_run.as_mut() {
+            // As a copy in /Applications would see it.
+            window.startup = modlight_macos::integration::StartupState::Disabled;
+        }
+        return Some(vec2(
+            crate::first_run::FIRST_RUN_SIZE.0,
+            crate::first_run::FIRST_RUN_SIZE.1,
+        ));
+    }
+    if screen == "editor-selector" {
+        state.windows.editor_selector = Some(crate::first_run::EditorSelector::default());
+        return Some(vec2(crate::first_run::SELECTOR_WIDTH, 300.0));
     }
     if screen == "about" {
         state.show_about();
@@ -348,6 +365,21 @@ fn sample_disk_report() -> modlight_api::DiskReport {
 pub fn draw(screen: &str, ui: &mut Ui, state: &mut AppState) -> Option<Option<f32>> {
     if !is_dialog(screen) {
         return None;
+    }
+    if screen == "first-run" {
+        let colors = state.colors.clone();
+        if let Some(window) = state.windows.first_run.as_ref() {
+            let _ = crate::first_run::first_run_ui(ui, window, &colors);
+        }
+        return Some(None);
+    }
+    if screen == "editor-selector" {
+        let colors = state.colors.clone();
+        if let Some(window) = state.windows.editor_selector.as_mut() {
+            let _ = crate::first_run::selector_ui(ui, window, &colors);
+            return Some(Some(window.content_height));
+        }
+        return Some(None);
     }
     if screen == "about" {
         let colors = state.colors.clone();

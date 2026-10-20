@@ -137,6 +137,8 @@ pub struct AppState {
     pub captures: crate::capture_flow::Captures,
     /// The Server tab's disk report.
     pub server_tab: crate::admin_tab::AdminTab,
+    /// No settings file existed when the app started (the first-run window opens).
+    pub first_launch: bool,
     /// The scrolling capture window.
     pub scrolling: Option<crate::scrolling::ScrollingWindow>,
     /// The Download tab (phase 3, media).
@@ -236,6 +238,7 @@ impl AppState {
             qa_clipboard: None,
             captures: crate::capture_flow::Captures::new(&env_profile, env_qa),
             server_tab: Default::default(),
+            first_launch: false,
             scrolling: None,
             downloads: Default::default(),
             components: Default::default(),

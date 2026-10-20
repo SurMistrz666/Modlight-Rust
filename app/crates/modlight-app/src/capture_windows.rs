@@ -217,6 +217,65 @@ impl ModlightApp {
             }
         }
 
+        // First-time configuration (CenterScreen, fixed size).
+        if let Some(window) = state.windows.first_run.as_mut() {
+            use crate::first_run as f;
+            let (asks, close) = dialog_resizable(
+                ctx,
+                "first-run",
+                "Modlight",
+                vec2(f::FIRST_RUN_SIZE.0, f::FIRST_RUN_SIZE.1),
+                vec2(f::FIRST_RUN_SIZE.0, f::FIRST_RUN_SIZE.1),
+                Placement::screen(true),
+                |ui| f::first_run_ui(ui, window, &colors),
+            );
+            let mut finished = close;
+            for ask in asks {
+                match ask {
+                    f::FirstRunAsk::Ok => finished = true,
+                    f::FirstRunAsk::StartAtLogin(on) => {
+                        if !state.env.qa
+                            && let Some(window) = state.windows.first_run.as_mut()
+                        {
+                            match modlight_macos::integration::set_startup(on) {
+                                Ok(startup) => {
+                                    window.startup = startup;
+                                    window.status.clear();
+                                }
+                                Err(error) => {
+                                    window.status = error;
+                                    window.startup = modlight_macos::integration::startup_state();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if finished {
+                state.windows.first_run = None;
+            }
+        }
+
+        // The image editor selector (CenterOwner, height of its content).
+        if let Some(window) = state.windows.editor_selector.as_mut() {
+            use crate::first_run as f;
+            let height = window.content_height.max(220.0);
+            let (choice, close) = dialog(
+                ctx,
+                "editor-selector",
+                t(s::ImageEditorSelectorWindow_Title),
+                vec2(f::SELECTOR_WIDTH, height),
+                Placement::owner(main),
+                true,
+                |ui| f::selector_ui(ui, window, &colors),
+            );
+            if let Some(legacy) = choice {
+                state.editor_selector_finished(Some(legacy));
+            } else if close {
+                state.editor_selector_finished(None);
+            }
+        }
+
         // About (CenterScreen).
         if let Some(window) = state.windows.about.as_mut() {
             use crate::about_window as a;
