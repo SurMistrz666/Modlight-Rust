@@ -2,6 +2,7 @@
 //! formats, skins, icons, settings and their sync, the account, and the library's logic.
 
 pub mod account;
+pub mod backup;
 pub mod capture;
 pub mod config;
 pub mod culture;
