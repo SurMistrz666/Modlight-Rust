@@ -347,32 +347,41 @@ pub fn coverage(lines: &[(Point, Point)], w: u32, h: u32) -> Mask {
 /// per pixel row sampled at their centres, span ends rounded to quarter pixels, coverage
 /// summed as `SuperBlitter::blitH` does (64 per full sub-row, 63 on the last).
 pub fn supersampled(lines: &[(Point, Point)], w: u32, h: u32) -> Mask {
+    // `SkEdge::setLine` in 26.6 and 16.16 fixed point.
     struct Edge {
-        x0: f32,
-        y0: f32,
-        slope: f32,
+        fx: i32,
+        fdx: i32,
         top: i32,
         bot: i32,
         winding: i32,
     }
     let mut edges = Vec::with_capacity(lines.len());
     for &(a, b) in lines {
-        let (mut p0, mut p1) = (a, b);
+        let scale = 256.0f32; // 1 << (SHIFT + 6)
+        let (mut x0, mut y0) = ((a.x * scale) as i32, (a.y * scale) as i32);
+        let (mut x1, mut y1) = ((b.x * scale) as i32, (b.y * scale) as i32);
         let mut winding = 1;
-        if p0.y > p1.y {
-            std::mem::swap(&mut p0, &mut p1);
+        if y0 > y1 {
+            std::mem::swap(&mut x0, &mut x1);
+            std::mem::swap(&mut y0, &mut y1);
             winding = -1;
         }
-        let (x0, y0, x1, y1) = (p0.x * 4.0, p0.y * 4.0, p1.x * 4.0, p1.y * 4.0);
-        let top = (y0 + 0.5).floor() as i32;
-        let bot = (y1 + 0.5).floor() as i32;
+        let top = (y0 + 32) >> 6;
+        let bot = (y1 + 32) >> 6;
         if top == bot {
             continue;
         }
+        let (dxv, dyv) = (x1 - x0, y1 - y0);
+        let slope = if (dxv as i64) >= i16::MIN as i64 && (dxv as i64) <= i16::MAX as i64 {
+            (dxv << 16) / dyv
+        } else {
+            (((dxv as i64) << 16) / dyv as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32
+        };
+        let dy = (top << 6) + 32 - y0;
+        let fx = (x0 + ((slope as i64 * dy as i64) >> 16) as i32) << 10;
         edges.push(Edge {
-            x0,
-            y0,
-            slope: (x1 - x0) / (y1 - y0),
+            fx,
+            fdx: slope,
             top,
             bot,
             winding,
@@ -381,30 +390,32 @@ pub fn supersampled(lines: &[(Point, Point)], w: u32, h: u32) -> Mask {
     let (wi, hi) = (w as i32, h as i32);
     let mut acc = vec![0u32; (wi * hi).max(0) as usize];
     let max_x = wi * 4;
-    let mut xs: Vec<(f32, i32)> = Vec::new();
+    let mut xs: Vec<(i32, i32)> = Vec::new();
     for sy in 0..hi * 4 {
         xs.clear();
         for e in &edges {
             if sy >= e.top && sy < e.bot {
-                xs.push((e.x0 + e.slope * (sy as f32 + 0.5 - e.y0), e.winding));
+                let fx = e.fx.wrapping_add(e.fdx.wrapping_mul(sy - e.top));
+                xs.push((fx, e.winding));
             }
         }
         if xs.len() < 2 {
             continue;
         }
-        xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        xs.sort_by_key(|a| a.0);
         let row = (sy >> 2) as usize * wi as usize;
         let max_value = 64 - (((sy & 3) + 1) >> 2) as u32;
         let mut wind = 0;
-        let mut left = 0f32;
+        let mut left = 0i32;
         for &(x, wdir) in xs.iter() {
             let before = wind;
             wind += wdir;
             if before == 0 && wind != 0 {
                 left = x;
             } else if before != 0 && wind == 0 {
-                let l = ((left + 0.5).floor() as i32).clamp(0, max_x);
-                let r = ((x + 0.5).floor() as i32).clamp(0, max_x);
+                // SkFixedRoundToInt on the 16.16 positions.
+                let l = ((left as i64 + 0x8000) >> 16).clamp(0, max_x as i64) as i32;
+                let r = ((x as i64 + 0x8000) >> 16).clamp(0, max_x as i64) as i32;
                 if r <= l {
                     continue;
                 }

@@ -4,6 +4,7 @@ pub mod adjustments;
 pub mod filters_a;
 pub mod filters_b;
 pub mod filters_c;
+pub mod filters_d;
 pub mod manipulations;
 pub mod remove_background;
 
@@ -18,5 +19,6 @@ pub fn defs() -> Vec<Def> {
     all.extend(filters_a::defs());
     all.extend(filters_b::defs());
     all.extend(filters_c::defs());
+    all.extend(filters_d::defs());
     all
 }
