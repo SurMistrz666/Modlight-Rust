@@ -74,11 +74,20 @@ mod mac {
     use super::WallpaperOptions;
 
     /// The PNG bytes of an `NSImage`'s representation for `scale` (1 or 2), decoded.
+    /// A picture larger than the app decodes anywhere else is refused before the system
+    /// draws it (`NSImage` takes no limits).
     fn image_pixels(image: &NSImage, scale: f64) -> Option<RgbaImage> {
         let size: NSSize = image.size();
+        let (width, height) = (size.width * scale, size.height * scale);
+        if !(width.is_finite() && height.is_finite())
+            || !modlight_core::image_decode::fits(width.ceil() as u64, height.ceil() as u64)
+        {
+            log::warn!("Modlight: a {width} x {height} picture is larger than the app opens.");
+            return None;
+        }
         let mut rect = NSRect::new(
             objc2_foundation::NSPoint::new(0.0, 0.0),
-            NSSize::new(size.width * scale, size.height * scale),
+            NSSize::new(width, height),
         );
         // SAFETY: a valid rect pointer and no hints.
         let cg = unsafe { image.CGImageForProposedRect_context_hints(&mut rect, None, None) }?;
@@ -89,7 +98,9 @@ mod mac {
             rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
         }?;
         let bytes = data.to_vec();
-        image::load_from_memory(&bytes).ok().map(|i| i.to_rgba8())
+        modlight_core::image_decode::from_bytes_as(&bytes, image::ImageFormat::Png)
+            .ok()
+            .map(|i| i.into_rgba8())
     }
 
     // The pre-macOS 15 resize cursors still draw; their successors only exist there.
@@ -196,6 +207,17 @@ mod mac {
         let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &file)?;
         // The picture's own pixels: the representation at its pixel size.
         let reps = image.representations();
+        // The system decodes on demand; a picture claiming more pixels than the app
+        // opens is never asked to.
+        if reps.iter().any(|r| {
+            !modlight_core::image_decode::fits(
+                r.pixelsWide().max(0) as u64,
+                r.pixelsHigh().max(0) as u64,
+            ) && (r.pixelsWide() > 0 || r.pixelsHigh() > 0)
+        }) {
+            log::warn!("Modlight: {} is larger than the app opens.", path.display());
+            return None;
+        }
         let scale = reps
             .iter()
             .map(|r| {
