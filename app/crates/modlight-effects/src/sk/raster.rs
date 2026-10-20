@@ -137,6 +137,133 @@ pub fn flatten(path: &Path, ts: Transform) -> Vec<(Point, Point)> {
     lines
 }
 
+/// `SnapY`: to the nearest quarter pixel.
+fn snap_y(y: f32) -> f32 {
+    (y * 4.0).round() / 4.0
+}
+
+/// The edges Skia's analytic AA works on: line ends with y snapped to quarter pixels, and
+/// curve steps snapped as `SkAnalyticQuadraticEdge::updateQuadratic` snaps them (whole
+/// pixels for steps of two pixels or more, quarters below).
+pub fn flatten_analytic(path: &Path, ts: Transform) -> Vec<(Point, Point)> {
+    let map = |p: Point| {
+        let mut q = [p];
+        ts.map_points(&mut q);
+        q[0]
+    };
+    let mut out = Vec::new();
+    // One curve as a run of points, walked from its top so the snapping goes downwards.
+    let curve = |pts: Vec<Point>, out: &mut Vec<(Point, Point)>| {
+        let reversed =
+            pts.first().map(|p| p.y).unwrap_or(0.0) > pts.last().map(|p| p.y).unwrap_or(0.0);
+        let mut pts = pts;
+        if reversed {
+            pts.reverse();
+        }
+        let n = pts.len();
+        let last_y = snap_y(pts[n - 1].y);
+        let mut snapped = Point::from_xy(pts[0].x, snap_y(pts[0].y));
+        let mut old = pts[0];
+        let mut segs = Vec::with_capacity(n);
+        for (i, p) in pts.iter().enumerate().skip(1) {
+            let next = if i == n - 1 {
+                Point::from_xy(p.x, last_y)
+            } else if (p.y - old.y).abs() >= 2.0 {
+                let dy = p.y - snapped.y;
+                let slope = if dy != 0.0 {
+                    (p.x - snapped.x) / dy
+                } else {
+                    0.0
+                };
+                let ny = last_y.min(p.y.round());
+                Point::from_xy(p.x - slope * (p.y - ny), ny)
+            } else {
+                Point::from_xy(p.x, last_y.min(snap_y(p.y)))
+            };
+            segs.push((snapped, next));
+            snapped = next;
+            old = *p;
+        }
+        if reversed {
+            for (a, b) in segs.into_iter().rev() {
+                out.push((b, a));
+            }
+        } else {
+            out.extend(segs);
+        }
+    };
+    let mut start = Point::zero();
+    let mut last = Point::zero();
+    let line = |a: Point, b: Point, out: &mut Vec<(Point, Point)>| {
+        out.push((
+            Point::from_xy(a.x, snap_y(a.y)),
+            Point::from_xy(b.x, snap_y(b.y)),
+        ));
+    };
+    for seg in path.segments() {
+        match seg {
+            PathSegment::MoveTo(p) => {
+                if last != start {
+                    line(last, start, &mut out);
+                }
+                start = map(p);
+                last = start;
+            }
+            PathSegment::LineTo(p) => {
+                let p = map(p);
+                line(last, p, &mut out);
+                last = p;
+            }
+            PathSegment::QuadTo(c, p) => {
+                let (c, p) = (map(c), map(p));
+                let n = quad_segments(last, c, p);
+                let mut pts = vec![last];
+                for i in 1..=n {
+                    let t = i as f32 / n as f32;
+                    let mt = 1.0 - t;
+                    pts.push(Point::from_xy(
+                        mt * mt * last.x + 2.0 * mt * t * c.x + t * t * p.x,
+                        mt * mt * last.y + 2.0 * mt * t * c.y + t * t * p.y,
+                    ));
+                }
+                curve(pts, &mut out);
+                last = p;
+            }
+            PathSegment::CubicTo(c1, c2, p) => {
+                let (c1, c2, p) = (map(c1), map(c2), map(p));
+                let n = cubic_segments(last, c1, c2, p);
+                let mut pts = vec![last];
+                for i in 1..=n {
+                    let t = i as f32 / n as f32;
+                    let mt = 1.0 - t;
+                    pts.push(Point::from_xy(
+                        mt * mt * mt * last.x
+                            + 3.0 * mt * mt * t * c1.x
+                            + 3.0 * mt * t * t * c2.x
+                            + t * t * t * p.x,
+                        mt * mt * mt * last.y
+                            + 3.0 * mt * mt * t * c1.y
+                            + 3.0 * mt * t * t * c2.y
+                            + t * t * t * p.y,
+                    ));
+                }
+                curve(pts, &mut out);
+                last = p;
+            }
+            PathSegment::Close => {
+                if last != start {
+                    line(last, start, &mut out);
+                }
+                last = start;
+            }
+        }
+    }
+    if last != start {
+        line(last, start, &mut out);
+    }
+    out
+}
+
 /// Exact-area coverage (non-zero winding, overlaps saturating) of closed line loops in a
 /// `w` x `h` mask.
 pub fn coverage(lines: &[(Point, Point)], w: u32, h: u32) -> Mask {
@@ -212,6 +339,108 @@ pub fn coverage(lines: &[(Point, Point)], w: u32, h: u32) -> Mask {
             let c = sum.abs().min(1.0);
             data[row * wi + col] = (c * 255.0 + 0.5) as u8;
         }
+    }
+    mask
+}
+
+/// Skia's supersampled anti-aliasing (`SkScan::SAAFillPath`, SHIFT 2): four sub-scanlines
+/// per pixel row sampled at their centres, span ends rounded to quarter pixels, coverage
+/// summed as `SuperBlitter::blitH` does (64 per full sub-row, 63 on the last).
+pub fn supersampled(lines: &[(Point, Point)], w: u32, h: u32) -> Mask {
+    struct Edge {
+        x0: f32,
+        y0: f32,
+        slope: f32,
+        top: i32,
+        bot: i32,
+        winding: i32,
+    }
+    let mut edges = Vec::with_capacity(lines.len());
+    for &(a, b) in lines {
+        let (mut p0, mut p1) = (a, b);
+        let mut winding = 1;
+        if p0.y > p1.y {
+            std::mem::swap(&mut p0, &mut p1);
+            winding = -1;
+        }
+        let (x0, y0, x1, y1) = (p0.x * 4.0, p0.y * 4.0, p1.x * 4.0, p1.y * 4.0);
+        let top = (y0 + 0.5).floor() as i32;
+        let bot = (y1 + 0.5).floor() as i32;
+        if top == bot {
+            continue;
+        }
+        edges.push(Edge {
+            x0,
+            y0,
+            slope: (x1 - x0) / (y1 - y0),
+            top,
+            bot,
+            winding,
+        });
+    }
+    let (wi, hi) = (w as i32, h as i32);
+    let mut acc = vec![0u32; (wi * hi).max(0) as usize];
+    let max_x = wi * 4;
+    let mut xs: Vec<(f32, i32)> = Vec::new();
+    for sy in 0..hi * 4 {
+        xs.clear();
+        for e in &edges {
+            if sy >= e.top && sy < e.bot {
+                xs.push((e.x0 + e.slope * (sy as f32 + 0.5 - e.y0), e.winding));
+            }
+        }
+        if xs.len() < 2 {
+            continue;
+        }
+        xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let row = (sy >> 2) as usize * wi as usize;
+        let max_value = 64 - (((sy & 3) + 1) >> 2) as u32;
+        let mut wind = 0;
+        let mut left = 0f32;
+        for &(x, wdir) in xs.iter() {
+            let before = wind;
+            wind += wdir;
+            if before == 0 && wind != 0 {
+                left = x;
+            } else if before != 0 && wind == 0 {
+                let l = ((left + 0.5).floor() as i32).clamp(0, max_x);
+                let r = ((x + 0.5).floor() as i32).clamp(0, max_x);
+                if r <= l {
+                    continue;
+                }
+                let (start, stop) = (l, r);
+                let mut fb = start & 3;
+                let mut fe = stop & 3;
+                let mut n = (stop >> 2) - (start >> 2) - 1;
+                if n < 0 {
+                    fb = fe - fb;
+                    n = 0;
+                    fe = 0;
+                } else if fb == 0 {
+                    n += 1;
+                } else {
+                    fb = 4 - fb;
+                }
+                let mut px = (start >> 2) as usize;
+                if fb != 0 {
+                    acc[row + px] += (fb as u32) << 4;
+                    px += 1;
+                }
+                for _ in 0..n {
+                    if px < wi as usize {
+                        acc[row + px] += max_value;
+                    }
+                    px += 1;
+                }
+                if fe != 0 && px < wi as usize {
+                    acc[row + px] += (fe as u32) << 4;
+                }
+            }
+        }
+    }
+    let mut mask = Mask::new(w, h).unwrap();
+    for (d, a) in mask.data_mut().iter_mut().zip(&acc) {
+        *d = (*a - (*a >> 8)).min(255) as u8;
     }
     mask
 }
