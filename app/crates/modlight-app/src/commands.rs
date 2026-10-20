@@ -75,6 +75,8 @@ pub enum Command {
     RetryUpload(std::path::PathBuf),
     ToggleAfterUploadTask(u32),
     ToggleAfterCaptureTask(u32),
+    /// The tray's image effect preset (`SelectedImageEffectPreset` of the defaults).
+    SelectImageEffectPreset(usize),
     OpenScreenshotsFolder,
     CopyText(String),
     /// Open a file with its app (`FileHelpers.OpenFile`).
@@ -184,6 +186,7 @@ impl AppState {
             Command::RetryUpload(path) => self.retry_upload(path),
             Command::ToggleAfterUploadTask(bit) => self.toggle_after_upload_task(bit),
             Command::ToggleAfterCaptureTask(bit) => self.toggle_after_capture_task(bit),
+            Command::SelectImageEffectPreset(index) => self.select_image_effect_preset(index),
             Command::OpenScreenshotsFolder => self.open_screenshots_folder(),
             Command::CopyText(text) => self.copy_text(&text),
             Command::OpenFile(path) => self.effects.push(crate::state::Effect::OpenFile(path)),

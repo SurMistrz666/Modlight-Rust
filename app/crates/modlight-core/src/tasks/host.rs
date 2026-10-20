@@ -126,6 +126,10 @@ pub enum TaskQuestion {
     Annotate(Arc<image::RgbaImage>),
     /// `BeautifyImage`: the editor in task mode with its Background panel open.
     Beautify(Arc<image::RgbaImage>),
+    /// `AddImageEffects` (`TaskHelpers.ApplyImageEffects`): the task's image effect
+    /// preset applied, after the Image effects window when the task asks for it. The
+    /// answer is `Annotated`; `None` (an effect left no picture) ends the task.
+    ImageEffects(Arc<image::RgbaImage>, Box<TaskSettings>),
 }
 
 /// The answer to a [`TaskQuestion`].
@@ -144,7 +148,8 @@ pub enum TaskAnswer {
     FileExists(Option<PathBuf>),
     /// The chosen path, or `None` when the save panel was cancelled.
     SaveAs(Option<PathBuf>),
-    /// The annotated picture, or `None` when the editor was closed without it.
+    /// The annotated picture (or the one image effects made), or `None` when the editor
+    /// was closed without it.
     Annotated(Option<Arc<image::RgbaImage>>),
 }
 

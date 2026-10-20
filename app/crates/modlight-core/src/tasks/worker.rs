@@ -614,8 +614,27 @@ impl WorkerTask {
                 _ => return false,
             }
         }
-        // Image effects arrive with the effects library; until then the picture goes on
-        // as it is.
+        // `TaskHelpers.ApplyImageEffects`: the host applies the preset (and shows the Image
+        // effects window first when the task asks for it); no picture ends the task.
+        if job.has(AfterCaptureTasks::AddImageEffects) {
+            match ctx
+                .channel
+                .ask(
+                    self.id,
+                    TaskQuestion::ImageEffects(image.clone(), Box::new(settings.clone())),
+                )
+                .await
+            {
+                Some(TaskAnswer::Annotated(Some(applied))) => {
+                    image = applied;
+                    self.with(|s| s.image = Some(image.clone()));
+                }
+                _ => {
+                    log::warn!("Error: Applying image effects resulted empty image.");
+                    return false;
+                }
+            }
+        }
         if job.has(AfterCaptureTasks::AnnotateImage) {
             // `TaskHelpers.AnnotateImage`: the editor, waited for; closing it without a
             // picture ends the task.

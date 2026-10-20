@@ -90,6 +90,8 @@ pub const SCREENS: &[&str] = &[
     "image-editor",
     "image-editor-start",
     "image-editor-annotate",
+    "image-editor-effects",
+    "image-editor-effect-dialog",
     // Phase 3, settings (`qa_settings::SCREENS`).
     "settings-capture-region",
     "settings-capture",
@@ -182,6 +184,15 @@ pub const SCREENS: &[&str] = &[
     "image-history-import",
     "print",
     "print-settings",
+    // Phase 5, image effects (`tools::image_effects::SCREENS`).
+    "image-effects",
+    "image-effects-presets",
+    "image-effects-editor",
+    "image-effects-empty",
+    "image-effects-add",
+    "image-effects-gradient",
+    "image-effects-packager",
+    "image-effects-confirm",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

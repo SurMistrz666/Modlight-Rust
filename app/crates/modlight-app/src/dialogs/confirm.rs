@@ -26,6 +26,8 @@ pub enum ConfirmAction {
     RemoveComponent(String),
     /// Settings -> Backup, Reset settings (`ResetAsync`).
     ResetSettings,
+    /// A `.sxie` was imported: turn "Add image effects" on (`ImportImageEffect`).
+    EnableImageEffects,
 }
 
 #[derive(Clone, Debug, PartialEq)]
