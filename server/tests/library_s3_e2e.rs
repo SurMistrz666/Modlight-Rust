@@ -147,6 +147,23 @@ async fn uploads_land_in_s3_and_leave_it_again() {
     assert_eq!(storage.stat(&key).await.unwrap().map(|s| s.size as usize), Some(data.len()));
     assert_eq!(storage.read_buffer(&key).await.unwrap().as_ref(), data.as_slice());
 
+    // ── Security fix 7a: the tus URL of the finished upload (whose object the
+    // media row now owns) neither serves the bytes nor deletes the object ──
+    let get = common::call(&app, Request::get(path.as_str()).body(Body::empty()).unwrap()).await;
+    assert_eq!(get.status, StatusCode::NOT_FOUND, "{}", get.text());
+    let head =
+        common::call(&app, Request::head(path.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap())
+            .await;
+    assert_eq!(head.status, StatusCode::NOT_FOUND);
+    let terminate = common::call(
+        &app,
+        Request::delete(path.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(terminate.status, StatusCode::NOT_FOUND, "{}", terminate.text());
+    assert_eq!(storage.read_buffer(&key).await.unwrap().as_ref(), data.as_slice());
+    assert_eq!(storage.stat(&format!("{key}.info")).await.unwrap(), None);
+
     // ── ShareX into the same bucket ──
     let boundary = "----e2e";
     let mut body = format!(
