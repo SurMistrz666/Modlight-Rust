@@ -38,6 +38,8 @@ pub struct EditorSession {
     finish: Option<Finish>,
     /// The window asked to close and the editor agreed (`CloseRequested`).
     pub closed: bool,
+    /// The title last given to the window.
+    title: String,
 }
 
 /// The editor windows and their counter.
@@ -181,6 +183,7 @@ impl AppState {
             view,
             finish: Some(finish),
             closed: false,
+            title: String::new(),
         });
     }
 
@@ -622,7 +625,39 @@ pub fn editor_viewports(state: &mut AppState, ctx: &egui::Context) {
                     ctx.send_viewport_cmd(ViewportCommand::CancelClose);
                     session.editor.request_close(true);
                 }
-                ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
+                if session.title != title {
+                    session.title = title.clone();
+                    ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
+                }
+                // Picture files dropped from Finder (`OnDrop`): the picture when there is
+                // none yet, an inserted image otherwise.
+                let dropped: Vec<PathBuf> = ctx.input(|i| {
+                    i.raw
+                        .dropped_files
+                        .iter()
+                        .map(|f| f.path().to_path_buf())
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .collect()
+                });
+                for path in dropped {
+                    let is_image = path
+                        .extension()
+                        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+                        .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.as_str()) || e == "ico");
+                    if !is_image {
+                        continue;
+                    }
+                    if let Some(image) = load_image(&path) {
+                        let text = Some(path.to_string_lossy().into_owned());
+                        if session.editor.has_image() {
+                            session.editor.insert_external_image(image, text);
+                        } else {
+                            session.editor.modal = None;
+                            session.editor.load_bitmap(image, text);
+                        }
+                        break;
+                    }
+                }
                 let focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
                 if paste && focused {
                     session.view.paste_shortcut(&mut session.editor);
