@@ -92,7 +92,7 @@ The map of the crate and the effect registry contract are in `EDITOR.md`. Snapsh
 | Effect browser, schema-driven dialog, preview | done | Registry with the editor operations and three sample effects; the effect library plugs in (`EDITOR.md`). |
 | Dialogs: start screen, new image, insert image, emoji picker, exit confirmation, toolbar customisation | done | |
 | Integration: Image editor hotkey and selector, after-capture "Annotate image" (task mode), "Beautify image" (Background panel open), the notice's "Annotate image", save, copy, upload, open, URL, clipboard | done | Print, pin to screen and the screen colour picker say "later" (phase 5). |
-| Region capture's annotation tools (`EditorView` as the overlay's workspace) | not done | `ANNOTATION_TOOLS_AVAILABLE` stays false; what it needs is in `docs/handoff/app-4.md`. |
+| Region capture's annotation tools (`EditorView` as the overlay's workspace) | done | The editor under the overlay (one canvas per display), the tool strip beside the region tool with the options row, keys to the editor first; the annotations go with the captured picture. Snapshot `region-capture-annotate`. |
 
 ## Engine
 

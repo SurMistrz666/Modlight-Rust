@@ -109,10 +109,15 @@ pub struct Canvas {
     text_box_guard: bool,
     /// The overlay was re-rendered this frame (tests).
     pub overlay_renders: u64,
+    /// A host-placed canvas (the region capture's workspace): no zoom, no scrolling.
+    fixed: Option<Geometry>,
 }
 
 impl Canvas {
     fn geometry(&mut self, editor: &Editor, host: Rect, ppp: f32) -> Geometry {
+        if let Some(fixed) = self.fixed {
+            return fixed;
+        }
         let state = editor.background_state();
         let layout = frame::layout(&state, editor.core.canvas_size());
         let z = editor.effective_zoom() as f32;
@@ -219,6 +224,52 @@ impl Canvas {
         g
     }
 
+    /// The canvas placed by its host (`RegionCaptureWindow`'s editor workspace): image
+    /// pixel (0, 0) at `origin`, `z` points per image pixel, in `area`. Only the
+    /// annotations and their chrome are drawn (the host shows the picture); pointer input
+    /// is taken when `input` is set.
+    pub fn show_fixed(
+        &mut self,
+        ui: &mut Ui,
+        editor: &mut Editor,
+        area: Rect,
+        origin: Pos2,
+        z: f32,
+        input: bool,
+    ) {
+        let ppp = ui.ctx().pixels_per_point();
+        let (w, h) = editor.core.canvas_size();
+        let g = Geometry {
+            host: area,
+            origin,
+            z,
+            ppp,
+            image_offset: Vec2::ZERO,
+            frame: vec2(w, h),
+        };
+        self.fixed = Some(g);
+        let response = ui.interact(
+            area,
+            ui.id().with("editor-canvas-fixed"),
+            Sense::click_and_drag(),
+        );
+        if input && editor.has_image() {
+            self.handle_events(ui, editor, &g, response.hovered());
+        } else {
+            self.pressed = None;
+        }
+        let painter = ui.painter().with_clip_rect(area);
+        if editor.has_image() {
+            self.paint_overlay(ui, &painter, editor, &g, false);
+            paint_chrome(ui, &painter, editor, &g);
+            self.text_box(ui, editor, &g);
+            if input {
+                self.update_cursor(ui, editor, &g, response.hovered());
+            }
+        }
+        self.geometry = Some(g);
+    }
+
     // ------------------------------------------------------------------ input
 
     fn handle_events(&mut self, ui: &Ui, editor: &mut Editor, g: &Geometry, hovered: bool) {
@@ -238,6 +289,9 @@ impl Canvas {
                     let m = Modifiers::from_egui(modifiers);
                     if pressed {
                         if !hovered || !g.host.contains(pos) || self.pressed.is_some() {
+                            continue;
+                        }
+                        if button == Button::Middle && self.fixed.is_some() {
                             continue;
                         }
                         if button == Button::Middle {
@@ -339,7 +393,7 @@ impl Canvas {
                 }
                 egui::Event::Zoom(factor) => {
                     // A pinch: one zoom level per 15 % of pinch, throttled like the wheel.
-                    if !hovered {
+                    if !hovered || self.fixed.is_some() {
                         continue;
                     }
                     self.pinch += factor.ln();

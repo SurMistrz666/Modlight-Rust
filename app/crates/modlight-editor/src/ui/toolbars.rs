@@ -334,7 +334,14 @@ fn visible_options(editor: &Editor) -> Vec<Opt> {
 }
 
 /// The tool-options row under the toolbar (`ShowToolOptionsSeparator`).
-fn options_row(ui: &mut Ui, colors: &Colors, editor: &mut Editor, view: Rect, top: f32) -> Rect {
+/// The tool-options row, centred in `view` with its top at `top`.
+pub fn options_row(
+    ui: &mut Ui,
+    colors: &Colors,
+    editor: &mut Editor,
+    view: Rect,
+    top: f32,
+) -> Rect {
     let opts = visible_options(editor);
     let widths: Vec<f32> = opts.iter().map(|o| opt_width(ui, editor, *o)).collect();
     let inner = widths.iter().sum::<f32>() + SPACING * (opts.len().saturating_sub(1)) as f32;
@@ -1049,4 +1056,88 @@ pub fn bottom_toolbar(
         pos2(bar.left(), bar.top() - 8.0),
         bar.max,
     ))
+}
+
+/// The annotation toolbar of the region capture (`CaptureAnnotationToolbar`): the
+/// visible tool buttons only (no crop, cut-out, file, background or effects), left edge
+/// at `left_top`, border 0,1,1,1 and corner 0,0,4,0. `tools_active` is false while the
+/// region tool is in use (no button lit). Returns the strip and the tool clicked.
+pub fn tool_strip(
+    ui: &mut Ui,
+    colors: &Colors,
+    editor: &Editor,
+    left_top: egui::Pos2,
+    tools_active: bool,
+) -> (Rect, Option<EditorTool>) {
+    let items: Vec<_> = editor
+        .visible_toolbar_items()
+        .filter(|i| {
+            i.tool
+                .is_some_and(|t| !matches!(t, EditorTool::Crop | EditorTool::CutOut))
+        })
+        .cloned()
+        .collect();
+    let mut widths = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let sep = if index > 0 && item.separator_visible() {
+            1.0 + SPACING
+        } else {
+            0.0
+        };
+        widths.push(sep);
+    }
+    let inner: f32 = widths.iter().sum::<f32>()
+        + ITEM * items.len() as f32
+        + SPACING * (items.len().saturating_sub(1)) as f32;
+    let bar = Rect::from_min_size(left_top, vec2(inner + 8.0 + 1.0, ITEM + 8.0 + 2.0));
+    ui.interact(bar, Id::new("capture-tool-strip"), Sense::click());
+    let painter = ui.painter().clone();
+    let radius = egui::CornerRadius {
+        nw: 0,
+        ne: 0,
+        sw: 0,
+        se: 4,
+    };
+    painter.rect_filled(bar, radius, colors.background_toolbar());
+    let stroke = egui::Stroke::new(1.0, colors.border());
+    painter.line_segment(
+        [
+            pos2(bar.left(), bar.top() + 0.5),
+            pos2(bar.right(), bar.top() + 0.5),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            pos2(bar.right() - 0.5, bar.top()),
+            pos2(bar.right() - 0.5, bar.bottom() - 4.0),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            pos2(bar.left(), bar.bottom() - 0.5),
+            pos2(bar.right() - 4.0, bar.bottom() - 0.5),
+        ],
+        stroke,
+    );
+    let mut x = bar.left() + 4.0;
+    let top = bar.top() + 1.0 + 4.0;
+    let mut clicked = None;
+    for (item, sep) in items.iter().zip(widths) {
+        if sep > 0.0 {
+            style::vertical_separator(&painter, colors, x, top, top + ITEM);
+            x += sep;
+        }
+        let rect = Rect::from_min_size(pos2(x, top), vec2(ITEM, ITEM));
+        let active = tools_active && item.is_active;
+        if style::toolbar_button(ui, colors, rect, item.icon, active, true)
+            .on_hover_text(item.tooltip())
+            .clicked()
+        {
+            clicked = item.tool;
+        }
+        x += ITEM + SPACING;
+    }
+    (bar, clicked)
 }
