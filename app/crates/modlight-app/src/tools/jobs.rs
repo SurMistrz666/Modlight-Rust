@@ -257,8 +257,7 @@ impl AppState {
 
     /// `TaskHelpers.PrintImage(image)`.
     pub fn print_image(&mut self, image: image::RgbaImage) {
-        let _ = image;
-        self.push(Command::NotYet);
+        self.print_picture(image);
     }
 }
 

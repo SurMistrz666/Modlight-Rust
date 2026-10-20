@@ -15,6 +15,7 @@ pub mod keychain;
 pub mod keys;
 pub mod network;
 pub mod pasteboard;
+pub mod print;
 pub mod sound;
 pub mod system;
 pub mod windows;

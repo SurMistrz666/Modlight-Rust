@@ -17,6 +17,7 @@ pub mod indexer;
 pub mod metadata;
 pub mod ocr;
 pub mod pin;
+pub mod print;
 pub mod qr;
 pub mod settings;
 pub mod video;

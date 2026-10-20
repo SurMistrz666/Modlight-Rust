@@ -30,6 +30,7 @@ pub mod kit;
 pub mod metadata;
 pub mod ocr;
 pub mod pin;
+pub mod print;
 pub mod qa;
 pub mod qr;
 pub mod region;
