@@ -50,6 +50,9 @@ pub struct TaskPagesState {
     pub snap_width: f64,
     pub snap_height: f64,
     pub editor: Option<crate::task_editors::TaskEditor>,
+    /// `UpdatePreviews`' last answer and what it was computed from: the previews change
+    /// when an input changes, not on every frame.
+    pub naming_preview: Option<(String, String, String)>,
     /// The Modlight folder picker of a hotkey's upload page.
     pub folders: ModlightFolders,
     /// The open task or task-flag menu of the Task page.
@@ -1715,6 +1718,26 @@ fn naming(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
         }
         parser.parse(pattern).unwrap_or_default()
     };
+    // Computed when an input changes (`UpdatePreviews` runs on change), so random codes
+    // do not flicker from frame to frame.
+    let capture_pattern = b.str(&u("NameFormatPattern"), "%ra{10}");
+    let window_pattern = b.str(&u("NameFormatPatternActiveWindow"), "%pn_%ra{10}");
+    let key = format!(
+        "{capture_pattern}\u{1}{window_pattern}\u{1}{}\u{1}{}\u{1}{}\u{1}{}",
+        ctx.auto_increment,
+        b.bool(&["UploadSettings", "UseCustomTimeZone"], false),
+        b.f64(&["AdvancedSettings", "NamePatternMaxLength"], 100.0),
+        b.f64(&["AdvancedSettings", "NamePatternMaxTitleLength"], 50.0),
+    );
+    let (capture_preview, window_preview) = match &ctx.state.naming_preview {
+        Some((cached, capture, window)) if *cached == key => (capture.clone(), window.clone()),
+        _ => {
+            let capture = preview(&capture_pattern, false, b, *ctx.auto_increment);
+            let window = preview(&window_pattern, true, b, *ctx.auto_increment);
+            ctx.state.naming_preview = Some((key, capture.clone(), window.clone()));
+            (capture, window)
+        }
+    };
     card(
         ui,
         colors,
@@ -1728,14 +1751,12 @@ fn naming(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
                 t(s::TaskSettingsWindow_CaptureOrClipboardUpload),
                 |ui| text(ui, colors, b, &u("NameFormatPattern"), "%ra{10}"),
             );
-            let pattern = b.str(&u("NameFormatPattern"), "%ra{10}");
-            let shown = preview(&pattern, false, b, *ctx.auto_increment);
             row(
                 ui,
                 colors,
                 TASK_ROW,
                 t(s::TaskSettingsWindow_Preview),
-                |ui| hint(ui, colors, &shown),
+                |ui| hint(ui, colors, &capture_preview),
             );
             row(
                 ui,
@@ -1752,14 +1773,12 @@ fn naming(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
                     )
                 },
             );
-            let pattern = b.str(&u("NameFormatPatternActiveWindow"), "%pn_%ra{10}");
-            let shown = preview(&pattern, true, b, *ctx.auto_increment);
             row(
                 ui,
                 colors,
                 TASK_ROW,
                 t(s::TaskSettingsWindow_Preview),
-                |ui| hint(ui, colors, &shown),
+                |ui| hint(ui, colors, &window_preview),
             );
             check(
                 ui,
