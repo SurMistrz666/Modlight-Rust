@@ -91,6 +91,23 @@ na host napastnika z `x-api-key: <token ofiary>`. `adopt` nie koryguje hosta.
   nie zmienia poprawnego działania. Najlepiej: biała lista nazw dozwolonych do importu
   zamiast czarnej.
 
+**Stan po poprawkach** (gałąź `app-secfix`, commit `735b6a4`):
+- `backup::import` przyjmuje wyłącznie `ApplicationConfig.json` i `HotkeysConfig.json`
+  (biała lista dokładnych nazw); `History.db` jest pomijany jak w oryginale. Każdy inny
+  wpis (`UploadersConfig.json`, `Queue.json`, nazwy z folderem, `..`, kropką na początku,
+  inna wielkość liter) jest odrzucany i wymieniany w komunikacie po imporcie (linia
+  statusu + okno z ostrzeżeniem). Nic nie jest zapisywane, dopóki całe archiwum nie
+  zostanie przeczytane.
+- Głębia obrony: magazyn poświadczeń (Keychain / plik QA) trzyma token razem z originem,
+  dla którego został wydany (`account.rs`, `BoundToken`). Host w `UploadersConfig.json`
+  inny niż ten origin (edycja pliku, czyjaś kopia) daje stan „wylogowany”: token nie jest
+  z nim parowany, dopóki użytkownik nie zaloguje się na tym hoście. Token zapisany przez
+  wcześniejszą wersję (bez originu) wymaga jednorazowego ponownego logowania.
+- Testy: `backup::tests::a_backup_cannot_repoint_the_account`,
+  `backup::tests::import_takes_only_the_files_export_writes`,
+  `account::tests::a_host_swapped_behind_the_token_never_gets_it`,
+  `account::tests::a_token_that_does_not_name_its_host_is_not_used`.
+
 ### [Średnia] W2 — import kopii zapasowej (Queue.json) kasuje dowolny plik przy następnym starcie
 `modlight-core/src/backup.rs:52` + `modlight-core/src/upload/store.rs:71` (`load`) +
 `modlight-core/src/upload/queue.rs:963-979` (`expire`) → `fail` `:900-904` →
@@ -108,6 +125,18 @@ użytkownika. Usunięcie jest trwałe (`std::fs::remove_file`, nie do Kosza).
   zalogowania i bez sieci).
 - **Poprawka**: jak W1 — nie importować `Queue.json`. Dodatkowo (głębia obrony)
   `discard_spool` powinno kasować tylko pliki w folderze spool kolejki.
+
+**Stan po poprawkach** (gałąź `app-secfix`, commity `735b6a4` i `ce46e09`):
+- `Queue.json` nie jest już importowany (biała lista z W1, `735b6a4`).
+- `QueueStore::discard_spool` (`ce46e09`) kasuje plik tylko wtedy, gdy ścieżka jest taka,
+  jaką nadaje `QueueStore::spool`: bezwzględna, bez `..`, bezpośrednio w folderze spool
+  i nazwana identyfikatorem pozycji (`{id}` + rozszerzenie); nigdy katalogu. Samo
+  `OwnsSource = true` z `Queue.json` nie wystarcza; inne ścieżki są pomijane z wpisem w
+  logu.
+- Testy: `upload::queue::tests::a_queue_file_from_elsewhere_cannot_delete_the_persons_files`
+  (restart z `Queue.json` wskazującym plik poza spoolem: plik zostaje, własny plik kolejki
+  znika), `upload::store::tests::only_spooled_names_are_ever_deleted`,
+  `backup::tests::a_backup_cannot_replace_the_upload_queue`.
 
 ### [Średnia] W3 — import kopii zapasowej (ApplicationConfig.json) może skonfigurować autostart programu zewnętrznego → wykonanie kodu
 `modlight-core/src/backup.rs:52` → `app_pages.rs:1972` (`import`) →
@@ -134,6 +163,24 @@ Watch folders z importowanego configu też uruchamiają zadania.
   które eksport wytwarza, i rozważyć prośbę o potwierdzenie, gdy config włącza
   `PerformActions`/watch folder.
 
+**Stan po poprawkach** (gałąź `app-secfix`, commit `ece123a`):
+- Import porównuje każde przywracane zadanie z tym samym zadaniem sprzed importu
+  (`DefaultTaskSettings` z `ApplicationConfig.json`; hotkey z `HotkeysConfig.json` według
+  pozycji na liście) i wyłącza to, co uruchamia się samo, a nie było już włączone w tym
+  zadaniu: aktywny program zewnętrzny (zostaje włączony tylko, gdy identyczny program był
+  już aktywny), krok `PerformActions` w `AfterCaptureJob` oraz watch foldery (zostają
+  tylko, gdy każdy folder był już obserwowany). Reszta pliku jest przywracana bez zmian;
+  własna kopia na tym samym Macu wraca bajt w bajt, na innym Macu te elementy czekają na
+  ręczne włączenie.
+- Komunikat po imporcie wymienia każdy wyłączony element (zadanie + akcja/ścieżka), żeby
+  użytkownik włączał je świadomie. Odstępstwo od oryginału opisane w `app/docs/MACOS.md`
+  („Behaviour that differs on purpose”). Plik ustawień, który nie jest obiektem JSON,
+  przerywa import przed zapisem czegokolwiek.
+- Testy: `backup::tests::programs_a_backup_switches_on_come_in_switched_off` (`/bin/sh -c`,
+  własny hotkey z `PerformActions`, nowy watch folder),
+  `backup::tests::ones_own_backup_comes_back_as_it_was`,
+  `backup::tests::a_settings_file_that_is_not_json_fails_the_import`.
+
 ### [Średnia] S3 — brak limitów przy dekodowaniu obrazów z serwera i z adresów usera (DoS pamięcią)
 `modlight-app/src/media.rs:75` (`decode_still`), `:100,:107` (animacje),
 `modlight-app/src/uploads.rs:799` i `modlight-app/src/editor_window.rs:557-564`
@@ -152,6 +199,28 @@ ogromnymi wymiarami (np. 30000×30000) powoduje alokację rzędu GB i zabicie pr
 - **Poprawka**: dekodować przez `image::ImageReader` z `.limits(Limits)` (limit alokacji i
   maks. wymiary) dla wszystkich bajtów z sieci. Audyt oryginału wymieniał „dekodowanie
   wrogich obrazów" jako punkt uwagi.
+
+**Stan po poprawkach** (gałąź `app-secfix`, commit `efb151c`):
+- Nowy moduł `modlight_core::image_decode`: `from_bytes`, `from_bytes_as`, `open` z
+  `image::Limits` (maks. 32768 px na bok, 512 MiB na obraz), `fits()` dla dekoderów bez
+  limitów, `animation_limits()` (128 MiB na klatkę). Uwaga: `ImageReader` miał już
+  domyślnie 512 MiB alokacji, ale bez limitu wymiarów; dekodery GIF/WebP animacji nie
+  miały żadnego limitu i trzymały do 60 pełnych klatek naraz.
+- Przez ten moduł idą wszystkie dekodowania bajtów z zewnątrz: miniatury, podglądy i
+  avatar (`media.rs`; animacje dekodowane klatka po klatce pod limitami i od razu
+  zmniejszane), podgląd po uploadzie, okna zadań i powiadomienia, „kopiuj obraz”, upload
+  pliku z przetwarzaniem obrazu (`worker.rs`), edytor: otwieranie/wstawianie/tło
+  (`open_image`) i „otwórz z URL”. Schowek: obraz czytany jako bajty PNG/TIFF z
+  `NSPasteboard` (`modlight_macos::pasteboard`) i dekodowany u nas, nie przez arboard.
+  `NSImage` (HEIC itp. w edytorze) jest najpierw mierzony i odrzucany powyżej tych limitów.
+- Błędy z tekstami oryginału: „The URL does not point to a valid image”, „Failed to
+  download image: …”, „Failed to load image file. <ścieżka>”; pobieranie z adresu w
+  edytorze przerywane powyżej 256 MiB.
+- Testy: `image_decode::tests::a_header_claiming_an_enormous_picture_is_refused_by_its_size`
+  (prawdziwe PNG i JPEG z nagłówkiem 30000×30000, 65535×65535, 32769×1),
+  `media::tests::pictures_claiming_an_enormous_size_are_refused` (miniatura i animacja GIF
+  z płótnem 30000/40000 px),
+  `editor_window::tests::a_downloaded_picture_claiming_an_enormous_size_is_not_a_valid_image`.
 
 ### [Niska] S4 — link projektu ShareX w oknie „O programie"
 `modlight-app/src/about_window.rs:266-282` — hiperłącza do `github.com/Jaex`,
@@ -285,3 +354,8 @@ i ze ścieżką po `--`, FSEvents dla watch folderów, loopback logowania jak w 
 Wspólny mianownik W1–W3: `backup::import` przyjmuje pliki, których `backup::export` nigdy
 nie tworzy (`UploadersConfig.json`, `Queue.json`) i stosuje config w całości. Najprostsza
 naprawa W1+W2: biała lista nazw dozwolonych do importu = dokładnie to, co eksport zapisuje.
+
+Stan po poprawkach (gałąź `app-secfix`): W1 `735b6a4`, W2 `735b6a4` + `ce46e09`,
+W3 `ece123a`, S3 `efb151c`; S4 bez zmian (bez działania). `cargo fmt`, `cargo clippy
+--workspace --all-targets -- -D warnings` i `cargo test --workspace` zielone (557 zdanych,
+0 niezdanych, 1 pominięty ręczny).
