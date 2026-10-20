@@ -24,6 +24,7 @@ use serde_json::{Map, Value};
 
 use crate::config::js_number;
 use crate::error::AppError;
+use crate::js_json::JsValue;
 
 /// Default ceiling. Generous for a body whose fields are an id, a name bounded
 /// at 120 characters and a couple of booleans; small enough that a flood costs
@@ -69,10 +70,13 @@ pub fn is_json_content_type(value: &str) -> bool {
 /// text is certainly over the limit, which keeps memory bounded without
 /// refusing anything upstream would accept.
 ///
-/// Where `JSON.parse` and serde_json still part (known deviations): a number
-/// beyond the f64 range (`1e400`, which JSON.parse reads as Infinity) and
-/// nesting deeper than serde_json's 128 levels are refused here as "Body must
-/// be a JSON object." (400); upstream parsed them and judged the fields.
+/// The text is parsed by [`crate::js_json::parse`], V8's `JSON.parse`
+/// (iterative: no nesting limit; lone surrogate escapes accepted; a number
+/// beyond the f64 range is Infinity), and handed to the route as serde_json
+/// values by [`js_object_to_map`]. Verified against the reference: `1e400` in
+/// `maxViews` is judged by the field ("View limit must be a number"), in
+/// `expiresInDays` it means no expiry, and a field nested 3000 levels deep is
+/// ignored like any unknown field (SKELETON.md 9.25).
 pub async fn read_json_object(
     headers: &HeaderMap,
     body: Body,
@@ -110,10 +114,66 @@ pub async fn read_json_object(
         return Err(too_large());
     }
 
-    match serde_json::from_str::<Value>(&lone_surrogates_replaced(&raw)) {
-        Ok(Value::Object(map)) => Ok(map),
+    match &crate::js_json::parse(&raw) {
+        Ok(JsValue::Object(object)) => Ok(js_object_to_map(object)),
         _ => Err(JsonBodyError::new(StatusCode::BAD_REQUEST, "Body must be a JSON object.")),
     }
+}
+
+/// Levels of a parsed body kept when it becomes `serde_json` values. The
+/// routes look at a field and at most a level or two inside it; deeper
+/// containers are kept as empty ones of the same kind (an array stays an
+/// array, so every type check answers as upstream's), which keeps a 16 KiB
+/// body nested 8000 levels deep from recursing through `serde_json::Value`
+/// (whose drop is recursive) on a worker thread's stack.
+pub const BODY_DEPTH_KEPT: usize = 64;
+
+/// A `JSON.parse` result as the routes read it: strings as Rust strings (a
+/// lone surrogate becomes U+FFFD, as when the string is written as UTF-8),
+/// integral numbers as integers (what serde_json's own parser produced, so
+/// `as_i64` keeps working), other finite numbers as floats, and the two
+/// numbers JSON cannot spell (`1e400` is Infinity in JavaScript) as the RPC's
+/// tagged form `{"$num": "Infinity"}`, which the library's number readers
+/// (`rpc::tagged::raw_num`, [`is_js_number`]) already understand.
+pub fn js_object_to_map(object: &crate::js_json::JsObject) -> Map<String, Value> {
+    fn number(n: f64) -> Value {
+        if !n.is_finite() {
+            let tag = if n.is_nan() {
+                "NaN"
+            } else if n > 0.0 {
+                "Infinity"
+            } else {
+                "-Infinity"
+            };
+            return serde_json::json!({ "$num": tag });
+        }
+        if n.fract() == 0.0 && n.abs() < 9.223_372_036_854_775e18 && !(n == 0.0 && n.is_sign_negative()) {
+            return Value::from(n as i64);
+        }
+        serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number)
+    }
+    fn convert(v: &JsValue, depth: usize) -> Value {
+        match v {
+            JsValue::Null => Value::Null,
+            JsValue::Bool(b) => Value::Bool(*b),
+            JsValue::Number(n) => number(*n),
+            JsValue::String(s) => Value::String(s.to_string_lossy()),
+            JsValue::Array(_) if depth >= BODY_DEPTH_KEPT => Value::Array(Vec::new()),
+            JsValue::Array(items) => Value::Array(items.iter().map(|i| convert(i, depth + 1)).collect()),
+            JsValue::Object(_) if depth >= BODY_DEPTH_KEPT => Value::Object(Map::new()),
+            JsValue::Object(o) => Value::Object(map(o, depth + 1)),
+        }
+    }
+    fn map(o: &crate::js_json::JsObject, depth: usize) -> Map<String, Value> {
+        o.entries().iter().map(|(k, v)| (k.to_string_lossy(), convert(v, depth))).collect()
+    }
+    map(object, 1)
+}
+
+/// `typeof v === "number"` for a body value: a plain number, or a non-finite
+/// one in its tagged form (see [`js_object_to_map`]).
+pub fn is_js_number(v: &Value) -> bool {
+    v.is_number() || (v.is_object() && crate::rpc::tagged::raw_num(v).is_some())
 }
 
 /// `JSON.parse` accepts a `\uD800`-style escape that is not half of a pair
@@ -190,7 +250,7 @@ pub fn json_response<T: Serialize + ?Sized>(status: StatusCode, body: &T, cache_
         Ok(b) => b,
         Err(err) => {
             tracing::error!(error = %err, "could not serialize a JSON response");
-            return crate::error::internal_error_response();
+            return crate::error::route_handler_error_response();
         }
     };
     let mut response = (status, bytes).into_response();
@@ -281,6 +341,39 @@ mod tests {
         assert!(read(&json, "\u{FEFF}\u{FEFF}{}", JSON_BODY_MAX).await.is_ok());
         let e = read(&json, "\u{FEFF}\u{FEFF}\u{FEFF}{}", JSON_BODY_MAX).await.unwrap_err();
         assert_eq!(e.message, "Body must be a JSON object.");
+    }
+
+    /// What `JSON.parse` accepts and serde_json did not (checked on the
+    /// reference, SKELETON.md 9.25): numbers beyond the f64 range, any depth.
+    #[tokio::test]
+    async fn accepts_what_json_parse_accepts() {
+        let json = [("content-type", "application/json")];
+        let m =
+            read(&json, r#"{"a":1e400,"b":-1e400,"c":7,"d":-0,"e":1.5,"f":"\ud800x"}"#, JSON_BODY_MAX).await.unwrap();
+        assert_eq!(m["a"], serde_json::json!({ "$num": "Infinity" }));
+        assert_eq!(crate::rpc::tagged::raw_num(&m["b"]), Some(f64::NEG_INFINITY));
+        assert!(is_js_number(&m["a"]) && is_js_number(&m["c"]) && !is_js_number(&m["f"]));
+        assert_eq!(m["c"].as_i64(), Some(7));
+        assert!(m["d"].as_f64().is_some_and(|d| d == 0.0 && d.is_sign_negative()));
+        assert_eq!(m["e"].as_f64(), Some(1.5));
+        assert_eq!(m["f"], "\u{FFFD}x");
+        // 8000 levels in a 16 KiB body: parsed, the depth past what any route
+        // reads kept as an empty container of the same kind.
+        let deep = format!(r#"{{"ids":["x"],"z":{}{}}}"#, "[".repeat(8000), "]".repeat(8000));
+        let m = read(&json, &deep, JSON_BODY_MAX).await.unwrap();
+        assert_eq!(m["ids"], serde_json::json!(["x"]));
+        let mut v = &m["z"];
+        let mut depth = 1;
+        while let Some(inner) = v.as_array().and_then(|a| a.first()) {
+            v = inner;
+            depth += 1;
+        }
+        assert_eq!(depth, BODY_DEPTH_KEPT);
+        assert_eq!(v, &serde_json::json!([]));
+        // Duplicate keys: the last value, at the first key's position.
+        let m = read(&json, r#"{"a":1,"b":2,"a":3}"#, JSON_BODY_MAX).await.unwrap();
+        assert_eq!(m.keys().collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(m["a"], 3);
     }
 
     #[tokio::test]
