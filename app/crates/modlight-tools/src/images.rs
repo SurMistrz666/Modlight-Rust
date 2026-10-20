@@ -1,6 +1,7 @@
 //! Reading and writing pictures the way the tools do (`ImageHelpers.LoadImage`,
 //! `ImageHelpers.SaveImage`): EXIF orientation applied on load, the format chosen by the
-//! file's extension on save.
+//! file's extension on save. Every decode runs under `modlight_core::image_decode`'s
+//! limits (pictures come from outside the app: opened, dropped, pasted files).
 
 use std::io::Cursor;
 use std::path::Path;
@@ -10,9 +11,10 @@ use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbaImage};
 
 /// Load a picture, turned by its EXIF orientation.
 pub fn load(path: &Path) -> anyhow::Result<RgbaImage> {
-    let reader = ImageReader::open(path)
+    let mut reader = ImageReader::open(path)
         .with_context(|| path.display().to_string())?
         .with_guessed_format()?;
+    reader.limits(modlight_core::image_decode::limits());
     let mut decoder = reader.into_decoder()?;
     let orientation = decoder.orientation().ok();
     let mut image = DynamicImage::from_decoder(decoder)?;
@@ -24,7 +26,8 @@ pub fn load(path: &Path) -> anyhow::Result<RgbaImage> {
 
 /// Load a picture from bytes (a PNG from the clipboard, a download).
 pub fn load_bytes(bytes: &[u8]) -> anyhow::Result<RgbaImage> {
-    let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    reader.limits(modlight_core::image_decode::limits());
     let mut decoder = reader.into_decoder()?;
     let orientation = decoder.orientation().ok();
     let mut image = DynamicImage::from_decoder(decoder)?;
