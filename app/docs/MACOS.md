@@ -9,7 +9,7 @@ Everything not listed behaves as upstream does. The per-screen state is in
 
 | Windows (upstream) | macOS (this port) | Notes |
 |---|---|---|
-| Token encrypted with DPAPI inside `UploadersConfig.json` | Login Keychain, generic password, service `Modlight`, written and read through `/usr/bin/security` | An item created by the app binary itself would be tied to that build and every rebuild would prompt; `security` is a stable owner. QA runs (`--qa-profile`) keep the token in a plain file in the profile instead and never touch the Keychain. |
+| Token encrypted with DPAPI inside `UploadersConfig.json` | Login Keychain, generic password, service `Modlight`, written and read through `/usr/bin/security` | An item created by the app binary itself would be tied to that build and every rebuild would prompt; `security` is a stable owner. QA runs (`--qa-profile`) keep the token in a plain file in the profile instead and never touch the Keychain. The item holds the token together with the origin it was issued for: with the host in one place and the token in another, a host changed in `UploadersConfig.json` (an edited file, somebody else's backup) would otherwise receive the token. A host that is not that origin reads as signed out until the person signs in there; a token saved without its origin (an earlier build) asks for one new sign-in. |
 | Personal folder `Documents\Modlight` (`Program.PersonalFolder`) | `~/Library/Application Support/Modlight` | Same file names inside: `ApplicationConfig.json`, `Queue.json`, `Queue/`, `History.db`. |
 | Notification area icon and its menu (`TrayIconService`) | Menu bar extra (`tray-icon` + `muda`) | Normal mode only; never in QA mode. Exit from it ends the process directly, because a hidden window may never be redrawn to receive a close. |
 | Window chrome: custom title bar with caption buttons | Native traffic lights over a full-size content view | The logo and title start at x = 78 to clear the lights; the band drags and double-click zooms the window. |
@@ -22,7 +22,7 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | Explorer "Show in folder" | `open -R` (reveal in Finder) | Opening a file or folder is `open -- <path>`. |
 | `NetworkChange` events + `NetworkInterface.GetIsNetworkAvailable` | `getifaddrs`: an interface other than loopback that is up, running and has an address, read before every pass of the queue (at least every 15 s) | Nothing is sent to find out. There is no change event: the queue's 15 s poll and its wake-ups stand in for `NetworkAvailabilityChanged`. |
 | `FileSystemWatcher` (watch folders) | FSEvents through the `notify` crate | Same filter rules, 1 s duplicate timer and "wait until the size stops changing" timing. FSEvents repeats flags and does not pair renames, so files are tracked by device, inode and birth time; a rename inside one folder is ignored, a move between folders or from outside is reported (as Windows' Deleted + Created). Folders and symlinks are never reported. On SMB volumes only this Mac's own changes are seen. A watched folder's "move to the screenshots folder" takes a unique name when the name exists instead of asking (nobody is at the window). |
-| Clipboard (`ClipboardHelpers`) | NSPasteboard through `arboard` | Text, images and Finder file lists. Reading asks for the file list first: Finder also puts the file's icon and name on the pasteboard, which upstream's image-then-text order would upload instead of the file. QA and headless runs never read the real clipboard (macOS may ask for paste permission). |
+| Clipboard (`ClipboardHelpers`) | NSPasteboard through `arboard` | Text, images and Finder file lists. Reading asks for the file list first: Finder also puts the file's icon and name on the pasteboard, which upstream's image-then-text order would upload instead of the file. A picture is read as its PNG or TIFF bytes (PNG first, as the pasteboard holds it) and decoded under the app's limits, not by arboard. QA and headless runs never read the real clipboard (macOS may ask for paste permission). |
 | Taskbar progress (`TaskbarManager`) | Not shown | macOS has no per-window taskbar progress; the tray icon's progress and the Upload tab carry it. The setting's check box is shown disabled, as upstream shows it where the platform does not support it. |
 | Inno Setup installer | `scripts/build-app.sh`: release build, `Modlight.app` with `Info.plist`, `.icns` cut from `ShareX/Modlight_Icon.ico`, ad hoc signature | Bundle id `org.modlight.Modlight` (to confirm with the owner). The script never starts the app. A DMG and components downloaded from the Components window come with phase 3. |
 | Start with Windows (`StartupManager`) | Login item through `SMAppService.mainApp` | Only a copy inside an app bundle can register; the check box says why it cannot change (turned off in System Settings, waiting for approval, not an app bundle) and offers System Settings' Login Items. |
@@ -39,7 +39,7 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | WebView2 (YouTube sign-in) | WKWebView | See the components rows below. |
 | `DebugHelper.Logger` and `Logs\Modlight-Log-yyyy-MM.txt` | The same line format in `Logs/Modlight-Log-yyyy-MM.txt` of the personal folder; the app's crates from Info, others from Warn | Upstream's main menu no longer reaches the Debug log window; the port links it from About. "Loaded assemblies" is not ported (there are none). |
 | Installer's first-time configuration (`FirstTimeConfigWindow`) | Opens on the first launch of the app bundle (no settings file yet) | Its Windows options become the login item and the note on the Finder service. |
-| Settings backup (`.sxb`: ApplicationConfig, UploadersConfig, HotkeysConfig, History) | ApplicationConfig.json, HotkeysConfig.json and History.db | There is no UploadersConfig.json on a Mac (the token stays in the Keychain). Import writes only plain `.json`/`.xml` names into the personal folder; anything with a folder, `..` or a dot first is skipped. |
+| Settings backup (`.sxb`: ApplicationConfig, UploadersConfig, HotkeysConfig, History) | ApplicationConfig.json, HotkeysConfig.json and History.db | There is no UploadersConfig.json on a Mac (the token stays in the Keychain). Import restores exactly `ApplicationConfig.json` and `HotkeysConfig.json`, by name; `History.db` is passed over as upstream does. Upstream took any `.json`/`.xml` entry: every other entry (`UploadersConfig.json`, `Queue.json`, any name with a folder, `..` or a dot first) is left out and named in a message after the import. |
 | Personal folder setting (`PersonalPath.cfg` next to the exe) | Fixed at `~/Library/Application Support/Modlight` | The page shows it with Open; Browse stays off. |
 | Windows OCR | Vision | Phase 5. |
 | Import of ShareX settings | Not applicable | There is no ShareX on macOS. |
@@ -118,6 +118,29 @@ Everything not listed behaves as upstream does. The per-screen state is in
   one), hotkeys from a fake backend (pressed through `captures.simulated`), devices of
   the FFmpeg window from a fixed list, and "Save as" writes to `<dir>/Saved`; no
   ScreenCaptureKit, Accessibility, camera, microphone or login item call is made.
+- **Settings backup import** restores what runs by itself switched off: an external
+  program of "Perform actions", the "Perform actions" step after capture, and watch
+  folders, whenever the backup switches one on that this installation did not already
+  have switched on for the same task (the default task settings; a hotkey by its place
+  in the list; a program only when the very same one was on). A custom FFmpeg path
+  (`OverrideCLIPath` with `CLIPath`) that this task did not already start comes back to
+  the FFmpeg from Components. It is the only path to a program the settings hold: yt-dlp
+  and ExifTool are found in Tools and the usual places, never read from the settings, and
+  `BrowserPath` is stored but never started (links go through `/usr/bin/open`). A
+  message after the import names each one, and they are set again in the task
+  settings. Upstream restores the file whole, so a backup from somebody else could start
+  a program on the next capture or recording. Restoring one's own backup on the same Mac
+  changes nothing; on another Mac these wait to be set again.
+- **Pictures from outside the app** (thumbnails, previews and the account picture from
+  the server, Upload from URL previews, the editor's "open from URL", the clipboard,
+  files opened, inserted or uploaded) are decoded under limits
+  (`modlight_core::image_decode`): at most 32768 px a side and 512 MiB for a still
+  picture, 128 MiB per frame of a moving preview, decoded one frame at a time. A larger
+  one counts as no picture (the editor says upstream's "The URL does not point to a
+  valid image" or "Failed to load image file"); the editor stops a download from an
+  address past 256 MiB. Files the system decodes for the editor (`NSImage`, HEIC) are
+  measured first and refused by the same limits. Upstream (SkiaSharp) decoded whatever
+  size a file claimed.
 - **Deleting the folder you stand in** reloads the folder list; upstream loses that
   refresh and keeps showing the deleted folder until the next reload.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
