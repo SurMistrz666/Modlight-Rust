@@ -168,6 +168,9 @@ pub const SCREENS: &[&str] = &[
     "analyze-image-error",
     "analyze-image-options",
     "analyze-image-options-gemini",
+    "background-remover",
+    "background-remover-source",
+    "background-remover-empty",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

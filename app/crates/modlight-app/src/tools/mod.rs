@@ -15,6 +15,7 @@ use modlight_core::tasks::settings::TaskSettings;
 use crate::state::AppState;
 
 pub mod analyze;
+pub mod background;
 pub mod boxes;
 pub mod color_picker;
 pub mod combiner;
