@@ -37,7 +37,9 @@ Ostatnia aktualizacja: 2026-10-18 (koniec dnia 1, praca wstrzymana na prośbę w
 | `app-3` | `_wt/app-3` | W TOKU: etap 3 (zrzuty ekranu, skróty, nagrywanie ffmpeg, komponenty, yt-dlp, zakładka Serwer, ustawienia, start z systemem, usługa Findera) |
 | `srv-auth` | scalona do `main` (bbde0a3) | konta, logowanie zgodne z Better Auth, 2FA, admin, poczta, wydania, strony auth i układ (app); skrypty porównawcze z oryginałem zielone, zgodność kont/sesji/2FA w obie strony 227/227; poprawki 3, 4, 7 wdrożone. Szczegóły i pozostałe różnice: `docs/handoff/srv-auth.md` |
 | `srv-library` | scalona do `main` (1be08bc) | wysyłanie (ShareX z poprawką 2, tus zgodny z Uppy i aplikacją), magazyn lokalny i S3, foldery, kosz, duplikaty, skróty, awatary i tapety, wiązanie libvips, strony biblioteki; 975 testów, porównania z oryginałem zielone. Otwarte pozycje dla mediów: `docs/handoff/srv-library.md` |
-| `srv-media-a` | `_wt/srv-media-a` | W TOKU: przetwarzanie mediów (konwersje, podglądy ruchome i osi czasu, okładki, docx, karty OG) |
+| `srv-media-a` | scalona do `main` (78eee7c) | konwersje, podglądy ruchome i osi czasu, okładki, docx (mammoth), karty OG, pdf; 1212 testów; przy ffmpeg 5.1 wyjścia bajt w bajt jak w oryginale, karty co do piksela |
+| `srv-integration` | `_wt/srv-integration` | W TOKU: obraz Dockera (libvips jak w sharp, ffmpeg 5.1) na 127.0.0.1:8430, pełne porównania, testy e2e z oryginału, luka S3 tus i kasowanie starych awatarów, README serwera |
+| `app-4` | `_wt/app-4` | W TOKU: edytor obrazów (rdzeń, adnotacje, historia, interfejs, rejestr efektów) |
 | `srv-media-b` | scalona do `main` (e549b53) | serwowanie plików, strony publiczne, osadzenia, oEmbed, albumy z zip, usuwanie tokenem; poprawki 1 (limit wyświetleń: przepustka `ml_view_<id>`), 5, 6; 1080 testów, 1064 porównań zgodnych. Czeka na podpięcie części A w `media/part_a.rs`. Znaleziony błąd oryginału: zip albumu zawsze 500 |
 
 Gotowe polecenia dla kolejnych agentów: `_scratch/prompts/` (`common-server.md`,
