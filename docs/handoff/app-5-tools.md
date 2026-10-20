@@ -24,7 +24,14 @@ viewer, pin to screen (pins, startup, options; after-capture task, notice action
 request), image combiner, video converter (real-ffmpeg test), metadata + strip metadata
 (ExifTool via /usr/bin/perl; stand-in script test), input box, output box (recording
 failures), error window (panics off the UI thread), directory indexer (+ clipboard
-folder indexing).
+folder indexing), OCR (Apple Vision; ignored test reads a real line), analyze image
+(4 providers, stub-server tests, keys in the Keychain only), background remover
+(`modlight_core::background_removal` on ort 2.0.0-rc.15 / ONNX Runtime 1.31 static, Core
+ML or CPU; hand-written ONNX model test).
 
-Next: OCR (Vision), analyze image, background remover (ort), borderless / top-most,
-history + image history, print, docs (STATUS.md, MACOS.md), full test run.
+main merged twice (editor e303cd9, security fixes 21b3764). Pictures from outside go
+through `modlight_core::image_decode` limits; ffmpeg and ExifTool only from Components
+(ffmpeg also the recorder's own override, which backup import resets).
+
+Next: borderless / top-most, history + image history, print, docs (STATUS.md,
+MACOS.md), full test run.
