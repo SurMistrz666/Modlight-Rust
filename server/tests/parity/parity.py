@@ -674,6 +674,9 @@ class _ContainerSink(object):
         subprocess.run(["docker", "rm", "-f", self.name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        env=self.env)
 
+    def wait(self, timeout=None):
+        return 0
+
 
 def start_rust_sink(script, log, port, timeout):
     """The Rust server's SMTP sink: a host process (the Rust server on the
