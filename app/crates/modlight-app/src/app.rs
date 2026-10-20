@@ -87,6 +87,7 @@ impl ModlightApp {
         }
         if mode == Mode::Normal {
             modlight_macos::integration::install_services_provider();
+            crate::editor_window::install_system_services();
         }
         if mode == Mode::Normal && app.state.config.show_tray() {
             app.tray = crate::tray::Tray::new(ctx, &app.state);

@@ -6,6 +6,7 @@
 //! to that exact build, and every rebuild would stop at a password prompt).
 
 pub mod capture;
+pub mod editor;
 pub mod hotkeys;
 pub mod input;
 pub mod integration;

@@ -80,16 +80,45 @@ pub fn encode_for_path(
 const IMAGE_EXTENSIONS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp"];
 
 fn load_image(path: &Path) -> Option<RgbaImage> {
-    match image::open(path) {
-        Ok(image) => Some(image.to_rgba8()),
-        Err(error) => {
-            log::warn!(
-                "Modlight: the image editor could not open {}: {error}",
-                path.display()
-            );
-            None
-        }
+    let image = modlight_editor::editor::background::open_image(path);
+    if image.is_none() {
+        log::warn!(
+            "Modlight: the image editor could not open {}",
+            path.display()
+        );
     }
+    image
+}
+
+/// The desktop picture for the Wallpaper background (`IDesktopWallpaperService`).
+struct MacWallpaper;
+
+impl modlight_editor::editor::background::WallpaperService for MacWallpaper {
+    fn wallpaper(&self) -> Option<(String, modlight_editor::frame::ImageLayout)> {
+        use modlight_editor::frame::ImageLayout;
+        let (path, options) = modlight_macos::editor::desktop_wallpaper()?;
+        // `MapDesktopWallpaperLayout` from `NSImageScaling` (and clipping).
+        let layout = match options.scaling {
+            2 => ImageLayout::Center,
+            1 => ImageLayout::Stretch,
+            0 => ImageLayout::Fit,
+            _ if options.allow_clipping => ImageLayout::Fill,
+            _ => ImageLayout::Fit,
+        };
+        Some((path.to_string_lossy().into_owned(), layout))
+    }
+}
+
+/// The system's part of the editor: macOS cursors for cursor annotations, the desktop
+/// picture, and `NSImage` for formats the image crate does not read. Real app only.
+pub fn install_system_services() {
+    modlight_editor::cursor::set_provider(Box::new(|cursor| {
+        modlight_macos::editor::cursor_image(cursor.name())
+    }));
+    modlight_editor::editor::background::set_wallpaper_service(Some(Box::new(MacWallpaper)));
+    modlight_editor::editor::background::set_image_loader(Some(Box::new(|path| {
+        modlight_macos::editor::load_image(path)
+    })));
 }
 
 impl AppState {
