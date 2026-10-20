@@ -382,7 +382,7 @@ const POLISH_DAYS: [&str; 7] = [
 ];
 
 /// `%mon`: the month in the current culture (`CultureInfo.CurrentCulture`).
-fn month_name(culture: Culture, month0: usize) -> &'static str {
+pub fn month_name(culture: Culture, month0: usize) -> &'static str {
     let names = match culture.id {
         CultureId::EnglishUs => &INVARIANT_MONTHS,
         CultureId::PolishPl => &POLISH_MONTHS,
@@ -391,7 +391,7 @@ fn month_name(culture: Culture, month0: usize) -> &'static str {
 }
 
 /// `%w`: the day of the week in the current culture.
-fn day_name(culture: Culture, day_from_sunday: usize) -> &'static str {
+pub fn day_name(culture: Culture, day_from_sunday: usize) -> &'static str {
     let names = match culture.id {
         CultureId::EnglishUs => &INVARIANT_DAYS,
         CultureId::PolishPl => &POLISH_DAYS,

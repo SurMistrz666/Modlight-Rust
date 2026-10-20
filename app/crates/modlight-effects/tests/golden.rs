@@ -44,7 +44,7 @@ fn registry() -> EffectRegistry {
 /// The categories ported so far (the port lands category by category).
 /// While the port lands category by category, effects not registered yet are skipped;
 /// once every effect is in, a missing one fails.
-const REQUIRE_ALL: bool = false;
+const REQUIRE_ALL: bool = true;
 
 fn ported(id: &str) -> bool {
     REQUIRE_ALL || modlight_effects::find(id).is_some()
