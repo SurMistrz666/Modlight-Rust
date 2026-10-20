@@ -23,6 +23,7 @@
     clippy::type_complexity
 )]
 
+pub mod classic;
 pub mod def;
 pub mod dotnet;
 pub mod fx;
