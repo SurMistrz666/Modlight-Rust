@@ -26,6 +26,7 @@ pub const SCREENS: &[&str] = &[
     "region-capture",
     "region-capture-hover",
     "region-capture-light",
+    "region-capture-annotate",
     "recording-toolbar",
     "recording-toolbar-compact",
     "after-capture",
@@ -157,7 +158,10 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
             state.captures.source = Arc::new(qa_desktop());
             return Some(crate::app::MAIN_SIZE);
         }
-        "region-capture" | "region-capture-hover" | "region-capture-light" => {
+        "region-capture"
+        | "region-capture-hover"
+        | "region-capture-light"
+        | "region-capture-annotate" => {
             let kind = if screen == "region-capture-light" {
                 RegionKind::Light
             } else {
@@ -175,17 +179,43 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
                     session.pointer_moved(Point::new(640.0, 380.0));
                 }
                 "region-capture-hover" => session.pointer_moved(Point::new(250.0, 160.0)),
+                "region-capture-annotate" => session.pointer_moved(Point::new(250.0, 160.0)),
                 _ => {
                     session.pointer_pressed(Button::Left, Point::new(200.0, 140.0), 1);
                     session.pointer_moved(Point::new(520.0, 380.0));
                 }
             }
-            state.captures.overlay = Some(RegionOverlay::new(
-                session,
-                OverlayPurpose::Capture,
-                settings,
-                0.0,
-            ));
+            let mut overlay = RegionOverlay::new(session, OverlayPurpose::Capture, settings, 0.0);
+            overlay.enable_workspace(state.editor_options());
+            if screen == "region-capture-annotate"
+                && let Some(w) = overlay.workspace.as_mut()
+            {
+                // An arrow and a rectangle drawn with the editor's tools, the rectangle tool
+                // still in hand (its options under the toolbar).
+                use modlight_editor::editor::input as ei;
+                use modlight_editor::geom::Point as EP;
+                let m = ei::Modifiers::NONE;
+                let e = &mut w.editor;
+                for (tool, from, to) in [
+                    (
+                        modlight_editor::model::EditorTool::Arrow,
+                        (520.0, 520.0),
+                        (700.0, 420.0),
+                    ),
+                    (
+                        modlight_editor::model::EditorTool::Rectangle,
+                        (640.0, 300.0),
+                        (880.0, 440.0),
+                    ),
+                ] {
+                    e.select_tool(tool);
+                    ei::pointer_pressed(e, EP::new(from.0, from.1), ei::Button::Left, m, 1);
+                    ei::pointer_moved(e, EP::new(to.0, to.1), false, m);
+                    ei::pointer_released(e, EP::new(to.0, to.1), ei::Button::Left, m);
+                }
+                overlay.session.region_tool_active = false;
+            }
+            state.captures.overlay = Some(overlay);
             vec2(960.0, 600.0)
         }
         "recording-toolbar" | "recording-toolbar-compact" => {
@@ -311,7 +341,10 @@ pub fn draw(screen: &str, ui: &mut Ui, state: &mut AppState) -> Option<Option<f3
     let colors = state.colors.clone();
     let now = state.time;
     match screen {
-        "region-capture" | "region-capture-hover" | "region-capture-light" => {
+        "region-capture"
+        | "region-capture-hover"
+        | "region-capture-light"
+        | "region-capture-annotate" => {
             if let Some(overlay) = state.captures.overlay.as_mut() {
                 let screen_info = overlay.screens()[0].clone();
                 overlay.ui(ui, &colors, &screen_info);

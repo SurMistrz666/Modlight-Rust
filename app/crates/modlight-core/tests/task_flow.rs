@@ -302,6 +302,10 @@ impl Host {
                             self.questions.push("annotate".into());
                             TaskAnswer::Annotated(Some(image))
                         }
+                        TaskQuestion::Beautify(image) => {
+                            self.questions.push("beautify".into());
+                            TaskAnswer::Annotated(Some(image))
+                        }
                     };
                     let _ = reply.send(answer);
                 }
