@@ -8,11 +8,16 @@
 //! - `effects`: the effect registry the image effects library plugs into.
 //! - `ui`: the editor window (`Presentation/**`) drawn with egui.
 
+pub mod annot_effects;
 pub mod color;
 pub mod core;
+pub mod cursor;
+pub mod emoji;
+pub mod frame;
 pub mod geom;
 pub mod history;
 pub mod model;
 pub mod ops;
 pub mod raster;
+pub mod render;
 pub mod text;
