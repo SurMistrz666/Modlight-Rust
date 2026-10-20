@@ -33,6 +33,9 @@ const PROJECTS: &[(&str, &str)] = &[
     ("ShareX.UploadersLib", "uploaders"),
     ("ShareX.HelpersLib", "helpers"),
     ("ShareX.ScreenCaptureLib", "capture"),
+    // Phase 5, tools: the tool windows and the history windows.
+    ("ShareX.Tools", "tools"),
+    ("ShareX.HistoryLib", "history"),
     // The macOS port's own texts, where upstream's name Windows (assets/mac/l10n).
     ("Mac", "mac"),
 ];

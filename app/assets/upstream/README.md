@@ -5,7 +5,7 @@ specification the Rust build reads at compile time; nothing here is edited by ha
 
 | Here | Upstream |
 |---|---|
-| `l10n/<Project>.resx`, `l10n/<Project>.pl.resx` (ShareX, ShareX.Avalonia, ShareX.UploadersLib, ShareX.HelpersLib, ShareX.ScreenCaptureLib) | `<Project>/Localization/Strings.resx`, `Strings.pl.resx` |
+| `l10n/<Project>.resx`, `l10n/<Project>.pl.resx` (ShareX, ShareX.Avalonia, ShareX.UploadersLib, ShareX.HelpersLib, ShareX.ScreenCaptureLib, ShareX.Tools, ShareX.HistoryLib) | `<Project>/Localization/Strings.resx`, `Strings.pl.resx` |
 | `theming/Skins.axaml`, `theming/SkinVariants.g.cs`, `theming/ShareXTheme.axaml` | `ShareX.Avalonia/Theming/` |
 | `icons/lucide.ttf`, `icons/lucide-codepoints.json`, `icons/Lucide_license.txt` | `ShareX.Avalonia/Assets/`, `Licenses/` |
 | `icons/Modlight_Icon.ico`, `icons/logo.svg` | `ShareX/Modlight_Icon.ico`, `docs/logo.svg` |
