@@ -87,11 +87,26 @@ impl AppState {
 
 /// `ExecuteJob(job, filePath)` for the jobs `capture_flow` leaves to the tools.
 pub fn run(state: &mut AppState, job: HotkeyType, settings: TaskSettings, file: Option<PathBuf>) {
-    let _ = &file;
-    use HotkeyType::*;
+    use HotkeyType as H;
     match job {
-        ColorPicker => state.open_color_picker(&settings),
-        ScreenColorPicker => state.open_screen_color_picker(settings),
+        H::ColorPicker => state.open_color_picker(&settings),
+        H::ScreenColorPicker => state.open_screen_color_picker(settings),
+        H::ImageViewer => match file {
+            Some(file) => {
+                if file.is_file() {
+                    state.open_image_viewer_file(&file);
+                }
+            }
+            None => state.open_image_viewer(),
+        },
+        H::QRCode => match file {
+            Some(file) => state.open_qr_code_scan(Some(file), None),
+            None => state.open_qr_code(None),
+        },
+        H::QRCodeDecodeFromScreen => {
+            state.open_qr_code_scan(None, Some(super::qr::ScanMode::Screen))
+        }
+        H::QRCodeScanRegion => state.open_qr_code_scan(None, Some(super::qr::ScanMode::Region)),
         // The image effects window, the tray menu toggle: other parts of the port.
         _ => state.push(Command::NotYet),
     }

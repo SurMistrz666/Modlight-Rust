@@ -16,7 +16,40 @@ pub const SCREENS: &[&str] = &[
     "color-picker",
     "color-picker-standard",
     "screen-color-picker",
+    "qr-code",
+    "qr-code-empty",
+    "image-viewer",
 ];
+
+/// A picture to show: a sunset like the fixture library's, drawn here.
+pub fn sunset(w: u32, h: u32) -> image::RgbaImage {
+    let mut image = image::RgbaImage::new(w, h);
+    let lerp = |a: f32, b: f32, t: f32| (a + (b - a) * t) as u8;
+    for (x, y, p) in image.enumerate_pixels_mut() {
+        let t = y as f32 / h as f32;
+        let ridge = h as f32 * 0.6 + 30.0 * ((x as f32) / 50.0).sin();
+        *p = if (y as f32) > ridge {
+            image::Rgba([
+                lerp(120.0, 70.0, t),
+                lerp(80.0, 50.0, t),
+                lerp(130.0, 90.0, t),
+                255,
+            ])
+        } else {
+            image::Rgba([
+                lerp(240.0, 200.0, t),
+                lerp(170.0, 120.0, t),
+                lerp(140.0, 150.0, t),
+                255,
+            ])
+        };
+        let d = ((x as f32 - w as f32 * 0.3).powi(2) + (y as f32 - h as f32 * 0.25).powi(2)).sqrt();
+        if d < h as f32 * 0.1 {
+            *p = image::Rgba([250, 230, 170, 255]);
+        }
+    }
+    image
+}
 
 /// A few recent colours.
 fn recent() -> Vec<Color> {
@@ -93,6 +126,42 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                 desktop,
             ));
             Some(vec2(800.0, 500.0))
+        }
+        "qr-code" | "qr-code-empty" => {
+            let text =
+                (screen == "qr-code").then(|| "https://files.example.com/alex/q8".to_string());
+            state.tools.open_keyed(|key| {
+                Box::new(super::qr::QrWindow::new(
+                    key,
+                    super::qr::QrOptions {
+                        initial_text: text,
+                        ..Default::default()
+                    },
+                ))
+            });
+            Some(vec2(940.0, 610.0))
+        }
+        "image-viewer" => {
+            let folder = std::env::temp_dir().join("modlight-qa-image-viewer");
+            let _ = std::fs::create_dir_all(&folder);
+            for (name, w, h) in [
+                ("aurora.png", 800, 500),
+                ("mountain-sunset.png", 1200, 760),
+                ("zebra.png", 600, 600),
+            ] {
+                let path = folder.join(name);
+                if !path.is_file() {
+                    let _ = modlight_tools::images::save(&sunset(w, h), &path);
+                }
+            }
+            let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(1040.0, 700.0));
+            let mut window = super::image_viewer::ImageViewerWindow::new_on(screen);
+            window.load_file(&folder.join("mountain-sunset.png"));
+            state.tools.open_keyed(|key| {
+                window.key = key;
+                Box::new(window)
+            });
+            Some(vec2(1040.0, 700.0))
         }
         _ => None,
     }

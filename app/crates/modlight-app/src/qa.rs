@@ -142,6 +142,9 @@ pub const SCREENS: &[&str] = &[
     "color-picker",
     "color-picker-standard",
     "screen-color-picker",
+    "qr-code",
+    "qr-code-empty",
+    "image-viewer",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

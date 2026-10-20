@@ -727,3 +727,46 @@ pub fn flyout(
         });
     picked
 }
+
+/// `ShareX.Brush.Checkered`: 15 px squares of the skin's two checker colours, aligned to
+/// the window's top left.
+pub fn paint_checkered_big(ui: &Ui, colors: &Colors, rect: Rect) {
+    let (a, b) = (colors.checker_a(), colors.checker_b());
+    let id = egui::Id::new(("checkered-big", a.to_array(), b.to_array()));
+    let texture = ui
+        .ctx()
+        .memory_mut(|m| m.data.get_temp::<TextureHandle>(id));
+    let texture = match texture {
+        Some(texture) => texture,
+        None => {
+            let mut image = egui::ColorImage::filled([30, 30], a);
+            for y in 0..30 {
+                for x in 0..30 {
+                    if (x < 15) == (y < 15) {
+                        image.pixels[y * 30 + x] = b;
+                    }
+                }
+            }
+            let options = egui::TextureOptions {
+                wrap_mode: egui::TextureWrapMode::Repeat,
+                ..egui::TextureOptions::NEAREST
+            };
+            let texture = ui.ctx().load_texture("checkered-big", image, options);
+            ui.ctx()
+                .memory_mut(|m| m.data.insert_temp(id, texture.clone()));
+            texture
+        }
+    };
+    let origin = ui.max_rect().min;
+    let uv = Rect::from_min_max(
+        pos2(
+            (rect.left() - origin.x) / 30.0,
+            (rect.top() - origin.y) / 30.0,
+        ),
+        pos2(
+            (rect.right() - origin.x) / 30.0,
+            (rect.bottom() - origin.y) / 30.0,
+        ),
+    );
+    ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+}
