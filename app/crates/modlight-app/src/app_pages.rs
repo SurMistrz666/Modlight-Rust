@@ -39,6 +39,8 @@ pub enum AppPageAsk {
     OpenLoginItems,
     OpenServicesSettings,
     DisableHotkeys(bool),
+    /// "Automatically check for updates" was turned on: arm the hourly check.
+    UpdatesOn,
 }
 
 /// Between frames: the copy format selection and editor, the export choices, the
@@ -291,7 +293,8 @@ fn general(ui: &mut Ui, ctx: &mut AppPagesCtx, b: &mut Binder) {
             t(s::ApplicationSettingsWindow_Updates),
             true,
             |ui| {
-                check(
+                let before = b.bool(&["AutoCheckUpdate"], true);
+                let after = check(
                     ui,
                     colors,
                     b,
@@ -299,6 +302,9 @@ fn general(ui: &mut Ui, ctx: &mut AppPagesCtx, b: &mut Binder) {
                     true,
                     t(s::ApplicationSettingsWindow_AutomaticallyCheckForUpdates),
                 );
+                if after && !before {
+                    ctx.asks.push(AppPageAsk::UpdatesOn);
+                }
             },
         );
     }
@@ -1888,6 +1894,7 @@ impl crate::state::AppState {
                 }
             }
             AppPageAsk::DisableHotkeys(disabled) => self.captures.hotkeys.toggle(disabled),
+            AppPageAsk::UpdatesOn => crate::update_window::on_startup(self),
         }
     }
 
