@@ -378,9 +378,11 @@ impl AppState {
                 }
             }
             // Printing and pinning are later phases (MACOS.md).
-            Request::Print | Request::PinToScreen | Request::PickScreenColor(_) => {
+            Request::Print | Request::PinToScreen => {
                 self.push(crate::commands::Command::NotYet);
             }
+            // The screen colour picker (phase 5, `tools::editor_hooks`).
+            Request::PickScreenColor(target) => self.editor_pick_screen_color(key, target),
             Request::OpenImage
             | Request::InsertImage
             | Request::ReplaceImage(_)

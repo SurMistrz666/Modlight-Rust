@@ -14,9 +14,12 @@ use modlight_core::tasks::settings::TaskSettings;
 
 use crate::state::AppState;
 
+pub mod color_picker;
+pub mod editor_hooks;
 pub mod jobs;
 pub mod kit;
 pub mod qa;
+pub mod screen_picker;
 
 /// How a tool window opens.
 #[derive(Clone, Debug, PartialEq)]
@@ -78,6 +81,12 @@ pub struct Hosted {
 pub struct Tools {
     pub next_key: u64,
     pub windows: Vec<Hosted>,
+    /// The screen colour picker: waiting for its delay, taking the desktop, open.
+    pub pending_pick: Option<screen_picker::PendingPick>,
+    pub screen_pick_busy: bool,
+    pub screen_picker: Option<screen_picker::ScreenPicker>,
+    /// Tool windows to bring back after they stepped aside (minimised) for a pick.
+    pub restore: Vec<u64>,
 }
 
 impl Tools {
@@ -86,6 +95,17 @@ impl Tools {
         self.next_key += 1;
         let key = self.next_key;
         self.windows.push(Hosted { key, window });
+        key
+    }
+
+    /// Open a window that needs to know its own key.
+    pub fn open_keyed(&mut self, make: impl FnOnce(u64) -> Box<dyn ToolWindow>) -> u64 {
+        self.next_key += 1;
+        let key = self.next_key;
+        self.windows.push(Hosted {
+            key,
+            window: make(key),
+        });
         key
     }
 
@@ -138,6 +158,12 @@ fn builder(spec: &WindowSpec, size: Vec2) -> ViewportBuilder {
 /// Every tool window, each its own native window; called every frame.
 pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
     jobs::tick(state, ctx);
+    screen_picker::viewports(ctx, state);
+    for key in std::mem::take(&mut state.tools.restore) {
+        let id = ViewportId::from_hash_of(("tool-window", key));
+        ctx.send_viewport_cmd_to(id, ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);
+    }
     if state.tools.windows.is_empty() {
         return;
     }
