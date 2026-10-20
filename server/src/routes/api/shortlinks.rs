@@ -202,7 +202,7 @@ fn read_create_input(b: &Map<String, Value>) -> Result<CreateShortLinkInput, (Sh
     if !absent(b.get("customCode")) && !b["customCode"].is_string() {
         return Err((ShortLinkIssue::InvalidCode, "`customCode` must be a string.".into()));
     }
-    if !absent(b.get("expiresInDays")) && !b["expiresInDays"].is_number() {
+    if !absent(b.get("expiresInDays")) && !crate::api_json::is_js_number(&b["expiresInDays"]) {
         return malformed("`expiresInDays` must be a number of days.");
     }
     if !absent(b.get("password")) && !b["password"].is_string() {
@@ -218,7 +218,7 @@ fn read_create_input(b: &Map<String, Value>) -> Result<CreateShortLinkInput, (Sh
     Ok(CreateShortLinkInput {
         target: Value::String(target.clone()),
         custom_code: keep("customCode", Value::is_string),
-        expires_in_days: keep("expiresInDays", Value::is_number),
+        expires_in_days: keep("expiresInDays", crate::api_json::is_js_number),
         password: keep("password", Value::is_string),
         // Left out when absent so the core's own default (prefixed) applies.
         use_user_code: keep("useUserCode", Value::is_boolean),

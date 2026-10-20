@@ -98,7 +98,12 @@ class Ctx(object):
             return False
         if ra.status != 200 or ra.body == rb.body:
             self.run.passed += 1
+            if ra.status == 200:
+                self.encoded_identical = getattr(self, "encoded_identical", 0) + 1
             return True
+        # Reported, not failed: with the same libvips build on both sides the
+        # bytes are expected to match too (the integration Docker image).
+        print("BYTES-DIFFER %s (%s)" % (name, (ra.header("content-type") or "").split(";")[0]))
         (ia, pa), (ib, pb) = decoded(ra), decoded(rb)
         if not self.run.compare(name + " (decoded)", ia, ib):
             return False
@@ -974,6 +979,7 @@ def main():
         if a.only and a.only != name:
             continue
         fn()
+    print("encoder-dependent bodies byte-identical: %d" % getattr(ctx, "encoded_identical", 0))
     run.finish()
 
 

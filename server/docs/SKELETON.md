@@ -310,8 +310,8 @@ Deliberate, each for a reason:
 10. **Static files** are served without `ETag` (with `Last-Modified`), with the
     upstream `Cache-Control` values.
 11. **HTTP**: HTTP/1.1 only (as Node), no `X-Powered-By`, no Next `Vary: rsc`,
-    no `Keep-Alive: timeout=5` header; no response compression yet (Next
-    gzipped HTML/JSON).
+    no `Keep-Alive: timeout=5` header. Response compression is Next's
+    (item 42).
 12. **Jobs** never overlap a slow previous run (upstream `setInterval` could).
 13. **`serve` validates the configuration before migrating** (the upstream
     container migrated first and refused to start afterwards).
@@ -360,20 +360,27 @@ Deliberate, each for a reason:
 22. **`GET /api/link-info`** sends the handler's own `Vary: Authorization,
     Cookie` (Next replaces it with its `rsc, ...` list on every route handler;
     see 11).
-23. **Kept on purpose (upstream behaviour worth knowing)**: replacing or
-    removing an avatar or a wallpaper never deletes the previous object
-    (`UPDATE ... RETURNING` reads the NEW key, so `discard(old, key)` is a
-    no-op; confirmed on the reference); on S3 a finished tus upload stays
-    downloadable at its tus URL (`GET /api/files/<id>`), whatever the file's
-    later privacy or view limit, until the file is deleted; `listFolders`
+23. **Kept on purpose (upstream behaviour worth knowing)**: `listFolders`
     always reports `count: 0` (the subquery compares `uploads` with itself).
-24. **A thrown error in a route handler** answers 500 with
-    `{"message":"Internal server error"}` (section 3); Next sends an empty
-    500. Seen on `/api/duplicates` with an out-of-range count and on `/s/%00`.
-25. **`read_json_object`** replaces lone surrogate escapes with U+FFFD before
-    parsing (JSON.parse accepted them); a number beyond the f64 range
-    (`1e400`) or nesting deeper than 128 levels is still refused with 400
-    where upstream judged the fields.
+    (This item also listed the two behaviours items 38 and 39 now fix.)
+24. **A thrown error in a route handler** answers like Next: `500`, empty
+    body, no `Content-Type` (`error::route_handler_error_response`; seen on
+    the reference on `/api/duplicates` with an out-of-range count and on
+    `/s/%00`). Only `server.ts`' raw upload paths answer its `fail()` JSON
+    `{"message":"Internal server error"}` (also for a panic there). Decided
+    at integration (2026-10-20); before, every 500 was the JSON one.
+25. **`read_json_object`** parses with `js_json::parse` (V8's `JSON.parse`:
+    no nesting limit, lone surrogate escapes, `1e400` = Infinity), as upstream
+    `readJsonObject` (decided at integration with the reference's answers:
+    `maxViews: 1e400` -> 400 "View limit must be a number", `expiresInDays:
+    1e400` -> a link without expiry, a field nested 3000 levels deep ignored
+    like any unknown field). The routes still read serde_json values
+    (`api_json::js_object_to_map`): a non-finite number becomes the RPC's
+    tagged `{"$num":"Infinity"}` (`api_json::is_js_number`,
+    `rpc::tagged::raw_num` read it), so a client that sends that literal
+    object as a field value is read as Infinity; containers deeper than 64
+    levels are kept empty (no route reads that deep; serde_json's drop is
+    recursive). Lone surrogates become U+FFFD as before.
 26. **Security fix 1, view limits** (`media::serve::ViewBudget`, the exact
     rule is in its doc comment). For a file with `max_views`, and anybody but
     its owner or an administrator: a request upstream counted is counted
@@ -452,6 +459,79 @@ Deliberate, each for a reason:
     and no motion tile (`not-animated`), on both servers.
 37. **Lookups by a caller's string** in `media/source_preview.rs` (paste
     language -> extension) use exact keys, as item 31 does for the card table.
+
+38. **Security fix: the tus URL of a finished upload** (integration,
+    2026-10-20). On S3 a finished tus upload IS the stored object (finalize
+    adopts the key in place) and its `<id>.info` record stayed, so upstream's
+    `GET /api/files/<id>` streamed the file to anybody holding the tus URL
+    whatever its later privacy, password or view limit, and `DELETE` (tus
+    termination, no authentication upstream) deleted the object from under
+    its media row. Now `GET` never serves a finished upload (404, as an
+    unknown id; the option `serve_finished_uploads`), `DELETE` of a finished
+    upload answers 400 "Cannot terminate an already completed upload"
+    (@tus/server's own `disableTerminationForFinishedUploads`), and once the
+    upload is finalized on S3 its tus record (`.info`, `.part`) is deleted, so
+    the URL answers 404 to HEAD/PATCH/DELETE exactly as on the local driver.
+    Unfinished uploads resume as before. Tests: `upload::tus_server::server`
+    `finished_uploads_are_not_served_or_terminated`, `tests/library_s3_e2e.rs`
+    (MinIO).
+39. **Replacing or removing an avatar or a wallpaper deletes the previous
+    object** (integration, 2026-10-20). Upstream's `UPDATE ... RETURNING`
+    read the NEW key, so `discard(old, key)` never deleted anything and every
+    replacement left an object behind for good. The previous key is now read
+    under the row lock of the same statement (`update ... from (select ... for
+    update) prev returning prev.<column>`), and its object is deleted after
+    the update; only this account's own keys (`avatars/<userId>-...`,
+    `backgrounds/<userId>-...`) are ever deleted, because `user.image` can also
+    be written through Better Auth's `update-user`. Test:
+    `tests/library_routes_db.rs` `replacing_avatar_or_wallpaper_deletes_the_previous_object`.
+
+40. **PORT.md section 12, fixes 1 to 7, re-checked in the integrated build**
+    (2026-10-20), each with a test that fails on upstream's behaviour:
+    1 view limits: items 26, `tests/media_serving_db.rs`
+    `fix1_every_bypass_of_the_audit_is_closed`, `fix1_the_legitimate_flows_ride_on_the_view_grant`,
+    `fix1_preview_bots_get_no_content_of_a_capped_file` (+ parity `media_serve.py --only fix1`);
+    2 ShareX: item 17, `tests/security_fixes_db.rs`
+    `fix2_sharex_authenticates_before_the_body_and_caps_what_streams` (an
+    unknown header token is refused with the body unread; no token: 413 after
+    8 MiB; a chunked body over the quota: 507 while streaming, nothing kept);
+    3 first administrator: `auth::adapter` (`pg_advisory_xact_lock`),
+    `tests/security_fixes_db.rs` `fix3_concurrent_first_sign_ups_make_exactly_one_admin`
+    (12 concurrent sign-ups on an empty install, one admin);
+    4 `POST /api/releases/app`: `tests/releases.rs`
+    `publishing_authenticates_before_it_reads_the_body` and the 415 / 413
+    checks in `release_channel_against_a_database`;
+    5 constant-time delete token: item 27, `tests/media_serving_db.rs` `fix5_delete_by_token`;
+    6 `/oembed` of a capped file: item 28, `tests/media_serving_db.rs`
+    `fix6_oembed_describes_a_capped_file_without_its_bytes`;
+    7 `X-Real-IP` only behind `TRUST_PROXY`: item 8, `password::tests::honours_x_real_ip_only_behind_a_trusted_proxy`,
+    `auth::ip::tests::real_ip_only_behind_a_trusted_proxy`.
+
+41. **Document redirects and the dashboard boundary** (integration,
+    2026-10-20, decided with the reference's answers, CONTRACT 12.4). A page's
+    or layout's `redirect()` answers `307` + `Location` with a whole HTML
+    document as the body, as Next does (Next sends its `__next_error__`
+    shell; here the SPA shell with the redirect payload inlined, which the
+    SPA follows if a client ever shows it). Under `app/(app)/dashboard/`,
+    whose `loading.tsx` makes Next flush the page before it runs, a page's
+    own `redirect()` or `notFound()` answers `200` like the reference: the
+    page's own title (`Admin - Modlight`, `User files - Modlight`, else the
+    app name), a `notFound()` with `robots: noindex`, a redirect with Next's
+    `<meta id="__next-page-redirect" http-equiv="refresh"
+    content="1;url=...">` inside `<noscript>` (the SPA follows the inlined
+    redirect payload itself; a live refresh would load the target a second
+    time a second later). Layout redirects (the `(app)` layout's
+    `requireUser()`) stay `307`, as on the reference. The proxy gate and the
+    trailing-slash `308` keep their text bodies (already as upstream).
+    Malformed percent-escapes keep item 1 (400).
+42. **Response compression** (integration, 2026-10-20): Next's
+    `compress: true` (compression 1.7.4), checked response by response on the
+    reference: documents, `/_page` and `/_rpc` (the RSC payloads' place) and
+    static files (`/assets/*`, `public/`, from 1 KiB) are gzip- or
+    deflate-encoded for a client that accepts it, with `Vary:
+    Accept-Encoding`; route handlers (`/api/*`, media, `/oembed`, `/embed`,
+    `/icon.svg`), the raw upload paths and every `206` never are
+    (`http::compression`). Bytes differ from Node's zlib (same content).
 
 ## 10. Verified on 2026-10-18
 

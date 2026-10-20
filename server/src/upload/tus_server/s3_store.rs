@@ -753,6 +753,25 @@ impl DataStore for S3Store {
         true
     }
 
+    /// The upload's record only: the `<id>.info` object (and a parked
+    /// `<id>.part`, which a finished upload no longer has), never the object
+    /// `<id>` itself. Not in `@tus/s3-store`: lib/upload/tus.ts calls it once a
+    /// finished upload has been adopted into storage (SKELETON.md 9, the tus
+    /// URL of a finished upload).
+    fn delete_record<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(async move {
+            let objects = [self.info_key(id), self.part_key(id, true)]
+                .into_iter()
+                .map(|key| ObjectIdentifier::builder().key(key).build())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(anyhow::Error::from)?;
+            let delete = Delete::builder().set_objects(Some(objects)).build().map_err(anyhow::Error::from)?;
+            self.client.delete_objects().bucket(&self.bucket).delete(delete).send().await.map_err(sdk_err)?;
+            self.clear_cache(id);
+            Ok(())
+        })
+    }
+
     fn read<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<ByteStream, StoreError>> {
         Box::pin(async move { S3Store::read(self, id).await.map_err(StoreError::Other) })
     }

@@ -4,7 +4,9 @@
 //! Route handlers return `AppResult<Response>`. Expected refusals carry their
 //! status and the exact upstream body; anything else is an
 //! [`AppError::Internal`], which is logged with its cause chain and answered
-//! like `server.ts` `fail()`: 500 with `{"message":"Internal server error"}`.
+//! as Next answers a route handler that threw: 500 with an empty body
+//! (SKELETON.md 9.24). The raw upload paths answer like `server.ts` `fail()`
+//! (`{"message":"Internal server error"}`, [`internal_error_response`]).
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -70,6 +72,14 @@ pub fn internal_error_response() -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "message": "Internal server error" }))).into_response()
 }
 
+/// What Next answers when a route handler (`app/**/route.ts`) throws: `500`
+/// with an empty body and no `Content-Type` (seen on the reference: `/s/%00`,
+/// `POST /api/duplicates` with an out-of-range count). The raw upload paths
+/// of `server.ts` keep [`internal_error_response`] (its `fail()`).
+pub fn route_handler_error_response() -> Response {
+    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
@@ -78,7 +88,7 @@ impl IntoResponse for AppError {
             AppError::Response(response) => *response,
             AppError::Internal(err) => {
                 tracing::error!(error = ?err, "request failed");
-                internal_error_response()
+                route_handler_error_response()
             }
         }
     }

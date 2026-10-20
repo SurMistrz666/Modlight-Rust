@@ -215,6 +215,10 @@ async fn run(pool: &PgPool) {
     let a = post_release(&app, &body, "text/plain", &token).await;
     assert_eq!(a.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
     assert_eq!(a.json(), json!({ "message": "Content-Type must be application/json." }));
+    // ... and the size ceiling of every other JSON write endpoint (16 KiB).
+    let huge = json!({ "version": "v0.7.0", "code": "saluy6", "notes": "x".repeat(20 * 1024) }).to_string();
+    let a = post_release(&app, &huge, "application/json", &token).await;
+    assert_eq!(a.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", a.text());
     let a = post_release(&app, &body, "application/json", &token).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.text());
     assert_eq!(a.header("cache-control").as_deref(), Some("no-store"));

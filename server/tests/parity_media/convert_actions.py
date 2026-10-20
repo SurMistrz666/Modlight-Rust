@@ -36,6 +36,8 @@ p.add_argument("--ref-db", default="modlight-srvmedia-a-ref-postgres-1:modlight"
 p.add_argument("--rust-db", default="modlight-devdb-postgres-1:modlight_srv_media_a")
 p.add_argument("--rust-storage", default=os.path.join(SCRATCH, "data", "storage"))
 p.add_argument("--corpus", default=os.path.join(SCRATCH, "corpus"))
+p.add_argument("--ref-env", default=os.path.join(SCRATCH, "ref", ".env"))
+p.add_argument("--rust-env", default=os.path.join(SCRATCH, "rust.env"))
 OPT, _ = p.parse_known_args()
 if not os.environ.get("PARITY_REF"):
     os.environ["PARITY_REF"] = "http://localhost:8446"
@@ -45,8 +47,8 @@ if not os.environ.get("PARITY_RUST"):
 run = parity.Run.from_args()
 _rc, _rd = OPT.ref_db.split(":")
 _uc, _ud = OPT.rust_db.split(":")
-REF = parity.Db(_rc, _rd, parity.read_env_file(os.path.join(SCRATCH, "ref", ".env"))["AUTH_SECRET"])
-RUST = parity.Db(_uc, _ud, parity.read_env_file(os.path.join(SCRATCH, "rust.env"))["AUTH_SECRET"])
+REF = parity.Db(_rc, _rd, parity.read_env_file(OPT.ref_env)["AUTH_SECRET"])
+RUST = parity.Db(_uc, _ud, parity.read_env_file(OPT.rust_env)["AUTH_SECRET"])
 lib = Library(run, REF, RUST)
 acts = parity.Actions(run, OPT.ref_app)
 SFX = lib.suffix

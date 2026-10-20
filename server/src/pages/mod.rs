@@ -360,6 +360,10 @@ impl PageRegistry {
     pub fn has_page(&self, path: &str) -> bool {
         self.pages.contains_key(path)
     }
+
+    pub fn has_layout(&self, layout: Layout) -> bool {
+        self.layouts.contains_key(&layout)
+    }
 }
 
 /// Every page and layout loader. ONE LINE PER MODULE: other agents add theirs
@@ -412,10 +416,16 @@ pub enum PageOutcome {
     Redirect {
         to: String,
         status: StatusCode,
+        /// The page's own `redirect()` inside `app/(app)/dashboard/`, whose
+        /// `loading.tsx` makes Next flush the shell first: the document answers
+        /// 200 with the page's head (see [`dashboard_boundary`]).
+        boundary: Option<ResolvedHead>,
     },
     NotFound {
         layouts: IndexMap<String, Value>,
         head: ResolvedHead,
+        /// The page's own `notFound()` inside the dashboard boundary (200).
+        boundary: bool,
     },
     NotImplemented {
         route: &'static AppRoute,
@@ -432,6 +442,9 @@ impl PageOutcome {
     pub fn status(&self) -> StatusCode {
         match self {
             PageOutcome::Page { .. } => StatusCode::OK,
+            PageOutcome::Redirect { boundary: Some(_), .. } | PageOutcome::NotFound { boundary: true, .. } => {
+                StatusCode::OK
+            }
             PageOutcome::Redirect { status, .. } => *status,
             PageOutcome::NotFound { .. } => StatusCode::NOT_FOUND,
             PageOutcome::NotImplemented { .. } => StatusCode::NOT_IMPLEMENTED,
@@ -449,8 +462,10 @@ impl PageOutcome {
                 "props": props,
                 "meta": head,
             }),
-            PageOutcome::Redirect { to, status } => json!({ "redirect": to, "status": status.as_u16() }),
-            PageOutcome::NotFound { layouts, head } => json!({ "notFound": true, "layouts": layouts, "meta": head }),
+            PageOutcome::Redirect { to, status, .. } => json!({ "redirect": to, "status": status.as_u16() }),
+            PageOutcome::NotFound { layouts, head, .. } => {
+                json!({ "notFound": true, "layouts": layouts, "meta": head })
+            }
             PageOutcome::NotImplemented { route, missing, layouts } => json!({
                 "notImplemented": true,
                 "route": route.path,
@@ -479,7 +494,7 @@ pub async fn load_page(ctx: PageCtx) -> PageOutcome {
             Ok(v) => {
                 layouts.insert(layout.key().to_string(), v);
             }
-            Err(e) => return error_outcome(&state, e, layouts),
+            Err(e) => return error_outcome(&state, e, layouts, None),
         }
     }
     let Some(loader) = state.pages.pages.get(route.path) else {
@@ -500,17 +515,64 @@ pub async fn load_page(ctx: PageCtx) -> PageOutcome {
                 skin,
             }
         }
-        Err(e) => error_outcome(&state, e, layouts),
+        Err(e) => {
+            let boundary = dashboard_boundary(&ctx).map(|page_meta| meta::resolve(&state.config, &page_meta, false));
+            error_outcome(&state, e, layouts, boundary)
+        }
     }
 }
 
-fn error_outcome(state: &AppState, e: PageError, mut layouts: IndexMap<String, Value>) -> PageOutcome {
+/// The head a page's own `redirect()` / `notFound()` keeps when it runs
+/// inside `app/(app)/dashboard/loading.tsx`'s boundary, `None` elsewhere.
+///
+/// Next flushes the dashboard shell (status 200, the page's `metadata` in the
+/// head) before the page runs, so a redirect there becomes `200` with
+/// `<meta id="__next-page-redirect" http-equiv="refresh" content="1;url=..">`
+/// and a `notFound()` becomes `200` with `<meta name="robots"
+/// content="noindex"/>`, the page's own title kept (seen on the reference: a
+/// non-admin on `/dashboard/admin` gets `200`, title `Admin - Modlight`;
+/// `/dashboard/admin/users/<unknown>/files` `200`, `User files - Modlight`,
+/// noindex; `/dashboard` with folders `200` to `/dashboard/folders`).
+/// Layouts run outside the boundary: their redirects stay `307`.
+/// Only the pages that can redirect or 404 by themselves need their title
+/// here; the others' `metadata` is never reached by these paths.
+fn dashboard_boundary(ctx: &PageCtx) -> Option<PageMeta> {
+    let path = ctx.route.path;
+    if path != "/dashboard" && !path.starts_with("/dashboard/") {
+        return None;
+    }
+    Some(match path {
+        // app/(app)/dashboard/admin/page.tsx: `metadata = { title: "Admin" }`
+        "/dashboard/admin" => PageMeta::titled("Admin"),
+        // .../admin/users/[id]/files/page.tsx: generateMetadata
+        "/dashboard/admin/users/[id]/files" => PageMeta::titled(ctx.t("admin").t("files.pageTitle")),
+        // /dashboard, /dashboard/folders: no metadata of their own
+        _ => PageMeta::default(),
+    })
+}
+
+fn error_outcome(
+    state: &AppState,
+    e: PageError,
+    mut layouts: IndexMap<String, Value>,
+    boundary: Option<ResolvedHead>,
+) -> PageOutcome {
     match e {
-        PageError::Redirect { to, status } => PageOutcome::Redirect { to, status },
+        PageError::Redirect { to, status } => PageOutcome::Redirect { to, status, boundary },
         PageError::NotFound => {
             // The not-found boundary renders inside the root layout only.
             layouts.retain(|k, _| k == Layout::Root.key());
-            PageOutcome::NotFound { layouts, head: meta::resolve(&state.config, &PageMeta::default(), true) }
+            match boundary {
+                Some(mut head) => {
+                    head.robots = Some("noindex".to_string());
+                    PageOutcome::NotFound { layouts, head, boundary: true }
+                }
+                None => PageOutcome::NotFound {
+                    layouts,
+                    head: meta::resolve(&state.config, &PageMeta::default(), true),
+                    boundary: false,
+                },
+            }
         }
         PageError::NotImplemented => PageOutcome::Error { error: anyhow::anyhow!("not implemented"), layouts },
         PageError::Internal(error) => {
@@ -542,7 +604,11 @@ fn with_page_cache(mut res: Response) -> Response {
 }
 
 fn json_page(status: StatusCode, body: &Value) -> Response {
-    with_page_cache(crate::api_json::json_response(status, body, None))
+    // The RSC payload's counterpart: compressed like Next's.
+    crate::http::compression::mark(
+        with_page_cache(crate::api_json::json_response(status, body, None)),
+        crate::http::compression::Compress::Rendered,
+    )
 }
 
 /// The placeholder for an upstream route handler nobody has ported yet.
@@ -593,18 +659,23 @@ fn base_ctx(
 
 /// Render an outcome as a document (the SPA shell).
 async fn document_response(state: &AppState, ctx: &PageCtx, outcome: PageOutcome) -> Response {
-    if let PageOutcome::Redirect { to, status } = &outcome {
-        let mut res = (*status).into_response();
-        if let Ok(v) = HeaderValue::from_str(to) {
-            res.headers_mut().insert(header::LOCATION, v);
-        }
-        return with_page_cache(res);
-    }
     let root = root_layout::compute(ctx).await;
     let head = match &outcome {
         PageOutcome::Page { head, .. } | PageOutcome::NotFound { head, .. } => head.clone(),
+        PageOutcome::Redirect { boundary: Some(head), .. } => head.clone(),
         _ => meta::resolve(&state.config, &PageMeta::default(), false),
     };
+    // A redirect inside the dashboard boundary carries Next's refresh tag for
+    // clients without JavaScript, inside <noscript>: the SPA follows the
+    // inlined redirect payload itself, and a live refresh would load the
+    // target a second time a second later.
+    let mut head_html = meta::render_head(&head);
+    if let PageOutcome::Redirect { to, boundary: Some(_), .. } = &outcome {
+        head_html.push_str(&format!(
+            "<noscript><meta id=\"__next-page-redirect\" http-equiv=\"refresh\" content=\"1;url={}\"/></noscript>",
+            meta::escape_attr(to)
+        ));
+    }
     let skin = match &outcome {
         PageOutcome::Page { skin, .. } => skin.clone(),
         // The `(app)` layout's <ThemeApplier> paints the panel whatever the
@@ -622,12 +693,21 @@ async fn document_response(state: &AppState, ctx: &PageCtx, outcome: PageOutcome
         data_mode: root.mode,
         data_theme: skin.as_ref().map(|s| s.theme).unwrap_or(root.theme),
         background_style: background_style.as_deref(),
-        head: &meta::render_head(&head),
+        head: &head_html,
         payload_json: &tagged::json_for_html(&payload),
     });
     let mut res = (outcome.status(), html).into_response();
     res.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
-    with_page_cache(res)
+    // A plain `redirect()` (a layout, or a page outside the dashboard): 307
+    // with `Location`, and, like Next, a whole document as the body (Next's
+    // `__next_error__` shell that redirects client-side; here the SPA shell
+    // with the redirect payload, which the SPA follows if it is ever shown).
+    if let PageOutcome::Redirect { to, boundary: None, .. } = &outcome
+        && let Ok(v) = HeaderValue::from_str(to)
+    {
+        res.headers_mut().insert(header::LOCATION, v);
+    }
+    crate::http::compression::mark(with_page_cache(res), crate::http::compression::Compress::Rendered)
 }
 
 /// The not-found document for a URL no route matches.
@@ -637,7 +717,11 @@ pub async fn not_found_document(state: &AppState, uri: &Uri, headers: HeaderMap,
         RequestInfo { headers: Arc::new(headers), peer, cookies: ResponseCookies::default(), mode: PageMode::Document };
     let ctx = base_ctx(state, route, uri.path(), IndexMap::new(), SearchParams::default(), req);
     let layouts = root_only(state, &ctx).await;
-    let outcome = PageOutcome::NotFound { layouts, head: meta::resolve(&state.config, &PageMeta::default(), true) };
+    let outcome = PageOutcome::NotFound {
+        layouts,
+        head: meta::resolve(&state.config, &PageMeta::default(), true),
+        boundary: false,
+    };
     document_response(state, &ctx, outcome).await
 }
 
@@ -723,7 +807,11 @@ async fn page_data(State(state): State<AppState>, req: axum::extract::Request) -
         let req = RequestInfo { headers, peer, cookies, mode: PageMode::Navigation };
         let ctx = base_ctx(&state, route, &path, IndexMap::new(), search, req);
         let layouts = root_only(&state, &ctx).await;
-        let outcome = PageOutcome::NotFound { layouts, head: meta::resolve(&state.config, &PageMeta::default(), true) };
+        let outcome = PageOutcome::NotFound {
+            layouts,
+            head: meta::resolve(&state.config, &PageMeta::default(), true),
+            boundary: false,
+        };
         return json_page(StatusCode::OK, &outcome.payload(state.config.is_prod));
     };
     if matched.route.kind == RouteKind::Handler {
