@@ -435,7 +435,7 @@ pub fn settings_menu(state: &AppState) -> Vec<Entry> {
             icons::FOLDER_OPEN,
             Command::OpenScreenshotsFolder,
         ),
-        Entry::item(t(s::MainMenuBuilder_About), icons::INFO, Command::NotYet),
+        Entry::item(t(s::MainMenuBuilder_About), icons::INFO, Command::ShowAbout),
     ]
 }
 

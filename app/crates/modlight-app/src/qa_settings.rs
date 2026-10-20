@@ -86,6 +86,9 @@ pub const SCREENS: &[&str] = &[
     "tab-server",
     "tab-server-problem",
     "tab-server-loading",
+    "about",
+    "debug-log",
+    "debug-log-upload",
     "ffmpeg-options",
     "ffmpeg-options-video",
     "ffmpeg-options-audio",
@@ -199,6 +202,33 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         window.hotkeys.confirm_reset = screen == "settings-hotkeys-reset";
         state.windows.settings = Some(window);
         return Some(vec2(crate::settings::WIDTH, crate::settings::HEIGHT));
+    }
+    if screen == "about" {
+        state.show_about();
+        return Some(vec2(
+            crate::about_window::ABOUT_WIDTH,
+            crate::about_window::ABOUT_HEIGHT,
+        ));
+    }
+    if screen.starts_with("debug-log") {
+        state.windows.debug_log = Some(crate::about_window::DebugLogWindow {
+            startup_path: "/Applications/Modlight.app/Contents/MacOS".into(),
+            text: [
+                "2026-10-20 09:41:05.120 - Modlight 0.7.7 Dev started (macos, aarch64)",
+                "2026-10-20 09:41:05.348 - Settings read from ApplicationConfig.json",
+                "2026-10-20 09:41:06.002 - 5 hotkeys registered",
+                "2026-10-20 09:42:13.517 - Upload finished: https://files.example.com/q8",
+                "",
+            ]
+            .join("\n"),
+            seen: modlight_core::debug_log::count(),
+            confirm_upload: screen == "debug-log-upload",
+            scroll_to_end: true,
+        });
+        return Some(vec2(
+            crate::about_window::LOG_WIDTH,
+            crate::about_window::LOG_HEIGHT,
+        ));
     }
     if screen.starts_with("tab-server") {
         state.tab = crate::state::Tab::Admin;
@@ -318,6 +348,20 @@ fn sample_disk_report() -> modlight_api::DiskReport {
 pub fn draw(screen: &str, ui: &mut Ui, state: &mut AppState) -> Option<Option<f32>> {
     if !is_dialog(screen) {
         return None;
+    }
+    if screen == "about" {
+        let colors = state.colors.clone();
+        if let Some(window) = state.windows.about.as_mut() {
+            let _ = crate::about_window::about_ui(ui, window, &colors);
+        }
+        return Some(None);
+    }
+    if screen.starts_with("debug-log") {
+        let colors = state.colors.clone();
+        if let Some(window) = state.windows.debug_log.as_mut() {
+            let _ = crate::about_window::debug_log_ui(ui, window, &colors);
+        }
+        return Some(None);
     }
     if screen.starts_with("ffmpeg-options") {
         let colors = state.colors.clone();

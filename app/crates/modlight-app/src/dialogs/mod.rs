@@ -44,6 +44,8 @@ pub struct Windows {
     pub duplicates: Option<duplicates::Duplicates>,
     pub confirm: Option<confirm::Confirm>,
     pub notification: Option<Notification>,
+    pub about: Option<crate::about_window::AboutWindow>,
+    pub debug_log: Option<crate::about_window::DebugLogWindow>,
 }
 
 impl Windows {

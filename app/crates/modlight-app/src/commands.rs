@@ -97,6 +97,8 @@ pub enum Command {
     QuickTask(usize),
     /// An entry of a menu whose owner reads the position itself; never run.
     Local(usize),
+    /// `MainFormCommand.About`.
+    ShowAbout,
 }
 
 impl AppState {
@@ -206,6 +208,7 @@ impl AppState {
                 self.open_scrolling_capture(settings);
             }
             Command::Local(_) => {}
+            Command::ShowAbout => self.show_about(),
             Command::QuickTask(index) => {
                 let choice = self
                     .captures
