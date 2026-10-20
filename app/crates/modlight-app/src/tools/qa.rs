@@ -54,6 +54,8 @@ pub const SCREENS: &[&str] = &[
     "image-history",
     "image-history-settings",
     "image-history-import",
+    "print",
+    "print-settings",
 ];
 
 /// ExifTool's `-G -t` output for the fixture photo.
@@ -580,6 +582,25 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                 }
             });
             Some(vec2(1100.0, 720.0))
+        }
+        "print" | "print-settings" => {
+            let mut settings = modlight_tools::print::PrintSettings::default();
+            if screen == "print-settings" {
+                settings.auto_scale_image = false;
+                settings.show_print_dialog = false;
+                settings.margin = 20;
+            }
+            let image = Arc::new(sunset(640, 400));
+            let preview_only = screen == "print-settings";
+            state.tools.open_keyed(|key| {
+                Box::new(super::print::PrintWindow::new(
+                    key,
+                    image,
+                    settings,
+                    preview_only,
+                ))
+            });
+            Some(vec2(470.0, 330.0))
         }
         _ => None,
     }

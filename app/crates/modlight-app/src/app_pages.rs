@@ -1863,7 +1863,7 @@ impl crate::state::AppState {
                 self.windows.confirm = Some(confirm);
             }
             // Printing is not part of this phase.
-            AppPageAsk::ImagePrintSettings => self.push(Command::NotYet),
+            AppPageAsk::ImagePrintSettings => self.open_print_settings(),
             AppPageAsk::StartAtLogin(on) => {
                 if !self.dialogs_allowed() {
                     return;

@@ -180,6 +180,8 @@ pub const SCREENS: &[&str] = &[
     "image-history",
     "image-history-settings",
     "image-history-import",
+    "print",
+    "print-settings",
 ];
 
 /// How a screen is drawn: skin, light or dark, language, size, scale.

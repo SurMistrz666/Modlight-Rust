@@ -377,9 +377,11 @@ impl AppState {
                     s.editor.close_after_task_action();
                 }
             }
-            // Printing is a later step of phase 5.
+            // `TaskHelpers.PrintImage(image)` (phase 5, `tools::print`).
             Request::Print => {
-                self.push(crate::commands::Command::NotYet);
+                if let Some(image) = self.session(key).and_then(|s| s.editor.snapshot()) {
+                    self.print_picture(image);
+                }
             }
             // `TaskHelpers.PinToScreen(image)` (phase 5, `tools::pin`).
             Request::PinToScreen => {
