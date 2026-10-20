@@ -194,9 +194,9 @@ impl WorkerTask {
                 && s.info.data_type == DataType::Image
             {
                 s.info.job = TaskJob::Job;
-                match image::open(path) {
+                match crate::image_decode::open(path) {
                     Ok(picture) => {
-                        let picture = Arc::new(picture.to_rgba8());
+                        let picture = Arc::new(picture.into_rgba8());
                         s.info.metadata.image = Some(picture.clone());
                         s.image = Some(picture);
                     }

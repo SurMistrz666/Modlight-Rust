@@ -1963,6 +1963,8 @@ impl crate::state::AppState {
         if !path.is_file() {
             return;
         }
+        // The import compares what it restores with the settings as they are now.
+        self.save_config();
         self.app_status(
             t(s::ApplicationSettingsWindow_ImportingBackup).to_string(),
             true,
@@ -1971,12 +1973,28 @@ impl crate::state::AppState {
         self.rt.spawn_blocking(move || {
             let result = modlight_core::backup::import(&path, &profile);
             move |state: &mut crate::state::AppState, _ctx: &egui::Context| match result {
-                Ok(_) => {
+                Ok(report) => {
                     state.reload_settings_files();
-                    let text = format(
+                    let mut text = format(
                         t(s::ApplicationSettingsWindow_BackupImportedFrom),
                         &[Arg::from(path.display().to_string())],
                     );
+                    // What the backup held but did not get in is said out loud, in the
+                    // status line and in a message the person has to close.
+                    let notes = report.notes();
+                    if !notes.is_empty() {
+                        let body = notes.join("\n\n");
+                        log::warn!("Backup import: {}", body.replace('\n', " "));
+                        text.push_str("\n\n");
+                        text.push_str(&body);
+                        state.uploads.windows.messages.push_back(
+                            crate::dialogs::message::MessageBox::new(
+                                "Modlight",
+                                &body,
+                                modlight_core::tasks::host::MessageIcon::Warning,
+                            ),
+                        );
+                    }
                     state.app_status(text, false);
                 }
                 Err(error) => {

@@ -631,3 +631,45 @@ fn matching_ignores_case_and_a_trailing_slash() {
     };
     assert!(!matches(&item, &alex()), "tags are compared exactly");
 }
+
+/// W2: a `Queue.json` written somewhere else (an edited file, somebody's backup) marks a
+/// file of the person's as the queue's own and as overdue. The next start gives the item
+/// up; letting it go deletes only what the queue spooled itself.
+#[tokio::test]
+async fn a_queue_file_from_elsewhere_cannot_delete_the_persons_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let victim = elsewhere.path().join("work.docx");
+    std::fs::write(&victim, b"keep me").unwrap();
+    let now = Utc.with_ymd_and_hms(2026, 10, 19, 12, 0, 0).unwrap();
+    let store = QueueStore::new(dir.path());
+    let own = store.spool("own", "clip.png", &mut &b"png"[..]).unwrap();
+    let overdue = |id: &str, path: &std::path::Path| QueueItem {
+        id: id.into(),
+        file_name: "x.png".into(),
+        source_path: path.to_string_lossy().into_owned(),
+        owns_source: true,
+        host: alex().host,
+        account_tag: alex().tag,
+        length: 3,
+        deadline_utc: now - chrono::Duration::days(1),
+        ..QueueItem::default()
+    };
+    store.save(&[overdue("own", &own), overdue("work", &victim)]);
+
+    let account: AccountSlot = Arc::new(RwLock::new(Some(alex())));
+    let queue = UploadQueue::new(
+        QueueStore::new(dir.path()),
+        account,
+        Arc::new(Fake::default()),
+        Arc::new(|| true),
+    )
+    .with_clock(Arc::new(move || now));
+    queue.restore();
+    assert_eq!(queue.count(), 2);
+    queue.pump().await;
+    assert_eq!(queue.count(), 0, "both were given up on");
+    assert!(victim.exists(), "the person's file is still there");
+    assert_eq!(std::fs::read(&victim).unwrap(), b"keep me");
+    assert!(!own.exists(), "the queue's own spooled file went");
+}
