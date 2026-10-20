@@ -396,8 +396,12 @@ impl Canvas {
         let mut mask = Mask::new(w, h).unwrap();
         let device = path.clone().transform(self.state.matrix);
         match device {
-            Some(d) if aa && raster::should_use_analytic(&d, is_axis_rect(&d)) => {
-                mask = raster::coverage(&raster::flatten(&d, Transform::identity()), w, h);
+            Some(d) if aa => {
+                mask = if raster::should_use_analytic(&d, is_axis_rect(&d)) {
+                    raster::coverage(&raster::flatten_analytic(&d, Transform::identity()), w, h)
+                } else {
+                    raster::supersampled(&raster::flatten(&d, Transform::identity()), w, h)
+                };
             }
             _ => mask.fill_path(path, FillRule::Winding, aa, self.state.matrix),
         }
@@ -455,6 +459,11 @@ impl Canvas {
         }
     }
 
+    /// `DrawRect(x, y, w, h, paint)`.
+    pub fn draw_rect_xywh(&mut self, x: f32, y: f32, w: f32, h: f32, paint: &Paint) {
+        self.draw_rect_ltrb(x, y, x + w, y + h, paint);
+    }
+
     pub fn draw_round_rect(&mut self, r: Rect, rx: f32, ry: f32, paint: &Paint) {
         if let Some(path) = round_rect_path(r, rx, ry) {
             self.draw_path(&path, paint);
@@ -465,13 +474,13 @@ impl Canvas {
         if radius <= 0.0 {
             return;
         }
-        if let Some(path) = PathBuilder::from_circle(cx, cy, radius) {
+        if let Some(path) = oval_path(cx - radius, cy - radius, cx + radius, cy + radius) {
             self.draw_path(&path, paint);
         }
     }
 
     pub fn draw_oval(&mut self, r: Rect, paint: &Paint) {
-        if let Some(path) = PathBuilder::from_oval(r) {
+        if let Some(path) = oval_path(r.left(), r.top(), r.right(), r.bottom()) {
             self.draw_path(&path, paint);
         }
     }
@@ -539,9 +548,14 @@ impl Canvas {
         let hairline = paint.style != Style::Fill && paint.stroke_width <= 0.0;
         if paint.style != Style::Fill && !hairline {
             let res = matrix_scale(matrix);
+            // A dash whose first interval is longer than the contour leaves the closed
+            // contour whole in Skia (no butt-capped seam at its start).
+            let whole = paint.dash.as_ref().is_some_and(|(i, phase)| {
+                *phase == 0.0 && i.first().is_some_and(|f| *f >= path_length(path))
+            });
             let dashed = match &stroke.dash {
-                Some(d) => path.dash(d, res),
-                None => Some(path.clone()),
+                Some(d) if !whole => path.dash(d, res),
+                _ => Some(path.clone()),
             };
             if let Some(o) = dashed.and_then(|p| {
                 let mut st = stroke.clone();
@@ -597,11 +611,12 @@ impl Canvas {
             Some(d) => d,
             None => return,
         };
-        if !aa || !raster::should_use_analytic(&device, is_axis_rect(&device)) {
+        if !aa {
             self.pm
                 .fill_path(outline, ts_paint, FillRule::Winding, matrix, clip);
             return;
         }
+        let analytic = raster::should_use_analytic(&device, is_axis_rect(&device));
         let (cw, ch) = (self.pm.width() as i32, self.pm.height() as i32);
         let b = device.bounds();
         let bx = (b.left().floor() as i32).max(0);
@@ -612,8 +627,12 @@ impl Canvas {
             return;
         }
         let (bw, bh) = ((bx2 - bx) as u32, (by2 - by) as u32);
-        let lines = raster::flatten(&device, Transform::from_translate(-bx as f32, -by as f32));
-        let mut cov = raster::coverage(&lines, bw, bh);
+        let shift = Transform::from_translate(-bx as f32, -by as f32);
+        let mut cov = if analytic {
+            raster::coverage(&raster::flatten_analytic(&device, shift), bw, bh)
+        } else {
+            raster::supersampled(&raster::flatten(&device, shift), bw, bh)
+        };
         if let Some(c) = clip {
             let cd = c.data();
             let data = cov.data_mut();
@@ -812,6 +831,13 @@ impl Canvas {
                 continue;
             }
             blend_into(&mut data[i * 4..i * 4 + 4], sp, mode, cov);
+        }
+    }
+
+    /// `DrawText(text, x, y, font, paint)`: `y` is the baseline.
+    pub fn draw_text(&mut self, s: &str, x: f32, y: f32, font: &super::text::Font, paint: &Paint) {
+        if let Some(p) = font.path(s, x, y) {
+            self.draw_path(&p, paint);
         }
     }
 
@@ -1042,6 +1068,15 @@ pub fn blend_into(dst: &mut [u8], s: F4, mode: Blend, cov: f32) {
     dst[3] = a;
 }
 
+/// The length of a path's outline (curves flattened).
+fn path_length(path: &Path) -> f32 {
+    let lines = raster::flatten(path, Transform::identity());
+    lines
+        .iter()
+        .map(|(a, b)| ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt())
+        .sum()
+}
+
 /// The scale a matrix applies (the stroker's resolution scale).
 fn matrix_scale(m: Transform) -> f32 {
     let sx = (m.sx * m.sx + m.ky * m.ky).sqrt();
@@ -1128,6 +1163,25 @@ pub fn round_rect_path(r: Rect, rx: f32, ry: f32) -> Option<Path> {
     pb.finish()
 }
 
+/// `SKPath.AddOval` (clockwise from the right-hand point) in quarter conics, which the
+/// edge builder turns into quads the way Skia does (so small circles are as round, and as
+/// slightly bulging, as upstream's).
+pub fn oval_path(l: f32, t: f32, r: f32, b: f32) -> Option<Path> {
+    if !(r > l && b > t) {
+        return None;
+    }
+    let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0);
+    let w = std::f32::consts::FRAC_1_SQRT_2;
+    let mut pb = PathBuilder::new();
+    pb.move_to(r, cy);
+    conic_to(&mut pb, (r, cy), (r, b), (cx, b), w);
+    conic_to(&mut pb, (cx, b), (l, b), (l, cy), w);
+    conic_to(&mut pb, (l, cy), (l, t), (cx, t), w);
+    conic_to(&mut pb, (cx, t), (r, t), (r, cy), w);
+    pb.close();
+    pb.finish()
+}
+
 /// A conic from `p0` (the current point) through control `p1` to `p2`, as the quads
 /// `SkAutoConicToQuads` makes of it (tolerance 0.25).
 pub fn conic_to(pb: &mut PathBuilder, p0: (f32, f32), p1: (f32, f32), p2: (f32, f32), w: f32) {
@@ -1137,7 +1191,7 @@ pub fn conic_to(pb: &mut PathBuilder, p0: (f32, f32), p1: (f32, f32), p2: (f32, 
     let y = k * (p0.1 - 2.0 * p1.1 + p2.1);
     let mut error = (x * x + y * y).sqrt();
     let mut pow2 = 0;
-    while pow2 < 4 {
+    while pow2 < 5 {
         if error <= 0.25 {
             break;
         }
@@ -1171,6 +1225,38 @@ pub fn conic_to(pb: &mut PathBuilder, p0: (f32, f32), p1: (f32, f32), p2: (f32, 
     chop(p0, p1, p2, w, pow2, &mut quads);
     for (c, e) in quads {
         pb.quad_to(c.0, c.1, e.0, e.1);
+    }
+}
+
+/// `SKPath.AddArc(oval, startAngle, sweepAngle)`: a new contour along the ellipse, in
+/// conic segments of at most 90 degrees.
+pub fn add_arc(pb: &mut PathBuilder, oval: (f32, f32, f32, f32), start: f32, sweep: f32) {
+    let (l, t, r, b) = oval;
+    if r <= l || b <= t || sweep == 0.0 {
+        return;
+    }
+    let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0);
+    let (rx, ry) = ((r - l) / 2.0, (b - t) / 2.0);
+    let sweep = sweep.clamp(-360.0, 360.0);
+    let n = (sweep.abs() / 90.0).ceil().max(1.0) as i32;
+    let step = sweep / n as f32;
+    let pt = |deg: f32| {
+        let a = deg.to_radians();
+        (cx + rx * a.cos(), cy + ry * a.sin())
+    };
+    let mut cur = pt(start);
+    pb.move_to(cur.0, cur.1);
+    let mut a = start;
+    for _ in 0..n {
+        let a1 = a + step;
+        let mid = ((a + a1) / 2.0).to_radians();
+        let half = (step / 2.0).to_radians();
+        let k = 1.0 / half.cos();
+        let c = (cx + rx * mid.cos() * k, cy + ry * mid.sin() * k);
+        let e = pt(a1);
+        conic_to(pb, cur, c, e, half.cos());
+        cur = e;
+        a = a1;
     }
 }
 

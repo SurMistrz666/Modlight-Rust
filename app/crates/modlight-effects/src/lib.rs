@@ -24,6 +24,7 @@
 )]
 
 pub mod def;
+pub mod dotnet;
 pub mod fx;
 pub mod helpers;
 pub mod sk;

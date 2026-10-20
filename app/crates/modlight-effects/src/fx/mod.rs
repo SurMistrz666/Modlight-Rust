@@ -1,6 +1,9 @@
 //! The effect classes of upstream `Core/ImageEffects`, by category.
 
 pub mod adjustments;
+pub mod filters_a;
+pub mod filters_b;
+pub mod filters_c;
 pub mod manipulations;
 pub mod remove_background;
 
@@ -12,5 +15,8 @@ pub fn defs() -> Vec<Def> {
     all.extend(adjustments::defs());
     all.extend(manipulations::defs());
     all.push(remove_background::def());
+    all.extend(filters_a::defs());
+    all.extend(filters_b::defs());
+    all.extend(filters_c::defs());
     all
 }
