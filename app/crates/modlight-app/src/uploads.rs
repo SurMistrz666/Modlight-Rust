@@ -402,7 +402,7 @@ impl AppState {
         if matches!(question, TaskQuestion::SignIn) {
             self.show_sign_in();
         }
-        // Answered at once: the save panel is modal, and the editor arrives in phase 4.
+        // Answered at once: the save panel is modal. The editor answers when it closes.
         match question {
             TaskQuestion::SaveAs { folder, file_name } => {
                 let path = self.save_as_path(&folder, &file_name);
@@ -410,7 +410,11 @@ impl AppState {
                 return;
             }
             TaskQuestion::Annotate(image) => {
-                let _ = reply.send(TaskAnswer::Annotated(self.annotate_image(image)));
+                self.annotate_for_task(image, false, reply);
+                return;
+            }
+            TaskQuestion::Beautify(image) => {
+                self.annotate_for_task(image, true, reply);
                 return;
             }
             _ => {}
@@ -471,7 +475,10 @@ impl AppState {
                 self.uploads.windows.before_upload =
                     Some(BeforeUpload::new(ask.task, (**info).clone(), signed_in));
             }
-            TaskQuestion::SignIn | TaskQuestion::SaveAs { .. } | TaskQuestion::Annotate(_) => {}
+            TaskQuestion::SignIn
+            | TaskQuestion::SaveAs { .. }
+            | TaskQuestion::Annotate(_)
+            | TaskQuestion::Beautify(_) => {}
         }
     }
 
@@ -514,13 +521,6 @@ impl AppState {
             self.config_dirty = true;
         }
         Some(path)
-    }
-
-    /// `TaskHelpers.AnnotateImage`: the image editor (phase 4). Until it exists the
-    /// picture goes on unchanged and the person is told the editor comes later.
-    fn annotate_image(&mut self, image: Arc<image::RgbaImage>) -> Option<Arc<image::RgbaImage>> {
-        self.push(crate::commands::Command::NotYet);
-        Some(image)
     }
 
     /// Answer the oldest question of this kind.
@@ -657,8 +657,13 @@ impl AppState {
         let file = PathBuf::from(&path);
         match action {
             ToastAction::CloseNotification | ToastAction::CopyImageToClipboard => {}
-            // The image editor and pinning arrive with phases 3 and 4.
-            ToastAction::AnnotateImage | ToastAction::PinToScreen => {}
+            // `AnnotateImageFromFile`; pinning arrives with phase 5.
+            ToastAction::AnnotateImage => {
+                if !path.is_empty() {
+                    self.annotate_file(&file);
+                }
+            }
+            ToastAction::PinToScreen => {}
             ToastAction::CopyFile => {
                 if !path.is_empty() {
                     self.effects.push(Effect::CopyFiles(vec![file]));

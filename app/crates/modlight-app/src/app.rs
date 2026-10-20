@@ -170,6 +170,10 @@ impl ModlightApp {
             ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
         };
         let main_focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        // Another window has the key: an image editor takes the paste if it is that one.
+        if pasted && !main_focused {
+            state.windows.editors.paste = true;
+        }
         if pasted
             && main_focused
             && state.tab == crate::state::Tab::MySpace
@@ -333,6 +337,9 @@ impl ModlightApp {
         let main = ctx.input(|i| i.viewport().outer_rect);
         let state = &mut self.state;
         let colors = state.colors.clone();
+
+        // The image editor's windows.
+        crate::editor_window::editor_viewports(state, ctx);
 
         if state.windows.sign_in.is_some() {
             let height = state
