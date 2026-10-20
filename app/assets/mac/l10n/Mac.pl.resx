@@ -41,7 +41,7 @@
     <value>Rzeczy otwierane podczas logowania...</value>
   </data>
   <data name="FinderServiceHint" xml:space="preserve">
-    <value>Polecenie Wyślij przez Modlight jest w menu Usługi Findera: kliknij pliki prawym przyciskiem, potem Usługi. Skrót klawiszowy ustawisz w Ustawieniach systemowych.</value>
+    <value>Polecenie Prześlij za pomocą Modlight jest w menu Usługi Findera: kliknij pliki prawym przyciskiem, potem Usługi. Skrót klawiszowy ustawisz w Ustawieniach systemowych.</value>
   </data>
   <data name="FinderServiceButton" xml:space="preserve">
     <value>Skróty usług...</value>
@@ -56,7 +56,7 @@
     <value>Integracja z macOS</value>
   </data>
   <data name="HintMacIntegration" xml:space="preserve">
-    <value>Otwieranie po zalogowaniu i polecenie Wyślij przez Modlight w menu Usługi Findera.</value>
+    <value>Otwieranie po zalogowaniu i polecenie Prześlij za pomocą Modlight w menu Usługi Findera.</value>
   </data>
   <data name="PageLocalFolders" xml:space="preserve">
     <value>Foldery na dysku</value>

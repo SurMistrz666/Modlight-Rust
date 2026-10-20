@@ -126,6 +126,33 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- ffmpeg records cameras and microphones through avfoundation as this app's child,
+         so the questions are asked in this app's name. -->
+    <key>NSCameraUsageDescription</key>
+    <string>Modlight records the camera you choose as a screen recording source.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Modlight records the microphone you choose with a screen recording.</string>
+    <!-- Finder's "Upload with Modlight" (the Explorer context menu's counterpart). -->
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Upload with Modlight</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>uploadFiles</string>
+            <key>NSPortName</key>
+            <string>$name</string>
+            <key>NSRequiredContext</key>
+            <dict/>
+            <key>NSSendFileTypes</key>
+            <array>
+                <string>public.item</string>
+            </array>
+        </dict>
+    </array>
     <key>NSHumanReadableCopyright</key>
     <string>GPL-3.0-or-later. Based on ShareX.</string>
     <key>NSPrincipalClass</key>
@@ -136,6 +163,11 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 plutil -lint "$bundle/Contents/Info.plist" >/dev/null
+
+# The service's name in Polish (the menu item's key is its English text).
+mkdir -p "$bundle/Contents/Resources/en.lproj" "$bundle/Contents/Resources/pl.lproj"
+printf '"Upload with Modlight" = "Upload with Modlight";\n' > "$bundle/Contents/Resources/en.lproj/ServicesMenu.strings"
+printf '"Upload with Modlight" = "Prześlij za pomocą Modlight";\n' > "$bundle/Contents/Resources/pl.lproj/ServicesMenu.strings"
 
 # --- Signature ------------------------------------------------------------------
 # Ad hoc: enough for the system to run an app built on this Mac, and stable for one
