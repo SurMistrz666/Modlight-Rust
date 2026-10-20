@@ -132,14 +132,20 @@
 //! vectors (`tests/fixtures/blurhash_vectors.json`), with macOS's and glibc's
 //! libm alike.
 //!
-//! # Not ported yet
+//! The media processing port added what convert.ts, motion.ts and
+//! card-render.ts use: `.flatten({ background })` (the PDF path),
+//! `sharp([buffers], { join: { across, animated } })` (the video motion
+//! tile), `.composite([{ input, left, top }])` and `sharp({ text })` (the
+//! embed card). The animated motion WebP and every embed card come out
+//! byte- or pixel-identical to the reference container
+//! (tests/parity_media). Text runs on Pango's fontconfig backend, the one
+//! production has (see [`init`]).
 //!
-//! Used by upstream modules outside this port and left for the media agent:
-//! `flatten` (convert.ts, the PDF path), `join: { animated }` (motion.ts),
-//! `composite` and `text` input (card-render.ts; SVG input itself is here).
+//! # Not ported
+//!
 //! Used nowhere upstream: `fit: contain`, `rotate(angle)`, `flip`, `flop`,
 //! `trim`, `extend`, colour operations, TIFF/JP2/JXL output, file input and
-//! output.
+//! output, tiled or gravity composites, `create` input.
 
 mod ffi;
 pub mod image;
@@ -152,8 +158,8 @@ use std::sync::OnceLock;
 pub use image::{Blob, Image};
 pub use operation::{Arg, Operation};
 pub use sharp::{
-    FailOn, Fit, GifOptions, HeifOptions, JpegOptions, Kernel, Metadata, OutputInfo, PngOptions, Position, Region,
-    Resize, Sharp, WebpOptions,
+    CompositeLayer, FailOn, Fit, GifOptions, HeifOptions, JpegOptions, Kernel, Metadata, OutputInfo, PngOptions,
+    Position, Region, Resize, Sharp, TextInput, WebpOptions,
 };
 
 /// What went wrong inside libvips (or before reaching it, for invalid
@@ -237,6 +243,19 @@ pub fn init() -> Result<(), VipsError> {
 
 unsafe fn init_once() -> Result<(), String> {
     use crate::media::sharp_runtime;
+    // Text (the token on an embed card) must be laid out by Pango's
+    // fontconfig/FreeType backend, the only one production's Linux libvips
+    // has: that is the backend `fontfile` registers the font with. A macOS
+    // Pango otherwise picks its CoreText backend, which never sees the font
+    // file and silently draws a system face instead. Measured: with this set,
+    // Homebrew's libvips 8.18 renders the card token pixel for pixel like the
+    // reference container. Set once, before libvips starts and before any
+    // text is laid out; a value the operator chose is left alone.
+    if std::env::var_os("PANGOCAIRO_BACKEND").is_none() {
+        // SAFETY: runs once, inside the OnceLock that guards libvips start-up,
+        // before any libvips (and therefore Pango) thread exists.
+        unsafe { std::env::set_var("PANGOCAIRO_BACKEND", "fc") };
+    }
     // SAFETY: plain libvips/GLib calls with static C strings.
     unsafe {
         if ffi::vips_init(c"modlight".as_ptr()) != 0 {

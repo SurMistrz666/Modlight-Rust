@@ -1,27 +1,27 @@
-//! The calls the serving half makes into the PROCESSING half of `lib/media`
-//! (branch `srv-media-a`), each under its upstream name.
+//! The calls the serving half makes into the PROCESSING half of `lib/media`,
+//! each under its upstream name.
 //!
 //! The media serving port (`media::serve`, `routes::media_action`, the public
 //! page loaders) was written in parallel with the processing port, against the
-//! upstream signatures. Everything it needs from the other half goes through
-//! this one module, so wiring the real implementations after both land in main
-//! is a change here and nowhere else:
+//! upstream signatures, and calls the other half only through this module.
+//! Since both landed it is a thin adapter: every function here delegates to
+//! the processing module named beside it (SKELETON section 12), converting
+//! only the shapes the two ports chose differently.
 //!
-//! | here | upstream | state |
-//! |---|---|---|
-//! | [`docx_support`], [`MAX_DOCX_BYTES`] | `lib/media/docx-support.ts` | pure, complete |
-//! | [`shows_source`], [`inline_text_plan`] | `lib/media/source-preview.ts` | pure, complete |
-//! | [`can_timeline_preview`], `TIMELINE_*_ACTION` | `lib/media/timeline-preview.ts` | pure, complete |
-//! | [`diagnose_playback`] | `lib/media/playback-health.ts` | pure, complete |
-//! | [`conversion_budget`] | `lib/media/convert.ts` | pure, complete |
-//! | [`read_derived`], [`write_derived`] | `lib/media/derived-cache.ts` | complete |
-//! | [`video_poster`] | `lib/media/poster.ts` | waits for part A (no poster) |
-//! | [`motion_preview`] | `lib/media/motion.ts` | waits for part A (`no-engine`) |
-//! | [`timeline_track`], [`timeline_sheet`] | `lib/media/timeline.ts` | waits for part A (`no-engine`) |
-//! | [`av_convert`] | `lib/media/av-action.ts` | waits for part A (not claimed) |
-//! | [`convert_image_buffer`] | `lib/media/convert.ts` | waits for part A (error) |
-//! | [`docx_to_html`] | `lib/media/docx.ts` | waits for part A (error) |
-//! | [`render_card`] | `lib/media/card-render.ts` | waits for part A (error) |
+//! | here | processing module |
+//! |---|---|
+//! | [`docx_support`], [`MAX_DOCX_BYTES`] | `media::docx_support` |
+//! | [`shows_source`], [`inline_text_plan`] | `media::source_preview` |
+//! | [`can_timeline_preview`], `TIMELINE_*_ACTION`, [`TimelineRefusal`] | `media::timeline_preview` |
+//! | [`diagnose_playback`], [`playback_source`] | `media::playback_health` |
+//! | [`conversion_budget`], [`convert_image_buffer`] | `media::convert` |
+//! | [`read_derived`], [`write_derived`] | `media::derived_cache` |
+//! | [`video_poster`] | `media::poster` |
+//! | [`motion_preview`], [`MotionRefusal`] | `media::motion`, `media::motion_preview` |
+//! | [`timeline_track`], [`timeline_sheet`] | `media::timeline` |
+//! | [`av_convert`] | `media::av_action` |
+//! | [`docx_to_html`] | `media::docx` |
+//! | [`render_card`] | `media::card_render` |
 
 use axum::response::Response;
 use bytes::Bytes;
@@ -29,54 +29,36 @@ use futures_util::future::BoxFuture;
 
 use crate::db::models::Upload;
 use crate::media::abort::AbortSignal;
-use crate::media::av_cost::AV_MAX_INPUT_BYTES;
-use crate::media::av_targets::{AvSourceSize, WEB_MAX_EDGE, needs_web_rescue};
 use crate::media::card::CardChoice;
-use crate::media::convert_targets::{ConvertTarget, keeps_animation};
-use crate::media::mime::{MediaKind, is_text_payload, media_kind};
-use crate::media::paste_type::row_mime_type;
-use crate::media::playback_health::{
-    HARDWARE_DECODER_MAX_EDGE, PlaybackDiagnosis, PlaybackFault, PlaybackSource, STARVED_BITS_PER_PIXEL,
-    TYPICAL_BITS_PER_PIXEL, bits_per_pixel, longest_edge,
-};
-use crate::media::transform_cost::{max_pixels_for, peak_bytes_for};
+use crate::media::convert_targets::ConvertTarget;
+use crate::media::playback_health::PlaybackSource;
+use crate::media::source_preview::SourceSubject;
 use crate::state::AppState;
+
+pub use crate::media::convert::{BudgetVerdict, conversion_budget};
+pub use crate::media::motion_preview::MotionRefusal;
+pub use crate::media::playback_health::diagnose_playback;
+pub use crate::media::timeline_preview::{TIMELINE_SHEET_ACTION, TIMELINE_TRACK_ACTION, TimelineRefusal};
 
 // ── docx-support.ts ─────────────────────────────────────────────────────────
 
-/// Largest .docx offered a preview (it is a ZIP that expands).
-pub const MAX_DOCX_BYTES: i64 = 10 * 1024 * 1024;
+pub use crate::media::docx_support::{DocxKind, docx_support};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DocxKind {
-    Docx,
-    LegacyDoc,
-}
-
-/// `docxSupport(mime, ext)`
-pub fn docx_support(mime: Option<&str>, ext: Option<&str>) -> Option<DocxKind> {
-    let e = ext.unwrap_or("");
-    let e = e.strip_prefix('.').unwrap_or(e).to_lowercase();
-    let m = crate::config::js_trim(mime.unwrap_or("").split(';').next().unwrap_or("")).to_lowercase();
-    if e == "docx" || m == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
-        return Some(DocxKind::Docx);
-    }
-    if e == "doc" || m == "application/msword" {
-        return Some(DocxKind::LegacyDoc);
-    }
-    None
-}
+/// Largest .docx offered a preview, as the serving code compares sizes (`i64`).
+pub const MAX_DOCX_BYTES: i64 = crate::media::docx_support::MAX_DOCX_BYTES as i64;
 
 // ── source-preview.ts ───────────────────────────────────────────────────────
 
-/// Largest text inlined into the preview page.
-pub const MAX_INLINE_TEXT: i64 = 512 * 1024;
+pub use crate::media::source_preview::MAX_INLINE_TEXT;
 
-/// `showsSource(subject)`: anything /raw would hand over as text, plus every
-/// in-app paste (whose type is declared by its language).
+/// `showsSource(subject)` for a row.
 pub fn shows_source(media: &Upload) -> bool {
-    let mime = row_mime_type(Some(&media.kind), media.language.as_deref(), &media.mime_type);
-    is_text_payload(Some(&mime), Some(&media.ext))
+    crate::media::source_preview::shows_source(&SourceSubject {
+        mime_type: &media.mime_type,
+        ext: Some(&media.ext),
+        kind: Some(&media.kind),
+        language: media.language.as_deref(),
+    })
 }
 
 /// `inlineTextPlan(size)`
@@ -87,120 +69,27 @@ pub enum InlineTextPlan {
 }
 
 pub fn inline_text_plan(size: i64) -> InlineTextPlan {
-    if size > MAX_INLINE_TEXT { InlineTextPlan::TooLarge } else { InlineTextPlan::Read }
+    match crate::media::source_preview::inline_text_plan(size) {
+        "too-large" => InlineTextPlan::TooLarge,
+        _ => InlineTextPlan::Read,
+    }
 }
 
 // ── timeline-preview.ts ─────────────────────────────────────────────────────
 
-pub const TIMELINE_TRACK_ACTION: &str = "timeline.vtt";
-pub const TIMELINE_SHEET_ACTION: &str = "timeline.jpg";
-
-/// `canTimelinePreview(row)`: offered on what the ROW can settle - kind and
-/// size; duration is decided by the endpoint after its probe.
+/// `canTimelinePreview(row)`
 pub fn can_timeline_preview(mime_type: &str, ext: &str, size: i64) -> bool {
-    media_kind(Some(mime_type), Some(ext)) == MediaKind::Video && size > 0 && size as u64 <= AV_MAX_INPUT_BYTES
-}
-
-/// `TimelineRefusal`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimelineRefusal {
-    NotVideo,
-    TooLarge,
-    TooShort,
-    TooManyPixels,
-    UnknownDuration,
-    Unreadable,
-    NoEngine,
-}
-
-impl TimelineRefusal {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            TimelineRefusal::NotVideo => "not-video",
-            TimelineRefusal::TooLarge => "too-large",
-            TimelineRefusal::TooShort => "too-short",
-            TimelineRefusal::TooManyPixels => "too-many-pixels",
-            TimelineRefusal::UnknownDuration => "unknown-duration",
-            TimelineRefusal::Unreadable => "unreadable",
-            TimelineRefusal::NoEngine => "no-engine",
-        }
-    }
+    crate::media::timeline_preview::can_timeline_preview(Some(mime_type), Some(ext), size)
 }
 
 // ── playback-health.ts ──────────────────────────────────────────────────────
 
-/// `diagnosePlayback(source)`: what is wrong with this video's shape, or None
-/// when nothing is (and for everything that is not a measured video).
-pub fn diagnose_playback(source: &PlaybackSource) -> Option<PlaybackDiagnosis> {
-    if media_kind(source.mime_type.as_deref(), source.ext.as_deref()) != MediaKind::Video {
-        return None;
-    }
-    let size = AvSourceSize { width: source.width, height: source.height };
-    let edge = longest_edge(&size);
-    if edge <= 0.0 {
-        return None;
-    }
-    let mut faults = Vec::new();
-    if edge > HARDWARE_DECODER_MAX_EDGE {
-        faults.push(PlaybackFault::Oversized);
-    }
-    let bpp = bits_per_pixel(source);
-    let starved = bpp.is_some_and(|b| b > 0.0 && b < STARVED_BITS_PER_PIXEL);
-    if starved {
-        faults.push(PlaybackFault::Starved);
-    }
-    if faults.is_empty() {
-        return None;
-    }
-    Some(PlaybackDiagnosis {
-        faults,
-        edge,
-        bits_per_pixel: bpp,
-        starvation_factor: if starved {
-            bpp.map(|b| crate::config::js_round(TYPICAL_BITS_PER_PIXEL / b))
-        } else {
-            None
-        },
-        repairable: needs_web_rescue(Some(&size)),
-        repair_edge: WEB_MAX_EDGE,
-    })
-}
-
 /// The row's [`PlaybackSource`].
 pub fn playback_source(media: &Upload) -> PlaybackSource {
-    PlaybackSource {
-        mime_type: Some(media.mime_type.clone()),
-        ext: Some(media.ext.clone()),
-        size: Some(media.size as f64),
-        width: media.width.map(f64::from),
-        height: media.height.map(f64::from),
-        frames: media.frames.map(f64::from),
-        duration_seconds: media.duration_seconds,
-        fps: media.fps,
-    }
+    PlaybackSource::from(media)
 }
 
 // ── convert.ts ──────────────────────────────────────────────────────────────
-
-/// `BudgetVerdict`
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BudgetVerdict {
-    pub ok: bool,
-    pub animated: bool,
-    pub pixels: u64,
-    pub limit: u64,
-    pub peak_bytes: f64,
-}
-
-/// `conversionBudget(probe, to)`: counts every frame when the animation is
-/// kept, and measures the ceiling against the TARGET.
-pub fn conversion_budget(animated: bool, frame_pixels: u64, total_pixels: u64, to: ConvertTarget) -> BudgetVerdict {
-    let animated = animated && keeps_animation(to);
-    let pixels = if animated { total_pixels } else { frame_pixels };
-    let limit = max_pixels_for(to, animated);
-    let peak_bytes = peak_bytes_for(to, animated, pixels);
-    BudgetVerdict { ok: pixels <= limit, animated, pixels, limit, peak_bytes }
-}
 
 /// `Converted`
 #[derive(Debug, Clone)]
@@ -211,67 +100,42 @@ pub struct Converted {
 }
 
 /// `convertImageBuffer(input, to, { animated, timeoutMs, signal })`.
-/// WAITS FOR PART A.
 pub async fn convert_image_buffer(
-    _input: Bytes,
-    _to: ConvertTarget,
-    _animated: bool,
-    _timeout_ms: u64,
-    _signal: AbortSignal,
+    input: Bytes,
+    to: ConvertTarget,
+    animated: bool,
+    timeout_ms: u64,
+    signal: AbortSignal,
 ) -> anyhow::Result<Converted> {
-    anyhow::bail!("convertImageBuffer is not wired yet (srv-media-a)")
+    let out = crate::media::convert::convert_image_buffer(
+        input,
+        to,
+        crate::media::convert::ConvertOptions { animated, timeout_ms: Some(timeout_ms), signal: Some(signal) },
+    )
+    .await?;
+    Ok(Converted { buffer: out.buffer, mime: out.mime.to_string(), ext: out.ext.to_string() })
 }
 
 // ── derived-cache.ts (reads and writes) ─────────────────────────────────────
 
-/// `readDerived(key)`: cached bytes, or None on a miss (or on any storage
-/// trouble - a miss is safe).
+/// `readDerived(key)`
 pub async fn read_derived(state: &AppState, key: &str) -> Option<Bytes> {
-    let storage = state.storage.get().ok()?;
-    storage.read_buffer(key).await.ok()
+    crate::media::derived_cache::read_derived(&state.storage, key).await
 }
 
-/// `writeDerived(key, body)`: best effort; a cache that cannot be written is
-/// still a working conversion.
+/// `writeDerived(key, body)`
 pub async fn write_derived(state: &AppState, key: &str, body: Bytes) {
-    if let Ok(storage) = state.storage.get() {
-        let _ = storage.write(key, crate::storage::bytes_stream(body)).await;
-    }
+    crate::media::derived_cache::write_derived(&state.storage, key, body).await
 }
 
 // ── poster.ts ───────────────────────────────────────────────────────────────
 
 /// `videoPoster(media, signal)`: a still frame of a video (cached), or None.
-/// WAITS FOR PART A: no poster yet, so `/raw?w=` on a video answers 415.
-pub async fn video_poster(_state: &AppState, _media: &Upload, _signal: AbortSignal) -> anyhow::Result<Option<Bytes>> {
-    Ok(None)
+pub async fn video_poster(state: &AppState, media: &Upload, signal: AbortSignal) -> anyhow::Result<Option<Bytes>> {
+    Ok(crate::media::poster::video_poster(state, media, signal).await)
 }
 
 // ── motion.ts ───────────────────────────────────────────────────────────────
-
-/// `MotionRefusal`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MotionRefusal {
-    NotAnimated,
-    TooLarge,
-    TooManyPixels,
-    UnknownDuration,
-    Unreadable,
-    NoEngine,
-}
-
-impl MotionRefusal {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            MotionRefusal::NotAnimated => "not-animated",
-            MotionRefusal::TooLarge => "too-large",
-            MotionRefusal::TooManyPixels => "too-many-pixels",
-            MotionRefusal::UnknownDuration => "unknown-duration",
-            MotionRefusal::Unreadable => "unreadable",
-            MotionRefusal::NoEngine => "no-engine",
-        }
-    }
-}
 
 /// `MotionOptions`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,35 +152,26 @@ pub enum MotionResult {
     Refused(MotionRefusal),
 }
 
-/// `motionPreview(media, opts, signal)`. WAITS FOR PART A: the refusals the
-/// row and a probe can settle are given (`not-animated`, `too-large`,
-/// `unreadable`); anything that would need the engine answers `no-engine`.
+/// `motionPreview(media, opts, signal)`
 pub async fn motion_preview(
     state: &AppState,
     media: &Upload,
-    _opts: MotionOptions,
+    opts: MotionOptions,
     signal: AbortSignal,
 ) -> anyhow::Result<MotionResult> {
-    let refuse = |r| Ok(MotionResult::Refused(r));
-    match media_kind(Some(&media.mime_type), Some(&media.ext)) {
-        MediaKind::Video if media.size as u64 > AV_MAX_INPUT_BYTES => refuse(MotionRefusal::TooLarge),
-        MediaKind::Image => {
-            if media.size as u64 > crate::media::transform_cost::MAX_TRANSFORM_BYTES {
-                return refuse(MotionRefusal::TooLarge);
-            }
-            let src = state.storage.get()?.read_buffer(&media.storage_key).await?;
-            if signal.aborted() {
-                return refuse(MotionRefusal::Unreadable);
-            }
-            match crate::media::probe::probe_image(src).await {
-                None => refuse(MotionRefusal::Unreadable),
-                Some(p) if !p.animated => refuse(MotionRefusal::NotAnimated),
-                Some(_) => refuse(MotionRefusal::NoEngine),
-            }
-        }
-        MediaKind::Video => refuse(MotionRefusal::NoEngine),
-        _ => refuse(MotionRefusal::NotAnimated),
-    }
+    use crate::media::motion::{MotionFit, MotionOptions as Opts};
+    let fit = if opts.inside { MotionFit::Inside } else { MotionFit::Cover };
+    let built = crate::media::motion::motion_preview(
+        state,
+        media,
+        Opts { width: opts.width, height: opts.height, fit },
+        signal,
+    )
+    .await?;
+    Ok(match built {
+        Ok((buffer, frames)) => MotionResult::Ok { buffer: buffer.to_vec(), frames },
+        Err(refusal) => MotionResult::Refused(refusal),
+    })
 }
 
 // ── timeline.ts ─────────────────────────────────────────────────────────────
@@ -335,25 +190,20 @@ pub enum TimelineSheet {
     Refused(TimelineRefusal),
 }
 
-/// The refusal the ROW settles before anything is opened (`openTimelineSource`).
-fn timeline_row_refusal(media: &Upload) -> TimelineRefusal {
-    if !can_timeline_preview(&media.mime_type, &media.ext, media.size) {
-        if media.size as u64 > AV_MAX_INPUT_BYTES { TimelineRefusal::TooLarge } else { TimelineRefusal::NotVideo }
-    } else {
-        TimelineRefusal::NoEngine
-    }
+/// `timelineTrack(media, signal)`
+pub async fn timeline_track(state: &AppState, media: &Upload, signal: AbortSignal) -> anyhow::Result<TimelineTrack> {
+    Ok(match crate::media::timeline::timeline_track(state, media, signal).await? {
+        Ok(vtt) => TimelineTrack::Ok { vtt },
+        Err(refusal) => TimelineTrack::Refused(refusal),
+    })
 }
 
-/// `timelineTrack(media, signal)`. WAITS FOR PART A: the row's refusals, else
-/// `no-engine`.
-pub async fn timeline_track(_state: &AppState, media: &Upload, _signal: AbortSignal) -> anyhow::Result<TimelineTrack> {
-    Ok(TimelineTrack::Refused(timeline_row_refusal(media)))
-}
-
-/// `timelineSheet(media, signal)`. WAITS FOR PART A: the row's refusals, else
-/// `no-engine`.
-pub async fn timeline_sheet(_state: &AppState, media: &Upload, _signal: AbortSignal) -> anyhow::Result<TimelineSheet> {
-    Ok(TimelineSheet::Refused(timeline_row_refusal(media)))
+/// `timelineSheet(media, signal)`
+pub async fn timeline_sheet(state: &AppState, media: &Upload, signal: AbortSignal) -> anyhow::Result<TimelineSheet> {
+    Ok(match crate::media::timeline::timeline_sheet(state, media, signal).await? {
+        Ok(buffer) => TimelineSheet::Ok { buffer },
+        Err(refusal) => TimelineSheet::Refused(refusal),
+    })
 }
 
 // ── av-action.ts ────────────────────────────────────────────────────────────
@@ -367,13 +217,29 @@ pub struct AvConvertRequest<'a> {
     pub clip_seconds: Option<f64>,
     pub signal: AbortSignal,
     pub dry_run: bool,
-    pub admit: Option<Box<dyn FnOnce() -> BoxFuture<'a, bool> + Send + 'a>>,
+    pub admit: Option<Box<dyn FnOnce() -> BoxFuture<'static, bool> + Send>>,
 }
 
 /// `avConvert(req)`: the response for an audio/video conversion, or None when
-/// ffmpeg does not claim this target. WAITS FOR PART A (claims nothing yet).
-pub async fn av_convert(_state: &AppState, _req: AvConvertRequest<'_>) -> anyhow::Result<Option<Response>> {
-    Ok(None)
+/// ffmpeg does not claim this target.
+pub async fn av_convert(state: &AppState, req: AvConvertRequest<'_>) -> anyhow::Result<Option<Response>> {
+    let admit = req.admit.map(|admit| -> crate::media::av_action::AdmitHook {
+        Box::new(move || Box::pin(async move { Ok(admit().await) }))
+    });
+    crate::media::av_action::av_convert(
+        state,
+        crate::media::av_action::AvConvertRequest {
+            media: req.media.clone(),
+            privileged: req.privileged,
+            to: req.to,
+            offset_seconds: req.offset_seconds,
+            clip_seconds: req.clip_seconds,
+            signal: Some(req.signal),
+            admit,
+            dry_run: req.dry_run,
+        },
+    )
+    .await
 }
 
 // ── docx.ts ─────────────────────────────────────────────────────────────────
@@ -390,21 +256,27 @@ pub enum DocxResult {
     },
 }
 
-/// `docxToHtml(buf)`. WAITS FOR PART A.
-pub async fn docx_to_html(_buf: Bytes) -> anyhow::Result<DocxResult> {
-    anyhow::bail!("docxToHtml is not wired yet (srv-media-a)")
+/// `docxToHtml(buf)`: never fails for a bad document, every failure is a
+/// refusal token.
+pub async fn docx_to_html(buf: Bytes) -> anyhow::Result<DocxResult> {
+    Ok(match crate::media::docx::docx_to_html(buf).await {
+        Ok(preview) => DocxResult::Ok { html: preview.html },
+        Err(refusal) => DocxResult::Refused { reason: refusal.as_str().to_string() },
+    })
 }
 
 // ── card-render.ts ──────────────────────────────────────────────────────────
 
-/// `renderCard(choice)`: the 1200x630 PNG of a type card. WAITS FOR PART A.
-pub async fn render_card(_choice: &CardChoice) -> anyhow::Result<Vec<u8>> {
-    anyhow::bail!("renderCard is not wired yet (srv-media-a)")
+/// `renderCard(choice)`: the 1200x630 PNG of a type card.
+pub async fn render_card(choice: &CardChoice) -> anyhow::Result<Vec<u8>> {
+    crate::media::card_render::render_card(choice).await.map(|b| b.to_vec()).map_err(anyhow::Error::msg)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::media::av_cost::AV_MAX_INPUT_BYTES;
+    use crate::media::playback_health::PlaybackFault;
 
     #[test]
     fn docx_support_by_type_or_extension() {
