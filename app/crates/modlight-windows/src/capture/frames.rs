@@ -291,6 +291,39 @@ mod tests {
         frames.stop();
     }
 
+    /// Puts a magenta square of this test on the desktop and checks that the frames
+    /// leave it out while they run and that it is in pictures of the screen again after.
+    /// Run by hand: `cargo test -p modlight-windows -- --ignored own_windows_stay_out`.
+    #[test]
+    #[ignore = "puts a window on the desktop"]
+    fn own_windows_stay_out_of_the_frames() {
+        use super::super::desktop::rect_to_points;
+        use super::super::gdi::capture_pixels;
+        use super::super::transparent::Backdrop;
+        use windows_sys::Win32::UI::WindowsAndMessaging::HWND_TOPMOST;
+
+        let _pixels = PhysicalPixels::enter();
+        let rect = IRect::new(0, 0, 64, 64);
+        let square = Backdrop::new(rect, HWND_TOPMOST).expect("a window");
+        square.set_color(0x00FF_00FF);
+        let magenta = |bgra: &[u8]| bgra[0] > 200 && bgra[1] < 60 && bgra[2] > 200;
+        let centre = |rgba: &image::RgbaImage| {
+            let p = rgba.get_pixel(32, 32).0;
+            [p[2], p[1], p[0], p[3]]
+        };
+        assert!(magenta(&centre(&capture_pixels(rect, false).unwrap())));
+        let mut frames = ScreenFrames::new(rect_to_points(rect, primary_scale()), false, 30);
+        frames.start().unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let frame = frames.latest().unwrap();
+        let width = frames.size().0 as usize;
+        let at = (32 * width + 32) * 4;
+        assert!(!magenta(&frame[at..at + 4]), "the square is in the frame");
+        frames.stop();
+        square.set_color(0x00FF_00FF);
+        assert!(magenta(&centre(&capture_pixels(rect, false).unwrap())));
+    }
+
     #[test]
     fn frames_partly_off_the_desktop() {
         let scale = primary_scale();

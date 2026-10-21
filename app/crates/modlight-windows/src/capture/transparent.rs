@@ -111,11 +111,11 @@ fn pump(hwnd: HWND) {
 }
 
 /// The plain-coloured window behind the one being taken (upstream's borderless `Form`).
-struct Backdrop(HWND);
+pub(super) struct Backdrop(HWND);
 
 impl Backdrop {
     /// Show it over `rect` right below `target` in the z-order, without activating it.
-    fn new(rect: IRect, target: HWND) -> Option<Backdrop> {
+    pub(super) fn new(rect: IRect, target: HWND) -> Option<Backdrop> {
         let class = backdrop_class()?;
         let title = wide("");
         // SAFETY: a registered class; the window is destroyed by `drop`.
@@ -161,7 +161,8 @@ impl Backdrop {
         Some(backdrop)
     }
 
-    fn set_color(&self, color: u32) {
+    /// Paint it in a colour (`0x00BBGGRR`) and wait until the desktop shows it.
+    pub(super) fn set_color(&self, color: u32) {
         // SAFETY: plain calls on this thread's own window.
         unsafe {
             SetWindowLongPtrW(self.0, GWLP_USERDATA, color as isize);
