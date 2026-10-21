@@ -15,7 +15,9 @@
 //! `{ locale, messages, messagesHash, timeZone, mode, theme, config }`, where
 //! `config` is the public part of `lib/config.ts` (`appName`, `embedBrand`,
 //! `appUrl`, `appDomains`, `shortUrl`) that upstream's client components read
-//! from the server-rendered tree (`PublicConfig` in the SPA, CONTRACT 5.7).
+//! from the server-rendered tree (`PublicConfig` in the SPA, CONTRACT 5.7),
+//! plus, not upstream, `turnstileSiteKey`: the Cloudflare Turnstile site key
+//! while the optional check is on, else `null` (src/turnstile.rs).
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -58,6 +60,13 @@ pub async fn compute(ctx: &PageCtx) -> RootLayout {
 /// The `LayoutLoader` for [`crate::pages::table::Layout::Root`].
 pub async fn load(ctx: PageCtx) -> LayoutResult {
     let root = compute(&ctx).await;
+    // Not upstream: the optional Cloudflare Turnstile site key (read before
+    // the response's CSP is applied, which follows the same snapshot).
+    let turnstile = ctx.state.turnstile.current(&ctx.state.db, &ctx.state.config).await;
+    let mut config = public_config(&ctx.state.config);
+    if let Value::Object(map) = &mut config {
+        map.insert("turnstileSiteKey".into(), json!(turnstile.public_site_key()));
+    }
     let messages = ctx.state.messages.client_messages(root.locale);
     let hash = messages_hash(&messages);
     let client_has = ctx
@@ -72,7 +81,7 @@ pub async fn load(ctx: PageCtx) -> LayoutResult {
         "timeZone": server_time_zone(),
         "mode": root.mode,
         "theme": root.theme,
-        "config": public_config(&ctx.state.config),
+        "config": config,
     }))
 }
 

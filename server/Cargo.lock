@@ -1340,6 +1340,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]
@@ -1753,6 +1754,7 @@ dependencies = [
  "http",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "indexmap",
  "jsonwebtoken",
@@ -1762,6 +1764,7 @@ dependencies = [
  "percent-encoding",
  "rand",
  "regex",
+ "rustls",
  "scrypt",
  "serde",
  "serde_json",

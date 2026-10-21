@@ -26,6 +26,14 @@ pub mod keys {
     pub const EMAIL_VERIFICATION_REQUIRED: &str = "email_verification_required";
     /// The published build of Modlight App, as JSON (lib/releases-core.ts).
     pub const RELEASE_APP: &str = "release_app";
+    /// Not upstream (src/turnstile.rs): "on"/"off", the Cloudflare Turnstile
+    /// switch. A value here (either one) means the panel owns the whole
+    /// Turnstile block and the TURNSTILE_* environment is ignored.
+    pub const TURNSTILE_ENABLED: &str = "turnstile_enabled";
+    /// Not upstream: the widget's site key (public: every protected page shows it).
+    pub const TURNSTILE_SITE_KEY: &str = "turnstile_site_key";
+    /// Not upstream: the widget's secret key (encrypted, purpose `turnstile`).
+    pub const TURNSTILE_SECRET_ENC: &str = "turnstile_secret_enc";
 }
 
 /// Keys that may be handed to a client component (an ALLOWLIST).
@@ -41,7 +49,7 @@ pub const PANEL_SETTINGS: &[&str] = &[
 ];
 
 /// Keys whose VALUE must never leave the server.
-pub const SECRET_SETTINGS: &[&str] = &[keys::REGISTRATION_KEY_ENC, keys::SMTP_PASSWORD_ENC];
+pub const SECRET_SETTINGS: &[&str] = &[keys::REGISTRATION_KEY_ENC, keys::SMTP_PASSWORD_ENC, keys::TURNSTILE_SECRET_ENC];
 
 /// `getSetting(key)`: the value, or `None` for a missing row or a NULL value.
 pub async fn get_setting(db: &PgPool, key: &str) -> sqlx::Result<Option<String>> {

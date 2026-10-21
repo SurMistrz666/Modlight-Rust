@@ -13,7 +13,8 @@
         "https://files.example.com",
         "https://f.example.com"
       ],
-      "shortUrl": "https://s.example.com"
+      "shortUrl": "https://s.example.com",
+      "turnstileSiteKey": null
     }
   },
   "(app)": {

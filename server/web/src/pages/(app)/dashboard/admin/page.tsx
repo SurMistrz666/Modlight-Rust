@@ -6,7 +6,8 @@
 // toMailStatus(loadMailSettings(true)), loadGlobalStats() (the two aggregate
 // queries in the upstream file), serverStorageUsage(); plus diskInsights(),
 // which upstream's <ServerDisk> awaited itself (see the ServerDisk port).
-// `metadata = { title: "Admin" }`.
+// `metadata = { title: "Admin" }`. Not upstream: `turnstile`, the state of
+// the optional Cloudflare Turnstile card under Settings (src/turnstile/).
 import {
   ShieldCheck,
   SlidersHorizontal,
@@ -31,6 +32,8 @@ import { ReleaseChannel } from "@/components/admin/ReleaseChannel";
 import { ServerDisk } from "@/components/admin/ServerDisk";
 import { OrphanFiles } from "@/components/admin/OrphanFiles";
 import { Maintenance } from "@/components/admin/Maintenance";
+import { TurnstileSettings } from "../../../../turnstile/TurnstileSettings";
+import type { TurnstileStatus } from "../../../../turnstile/actions";
 
 export interface AdminPageProps {
   /** session.user.id and session.user.email of the signed-in administrator */
@@ -49,6 +52,11 @@ export interface AdminPageProps {
   diskInsights: DiskInsights;
   /** isUnlimited(config.defaultUserQuota) ? null : humanFileSize(config.defaultUserQuota) */
   defaultQuota: string | null;
+  /**
+   * Not upstream: the optional Cloudflare Turnstile card's state
+   * (server/src/turnstile.rs). Absent from an older server: no card.
+   */
+  turnstile?: TurnstileStatus;
 }
 
 export default function AdminPage({ props }: { props: AdminPageProps }) {
@@ -132,11 +140,13 @@ export default function AdminPage({ props }: { props: AdminPageProps }) {
           <OrphanFiles />
         </TabsContent>
 
-        <TabsContent value="settings">
+        <TabsContent value="settings" className="flex flex-col gap-6">
           <SettingsForm
             registration={{ enabled: regEnabled, keyState }}
             defaultQuota={defaultQuota}
           />
+          {/* Not upstream: the optional Cloudflare Turnstile check. */}
+          {props.turnstile ? <TurnstileSettings initial={props.turnstile} /> : null}
         </TabsContent>
 
         <TabsContent value="mail">

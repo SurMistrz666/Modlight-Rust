@@ -1,5 +1,12 @@
 "use client";
 
+// Port of upstream components/auth/register-form.tsx with the optional Cloudflare
+// Turnstile check added (server/src/turnstile.rs; not upstream). Everything
+// else is upstream's, line for line; the additions are marked "Turnstile".
+// With no site key configured `captcha.enabled` is false, no widget renders,
+// no header is sent and the form behaves exactly as upstream's.
+// @upstream components/auth/register-form.tsx
+
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -14,6 +21,8 @@ import { Field, FormError } from "@/components/auth/form-bits";
 import { PasswordInput } from "@/components/auth/password-input";
 import { SubmitButton } from "@/components/auth/submit-button";
 import { authErrorMessage } from "@/components/auth/auth-error";
+// Turnstile
+import { captchaErrorKey, useCaptcha } from "../../../turnstile/widget";
 
 const MIN_PASSWORD = 8;
 
@@ -44,6 +53,9 @@ export function RegisterForm({
   const [error, setError] = useState<string | null>(null);
   const [verifyEmail, setVerifyEmail] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
+  // Turnstile
+  const captcha = useCaptcha();
+  const tCaptcha = useTranslations("turnstile.widget");
 
   /** Send the confirmation link again. Throttled by caller on the server. */
   async function onResend(address: string) {
@@ -66,6 +78,11 @@ export function RegisterForm({
       setError(t("passwordTooShort", { count: MIN_PASSWORD }));
       return;
     }
+    // Turnstile: no token yet, nothing to send.
+    if (captcha.enabled && !captcha.token) {
+      setError(tCaptcha("required"));
+      return;
+    }
 
     setPending(true);
     const { data, error: err } = await signUp.email({
@@ -75,10 +92,14 @@ export function RegisterForm({
       // Extra fields reach the endpoint handler but are dropped before the user
       // row is written, so the key is checked and never stored on the account.
       ...(keyRequired ? { registrationKey: registrationKey.trim() } : {}),
+      // Turnstile: the token travels in a header; it is spent either way.
+      fetchOptions: { headers: captcha.headers() },
     });
+    captcha.reset();
 
     if (err) {
-      const msg = authErrorMessage(err, t("register.couldNotCreate"));
+      const captchaKey = captchaErrorKey(err);
+      const msg = captchaKey ? tCaptcha(captchaKey) : authErrorMessage(err, t("register.couldNotCreate"));
       setError(msg);
       toast.error(msg);
       setPending(false);
@@ -228,6 +249,8 @@ export function RegisterForm({
           />
         </Field>
       ) : null}
+
+      {captcha.widget}
 
       <FormError message={error} />
 

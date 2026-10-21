@@ -1,0 +1,71 @@
+{
+  "widget": {
+    "label": "Weryfikacja, że jesteś człowiekiem",
+    "required": "Najpierw przejdź weryfikację poniżej.",
+    "failed": "Weryfikacja się nie powiodła. Spróbuj ponownie.",
+    "unavailable": "Nie udało się połączyć z usługą weryfikacji. Spróbuj ponownie za chwilę.",
+    "loadFailed": "Nie udało się wczytać weryfikacji. Odśwież stronę albo zezwól na challenges.cloudflare.com, jeśli zablokował ją bloker."
+  },
+  "admin": {
+    "title": "Cloudflare Turnstile",
+    "intro": "Prosi odwiedzających o potwierdzenie, że są ludźmi, przy logowaniu, rejestracji, resecie hasła i przyjmowaniu zaproszenia. Pozostaje wyłączony, dopóki nie zapiszesz klucza witryny i klucza tajnego oraz nie włączysz przełącznika.",
+    "source": {
+      "panel": "Skonfigurowany tutaj",
+      "env": "Ze zmiennych środowiskowych",
+      "none": "Nieskonfigurowany"
+    },
+    "active": "Włączony",
+    "inactive": "Wyłączony",
+    "enabledLabel": "Chroń formularze logowania",
+    "enabledDesc": "Gdy to jest włączone, logowanie, rejestracja, prośba o reset hasła i przyjęcie zaproszenia wymagają weryfikacji.",
+    "fromEnv": "Ta konfiguracja pochodzi ze środowiska (TURNSTILE_SITE_KEY i TURNSTILE_SECRET_KEY). Pola są tylko do odczytu, dopóki nie przejmiesz jej tutaj.",
+    "configureHere": "Skonfiguruj tutaj",
+    "overridesEnv": "Te ustawienia nadpisują TURNSTILE_SITE_KEY i TURNSTILE_SECRET_KEY ze środowiska.",
+    "useEnv": "Wróć do ustawień środowiskowych",
+    "siteKey": "Klucz witryny",
+    "siteKeyPlaceholder": "0x4AAAAAAA…",
+    "secret": "Klucz tajny",
+    "secretKeep": "Puste pole zostawia zapisany klucz tajny",
+    "secretEmpty": "Brak zapisanego klucza tajnego",
+    "secretEnvPlaceholder": "Ustawiony w TURNSTILE_SECRET_KEY",
+    "secretUnreadablePlaceholder": "Wpisz klucz tajny ponownie",
+    "secretSet": "Klucz tajny jest zapisany. Przechowujemy go zaszyfrowanego i nigdy nie odsyłamy do przeglądarki, dlatego to pole zawsze jest puste.",
+    "secretUnset": "Nie ma zapisanego klucza tajnego. Nowy klucz witryny wymaga własnego klucza tajnego.",
+    "secretUnreadable": "Zapisanego klucza tajnego nie da się już odszyfrować, co zwykle oznacza zmianę AUTH_SECRET. Weryfikacja pozostaje wyłączona, dopóki nie wpiszesz go ponownie.",
+    "secretFromEnv": "Klucz tajny pochodzi z TURNSTILE_SECRET_KEY i nie jest pokazywany.",
+    "save": "Zapisz ustawienia Turnstile",
+    "savedTitle": "Ustawienia Turnstile zapisane",
+    "savedOn": "Formularze wymagają teraz weryfikacji. Zanim się wylogujesz, spróbuj zalogować się w oknie prywatnym.",
+    "savedOff": "Formularze nie wymagają już weryfikacji.",
+    "saveErrorTitle": "Nie udało się zapisać ustawień Turnstile",
+    "invalid": {
+      "invalid-site-key": "Ten klucz witryny nie wygląda na klucz Cloudflare (tylko litery, cyfry, - i _).",
+      "invalid-secret": "Ten klucz tajny nie wygląda na klucz Cloudflare (tylko litery, cyfry, - i _).",
+      "site-key-required": "Włączenie weryfikacji wymaga klucza witryny.",
+      "secret-required": "Włączenie weryfikacji wymaga klucza tajnego. Zmieniony klucz witryny też potrzebuje własnego klucza tajnego.",
+      "secret-rejected": "Cloudflare odrzucił ten klucz tajny, więc nic nie zostało zapisane: z błędnym kluczem nikt by się nie zalogował, Ty też nie.",
+      "unreachable": "Nie udało się połączyć z Cloudflare, żeby potwierdzić klucz tajny, więc nic nie zostało zapisane. Spróbuj ponownie.",
+      "rate-limited": "Za dużo zapytań do Cloudflare z tego konta. Odczekaj kilka minut."
+    },
+    "revertedTitle": "Powrót do ustawień środowiskowych",
+    "revertedDesc": "Wartości zapisane tutaj zostały usunięte.",
+    "testTitle": "Sprawdź klucz tajny",
+    "testDesc": "Wysyła klucz tajny (wpisany powyżej, a jeśli pole jest puste, ten używany) do Cloudflare i pokazuje, czy Cloudflare go przyjmuje. Nic nie jest zapisywane.",
+    "test": "Sprawdź",
+    "testing": "Pytam Cloudflare…",
+    "testOk": "Cloudflare przyjął klucz tajny.",
+    "testAlwaysPasses": "To jeden z testowych kluczy tajnych Cloudflare: przepuszcza każdego odwiedzającego. Używaj go tylko do prób.",
+    "testError": {
+      "no-secret": "Nie ma klucza tajnego do sprawdzenia. Wpisz go powyżej.",
+      "invalid-secret": "Ten klucz tajny nie wygląda na klucz Cloudflare (tylko litery, cyfry, - i _).",
+      "rejected": "Cloudflare odrzucił ten klucz tajny.",
+      "unreachable": "Ten serwer nie może połączyć się z Cloudflare.",
+      "rate-limited": "Za dużo zapytań do Cloudflare z tego konta. Odczekaj kilka minut."
+    },
+    "testTook": "Trwało {ms} ms",
+    "howToTitle": "Skąd wziąć klucze",
+    "howTo": "W panelu Cloudflare otwórz Turnstile i dodaj widżet. Wpisz każdą nazwę hosta, pod którą działa ten panel (ta to {host}), zostaw tryb Managed, a potem skopiuj tutaj klucz witryny i klucz tajny.",
+    "testKeys": "Do prób testowe klucze Cloudflare działają na każdym hoście, także na localhost: klucz witryny 1x00000000000000000000AA z kluczem tajnym 1x0000000000000000000000000000000AA przepuszcza wszystkich, klucz tajny 2x0000000000000000000000000000000AA odrzuca wszystkich.",
+    "lockout": "Nie wylogowuj się w tej karcie, dopóki raz nie zalogujesz się w oknie prywatnym: widżet niepasujący do nazw hostów zablokowałby wszystkich."
+  }
+}

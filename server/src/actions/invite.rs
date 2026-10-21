@@ -20,6 +20,7 @@ use crate::invites::{AcceptInviteResult, INVITE_PASSWORD_MIN, accept_invite, rea
 use crate::mail_settings::mail_ready;
 use crate::password::check_rate_limit;
 use crate::rpc::{ActionCtx, ActionError, ActionResult, RpcRegistry};
+use crate::turnstile::Verdict;
 
 pub fn register(reg: &mut RpcRegistry) {
     reg.register("invite", "previewInvite", preview_invite);
@@ -87,6 +88,9 @@ fn js_length(v: Js<'_>) -> Result<Option<f64>, ActionError> {
 
 /// Set the password an invitation was issued for, then sign the person in.
 ///
+/// Not upstream: with Cloudflare Turnstile on, also `{ok: false, reason:
+/// "captcha"}` (no token Cloudflare accepts) and `"captcha-unavailable"`.
+///
 /// Signing in here rather than redirecting to /login is what makes the flow
 /// one step instead of three, and it is safe for the same reason the
 /// invitation is: possession of the token proved control of the mailbox, and
@@ -95,6 +99,14 @@ async fn accept_invitation(ctx: ActionCtx) -> ActionResult {
     let gate = check_rate_limit(&format!("invite:{}", ctx.client_ip()), 10, 15 * 60_000);
     if !gate.allowed {
         return refused("rate-limited");
+    }
+
+    // Not upstream: the optional Cloudflare Turnstile check (src/turnstile.rs),
+    // before the invitation is read (reading it may delete an expired one).
+    match crate::turnstile::check_action(&ctx).await {
+        Verdict::Off | Verdict::Passed => {}
+        Verdict::Unavailable => return refused("captcha-unavailable"),
+        Verdict::Missing | Verdict::Failed => return refused("captcha"),
     }
 
     let token = js(ctx.args.raw(0));

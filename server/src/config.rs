@@ -52,6 +52,9 @@ pub const ENV_VARS: &[&str] = &[
     "SMTP_SECURITY",
     "MAIL_FROM",
     "MAIL_FROM_NAME",
+    // Not upstream: optional Cloudflare Turnstile (src/turnstile.rs).
+    "TURNSTILE_SITE_KEY",
+    "TURNSTILE_SECRET_KEY",
 ];
 
 /// A production refusal. Displays exactly like the upstream `Error` message.
@@ -390,6 +393,33 @@ impl MailConfig {
     }
 }
 
+/// Not upstream: the environment half of the optional Cloudflare Turnstile
+/// check (src/turnstile.rs). Both keys set = on, unless the admin panel holds
+/// a Turnstile block of its own (the panel wins entirely, as for SMTP).
+#[derive(Clone, Default)]
+pub struct TurnstileEnv {
+    /// TURNSTILE_SITE_KEY, trimmed.
+    pub site_key: String,
+    /// TURNSTILE_SECRET_KEY, trimmed. Never printed (see the Debug impl).
+    pub secret_key: String,
+}
+
+impl TurnstileEnv {
+    /// Both halves present: the environment alone can turn the check on.
+    pub fn complete(&self) -> bool {
+        !self.site_key.is_empty() && !self.secret_key.is_empty()
+    }
+}
+
+impl std::fmt::Debug for TurnstileEnv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnstileEnv")
+            .field("site_key", &self.site_key)
+            .field("secret_key", &if self.secret_key.is_empty() { "" } else { "<set>" })
+            .finish()
+    }
+}
+
 /// Port of the upstream `config` object.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -418,6 +448,8 @@ pub struct Config {
     /// Default per-user disk quota in bytes; -1 = unlimited.
     pub default_user_quota: i64,
     pub mail: MailConfig,
+    /// Not upstream: TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY.
+    pub turnstile: TurnstileEnv,
     /// SHORTLINK_URL exactly as set: proxy.ts reads it raw, not through
     /// lib/config, to find the shortener host.
     pub raw_shortlink_url: Option<String>,
@@ -564,6 +596,16 @@ impl Config {
             let raw = env.trimmed("SHORTLINK_URL");
             normalize_origin(if raw.is_empty() { &app_url } else { raw })
         };
+        let turnstile = TurnstileEnv {
+            site_key: env.trimmed("TURNSTILE_SITE_KEY").to_string(),
+            secret_key: env.trimmed("TURNSTILE_SECRET_KEY").to_string(),
+        };
+        if turnstile.site_key.is_empty() != turnstile.secret_key.is_empty() {
+            warn(
+                "turnstile-half",
+                "TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY must both be set; Cloudflare Turnstile stays off until they are (or until it is configured in the admin panel).",
+            );
+        }
         let bind_addr = match env.trimmed("BIND_ADDR") {
             "" => "127.0.0.1".to_string(),
             v => v.to_string(),
@@ -606,6 +648,7 @@ impl Config {
                 from: env.or("MAIL_FROM", "no-reply@localhost"),
                 from_name: env.or("MAIL_FROM_NAME", ""),
             },
+            turnstile,
             raw_shortlink_url: env.get("SHORTLINK_URL").map(str::to_string),
             csp_origins: crate::http::headers::self_origins(
                 env.get("APP_URL"),

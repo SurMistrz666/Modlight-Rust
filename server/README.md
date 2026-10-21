@@ -166,6 +166,60 @@ z oryginałem:
    pętli zwrotnej). Albo wklej token utworzony w panelu w **Integracje**.
 3. Token trafia do pęku kluczy macOS (usługa `Modlight`).
 
+## Cloudflare Turnstile (sprawdzanie, czy to człowiek)
+
+Opcjonalne i domyślnie wyłączone: bez kluczy wszystko działa dokładnie jak
+w oryginale. Po włączeniu formularze logowania, rejestracji, prośby o reset
+hasła i przyjęcia zaproszenia pokazują widżet Cloudflare, a serwer sprawdza
+w Cloudflare każdy token, zanim cokolwiek zrobi. Gdy Cloudflare nie odpowiada,
+serwer odmawia (lepiej chwilowo nie wpuścić nikogo, niż wpuścić boty).
+
+**Klucze z panelu Cloudflare**
+
+1. Zaloguj się na https://dash.cloudflare.com i otwórz **Turnstile**
+   (w menu bocznym), potem **Add widget**.
+2. Nazwa dowolna (np. `Modlight`). W **Hostname management** dodaj każdą
+   nazwę hosta, pod którą otwierasz panel: host z `APP_URL` i każdy z
+   `APP_DOMAINS` (sama nazwa, bez `https://` i bez portu, np.
+   `pliki.example.com`). Na innym hoście widżet się nie pokaże.
+3. **Widget Mode**: zostaw **Managed**. Pre-clearance: nie.
+4. **Create**: Cloudflare pokaże **Site Key** (klucz witryny, jawny) i
+   **Secret Key** (klucz tajny). Skopiuj oba.
+
+**Gdzie je wpisać** (jedno z dwóch):
+
+- Panel: **Administracja → Ustawienia → Cloudflare Turnstile**: klucz witryny,
+  klucz tajny, przełącznik „Chroń formularze logowania”, **Zapisz**. Zapis
+  z włączonym przełącznikiem najpierw pyta Cloudflare, czy przyjmuje klucz
+  tajny (zły klucz zablokowałby każde logowanie, także Twoje); przycisk
+  **Sprawdź** robi to samo bez zapisywania. Klucz tajny jest przechowywany
+  zaszyfrowany i nigdy nie wraca do przeglądarki.
+- Albo `server/docker/.env`: `TURNSTILE_SITE_KEY=...` i
+  `TURNSTILE_SECRET_KEY=...` (oba, inaczej zostaje wyłączone), potem
+  `docker compose -f server/docker/docker-compose.yml up -d`. Jeśli karta
+  w panelu była kiedyś zapisana, panel ma pierwszeństwo w całości; przycisk
+  „Wróć do ustawień środowiskowych” oddaje decyzję plikowi `.env`.
+
+**Próba lokalnie, bez konta Cloudflare**: testowe klucze Cloudflare działają
+na każdym hoście, także na 127.0.0.1. Klucz witryny `1x00000000000000000000AA`
+z kluczem tajnym `1x0000000000000000000000000000000AA` przepuszcza wszystkich,
+klucz tajny `2x0000000000000000000000000000000AA` odrzuca wszystkich. Widżet
+pokazuje wtedy napis „For testing only”. Do prawdziwego użytku tylko klucze
+własnego widżetu.
+
+Zanim się wylogujesz po włączeniu, zaloguj się raz w oknie prywatnym. Gdyby
+logowanie nie działało (np. host nie pasuje do widżetu), wyłącz to z bazy:
+
+```sh
+docker compose -f server/docker/docker-compose.yml exec postgres \
+  psql -U modlight -d modlight -c "UPDATE settings SET value = 'off' WHERE key = 'turnstile_enabled'"
+```
+
+Zmiana działa w ciągu 30 sekund. Gdy Turnstile jest włączony, przeglądarka
+pobiera skrypt z `challenges.cloudflare.com`, a serwer wysyła tam token
+z formularza i adres IP odwiedzającego (więcej: `docs/SKELETON.md`, sekcja 9,
+punkt 43).
+
 ## Co jest inaczej niż w oryginale (najważniejsze)
 
 Pełna lista: `docs/SKELETON.md`, sekcja 9. W skrócie:
@@ -179,6 +233,8 @@ Pełna lista: `docs/SKELETON.md`, sekcja 9. W skrócie:
   skasować pod jego adresem tus (przy S3 omijało to prywatność pliku);
   zmiana awatara lub tapety usuwa stary plik (oryginał zostawiał go na zawsze).
 - Album ZIP działa (w oryginale zawsze błąd 500).
+- Nowość, której oryginał nie ma: opcjonalny Cloudflare Turnstile na
+  formularzach logowania, rejestracji, resetu hasła i zaproszeń (wyżej).
 - Zły znak `%` w adresie: 400 zamiast 500.
 
 ## Testy

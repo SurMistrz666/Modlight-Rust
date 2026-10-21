@@ -34,17 +34,26 @@ interface Envelope {
   revalidate?: boolean;
 }
 
-export type ActionTransport = (module: string, name: string, args: unknown[]) => Promise<Envelope>;
+/**
+ * `headers`: extra request headers for this one call (withActionHeaders); not
+ * upstream, Next's server actions have no such thing.
+ */
+export type ActionTransport = (
+  module: string,
+  name: string,
+  args: unknown[],
+  headers?: Record<string, string>,
+) => Promise<Envelope>;
 
-export const httpTransport: ActionTransport = async (module, name, args) => {
+export const httpTransport: ActionTransport = async (module, name, args, headers) => {
   const single = args.length === 1 ? args[0] : undefined;
   const init: RequestInit =
     single instanceof FormData
-      ? { method: "POST", body: single, headers: { "X-Modlight-Rpc": "form" } }
+      ? { method: "POST", body: single, headers: { ...headers, "X-Modlight-Rpc": "form" } }
       : {
           method: "POST",
           body: JSON.stringify(args.map((a) => encodeTagged(a))),
-          headers: { "Content-Type": "application/json", "X-Modlight-Rpc": "1" },
+          headers: { ...headers, "Content-Type": "application/json", "X-Modlight-Rpc": "1" },
         };
   init.credentials = "same-origin";
 
@@ -69,8 +78,31 @@ export function setActionTransport(next: ActionTransport): void {
   transport = next;
 }
 
+let scopedHeaders: Record<string, string> | undefined;
+
+/**
+ * Run `call` (which starts one server action synchronously, as every stub
+ * does) with extra request headers on that action's request: how a form hands
+ * the optional Cloudflare Turnstile token (`x-captcha-response`) to an action
+ * without changing the action's arguments (src/turnstile/). Not upstream.
+ */
+export function withActionHeaders<T>(headers: Record<string, string> | undefined, call: () => Promise<T>): Promise<T> {
+  const previous = scopedHeaders;
+  scopedHeaders = headers && Object.keys(headers).length > 0 ? headers : undefined;
+  try {
+    return call();
+  } finally {
+    scopedHeaders = previous;
+  }
+}
+
 export async function callAction<T>(module: string, name: string, args: ArrayLike<unknown>): Promise<T> {
-  const envelope = await transport(module, name, Array.from(args));
+  // Read before the first await: withActionHeaders only holds them while the
+  // stub runs synchronously.
+  const headers = scopedHeaders;
+  const envelope = headers
+    ? await transport(module, name, Array.from(args), headers)
+    : await transport(module, name, Array.from(args));
 
   if (typeof envelope.redirect === "string") {
     const type = envelope.redirectType === "replace" ? "replace" : "push";
