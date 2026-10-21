@@ -200,6 +200,21 @@ async fn documents_and_page_data_are_compressed_route_handlers_not() {
     assert_eq!(a.header("content-encoding"), None);
 }
 
+/// The opening `<html …>` tag of a document. The built SPA shell carries its own
+/// attributes there (a `class`), the placeholder shell none, so tests check the
+/// attributes the server injects one by one instead of the whole tag.
+fn html_tag(html: &str) -> &str {
+    let start = html.find("<html").expect("an <html> tag");
+    &html[start..start + html[start..].find('>').expect("a closed <html> tag") + 1]
+}
+
+fn assert_html_attrs(html: &str, attrs: &[&str]) {
+    let tag = html_tag(html);
+    for attr in attrs {
+        assert!(tag.contains(attr), "{attr} missing from {tag}");
+    }
+}
+
 #[tokio::test]
 async fn documents_inline_the_payload_and_the_head() {
     let app = app();
@@ -207,7 +222,7 @@ async fn documents_inline_the_payload_and_the_head() {
     assert_eq!(a.status.as_u16(), 200);
     assert_eq!(a.header("content-type").as_deref(), Some("text/html; charset=utf-8"));
     let html = a.text();
-    assert!(html.contains("<html lang=\"en\" data-mode=\"system\" data-theme=\"discord\">"));
+    assert_html_attrs(&html, &["lang=\"en\"", "data-mode=\"system\"", "data-theme=\"discord\""]);
     assert!(
         html.contains("<title>alice&#x27;s files - Modlight</title>")
             || html.contains("<title>alice's files - Modlight</title>")
@@ -231,7 +246,7 @@ async fn themes_and_locales_come_from_cookies() {
         .body(axum::body::Body::empty())
         .unwrap();
     let html = common::call(&app, req).await.text();
-    assert!(html.contains("<html lang=\"pl\" data-mode=\"dark\" data-theme=\"glass\">"), "{}", &html[..300]);
+    assert_html_attrs(&html, &["lang=\"pl\"", "data-mode=\"dark\"", "data-theme=\"glass\""]);
 }
 
 #[tokio::test]
