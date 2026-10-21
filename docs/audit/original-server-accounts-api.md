@@ -1,227 +1,227 @@
-# Audyt bezpieczeństwa — Modlight (serwer, konta, uwierzytelnianie, API)
+# Security audit: Modlight (server, accounts, authentication, API)
 
-Zakres: serwer Next.js 16 + własny `server.ts`, better-auth, drizzle/PostgreSQL. Przedmiot
-audytu: `/Users/marcinasdfg/Desktop/modlight/upstream/Modlight`. Analiza wyłącznie statyczna
-(czytanie kodu); nic z repozytorium nie było uruchamiane.
+Scope: the Next.js 16 server + the custom `server.ts`, better-auth, drizzle/PostgreSQL. Subject of
+the audit: `/Users/marcinasdfg/Desktop/modlight/upstream/Modlight`. Static analysis only
+(reading the code); nothing from the repository was run.
 
-Commit: `a59d03c` (jeden commit, 2026-10-18).
+Commit: `a59d03c` (a single commit, 2026-10-18).
 
-## Podsumowanie
+## Summary
 
-Kod jest nietypowo mocno zahartowany i gęsto skomentowany uzasadnieniami bezpieczeństwa.
-Przeszedłem ścieżkami od wejścia do skutku dla: rejestracji i bootstrapu admina, logowania,
-2FA, resetu hasła, zaproszeń, tokenów API i egzekwowania zakresów, każdego route handlera w
-`app/api/**`, pozostałych `route.ts`, server actions w `app/actions/**`, przepływu autoryzacji
-aplikacji desktopowej (loopback), publikacji wydań, migracji i skryptów.
+The code is unusually hardened and densely commented with security rationale.
+I followed the paths from entry to effect for: registration and the admin bootstrap, sign-in,
+2FA, password reset, invitations, API tokens and scope enforcement, every route handler in
+`app/api/**`, the remaining `route.ts` files, the server actions in `app/actions/**`, the
+desktop application authorization flow (loopback), release publishing, migrations and scripts.
 
-Nie znalazłem:
-- backdoora, ukrytego konta, hasła‑wytrychu ani magicznego nagłówka omijającego logowanie,
-- ścieżki eskalacji użytkownik → admin na istniejącej instalacji,
-- IDOR‑a (każdy dostęp do zasobu jest zawężony właścicielem w klauzuli WHERE),
-- obejścia zakresów tokenów (upload/read/write/full są egzekwowane przy każdym wywołaniu),
-- wycieku danych na zewnątrz (żaden kod z tego obszaru nie wysyła danych do obcych hostów —
-  patrz sekcja „Wysyłanie danych na zewnątrz”),
-- `eval`/`new Function`/`child_process` (poza `ffmpeg`/`ffprobe`, które mają whitelistę
-  protokołów `file,pipe` i wymuszony demukser `-f`).
+I did not find:
+- a backdoor, a hidden account, a master password or a magic header that bypasses sign-in,
+- a user -> admin escalation path on an existing installation,
+- an IDOR (every resource access is narrowed to the owner in the WHERE clause),
+- a bypass of token scopes (upload/read/write/full are enforced on every call),
+- data leaving the server (no code in this area sends data to foreign hosts;
+  see the section "Sending data outside"),
+- `eval`/`new Function`/`child_process` (other than `ffmpeg`/`ffprobe`, which have a
+  protocol whitelist `file,pipe` and a forced demuxer `-f`).
 
-Najważniejsze ustalenia (szczegóły niżej):
+The most important findings (details below):
 
-| Waga | Miejsce | Zdanie |
+| Severity | Location | Statement |
 |---|---|---|
-| Średnia | `lib/upload/sharex.ts:206` (+ `server.ts`) | Nieuwierzytelniony rozmówca może wymusić zapis do ~512 MB na dysk na połączenie, zanim token zostanie sprawdzony; przy braku Content-Length limit wstępny nie działa → DoS dyskowy. |
-| Średnia | `lib/auth.ts:252-275` | Przydział roli „admin” pierwszemu kontu liczy użytkowników bez blokady (TOCTOU); dotyczy tylko pustej instalacji, nie daje eskalacji na istniejącej. |
-| Niska | `app/api/releases/app/route.ts:79-84` | POST publikujący wydanie czyta `req.json()` bez limitu rozmiaru i bez kontroli Content-Type; CSRF łagodzone przez SameSite=Lax, ale niespójne z resztą API. |
-| Niska | `app/[userCode]/[mediaCode]/delete/[token]/route.ts:28` | Porównanie tokenu usuwania zwykłym `===` (nie w stałym czasie); ryzyko znikome przy wysokiej entropii, ale niespójne z `timingSafeEqual` w innych miejscach. |
-| Informacyjna | konfiguracja odwrotnego proxy | Cały model limitów ufa wyłącznie `x-real-ip`; proxy, które go nie nadpisze (albo bezpośrednie wystawienie portu), wyłącza throttling logowania/klucza/haseł plików. Udokumentowane, ale to największy realny foot-gun. |
-| Informacyjna | `lib/authorize/loopback.ts`, `app/(auth)/authorize` | Handoff tokenu desktopowego (RFC 8252) bez PKCE; `state` tylko odbijany, nie wiązany po stronie serwera. Zgodne ze standardem; ryzyko rezydualne wymaga lokalnego nasłuchu. |
+| Medium | `lib/upload/sharex.ts:206` (+ `server.ts`) | An unauthenticated caller can force up to ~512 MB to be written to disk per connection before the token is checked; without Content-Length the preliminary limit does not work -> disk DoS. |
+| Medium | `lib/auth.ts:252-275` | Granting the "admin" role to the first account counts users without a lock (TOCTOU); it affects only an empty installation and gives no escalation on an existing one. |
+| Low | `app/api/releases/app/route.ts:79-84` | The POST that publishes a release reads `req.json()` with no size limit and no Content-Type check; CSRF is mitigated by SameSite=Lax, but this is inconsistent with the rest of the API. |
+| Low | `app/[userCode]/[mediaCode]/delete/[token]/route.ts:28` | The delete token is compared with a plain `===` (not in constant time); the risk is negligible given the high entropy, but it is inconsistent with `timingSafeEqual` elsewhere. |
+| Informational | reverse proxy configuration | The whole rate-limit model trusts only `x-real-ip`; a proxy that does not overwrite it (or exposing the port directly) disables throttling of sign-in/key/file passwords. It is documented, but it is the biggest real foot-gun. |
+| Informational | `lib/authorize/loopback.ts`, `app/(auth)/authorize` | The desktop token handoff (RFC 8252) has no PKCE; `state` is only reflected, not bound on the server side. Consistent with the standard; the residual risk requires a local listener. |
 
 ---
 
-## Ustalenia szczegółowe
+## Detailed findings
 
-### [Średnia] Nieuwierzytelniony zapis dużego ciała na dysk przed sprawdzeniem tokenu (DoS)
-- Plik: `lib/upload/sharex.ts` (meter: `:198-221`, wstępny check: `:126-134`), `server.ts:82-88`.
-- Pewność: prawdopodobne (dokładne zachowanie zależy od FS i współbieżności).
-- Ścieżka kodu: `POST /upload` i `POST /api/upload` są obsługiwane w surowej warstwie Node
-  (przed Next). Uwierzytelnienie z nagłówka następuje przed IO tylko gdy nagłówek jest obecny
-  (`bearerFromHeaders`). Jeśli klient nie poda nagłówka (legacy: token jako pole formularza),
-  busboy strumieniuje plik do `tmpPath`, a limit anonimowy (`ANON_MAX_BYTES`, domyślnie
-  **512 MB**, `LEGACY_UPLOAD_MAX_SIZE`) przerywa dopiero po przekroczeniu. Wstępny
-  `hasRoomFor(declared, ...)` działa tylko dla skończonego `Content-Length > 0`
-  (`:126-134`), więc żądanie **chunked bez Content-Length** go omija.
-- Skutek: anonimowy rozmówca otwiera wiele połączeń chunked do `/upload`, w każdym wysyła do
-  ~512 MB zanim finalny brak tokenu zwróci 400. Pliki tymczasowe są sprzątane w `finally`,
-  ale w trakcie transferu zajmują `UPLOAD_TMP_PATH` (ten sam system plików co magazyn) —
-  a kod sam gdzie indziej ostrzega, że pełny dysk „kładzie każdą aplikację na hoście”. Brak
-  limitu szybkości na tej ścieżce dla anonima.
-- Wejście → skutek: `POST /api/upload`, `Transfer-Encoding: chunked`, bez `x-api-key`, bez
-  pola `token`, ciało > kilkaset MB, N równoległych połączeń → przejściowe wyczerpanie
-  miejsca na dysku magazynu.
-- Propozycja: wymuszać token/sesję zanim pojawi się choć bajt ciała (jak na ścieżce tus:
-  `onUploadCreate` uwierzytelnia przed zapisem), albo twardo ograniczyć anonimowy bufor do
-  kilku MB i throttlować beztokenowe `POST /upload` po `x-real-ip`. Rozważyć odrzucanie
-  chunked bez `Content-Length` na tej ścieżce.
+### [Medium] Unauthenticated write of a large body to disk before the token is checked (DoS)
+- File: `lib/upload/sharex.ts` (meter: `:198-221`, preliminary check: `:126-134`), `server.ts:82-88`.
+- Confidence: likely (the exact behavior depends on the filesystem and on concurrency).
+- Code path: `POST /upload` and `POST /api/upload` are handled in the raw Node layer
+  (before Next). Authentication from the header happens before any I/O only when the header is present
+  (`bearerFromHeaders`). If the client does not send the header (legacy: the token as a form field),
+  busboy streams the file to `tmpPath`, and the anonymous limit (`ANON_MAX_BYTES`, default
+  **512 MB**, `LEGACY_UPLOAD_MAX_SIZE`) aborts only once it is exceeded. The preliminary
+  `hasRoomFor(declared, ...)` works only for a finite `Content-Length > 0`
+  (`:126-134`), so a **chunked request without Content-Length** bypasses it.
+- Effect: an anonymous caller opens many chunked connections to `/upload`, and in each sends up to
+  ~512 MB before the final missing token returns 400. The temporary files are cleaned up in `finally`,
+  but during the transfer they occupy `UPLOAD_TMP_PATH` (the same filesystem as the storage),
+  and the code itself warns elsewhere that a full disk "takes down every application on the host". There is no
+  rate limit on this path for an anonymous caller.
+- Input -> effect: `POST /api/upload`, `Transfer-Encoding: chunked`, no `x-api-key`, no
+  `token` field, a body of more than a few hundred MB, N parallel connections -> temporary exhaustion of
+  the storage's disk space.
+- Proposal: require a token/session before a single byte of the body arrives (as on the tus path:
+  `onUploadCreate` authenticates before writing), or hard-limit the anonymous buffer to
+  a few MB and throttle tokenless `POST /upload` by `x-real-ip`. Consider rejecting
+  chunked requests without `Content-Length` on this path.
 
-### [Średnia] Przydział roli admina pierwszemu kontu bez transakcyjnej blokady (TOCTOU)
-- Plik: `lib/auth.ts:252-275` (`databaseHooks.user.create.before`), wsparcie:
+### [Medium] Granting the admin role to the first account without a transactional lock (TOCTOU)
+- File: `lib/auth.ts:252-275` (`databaseHooks.user.create.before`), supporting:
   `lib/registration.ts:161-164`, `lib/auth.ts:206-239`.
-- Pewność: potwierdzone (że liczenie jest bez blokady); skutek ograniczony.
-- Ścieżka kodu: hook liczy `count()` użytkowników i jeśli 0, nadaje rolę `admin`. Dwie
-  jednoczesne „pierwsze” rejestracje na pustej instalacji mogą obie odczytać `n=0` i obie
-  dostać admina. Niezależnie bramka `evaluateSignUp` też liczy (`isFirstAccount`).
-- Skutek: na **pustej** instalacji można uzyskać dwóch adminów zamiast jednego. Na
-  **istniejącej** instalacji `count>0`, więc self‑signup zawsze dostaje rolę `user` — nie ma
-  eskalacji. Jawnie podana rola `admin` jest honorowana tylko z `/admin/create-user`
-  (chronione przez plugin admin better-auth), więc stronniczy stranger jej nie wstrzyknie.
-- Wejście → skutek: dwa równoległe `POST /sign-up/email` w oknie bootstrapu → 2 konta admin.
-- Propozycja: nadawać pierwszego admina w jednej transakcji z blokadą (np. `INSERT ...
-  SELECT ... WHERE NOT EXISTS`, albo advisory lock), żeby „pierwszość” była rozstrzygana
-  atomowo. Priorytet niski ze względu na wąskie okno i brak eskalacji na żywej instalacji.
+- Confidence: confirmed (that the count has no lock); the effect is limited.
+- Code path: the hook runs `count()` over the users and, if 0, assigns the `admin` role. Two
+  simultaneous "first" registrations on an empty installation can both read `n=0` and both
+  get admin. Independently, the `evaluateSignUp` gate also counts (`isFirstAccount`).
+- Effect: on an **empty** installation one can end up with two admins instead of one. On an
+  **existing** installation `count>0`, so self-signup always gets the `user` role: there is no
+  escalation. An explicitly supplied `admin` role is honored only from `/admin/create-user`
+  (protected by the better-auth admin plugin), so an outsider cannot inject it.
+- Input -> effect: two parallel `POST /sign-up/email` within the bootstrap window -> 2 admin accounts.
+- Proposal: grant the first admin in a single transaction with a lock (e.g. `INSERT ...
+  SELECT ... WHERE NOT EXISTS`, or an advisory lock), so that "being first" is decided
+  atomically. Low priority because of the narrow window and no escalation on a live installation.
 
-### [Niska] POST publikacji wydania bez limitu ciała i bez kontroli Content-Type
-- Plik: `app/api/releases/app/route.ts:75-88`.
-- Pewność: potwierdzone.
-- Ścieżka kodu: handler woła `await req.json()` bezpośrednio — brak górnego limitu rozmiaru
-  (reszta API używa `readJsonObject`/`readCappedBody` z limitem) i brak wymogu
-  `application/json`, który w `app/api/shortlinks/route.ts:233-241`,
-  `app/api/client-settings` i `app/api/theme` jest świadomie użyty jako kontrola CSRF dla
-  tras akceptujących ciasteczko sesji. Trasa jest admin-only (`requireAdminCaller`), a CSRF
-  jest dodatkowo łagodzone domyślnym `SameSite=Lax` ciasteczka sesji better-auth (brak
-  nadpisania w `lib/auth.ts`), więc żądanie cross-site i tak nie poniesie ciasteczka.
-- Skutek: realne ryzyko minimalne (potrzebny admin‑ofiara i znajomość `code` istniejącego
-  publicznego uploadu), ale rozbieżność z udokumentowaną w repo zasadą „Content-Type to
-  kontrola CSRF” oraz brak limitu ciała (drobny DoS pamięci na trasie admina).
-- Propozycja: przepuścić ciało przez `readJsonObject` (limit + wymóg `application/json`),
-  tak jak pozostałe trasy zapisu.
+### [Low] The release-publishing POST has no body limit and no Content-Type check
+- File: `app/api/releases/app/route.ts:75-88`.
+- Confidence: confirmed.
+- Code path: the handler calls `await req.json()` directly: there is no upper size limit
+  (the rest of the API uses `readJsonObject`/`readCappedBody` with a limit) and no requirement for
+  `application/json`, which in `app/api/shortlinks/route.ts:233-241`,
+  `app/api/client-settings` and `app/api/theme` is deliberately used as a CSRF check
+  for routes that accept the session cookie. The route is admin-only (`requireAdminCaller`), and CSRF
+  is additionally mitigated by the default `SameSite=Lax` of the better-auth session cookie (not
+  overridden in `lib/auth.ts`), so a cross-site request will not carry the cookie anyway.
+- Effect: the real risk is minimal (it needs a victim admin and knowledge of the `code` of an existing
+  public upload), but it diverges from the rule documented in the repository, "Content-Type is the CSRF
+  check", and there is no body limit (a minor memory DoS on an admin route).
+- Proposal: pass the body through `readJsonObject` (limit + the `application/json` requirement),
+  like the other write routes.
 
-### [Niska] Porównanie tokenu usuwania w czasie zależnym od danych
-- Plik: `app/[userCode]/[mediaCode]/delete/[token]/route.ts:28`
-  (`token === media.deleteToken`); podobnie dopieranie tokenów API na indeksowanym
-  wyszukaniu hasza bez stałego czasu (`lib/api-token.ts:107-114`).
-- Pewność: potwierdzone (niestałoczasowość); skutek praktyczny znikomy.
-- Ścieżka kodu: `deleteToken` i tokeny API to sekrety o wysokiej entropii (`secureToken`,
-  `randomBytes`), więc atak czasowy przez sieć na wydobycie 64‑znakowego sekretu jest
-  niepraktyczny. Mimo to reszta kodu (tokeny odblokowania plików, bilety renderu) używa
-  `timingSafeEqual`, więc to niespójność warta wyrównania.
-- Propozycja: porównywać `deleteToken` przez `timingSafeEqual` nad buforami równej długości
-  (jak w `lib/password.ts:249` / `lib/media/render-ticket.ts:146`).
+### [Low] Comparison of the delete token takes data-dependent time
+- File: `app/[userCode]/[mediaCode]/delete/[token]/route.ts:28`
+  (`token === media.deleteToken`); likewise the matching of API tokens through an indexed
+  hash lookup without constant time (`lib/api-token.ts:107-114`).
+- Confidence: confirmed (the comparison is not constant-time); the practical effect is negligible.
+- Code path: `deleteToken` and API tokens are high-entropy secrets (`secureToken`,
+  `randomBytes`), so a network timing attack to extract a 64-character secret is
+  impractical. Even so, the rest of the code (file unlock tokens, render tickets) uses
+  `timingSafeEqual`, so this is an inconsistency worth aligning.
+- Proposal: compare `deleteToken` with `timingSafeEqual` over buffers of equal length
+  (as in `lib/password.ts:249` / `lib/media/render-ticket.ts:146`).
 
-### [Informacyjna] Model limitów całkowicie zależny od `x-real-ip`
-- Plik: `lib/password.ts:375-377`, `lib/auth.ts:100-104`, `docker/Caddyfile:36`,
+### [Informational] The rate-limit model depends entirely on `x-real-ip`
+- File: `lib/password.ts:375-377`, `lib/auth.ts:100-104`, `docker/Caddyfile:36`,
   `docker/nginx.example.conf:25`, `docker/docker-compose.expose.yml`.
-- Ścieżka kodu: `clientIp()` ufa wyłącznie `x-real-ip`; better-auth ma `ipAddressHeaders:
-  ["x-real-ip"]`. To słuszny wybór (X-Forwarded-For jest dopisywalny przez klienta). Ryzyko
-  jest konfiguracyjne: jeśli odwrotne proxy **nie nadpisze** `x-real-ip` (albo aplikacja
-  zostanie wystawiona wprost — przed czym `docker-compose.expose.yml` ostrzega), to każdy
-  klient nadaje sobie dowolne `x-real-ip` i dostaje świeży kubełek na każde żądanie —
-  wyłączając throttling logowania, klucza rejestracji, odblokowania haseł plików i resendu
-  potwierdzeń. Udokumentowane obszernie (`docs/deployment.md`), ale to największy realny
-  foot-gun wdrożeniowy.
-- Propozycja: pozostawić jak jest w kodzie; w dokumentacji/healthchecku rozważyć twarde
-  ostrzeżenie startowe, gdy `TRUST_PROXY=true`, a nagłówek nie dociera.
+- Code path: `clientIp()` trusts only `x-real-ip`; better-auth has `ipAddressHeaders:
+  ["x-real-ip"]`. That is the right choice (X-Forwarded-For can be appended to by the client). The risk
+  is in the configuration: if the reverse proxy **does not overwrite** `x-real-ip` (or the application
+  is exposed directly, which `docker-compose.expose.yml` warns against), every
+  client sets any `x-real-ip` it likes and gets a fresh bucket on every request,
+  disabling throttling of sign-in, the registration key, file password unlocking and resending
+  of confirmations. It is documented extensively (`docs/deployment.md`), but it is the biggest real
+  deployment foot-gun.
+- Proposal: leave the code as it is; in the documentation/healthcheck consider a hard
+  startup warning when `TRUST_PROXY=true` and the header does not arrive.
 
-### [Informacyjna] Handoff tokenu desktopowego (loopback) bez PKCE
-- Plik: `lib/authorize/loopback.ts`, `app/(auth)/authorize/page.tsx`,
+### [Informational] The desktop token handoff (loopback) has no PKCE
+- File: `lib/authorize/loopback.ts`, `app/(auth)/authorize/page.tsx`,
   `app/actions/authorize.ts`, `components/authorize/authorize-prompt.tsx`, `next.config.ts:68-94`.
-- Ocena: implementacja jest poprawna i ostrożna. `callback` budowany jest wyłącznie z
-  **sparsowanego numeru portu** (`loopbackCallback`), nigdy z ciągu od klienta — otwarte
-  przekierowanie poza loopback jest niemożliwe (tylko `http://127.0.0.1:<port>/`, port
-  1024–65535). `name` sanityzowane (usuwa znaki sterujące i bidi‑override). Mennica tokenu to
-  Server Action (POST) wymagający sesji i kliknięcia człowieka; zakres tokenu to `write`
-  (nie `full`), więc desktop nie może publikować wydań. CSP dla `/authorize` rozszerza
-  `connect-src` o `http://127.0.0.1:*` wyłącznie dla tej ścieżki (reszta aplikacji nie).
-- Ryzyko rezydualne: brak PKCE i brak serwerowego wiązania `state` oznacza, że `state` służy
-  tylko aplikacji do rozpoznania własnej odpowiedzi. Przechwycenie tokenu wymaga procesu
-  nasłuchującego na porcie loopback ofiary (lokalny dostęp) — zgodnie ze standardem RFC 8252
-  i akceptowalne. Nic do naprawy; odnotowane, bo było w zakresie pytań.
+- Assessment: the implementation is correct and careful. `callback` is built solely from the
+  **parsed port number** (`loopbackCallback`), never from a string supplied by the client: an open
+  redirect outside loopback is impossible (only `http://127.0.0.1:<port>/`, port
+  1024-65535). `name` is sanitized (control characters and bidi override are removed). The token mint is
+  a Server Action (POST) that requires a session and a human click; the token's scope is `write`
+  (not `full`), so the desktop cannot publish releases. The CSP for `/authorize` extends
+  `connect-src` with `http://127.0.0.1:*` for that path only (the rest of the application does not).
+- Residual risk: no PKCE and no server-side binding of `state` means that `state` serves
+  only for the application to recognize its own reply. Intercepting the token requires a process
+  listening on the victim's loopback port (local access); this is in line with RFC 8252
+  and acceptable. Nothing to fix; noted because it was within the scope of the questions.
 
 ---
 
-## Błędy logiczne
+## Logic errors
 
-Nie znalazłem błędów logicznych skutkujących utratą danych, złą kolejnością czy złymi
-warunkami ponad to, co wymieniono wyżej. Kilka miejsc sprawdzonych pod tym kątem i uznanych
-za **poprawne** (odnotowuję, bo były w zakresie):
+I found no logic errors resulting in data loss, wrong ordering or wrong
+conditions beyond what is listed above. Several places were checked from this angle and judged
+**correct** (I note them because they were in scope):
 
-- Kolejność w `updateUserAccount` (`app/actions/admin.ts:331-550`): walidacja całości przed
-  zapisem, tag jako pierwszy (bo jego unikalność rozstrzyga sam zapis), samo‑demotowanie i
-  samo‑ban odrzucane — spójne, bez stanu „pół konta zmienione”.
-- `app/api/uploads/route.ts` `reachableBy()` (`:529-533`): tryb `permanent` celowo widzi
-  wiersze z `deleted_at` i bez — wcześniejszy bug (permanent nie czyścił kosza) jest opisany
-  i naprawiony; `trash`/`restore` mają rozłączne zakresy. OK.
-- Rotacja domyślnego hasła plików (`app/actions/account.ts:464-510`): bump wersji + przepis
-  istniejących w jednej transakcji; pliki z ręcznym hasłem (`passwordVersion=null`) i bez
-  hasła nietknięte. OK.
-- `isNarrowing` (`lib/api-scopes.ts:109-112`) i `narrowApiTokenScope` (`lib/api-token.ts:248-281`):
-  zawężenie to test podzbioru pojemności (nie ranga), a stary zakres wpięty w WHERE UPDATE —
-  dwa równoległe zawężenia nie mogą przeplatać się w rozszerzenie. OK.
-- Bramka rejestracji (`lib/registration.ts:85-103`): bootstrap > rate‑limit > „zamknięte” >
-  klucz; nieodczytywalny klucz = zamknięte (fail‑closed). OK.
+- The order in `updateUserAccount` (`app/actions/admin.ts:331-550`): validation of everything before
+  writing, the tag first (because its uniqueness is decided by the write itself), self-demotion and
+  self-ban rejected: consistent, with no "half-changed account" state.
+- `app/api/uploads/route.ts` `reachableBy()` (`:529-533`): the `permanent` mode deliberately sees
+  rows with and without `deleted_at`; an earlier bug (permanent did not empty the trash) is described
+  and fixed; `trash`/`restore` have disjoint scopes. OK.
+- Rotation of the default file password (`app/actions/account.ts:464-510`): a version bump + re-encryption of
+  the existing ones in one transaction; files with a manual password (`passwordVersion=null`) and without
+  a password are untouched. OK.
+- `isNarrowing` (`lib/api-scopes.ts:109-112`) and `narrowApiTokenScope` (`lib/api-token.ts:248-281`):
+  narrowing is a subset test of capabilities (not a rank), and the old scope is pinned in the UPDATE WHERE:
+  two parallel narrowings cannot interleave into a widening. OK.
+- The registration gate (`lib/registration.ts:85-103`): bootstrap > rate limit > "closed" >
+  key; an unreadable key = closed (fail-closed). OK.
 
 ---
 
-## Wysyłanie danych na zewnątrz (mój zakres)
+## Sending data outside (my scope)
 
-W obszarze serwer/konta/uwierzytelnianie/API **nie ma** kodu wysyłającego dane do obcych
-hostów. Konkretnie:
+In the server/accounts/authentication/API area there is **no** code that sends data to foreign
+hosts. Specifically:
 
-- Jedyny wychodzący ruch sieciowy serwera to **SMTP** przez nodemailer (`lib/mail.ts`), do
-  hosta skonfigurowanego przez administratora (panel lub env). Treść: maile weryfikacji,
-  resetu hasła, zaproszeń, „zmieniono hasło/e‑mail”, test SMTP. Błędy SMTP są redagowane z
-  sekretów (`redactSecrets`, `smtpSecretForms`) przed trafieniem do logu/audytu. Hasło SMTP
-  nigdy nie wraca do przeglądarki (`toMailStatus`), przechowywane szyfrowane (AES‑256‑GCM,
+- The server's only outgoing network traffic is **SMTP** through nodemailer (`lib/mail.ts`), to a
+  host configured by the administrator (panel or env). Content: verification e-mails,
+  password reset, invitations, "password/e-mail changed", the SMTP test. SMTP errors are redacted of
+  secrets (`redactSecrets`, `smtpSecretForms`) before reaching the log/audit. The SMTP password
+  never goes back to the browser (`toMailStatus`) and is stored encrypted (AES-256-GCM,
   `lib/secret-box.ts`).
-- Serwer S3 (`lib/storage/s3.ts`) tylko gdy `STORAGE_DRIVER=s3`, do endpointu operatora.
-- `ffmpeg/ffprobe` mają whitelistę protokołów `file,pipe` i wymuszony `-f`
-  (`lib/media/ffmpeg.ts`), więc nie pobiorą niczego po sieci (ochrona SSRF).
-- Fetch po stronie klienta idzie wyłącznie do własnych tras (`/api/avatar`,
-  `/api/background`, `/api/uploads/check`) oraz do loopbacku (`127.0.0.1:<port>`). Jedyne
-  twarde zewnętrzne URL‑e to linki do GitHuba na stronie lądowania i `oembed.com` (tekst spec).
-- `userEmail` konta (kontekst harnessu) nie trafia do żadnego żądania wychodzącego.
+- The S3 server (`lib/storage/s3.ts`) only when `STORAGE_DRIVER=s3`, to the operator's endpoint.
+- `ffmpeg/ffprobe` have a protocol whitelist `file,pipe` and a forced `-f`
+  (`lib/media/ffmpeg.ts`), so they will not fetch anything over the network (SSRF protection).
+- Client-side fetch goes only to the application's own routes (`/api/avatar`,
+  `/api/background`, `/api/uploads/check`) and to loopback (`127.0.0.1:<port>`). The only
+  hard-coded external URLs are links to GitHub on the landing page and `oembed.com` (spec text).
+- The account's `userEmail` (harness context) does not go into any outgoing request.
 
-Nie znalazłem żadnej eksfiltracji tokenów, haseł ani sekretów.
+I found no exfiltration of tokens, passwords or secrets.
 
 ---
 
-## Mapa API (metoda, ścieżka, uwierzytelnienie / zakres)
+## API map (method, path, authentication / scope)
 
-Publiczne (bez uwierzytelnienia):
-- `GET /api/health` — sonda; ujawnia tylko status podsystemów.
-- `GET /api/releases/app` — manifest wydania (celowo publiczny, cache 300 s).
-- `GET /download/app` — 302 do bieżącego wydania.
-- `GET /avatar/{tag}`, `GET /bg/{tag}` — obrazy (zawsze przekodowany WebP; `nosniff`).
-- `GET /{tag}/{code}` (strona), `/raw[.ext]`, `/download`, `/render`, `/timeline*`,
-  `GET|POST /{tag}/{code}/delete/{token}` — token usuwania **lub** token API o zakresie
-  `write` należący do właściciela; `/render` wymaga `Sec-Fetch-Dest: iframe` + ważnego biletu.
-- `GET /a/{tag}/{slug}` i `/a/{tag}/{slug}/zip` — tylko folder `isPublic`; pozycje filtrowane
-  (opublikowane, nie w koszu, bez hasła, nie wygasłe, w limicie odsłon) w
+Public (no authentication):
+- `GET /api/health`: a probe; it reveals only the status of the subsystems.
+- `GET /api/releases/app`: the release manifest (deliberately public, cached 300 s).
+- `GET /download/app`: 302 to the current release.
+- `GET /avatar/{tag}`, `GET /bg/{tag}`: images (always re-encoded to WebP; `nosniff`).
+- `GET /{tag}/{code}` (page), `/raw[.ext]`, `/download`, `/render`, `/timeline*`,
+  `GET|POST /{tag}/{code}/delete/{token}`: the delete token **or** an API token with the scope
+  `write` belonging to the owner; `/render` requires `Sec-Fetch-Dest: iframe` + a valid ticket.
+- `GET /a/{tag}/{slug}` and `/a/{tag}/{slug}/zip`: only a folder that is `isPublic`; items filtered
+  (published, not in the trash, without a password, not expired, within the view limit) in
   `lib/data/folders.ts:299-333`.
 - `GET /u/{tag}`, `GET /s/{code}[/..]`, `GET /oembed`, `GET /embed/{v}/{card}`.
-- `POST /upload`, `POST /api/upload` — token API w nagłówku `x-api-key`/`Authorization` lub
-  (legacy) pole `token`; zakres **upload**.
-- `/api/files*` (tus: POST/PATCH/HEAD/…) — token API (zakres **upload**) **lub** sesja;
-  kolejne PATCH‑e autoryzuje posiadanie URL‑a uploadu.
+- `POST /upload`, `POST /api/upload`: an API token in the `x-api-key`/`Authorization` header or
+  (legacy) the `token` field; scope **upload**.
+- `/api/files*` (tus: POST/PATCH/HEAD/...): an API token (scope **upload**) **or** a session;
+  subsequent PATCHes are authorized by possession of the upload URL.
 
-Token API (pierwszeństwo) lub sesja; zakres wymagany:
-- `GET /api/me` — **identify** (każdy zakres).
-- `GET /api/folders` — read; `POST/PATCH/DELETE /api/folders` — **write**.
-- `GET /api/uploads` — read; `PATCH/DELETE /api/uploads` — **write** (zawężone do właściciela,
-  bez przywileju admina na tej trasie).
-- `POST /api/uploads/check` — **read**.
-- `GET /api/duplicates` — read; `POST /api/duplicates` — **write**.
-- `GET /api/shortlinks` — read; `POST /api/shortlinks` — **write** (+ limit szybkości).
-- `GET /api/client-settings` — read; `PUT /api/client-settings` — **write**.
-- `GET /api/theme` — read; `PUT /api/theme` — **write**.
-- `GET /api/link-info` — **read**, ale z trybem anonimowym (zły/pusty token = odpowiedź
-  publiczna, nie 403).
+API token (takes precedence) or session; required scope:
+- `GET /api/me`: **identify** (any scope).
+- `GET /api/folders`: read; `POST/PATCH/DELETE /api/folders`: **write**.
+- `GET /api/uploads`: read; `PATCH/DELETE /api/uploads`: **write** (narrowed to the owner,
+  with no admin privilege on this route).
+- `POST /api/uploads/check`: **read**.
+- `GET /api/duplicates`: read; `POST /api/duplicates`: **write**.
+- `GET /api/shortlinks`: read; `POST /api/shortlinks`: **write** (+ rate limit).
+- `GET /api/client-settings`: read; `PUT /api/client-settings`: **write**.
+- `GET /api/theme`: read; `PUT /api/theme`: **write**.
+- `GET /api/link-info`: **read**, but with an anonymous mode (a bad/empty token = a
+  public response, not 403).
 
-Admin (token o zakresie **full** + rola `admin`, albo sesja admina):
-- `POST /api/releases/app` — publikacja wydania (dwie bramki: zakres `full` i rola admin).
-- `GET /api/admin/disk` — raport dysku (nie‑admin dostaje 404 bajt‑w‑bajt jak brak trasy).
+Admin (a token with scope **full** + the `admin` role, or an admin session):
+- `POST /api/releases/app`: release publishing (two gates: scope `full` and the admin role).
+- `GET /api/admin/disk`: the disk report (a non-admin gets a 404 byte-for-byte identical to a missing route).
 
-Tylko sesja przeglądarki:
-- `POST|DELETE /api/avatar`, `POST|DELETE /api/background` — konto dzwoniącego (własne).
-- `ALL /api/auth/[...all]` — better-auth (logowanie, 2FA, reset, weryfikacja, plugin admin
-  chroniony rolą).
-- Wszystkie server actions w `app/actions/**` (każda sprawdza `requireUser`/`requireAdmin`
-  albo zawęża po właścicielu w WHERE; brak martwego kodu‑endpointów).
+Browser session only:
+- `POST|DELETE /api/avatar`, `POST|DELETE /api/background`: the caller's own account.
+- `ALL /api/auth/[...all]`: better-auth (sign-in, 2FA, reset, verification, the admin plugin
+  protected by role).
+- All server actions in `app/actions/**` (each checks `requireUser`/`requireAdmin`
+  or narrows by owner in the WHERE; no dead endpoint code).

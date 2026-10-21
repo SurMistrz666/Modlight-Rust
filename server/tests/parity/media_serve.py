@@ -309,7 +309,7 @@ def area_gates(ctx, f, tag, owner, admin):
 # ── security fix 1 ─────────────────────────────────────────────────────────
 
 def area_fix1(ctx, f, tag):
-    """The bypasses of docs/audyt/serwer-pliki-wyciek.md (A1, L1, and the ones
+    """The bypasses of docs/audit/original-server-files-exfiltration.md (A1, L1, and the ones
     found while porting), each on a fresh capped file: OPEN on the reference
     (bytes served, no view spent), CLOSED on Rust (a view spent, or 404)."""
     seed = ctx.seed

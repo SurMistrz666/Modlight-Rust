@@ -1,7 +1,7 @@
 //! Where a component, a tool update or an app update may be fetched from, and the HTTP
 //! client that fetches it.
 //!
-//! The rules are the audit's (`docs/audyt/klient.md`, PORT.md section 5): https only,
+//! The rules are the audit's (`docs/audit/original-client.md`, PORT.md section 5): https only,
 //! redirects followed only to https, and a GitHub release artefact only from
 //! `github.com` itself. Tests run against a server on 127.0.0.1 over plain http; the
 //! switch that lets them is [`testing::allow_origin`], which exists only in debug builds,
