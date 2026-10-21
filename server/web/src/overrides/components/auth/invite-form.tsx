@@ -1,14 +1,24 @@
 "use client";
 
+// Port of upstream components/auth/invite-form.tsx with the optional Cloudflare
+// Turnstile check added (server/src/turnstile.rs; not upstream). Everything
+// else is upstream's, line for line; the additions are marked "Turnstile".
+// With no site key configured `captcha.enabled` is false, no widget renders,
+// no header is sent and the form behaves exactly as upstream's.
+// @upstream components/auth/invite-form.tsx
+
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
-import { acceptInvitation } from "@/app/actions/invite";
+import { acceptInvitation, type AcceptInvitationResult } from "@/app/actions/invite";
 import { Field, FormError } from "@/components/auth/form-bits";
 import { PasswordInput } from "@/components/auth/password-input";
 import { SubmitButton } from "@/components/auth/submit-button";
+// Turnstile
+import { withActionHeaders } from "../../../runtime/rpc";
+import { captchaRefusalKey, useCaptcha, type CaptchaRefusal } from "../../../turnstile/widget";
 
 const MIN_PASSWORD = 8;
 
@@ -27,6 +37,9 @@ export function InviteForm({ token, email }: { token: string; email: string }) {
   const [confirm, setConfirm] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Turnstile
+  const captcha = useCaptcha();
+  const tCaptcha = useTranslations("turnstile.widget");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -41,9 +54,28 @@ export function InviteForm({ token, email }: { token: string; email: string }) {
       setError(t("reset.passwordsDontMatch"));
       return;
     }
+    // Turnstile: no token yet, nothing to send.
+    if (captcha.enabled && !captcha.token) {
+      setError(tCaptcha("required"));
+      return;
+    }
 
     setPending(true);
-    const res = await acceptInvitation(token, password);
+    // Turnstile: the token travels in a header; it is spent either way.
+    const res: AcceptInvitationResult | { ok: false; reason: CaptchaRefusal } = await withActionHeaders(
+      captcha.headers(),
+      () => acceptInvitation(token, password),
+    );
+    captcha.reset();
+
+    const captchaKey = res.ok ? null : captchaRefusalKey(res.reason);
+    if (captchaKey) {
+      const msg = tCaptcha(captchaKey);
+      setError(msg);
+      toast.error(msg);
+      setPending(false);
+      return;
+    }
 
     if (!res.ok) {
       // "sign-in-failed" is a special case: the password IS set, so telling the
@@ -102,6 +134,8 @@ export function InviteForm({ token, email }: { token: string; email: string }) {
           aria-invalid={!!error}
         />
       </Field>
+
+      {captcha.widget}
 
       <FormError message={error} />
 
