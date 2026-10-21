@@ -103,7 +103,9 @@ impl Uploads {
         waker: Arc<dyn Fn() + Send + Sync>,
     ) -> Uploads {
         let account: AccountSlot = Arc::new(RwLock::new(None));
-        let transport = Arc::new(ApiTransport::new(api.clone()));
+        let tus = modlight_api::TusClient::new(env!("CARGO_PKG_VERSION"))
+            .expect("the transfer client starts");
+        let transport = Arc::new(ApiTransport::with_tus(api.clone(), tus.clone()));
         let queue = UploadQueue::new(
             QueueStore::new(profile),
             account.clone(),
@@ -115,6 +117,7 @@ impl Uploads {
         let auto_increment = settings.name_parser_auto_increment_number;
         let ctx = TaskContext {
             api,
+            tus,
             account: account.clone(),
             queue: queue.clone(),
             channel,

@@ -18,7 +18,7 @@ use crate::tasks::info::{DataType, TaskInfo, TaskJob, TaskMetadata, TaskStatus, 
 use crate::tasks::naming;
 use crate::tasks::settings::{AfterCaptureTasks, AfterUploadTasks, TaskSettings};
 use crate::tasks::uploader;
-use crate::upload::queue::TakeOver;
+use crate::upload::queue::{LiveSession, TakeOver};
 
 /// The bytes a task uploads (`WorkerTask.Data`): a file it reads, or bytes in memory.
 #[derive(Clone, Debug)]
@@ -64,6 +64,9 @@ pub struct TaskState {
     /// The server's status on the last attempt, `None` when nothing answered: what the
     /// offline queue decides on.
     pub last_answer: Option<u16>,
+    /// The resumable session a large upload left on the server, for the next attempt or
+    /// the offline queue to carry on from.
+    pub live_session: Option<LiveSession>,
 }
 
 /// One task, as the task list holds it.
@@ -97,6 +100,7 @@ impl WorkerTask {
                 text: None,
                 image: None,
                 last_answer: None,
+                live_session: None,
             })),
             upload_cancel: CancellationToken::new(),
         }
@@ -1078,6 +1082,9 @@ impl WorkerTask {
         if is_error && !self.stop_requested() && self.hand_over_to_queue(ctx) {
             is_error = false;
         }
+        // A session nobody is going to resume (stopped, or failed for good) is let go
+        // of now rather than left on the server's disk for a day.
+        self.abandon_live_session(ctx);
 
         if !is_error {
             ctx.channel.event(self.id, TaskEvent::UploadCompleted);
@@ -1099,7 +1106,14 @@ impl WorkerTask {
     /// The task then ends exactly as a stopped one does: no error, no URL expected, no
     /// after-upload work. The queue tells the person, once, and again when it goes.
     fn hand_over_to_queue(&self, ctx: &TaskContext) -> bool {
-        let (info, data, answer) = self.with(|s| (s.info.clone(), s.data.clone(), s.last_answer));
+        let (info, data, answer, session) = self.with(|s| {
+            (
+                s.info.clone(),
+                s.data.clone(),
+                s.last_answer,
+                s.live_session.clone(),
+            )
+        });
         if !gate::uploads_to_modlight(&info) {
             return false;
         }
@@ -1115,11 +1129,14 @@ impl WorkerTask {
             file_path,
             data: bytes,
             answer,
+            session,
         };
         if !ctx.queue.try_take_over(request) {
             return false;
         }
         self.with(|s| {
+            // The queue carries the session on now.
+            s.live_session = None;
             // The file must still be there when the queue gets to it: "delete it once it
             // is uploaded" cannot be honoured by an upload that has not happened.
             s.info.settings.after_capture_job = s
@@ -1135,6 +1152,17 @@ impl WorkerTask {
             s.stop_requested = true;
         });
         true
+    }
+
+    /// Tell the server to forget the session a large upload left, if one is left.
+    fn abandon_live_session(&self, ctx: &TaskContext) {
+        let Some(url) = self.with(|s| s.live_session.take().and_then(|live| live.session.url))
+        else {
+            return;
+        };
+        if let Some(credential) = ctx.credential() {
+            uploader::abandon_session(ctx, credential, url);
+        }
     }
 
     /// One attempt (`DoUpload`). Returns whether it ended in an error.
@@ -1161,14 +1189,17 @@ impl WorkerTask {
                 channel.event(id, TaskEvent::UploadProgressChanged);
             }
         };
+        let mut live = self.with(|s| s.live_session.take());
         let outcome = uploader::upload(
             ctx,
             &info,
             data,
             self.upload_cancel.clone(),
             Box::new(progress),
+            &mut live,
         )
         .await;
+        self.with(|s| s.live_session = live);
         let elapsed = started.elapsed();
         self.with(|s| {
             s.last_answer = outcome.answer;
