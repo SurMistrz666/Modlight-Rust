@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::upload::item::QueueReason;
 use crate::upload::queue::{
-    BoxFuture, ProgressFn, QueueAccount, QueueTransport, QuotaAnswer, TransferItem,
+    BoxFuture, CheckpointFn, ProgressFn, QueueAccount, QueueTransport, QuotaAnswer, TransferItem,
     TransferOutcome, TransferResult,
 };
 
@@ -26,10 +26,18 @@ impl ApiTransport {
         }
     }
 
-    /// A transport whose tus client has its own durations (tests of stalls).
+    /// A transport over a tus client of the caller's: the one the live uploads share, or
+    /// one with its own durations or chunk size (tests).
     pub fn with_tus(api: Api, tus: TusClient) -> ApiTransport {
         ApiTransport { api, tus }
     }
+}
+
+/// The parts of a session the queue's item keeps.
+fn write_back(item: &mut TransferItem, session: &TusSession) {
+    item.tus_url = session.url.clone();
+    item.tus_offset = session.offset as i64;
+    item.folder_id = session.folder_id.clone();
 }
 
 fn credential(account: &QueueAccount) -> Credential {
@@ -55,31 +63,35 @@ impl QueueTransport for ApiTransport {
         item: &'a mut TransferItem,
         cancel: CancellationToken,
         mut progress: ProgressFn<'a>,
+        mut checkpoint: CheckpointFn<'a>,
     ) -> BoxFuture<'a, TransferResult> {
         Box::pin(async move {
-            let file = TusFile {
-                path: item.source_path.clone(),
-                name: item.file_name.clone(),
-                length: item.length.max(0) as u64,
-            };
+            let file = TusFile::file(
+                item.source_path.clone(),
+                item.file_name.clone(),
+                item.length.max(0) as u64,
+            );
             let mut session = TusSession {
                 url: item.tus_url.clone(),
                 offset: item.tus_offset.max(0) as u64,
                 folder_id: item.folder_id.clone(),
             };
+            let mut confirmed = item.clone();
             let result = self
                 .tus
-                .send(
+                .send_with_checkpoints(
                     &credential(account),
                     &file,
                     &mut session,
                     |sent, total| progress(sent as i64, total as i64),
+                    |session| {
+                        write_back(&mut confirmed, session);
+                        checkpoint(&confirmed);
+                    },
                     &cancel,
                 )
                 .await;
-            item.tus_url = session.url;
-            item.tus_offset = session.offset as i64;
-            item.folder_id = session.folder_id;
+            write_back(item, &session);
             TransferResult {
                 outcome: match result.outcome {
                     TusOutcome::Success => TransferOutcome::Success,
