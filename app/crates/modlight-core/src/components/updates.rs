@@ -410,6 +410,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_version_is_read_from_the_binary_with_an_argument_vector() {
         let dir = tempfile::tempdir().unwrap();

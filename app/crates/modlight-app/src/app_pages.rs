@@ -9,10 +9,10 @@
 use egui::{Align, Layout, Order, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use serde_json::{Value, json};
 
+use crate::platform::integration::StartupState;
 use modlight_core::hotkeys::HotkeyType;
 use modlight_core::icons;
 use modlight_core::l10n::{Arg, LanguageSetting, format, helpers, mac, s, t};
-use modlight_macos::integration::StartupState;
 
 use crate::commands::Command;
 use crate::menus::Entry;
@@ -1868,7 +1868,7 @@ impl crate::state::AppState {
                 if !self.dialogs_allowed() {
                     return;
                 }
-                match modlight_macos::integration::set_startup(on) {
+                match crate::platform::integration::set_startup(on) {
                     Ok(state) => {
                         if let Some(window) = self.windows.settings.as_mut() {
                             window.startup = Some(state);
@@ -1878,19 +1878,19 @@ impl crate::state::AppState {
                         log::warn!("Login item: {error}");
                         self.app_status(error, false);
                         if let Some(window) = self.windows.settings.as_mut() {
-                            window.startup = Some(modlight_macos::integration::startup_state());
+                            window.startup = Some(crate::platform::integration::startup_state());
                         }
                     }
                 }
             }
             AppPageAsk::OpenLoginItems => {
                 if self.dialogs_allowed() {
-                    modlight_macos::integration::open_login_items_settings();
+                    crate::platform::integration::open_login_items_settings();
                 }
             }
             AppPageAsk::OpenServicesSettings => {
                 if self.dialogs_allowed() {
-                    let _ = modlight_macos::integration::open_services_settings();
+                    let _ = crate::platform::integration::open_services_settings();
                 }
             }
             AppPageAsk::DisableHotkeys(disabled) => self.captures.hotkeys.toggle(disabled),

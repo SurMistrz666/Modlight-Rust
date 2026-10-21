@@ -6,6 +6,9 @@
 //! The upload half needs `_wzorzec/qa-accounts.env` and the server; without either it
 //! says so and passes. Nothing here runs a real yt-dlp or touches the internet.
 
+// The fake yt-dlp is a POSIX shell script.
+#![cfg(unix)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64};

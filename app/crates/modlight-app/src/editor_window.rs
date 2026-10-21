@@ -98,7 +98,7 @@ struct MacWallpaper;
 impl modlight_editor::editor::background::WallpaperService for MacWallpaper {
     fn wallpaper(&self) -> Option<(String, modlight_editor::frame::ImageLayout)> {
         use modlight_editor::frame::ImageLayout;
-        let (path, options) = modlight_macos::editor::desktop_wallpaper()?;
+        let (path, options) = crate::platform::editor::desktop_wallpaper()?;
         // `MapDesktopWallpaperLayout` from `NSImageScaling` (and clipping).
         let layout = match options.scaling {
             2 => ImageLayout::Center,
@@ -115,11 +115,11 @@ impl modlight_editor::editor::background::WallpaperService for MacWallpaper {
 /// picture, and `NSImage` for formats the image crate does not read. Real app only.
 pub fn install_system_services() {
     modlight_editor::cursor::set_provider(Box::new(|cursor| {
-        modlight_macos::editor::cursor_image(cursor.name())
+        crate::platform::editor::cursor_image(cursor.name())
     }));
     modlight_editor::editor::background::set_wallpaper_service(Some(Box::new(MacWallpaper)));
     modlight_editor::editor::background::set_image_loader(Some(Box::new(|path| {
-        modlight_macos::editor::load_image(path)
+        crate::platform::editor::load_image(path)
     })));
 }
 
@@ -174,7 +174,7 @@ impl AppState {
             }
         }
         let mut view = EditorView::new();
-        view.host_watches_paste = modlight_macos::keys::monitoring();
+        view.host_watches_paste = crate::platform::keys::monitoring();
         let windows = &mut self.windows.editors;
         windows.counter += 1;
         windows.sessions.push(EditorSession {

@@ -209,7 +209,7 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         state.show_first_run();
         if let Some(window) = state.windows.first_run.as_mut() {
             // As a copy in /Applications would see it.
-            window.startup = modlight_macos::integration::StartupState::Disabled;
+            window.startup = crate::platform::integration::StartupState::Disabled;
         }
         return Some(vec2(
             crate::first_run::FIRST_RUN_SIZE.0,

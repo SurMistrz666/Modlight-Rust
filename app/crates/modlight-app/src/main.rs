@@ -12,8 +12,8 @@ use std::process::ExitCode;
 
 use egui::{ViewportBuilder, vec2};
 use modlight_app::app::{MAIN_MIN_SIZE, MAIN_SIZE, Mode, ModlightApp};
-use modlight_app::qa;
 use modlight_app::state::{AppState, Env};
+use modlight_app::{platform, qa};
 use modlight_core::account::{AccountStore, CredentialStore, FileCredentialStore};
 use modlight_core::config::AppConfig;
 use modlight_core::l10n::Language;
@@ -146,17 +146,17 @@ fn main() -> ExitCode {
     let credentials: Box<dyn CredentialStore> = if qa_mode {
         Box::new(FileCredentialStore::new(profile.join("credentials")))
     } else {
-        Box::new(modlight_macos::KeychainStore::for_app())
+        Box::new(platform::SecretStore::for_app())
     };
     let account = AccountStore::load(&profile, credentials);
     let env = Env {
         profile,
         qa: qa_mode,
         frozen_now: None,
-        machine: modlight_macos::system::machine_name(),
-        system_language: modlight_macos::system::preferred_language(),
-        system_locale: modlight_macos::system::system_locale(),
-        reduce_motion: modlight_macos::system::reduce_motion(),
+        machine: platform::system::machine_name(),
+        system_language: platform::system::preferred_language(),
+        system_locale: platform::system::system_locale(),
+        reduce_motion: platform::system::reduce_motion(),
         system_dark: None,
     };
     let bounds = config.main_window();

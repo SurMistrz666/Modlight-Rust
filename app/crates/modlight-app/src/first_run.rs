@@ -12,9 +12,9 @@
 use egui::{Align, Layout, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use serde_json::json;
 
+use crate::platform::integration::StartupState;
 use modlight_core::icons;
 use modlight_core::l10n::{mac, s, t};
-use modlight_macos::integration::StartupState;
 
 use crate::state::AppState;
 use crate::theme::{Colors, Weight};
@@ -39,7 +39,7 @@ impl AppState {
         let startup = if self.env.qa || self.mode != crate::app::Mode::Normal {
             StartupState::NotAvailable
         } else {
-            modlight_macos::integration::startup_state()
+            crate::platform::integration::startup_state()
         };
         self.windows.first_run = Some(FirstRunWindow {
             startup,

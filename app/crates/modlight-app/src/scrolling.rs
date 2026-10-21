@@ -612,7 +612,7 @@ pub fn region_chosen(state: &mut AppState, rect: IRect, window_info: Option<Wind
     let scroller: Arc<dyn Scroller> = if state.env.qa {
         Arc::new(FakeScroller)
     } else {
-        Arc::new(modlight_macos::input::MacScroller)
+        Arc::new(crate::platform::input::SystemScroller)
     };
     state.rt.spawn_blocking(move || {
         let (result, status) = modlight_core::capture::scrolling::run(

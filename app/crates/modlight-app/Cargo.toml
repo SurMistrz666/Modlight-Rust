@@ -1,6 +1,6 @@
 [package]
 name = "modlight-app"
-description = "Modlight App for macOS: the window, My space, sign-in, notifications and the tray."
+description = "Modlight App for macOS and Windows: the window, My space, sign-in, notifications and the tray."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,7 +18,6 @@ path = "src/lib.rs"
 [dependencies]
 modlight-api.workspace = true
 modlight-core.workspace = true
-modlight-macos.workspace = true
 modlight-editor.workspace = true
 modlight-tools.workspace = true
 modlight-effects.workspace = true
@@ -38,6 +37,13 @@ dirs.workspace = true
 log.workspace = true
 url.workspace = true
 tray-icon = "0.21"
+
+# The system's glue; `crate::platform` names the one this build uses.
+[target.'cfg(not(windows))'.dependencies]
+modlight-macos.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+modlight-windows.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

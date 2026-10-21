@@ -545,6 +545,11 @@ pub fn free_space(folder: &Path) -> Option<u64> {
             return None;
         }
     }
+    volume_free_bytes(&probe)
+}
+
+#[cfg(unix)]
+fn volume_free_bytes(probe: &Path) -> Option<u64> {
     let path = std::ffi::CString::new(probe.as_os_str().as_encoded_bytes()).ok()?;
     let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
     // SAFETY: `path` is a valid NUL-terminated string and `stat` a writable struct.
@@ -553,6 +558,29 @@ pub fn free_space(folder: &Path) -> Option<u64> {
         return None;
     }
     Some(stat.f_bavail as u64 * stat.f_frsize as u64)
+}
+
+/// The bytes this user may still write there (`GetDiskFreeSpaceEx`, quotas included).
+#[cfg(windows)]
+fn volume_free_bytes(probe: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = probe
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut available = 0u64;
+    // SAFETY: a NUL-terminated wide path and one writable counter; the other two
+    // counters are not asked for.
+    let ok = unsafe {
+        windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
 }
 
 /// A drive that cannot be measured is not a drive that is full.

@@ -285,7 +285,7 @@ impl AppState {
         let options: modlight_tools::settings::BorderlessWindowSettings =
             tool_options(&settings, "BorderlessWindowSettings");
         let working_area = options.exclude_taskbar_area;
-        let outcome = modlight_macos::ax::toggle_active_window(|window, screens| {
+        let outcome = crate::platform::ax::toggle_active_window(|window, screens| {
             use modlight_tools::borderless::{Frame, Screen, target_frame};
             let frame = |r: (f64, f64, f64, f64)| Frame::new(r.0, r.1, r.2, r.3);
             let screens: Vec<Screen> = screens
@@ -298,7 +298,7 @@ impl AppState {
             target_frame(&frame(window), &screens, working_area)
                 .map(|f| (f.x, f.y, f.width, f.height))
         });
-        use modlight_macos::ax::Toggled;
+        use crate::platform::ax::Toggled;
         match outcome {
             Toggled::Filled | Toggled::Restored => {
                 self.play_task_sound(NotificationSound::ActionCompleted, &settings)

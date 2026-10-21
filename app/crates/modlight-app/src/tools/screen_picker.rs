@@ -538,7 +538,7 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
             if !ui
                 .ctx()
                 .data(|d| d.get_temp::<bool>(raised_key).unwrap_or(false))
-                && modlight_macos::windows::raise_overlay(&title)
+                && crate::platform::windows::raise_overlay(&title)
             {
                 ui.ctx().data_mut(|d| d.insert_temp(raised_key, true));
                 ui.ctx().send_viewport_cmd(ViewportCommand::Focus);

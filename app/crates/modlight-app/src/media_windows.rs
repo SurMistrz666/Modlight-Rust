@@ -23,7 +23,7 @@ fn builder(title: &str, size: Vec2, resizable: bool) -> ViewportBuilder {
         .with_resizable(resizable)
         .with_minimize_button(false)
         .with_maximize_button(resizable);
-    if let Some((x, y, w, h)) = modlight_macos::system::visible_frame() {
+    if let Some((x, y, w, h)) = crate::platform::system::visible_frame() {
         let area = Rect::from_min_size(pos2(x, y), vec2(w, h));
         builder = builder.with_position(pos2(
             area.center().x - size.x / 2.0,

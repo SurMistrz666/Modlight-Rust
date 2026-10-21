@@ -279,7 +279,7 @@ impl Tray {
                 std::process::exit(0);
             }
             if id.starts_with(SHOWS) {
-                modlight_macos::system::show_app_windows();
+                crate::platform::system::show_app_windows();
             }
             let _ = sender.send(id);
             wake.request_repaint();

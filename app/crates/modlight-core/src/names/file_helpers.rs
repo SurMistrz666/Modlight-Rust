@@ -781,14 +781,18 @@ mod tests {
         assert!(!file_exists(&dir.path().to_string_lossy()));
         assert!(!file_exists(""));
         assert!(!file_exists("a\0b"));
-        let dangling = dir.path().join("dangling");
-        std::os::unix::fs::symlink(dir.path().join("gone"), &dangling).unwrap();
-        assert!(file_exists(&dangling.to_string_lossy()));
-        let to_folder = dir.path().join("to-folder");
-        std::os::unix::fs::symlink(dir.path(), &to_folder).unwrap();
-        assert!(!file_exists(&to_folder.to_string_lossy()));
+        #[cfg(unix)]
+        {
+            let dangling = dir.path().join("dangling");
+            std::os::unix::fs::symlink(dir.path().join("gone"), &dangling).unwrap();
+            assert!(file_exists(&dangling.to_string_lossy()));
+            let to_folder = dir.path().join("to-folder");
+            std::os::unix::fs::symlink(dir.path(), &to_folder).unwrap();
+            assert!(!file_exists(&to_folder.to_string_lossy()));
+        }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn special_folders_map_to_macos() {
         let home = std::env::var("HOME").unwrap();
