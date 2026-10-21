@@ -20,7 +20,7 @@ build files as downloaded).
 | 5 | Upstream e2e (Playwright) on both servers | 12/15 on both, the same 3 stale specs fail on the reference too; adapted copies 3/3 on both |
 | 6 | Compression, redirect bodies, 500 bodies, /dashboard, JSON.parse | done 45060e2 (SKELETON 9.11, 9.24, 9.25, 9.41, 9.42) |
 | 1 | `server/docs/COVERAGE.md` | done 0005e6f (+ tests/coverage.rs: no page or handler answers 501) |
-| 8 | Final verification, `server/README.md` (Polish) | done: 1224 tests, every suite, e2e, smoke 12/12; stack on 8430 rebuilt from HEAD |
+| 8 | Final verification, `server/README.md` (originally in Polish) | done: 1224 tests, every suite, e2e, smoke 12/12; stack on 8430 rebuilt from HEAD |
 
 ## Image (task 2)
 

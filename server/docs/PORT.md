@@ -218,7 +218,7 @@ ICU message syntax is formatted the way `next-intl` formats it.
 
 ## 12. Security fixes (the only intended differences)
 
-From the audit (`docs/audyt/`):
+From the audit (`docs/audit/`):
 
 1. **High**: view limits (`maxViews`, burn after reading) are bypassable with
    `Range: bytes=1-` or `Sec-Fetch-Dest: image|video`. Every response that

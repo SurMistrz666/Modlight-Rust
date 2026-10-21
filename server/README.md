@@ -1,99 +1,99 @@
-# Modlight w Rust: serwer
+# Modlight in Rust: the server
 
-To jest serwer Modlight przepisany z TypeScriptu (Next.js 16 + PostgreSQL 17,
-oryginał w `upstream/Modlight`) na Rust, 1:1. Modlight to własny hosting plików
-i zrzutów ekranu: panel WWW (biblioteka, foldery, kosz, duplikaty, skróty
-linków, wklejki, profil, tokeny, administracja), wysyłanie przez ShareX
-(`POST /upload`) i przez tus (wznawiane wysyłanie z panelu i z aplikacji),
-publiczne strony plików, galerie i albumy, podglądy dla Discorda i innych
-komunikatorów, konwersje obrazów, audio i wideo.
+This is the Modlight server rewritten from TypeScript (Next.js 16 + PostgreSQL 17,
+the original in `upstream/Modlight`) to Rust, 1:1. Modlight is a self-hosted file
+and screenshot hosting service: a web panel (library, folders, trash, duplicates, short
+links, pastes, profile, tokens, administration), uploads through ShareX
+(`POST /upload`) and through tus (resumable uploads from the panel and from the app),
+public file pages, galleries and albums, previews for Discord and other
+messengers, and image, audio and video conversions.
 
-Ten sam adres URL, te same odpowiedzi, ta sama baza danych co oryginał:
-panel WWW, ShareX i aplikacja Modlight nie odróżnią serwerów. Wyjątki są celowe
-i opisane w `docs/SKELETON.md`, sekcja 9 (poprawki bezpieczeństwa z audytu
-`docs/audyt/` i kilka błędów oryginału, których nie powtarzamy).
+The same URLs, the same responses, the same database as the original:
+the web panel, ShareX and the Modlight app cannot tell the servers apart. The exceptions are deliberate
+and described in `docs/SKELETON.md`, section 9 (the security fixes from the audit
+in `docs/audit/` and a few errors of the original that we do not repeat).
 
-Dokumenty dla programistów: `docs/PORT.md` (zasady portu), `docs/SKELETON.md`
-(budowa serwera, odstępstwa), `docs/CONTRACT.md` (umowa z panelem WWW),
-`docs/COVERAGE.md` (co z oryginału jest gdzie i czym sprawdzone).
+Documents for developers: `docs/PORT.md` (the port's rules), `docs/SKELETON.md`
+(how the server is built, deviations), `docs/CONTRACT.md` (the contract with the web panel),
+`docs/COVERAGE.md` (what from the original is where and how it was checked).
 
-## Lokalny stos w Dockerze
+## Local stack in Docker
 
-Wszystko działa tylko na tym Macu. Panel jest pod **http://127.0.0.1:8430**,
-port jest otwarty wyłącznie na adresie pętli zwrotnej (127.0.0.1): z innego
-komputera ani z internetu nie da się do niego dostać. Baza danych nie ma
-żadnego portu na zewnątrz.
+Everything runs on this Mac only. The panel is at **http://127.0.0.1:8430**,
+and the port is open only on the loopback address (127.0.0.1): it cannot be reached
+from another computer or from the internet. The database has no
+port exposed to the outside.
 
-Docker to Colima (profil `modlight`). Wszystkie polecenia niżej uruchamiaj
-z katalogu repozytorium (`~/Desktop/modlight`):
+Docker is Colima (the profile `modlight`). Run all the commands below
+from the repository directory (`~/Desktop/modlight`):
 
 ```sh
-colima start --profile modlight          # jeśli Docker nie działa (np. po restarcie Maca)
+colima start --profile modlight          # if Docker is not running (e.g. after restarting the Mac)
 ```
 
-### Pierwsze uruchomienie
+### First run
 
 ```sh
-server/docker/setup-local.sh                                   # tworzy server/docker/.env (losowe hasła)
+server/docker/setup-local.sh                                   # creates server/docker/.env (random passwords)
 docker compose -f server/docker/docker-compose.yml up -d --build
 ```
 
-`setup-local.sh` zapisuje `server/docker/.env` z prawami 600: klucz
-podpisujący sesje (`AUTH_SECRET`), klucz do sekretów w bazie
-(`SETTINGS_ENCRYPTION_KEY`) i hasło bazy (`POSTGRES_PASSWORD`). Plik nie trafia
-do gita. **Nie zmieniaj tych wartości na działającej instalacji** (wylogowałoby
-wszystkich, hasło SMTP w bazie przestałoby się dać odczytać, a aplikacja
-straciłaby dostęp do bazy). Skrypt można uruchomić ponownie: istniejące sekrety
-zostawia, starą wersję pliku zapisuje obok jako kopię.
+`setup-local.sh` writes `server/docker/.env` with mode 600: the key that
+signs sessions (`AUTH_SECRET`), the key for secrets in the database
+(`SETTINGS_ENCRYPTION_KEY`) and the database password (`POSTGRES_PASSWORD`). The file does not go
+into git. **Do not change these values on a running installation** (it would sign
+everyone out, the SMTP password in the database would become unreadable, and the application would
+lose access to the database). The script can be run again: it keeps existing secrets
+and saves the old version of the file next to it as a copy.
 
-Potem otwórz http://127.0.0.1:8430/register i załóż konto. **Pierwsze konto
-na pustej instalacji zostaje administratorem** (rejestracja dla innych jest
-wyłączona; włączysz ją w Admin → Ustawienia, a konta możesz też zakładać sam
-w Admin → Użytkownicy).
+Then open http://127.0.0.1:8430/register and create an account. **The first account
+on an empty installation becomes the administrator** (registration for others is
+disabled; you enable it in Admin → Ustawienia (Admin → Settings), and you can also create accounts yourself
+in Admin → Użytkownicy (Admin → Users)).
 
-### Codzienna obsługa
+### Day-to-day operation
 
 ```sh
 F=server/docker/docker-compose.yml
-docker compose -f $F ps                 # stan (app powinna być "healthy")
-docker compose -f $F logs -f app        # dziennik serwera
-docker compose -f $F stop               # zatrzymanie (dane zostają)
-docker compose -f $F start              # ponowne uruchomienie
-docker compose -f $F restart app        # restart samego serwera
-docker compose -f $F down               # usunięcie kontenerów (dane w wolumenach zostają)
+docker compose -f $F ps                 # status (app should be "healthy")
+docker compose -f $F logs -f app        # the server's log
+docker compose -f $F stop               # stop (the data stays)
+docker compose -f $F start              # start again
+docker compose -f $F restart app        # restart just the server
+docker compose -f $F down               # remove the containers (the data in volumes stays)
 ```
 
-Kontenery mają `restart: unless-stopped`, więc po starcie Colimy wstają same,
-chyba że je zatrzymałeś.
+The containers have `restart: unless-stopped`, so after Colima starts they come up by themselves,
+unless you stopped them.
 
-### Aktualizacja
+### Updating
 
-Po zmianach w kodzie (albo po scaleniu nowej wersji do `main`):
+After changes in the code (or after merging a new version into `main`):
 
 ```sh
 docker compose -f server/docker/docker-compose.yml up -d --build
 ```
 
-To przebudowuje obraz i podmienia kontener aplikacji. Migracje bazy uruchamiają
-się same przy każdym starcie aplikacji (najpierw sprawdzenie konfiguracji, potem
-migracje, potem serwer). Pierwsze budowanie trwa ok. 10 minut (libvips i jego
-biblioteki kompilują się od źródeł), kolejne są szybkie dzięki pamięci
-podręcznej Dockera.
+This rebuilds the image and replaces the application container. Database migrations run
+by themselves on every start of the application (first the configuration check, then
+the migrations, then the server). The first build takes about 10 minutes (libvips and its
+libraries are compiled from source); later ones are fast thanks to Docker's
+cache.
 
-### Gdzie są dane
+### Where the data is
 
-| Co | Gdzie |
+| What | Where |
 |---|---|
-| Wysłane pliki, miniatury, awatary, tapety, pliki w trakcie wysyłania | wolumen Dockera `modlight-rust_appdata` (w kontenerze `/app/data`) |
-| Baza PostgreSQL 17 (konta, pliki, ustawienia) | wolumen Dockera `modlight-rust_pgdata` |
-| Sekrety i konfiguracja | `server/docker/.env` (prawa 600) |
+| Uploaded files, thumbnails, avatars, wallpapers, files being uploaded | the Docker volume `modlight-rust_appdata` (in the container `/app/data`) |
+| The PostgreSQL 17 database (accounts, files, settings) | the Docker volume `modlight-rust_pgdata` |
+| Secrets and configuration | `server/docker/.env` (mode 600) |
 
-Wolumeny żyją w maszynie wirtualnej Colimy (profil `modlight`). `docker compose
-down` ich nie usuwa; usunęłoby je dopiero `down -v` albo `colima delete`.
+The volumes live in the Colima virtual machine (the profile `modlight`). `docker compose
+down` does not remove them; only `down -v` or `colima delete` would.
 
-### Kopie zapasowe
+### Backups
 
-Baza (spójny zrzut przy działającym serwerze):
+The database (a consistent dump while the server is running):
 
 ```sh
 mkdir -p ~/ModlightBackup
@@ -101,17 +101,17 @@ docker compose -f server/docker/docker-compose.yml exec -T postgres \
   pg_dump -U modlight -Fc modlight > ~/ModlightBackup/modlight-$(date +%F).dump
 ```
 
-Pliki (wolumen `appdata`, spakowany obrazem aplikacji, który ma `tar`):
+The files (the `appdata` volume, packed with the application image, which has `tar`):
 
 ```sh
 docker run --rm --entrypoint tar -v modlight-rust_appdata:/data:ro -v ~/ModlightBackup:/backup \
   modlight-rust:local -czf /backup/appdata-$(date +%F).tar.gz -C /data .
 ```
 
-Zachowaj też kopię `server/docker/.env` (bez niej zaszyfrowane ustawienia, np.
-hasło SMTP, i sesje są nie do odtworzenia). Trzymaj ją w bezpiecznym miejscu.
+Also keep a copy of `server/docker/.env` (without it the encrypted settings, e.g. the
+SMTP password, and the sessions cannot be restored). Keep it in a safe place.
 
-Przywracanie (na zatrzymanej aplikacji):
+Restoring (with the application stopped; in the dump file names `RRRR-MM-DD` is the date as year-month-day, i.e. YYYY-MM-DD):
 
 ```sh
 F=server/docker/docker-compose.yml
@@ -122,131 +122,131 @@ docker run --rm --entrypoint tar -v modlight-rust_appdata:/data -v ~/ModlightBac
 docker compose -f $F start app
 ```
 
-Baza jest zgodna z oryginałem w obie strony: zrzut z oryginalnego Modlight
-(Next.js) można odtworzyć tutaj i odwrotnie.
+The database is compatible with the original in both directions: a dump from the original Modlight
+(Next.js) can be restored here and vice versa.
 
-### Porty
+### Ports
 
-| Port | Co | Dostęp |
+| Port | What | Access |
 |---|---|---|
-| 127.0.0.1:8430 | panel WWW, API, ShareX, tus | tylko z tego Maca |
-| (brak) | PostgreSQL | tylko z kontenera aplikacji |
+| 127.0.0.1:8430 | web panel, API, ShareX, tus | only from this Mac |
+| (none) | PostgreSQL | only from the application container |
 
-Port można zmienić w `server/docker/.env` (`APP_PORT` i `APP_URL` razem), potem
+The port can be changed in `server/docker/.env` (`APP_PORT` and `APP_URL` together), then
 `up -d`.
 
 ## ShareX
 
-ShareX działa tylko na Windowsie, a serwer słucha tylko na 127.0.0.1 tego Maca,
-więc ShareX z innego komputera się nie połączy, dopóki serwer nie zostanie
-udostępniony w sieci (to wymaga reverse proxy z HTTPS i nie jest zrobione).
-Konfiguracja, gdy będzie potrzebna:
+ShareX runs only on Windows, and the server listens only on 127.0.0.1 of this Mac,
+so ShareX from another computer will not connect until the server is
+made available on the network (that requires a reverse proxy with HTTPS and is not done).
+The configuration, when it is needed:
 
-1. Panel → **Integracje** (`/dashboard/tokens`) → utwórz token.
-2. „Pobierz konfigurację ShareX” (albo „Konfiguracja ShareX (.sxcu)” w oknie
-   nowego tokenu) zapisuje gotowy plik `.sxcu`; otwórz go dwukrotnie w ShareX.
-   Ręcznie: wysyłanie `POST <adres>/upload`, pole pliku `upload`, nagłówek
-   `x-api-key: <token>`; adres pliku w odpowiedzi to `{json:url}`, adres
-   usunięcia `{json:deletionUrl}`.
+1. Panel → **Integracje** (Integrations) (`/dashboard/tokens`) → create a token.
+2. „Pobierz konfigurację ShareX” ("Download ShareX config") (or „Konfiguracja ShareX (.sxcu)” ("ShareX config (.sxcu)") in the window
+   of a new token) saves a ready `.sxcu` file; open it by double-clicking in ShareX.
+   Manually: upload with `POST <address>/upload`, the file field `upload`, the header
+   `x-api-key: <token>`; the file address in the response is `{json:url}`, the deletion
+   address `{json:deletionUrl}`.
 
-Na tym Macu ten sam kontrakt sprawdzisz poleceniem:
+On this Mac you can check the same contract with the command:
 
 ```sh
 curl -F upload=@zrzut.png -H "x-api-key: <token>" http://127.0.0.1:8430/upload
 ```
 
-## Aplikacja Modlight na Maca
+## The Modlight app for Mac
 
-Aplikacja (`app/` w tym repozytorium) łączy się z tym serwerem tak jak
-z oryginałem:
+The app (`app/` in this repository) connects to this server just as it does
+to the original:
 
-1. W oknie logowania podaj adres serwera **http://127.0.0.1:8430**.
-2. Logowanie przez przeglądarkę otwiera panel na stronie `/authorize`;
-   zatwierdź tam urządzenie (aplikacja odbiera token przez lokalny port
-   pętli zwrotnej). Albo wklej token utworzony w panelu w **Integracje**.
-3. Token trafia do pęku kluczy macOS (usługa `Modlight`).
+1. In the sign-in window enter the server address **http://127.0.0.1:8430**.
+2. Signing in through the browser opens the panel on the page `/authorize`;
+   approve the device there (the app receives the token through a local
+   loopback port). Or paste a token created in the panel under **Integracje** (Integrations).
+3. The token goes into the macOS Keychain (the service `Modlight`).
 
-## Cloudflare Turnstile (sprawdzanie, czy to człowiek)
+## Cloudflare Turnstile (checking that the visitor is a human)
 
-Opcjonalne i domyślnie wyłączone: bez kluczy wszystko działa dokładnie jak
-w oryginale. Po włączeniu formularze logowania, rejestracji, prośby o reset
-hasła i przyjęcia zaproszenia pokazują widżet Cloudflare, a serwer sprawdza
-w Cloudflare każdy token, zanim cokolwiek zrobi. Gdy Cloudflare nie odpowiada,
-serwer odmawia (lepiej chwilowo nie wpuścić nikogo, niż wpuścić boty).
+Optional and off by default: without keys everything works exactly as in
+the original. Once enabled, the sign-in, registration, password reset request and
+invitation acceptance forms show the Cloudflare widget, and the server verifies
+every token with Cloudflare before it does anything. When Cloudflare does not respond,
+the server refuses (better to let nobody in for a moment than to let bots in).
 
-**Klucze z panelu Cloudflare**
+**Keys from the Cloudflare dashboard**
 
-1. Zaloguj się na https://dash.cloudflare.com i otwórz **Turnstile**
-   (w menu bocznym), potem **Add widget**.
-2. Nazwa dowolna (np. `Modlight`). W **Hostname management** dodaj każdą
-   nazwę hosta, pod którą otwierasz panel: host z `APP_URL` i każdy z
-   `APP_DOMAINS` (sama nazwa, bez `https://` i bez portu, np.
-   `pliki.example.com`). Na innym hoście widżet się nie pokaże.
-3. **Widget Mode**: zostaw **Managed**. Pre-clearance: nie.
-4. **Create**: Cloudflare pokaże **Site Key** (klucz witryny, jawny) i
-   **Secret Key** (klucz tajny). Skopiuj oba.
+1. Sign in at https://dash.cloudflare.com and open **Turnstile**
+   (in the side menu), then **Add widget**.
+2. Any name (e.g. `Modlight`). In **Hostname management** add every
+   hostname under which you open the panel: the host from `APP_URL` and each one from
+   `APP_DOMAINS` (just the name, without `https://` and without a port, e.g.
+   `pliki.example.com`). On a different host the widget will not appear.
+3. **Widget Mode**: leave **Managed**. Pre-clearance: no.
+4. **Create**: Cloudflare will show the **Site Key** (the site key, public) and the
+   **Secret Key** (the secret key). Copy both.
 
-**Gdzie je wpisać** (jedno z dwóch):
+**Where to enter them** (one of two):
 
-- Panel: **Administracja → Ustawienia → Cloudflare Turnstile**: klucz witryny,
-  klucz tajny, przełącznik „Chroń formularze logowania”, **Zapisz**. Zapis
-  z włączonym przełącznikiem najpierw pyta Cloudflare, czy przyjmuje klucz
-  tajny (zły klucz zablokowałby każde logowanie, także Twoje); przycisk
-  **Sprawdź** robi to samo bez zapisywania. Klucz tajny jest przechowywany
-  zaszyfrowany i nigdy nie wraca do przeglądarki.
-- Albo `server/docker/.env`: `TURNSTILE_SITE_KEY=...` i
-  `TURNSTILE_SECRET_KEY=...` (oba, inaczej zostaje wyłączone), potem
-  `docker compose -f server/docker/docker-compose.yml up -d`. Jeśli karta
-  w panelu była kiedyś zapisana, panel ma pierwszeństwo w całości; przycisk
-  „Wróć do ustawień środowiskowych” oddaje decyzję plikowi `.env`.
+- The panel: **Administracja → Ustawienia → Cloudflare Turnstile** (Administration → Settings → Cloudflare Turnstile): the site key,
+  the secret key, the switch „Chroń formularze logowania” ("Protect the sign-in forms"), **Zapisz** (Save). Saving
+  with the switch on first asks Cloudflare whether it accepts the secret
+  key (a wrong key would block every sign-in, including yours); the button
+  **Sprawdź** (Test) does the same without saving. The secret key is stored
+  encrypted and never goes back to the browser.
+- Or `server/docker/.env`: `TURNSTILE_SITE_KEY=...` and
+  `TURNSTILE_SECRET_KEY=...` (both, otherwise it stays off), then
+  `docker compose -f server/docker/docker-compose.yml up -d`. If the card
+  in the panel was ever saved, the panel takes precedence entirely; the button
+  „Wróć do ustawień środowiskowych” ("Use the environment settings") hands the decision back to the `.env` file.
 
-**Próba lokalnie, bez konta Cloudflare**: testowe klucze Cloudflare działają
-na każdym hoście, także na 127.0.0.1. Klucz witryny `1x00000000000000000000AA`
-z kluczem tajnym `1x0000000000000000000000000000000AA` przepuszcza wszystkich,
-klucz tajny `2x0000000000000000000000000000000AA` odrzuca wszystkich. Widżet
-pokazuje wtedy napis „For testing only”. Do prawdziwego użytku tylko klucze
-własnego widżetu.
+**Trying it locally, without a Cloudflare account**: Cloudflare's test keys work
+on any host, including 127.0.0.1. The site key `1x00000000000000000000AA`
+with the secret key `1x0000000000000000000000000000000AA` lets everyone through,
+the secret key `2x0000000000000000000000000000000AA` rejects everyone. The widget
+then shows the text "For testing only". For real use, only the keys of
+your own widget.
 
-Zanim się wylogujesz po włączeniu, zaloguj się raz w oknie prywatnym. Gdyby
-logowanie nie działało (np. host nie pasuje do widżetu), wyłącz to z bazy:
+Before you sign out after enabling it, sign in once in a private window. If
+signing in does not work (e.g. the host does not match the widget), turn it off from the database:
 
 ```sh
 docker compose -f server/docker/docker-compose.yml exec postgres \
   psql -U modlight -d modlight -c "UPDATE settings SET value = 'off' WHERE key = 'turnstile_enabled'"
 ```
 
-Zmiana działa w ciągu 30 sekund. Gdy Turnstile jest włączony, przeglądarka
-pobiera skrypt z `challenges.cloudflare.com`, a serwer wysyła tam token
-z formularza i adres IP odwiedzającego (więcej: `docs/SKELETON.md`, sekcja 9,
-punkt 43).
+The change takes effect within 30 seconds. When Turnstile is enabled, the browser
+fetches a script from `challenges.cloudflare.com`, and the server sends there the token
+from the form and the visitor's IP address (more: `docs/SKELETON.md`, section 9,
+item 43).
 
-## Co jest inaczej niż w oryginale (najważniejsze)
+## What is different from the original (the most important)
 
-Pełna lista: `docs/SKELETON.md`, sekcja 9. W skrócie:
+The full list: `docs/SKELETON.md`, section 9. In short:
 
-- **Poprawki bezpieczeństwa z audytu**: limit wyświetleń nie da się obejść
-  nagłówkiem `Range` ani `Sec-Fetch-Dest`; ShareX sprawdza token, zanim
-  przyjmie plik; pierwsze konto administratora jest ustalane w transakcji;
-  porównanie tokenu usuwania w stałym czasie; `/oembed` nie zdradza plików
-  z limitem wyświetleń; nagłówek `X-Real-IP` tylko przy `TRUST_PROXY`.
-- **Poprawki z integracji**: zakończonego wysyłania tus nie da się pobrać ani
-  skasować pod jego adresem tus (przy S3 omijało to prywatność pliku);
-  zmiana awatara lub tapety usuwa stary plik (oryginał zostawiał go na zawsze).
-- Album ZIP działa (w oryginale zawsze błąd 500).
-- Nowość, której oryginał nie ma: opcjonalny Cloudflare Turnstile na
-  formularzach logowania, rejestracji, resetu hasła i zaproszeń (wyżej).
-- Zły znak `%` w adresie: 400 zamiast 500.
+- **Security fixes from the audit**: the view limit cannot be bypassed
+  with the `Range` header or `Sec-Fetch-Dest`; ShareX checks the token before it
+  accepts a file; the first administrator account is decided in a transaction;
+  the delete token is compared in constant time; `/oembed` does not reveal files
+  with a view limit; the `X-Real-IP` header only with `TRUST_PROXY`.
+- **Fixes from the integration**: a finished tus upload can be neither downloaded nor
+  deleted at its tus address (with S3 this bypassed the file's privacy);
+  changing the avatar or wallpaper deletes the old file (the original left it forever).
+- The ZIP album works (in the original it was always a 500 error).
+- A novelty the original does not have: optional Cloudflare Turnstile on the
+  sign-in, registration, password reset and invitation forms (above).
+- A bad `%` character in the address: 400 instead of 500.
 
-## Testy
+## Tests
 
 ```sh
 cd server
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-Testy z bazą danych uruchamiają się, gdy jest ustawione
-`MODLIGHT_TEST_DATABASE_URL` (patrz `docs/SKELETON.md`, sekcja 1). Porównania
-z oryginałem (`tests/parity`, `tests/parity_media`) i testy Playwright
-z oryginału (`tests/e2e`) uruchamia się na osobnych, tymczasowych stosach,
-nigdy na tym z portu 8430; jak, opisuje `docs/handoff/srv-integration.md`
-w katalogu repozytorium.
+The tests with a database run when `MODLIGHT_TEST_DATABASE_URL` is set
+(see `docs/SKELETON.md`, section 1). The comparisons with the original
+(`tests/parity`, `tests/parity_media`) and the Playwright tests from the original
+(`tests/e2e`) are run on separate, temporary stacks,
+never on the one from port 8430; how is described in `docs/handoff/srv-integration.md`
+in the repository directory.

@@ -113,7 +113,7 @@ The instructions below are kept as they were written; they are what was done.
   1.3 has the numbers).
 - Stale elsewhere, not touched (outside the brief): PORT.md section 11 still
   says the SPA bundles `messages/` (the server sends them now, CONTRACT.md 5.7
-  and 10), and the `web-spa` row of `docs/STAN.md` still lists sections 10 to 12
+  and 10), and the `web-spa` row of `docs/STATUS.md` still lists sections 10 to 12
   and the `meta` blocks as open.
 
 ## Build and verify

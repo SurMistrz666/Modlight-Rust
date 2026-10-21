@@ -1,145 +1,145 @@
-# Audyt bezpieczeństwa klienta Modlight-App
+# Security audit of the Modlight-App client
 
-Data: 2026-10-18. Analiza wyłącznie statyczna (czytanie, grep, file, xxd, git, llvm-objdump). Nic z repozytorium nie było uruchamiane.
+Date: 2026-10-18. Static analysis only (reading, grep, file, xxd, git, llvm-objdump). Nothing from the repository was run.
 
-## Zakres i metoda
+## Scope and method
 
-- Kopia klienta: `/path/to/modlight/upstream/Modlight-App` (jeden commit `b178a09` autora Nimfek, 2026-10-18).
-- Przebadano CAŁY klient (wszystkie projekty), nie tylko `ShareX/Modlight/*`.
-- Klient to fork ShareX. Żeby odróżnić zmiany autora od kodu upstream, sklonowałem oryginalny ShareX do `/path/to/modlight/_audyt/upstream-sharex` i ustaliłem commit bazowy: **`9c81fb01` ("Add configurable built-in toolbars for editor hosting", 2026-08-17)** — to commit ShareX z najmniejszą liczbą różnic w plikach wspólnych (biblioteki edytora/efektów/przechwytywania praktycznie bez zmian poza przemianowaniem). Wszystkie poniższe werdykty opierają się na porównaniu fork vs ten commit.
-- Statystyka różnic: 164 pliki dodane, 726 usuniętych, 151 zmienionych. Autor usunął cały podsystem "uploaderów" ShareX (kilkadziesiąt usług z kluczami API, OAuth, FTP/SSH, host natywnego komunikatu przeglądarki, Steam, Microsoft Store) i zastąpił go jednym serwerem Modlight.
+- Copy of the client: `/path/to/modlight/upstream/Modlight-App` (a single commit `b178a09` by the author Nimfek, 2026-10-18).
+- The WHOLE client was examined (all projects), not only `ShareX/Modlight/*`.
+- The client is a fork of ShareX. To tell the author's changes apart from upstream code, I cloned the original ShareX into `/path/to/modlight/_audyt/upstream-sharex` and determined the base commit: **`9c81fb01` ("Add configurable built-in toolbars for editor hosting", 2026-08-17)**. It is the ShareX commit with the fewest differences in shared files (the editor/effects/capture libraries are practically unchanged apart from renaming). All verdicts below are based on a comparison of the fork against that commit.
+- Diff statistics: 164 files added, 726 removed, 151 changed. The author removed the whole ShareX "uploaders" subsystem (dozens of services with API keys, OAuth, FTP/SSH, the native browser messaging host, Steam, Microsoft Store) and replaced it with a single Modlight server.
 
-## WERDYKT GŁÓWNY: czy aplikacja wykrada dane
+## MAIN VERDICT: does the application exfiltrate data
 
-**Nie. Nie znalazłem żadnego backdoora, telemetrii ani wysyłania danych do strony trzeciej.** Kod jest napisany wyraźnie obronnie (token tylko w nagłówku, lista dozwolonych pól przy synchronizacji, pinowane SHA-256, walidacja hosta). Werdykt szczegółowy i pełna lista połączeń — w sekcji „Czy aplikacja wykrada dane". Nie ma ustaleń o wadze Krytyczna ani Wysoka. Ustalenia to głównie uwagi do przeniesienia na Rust i kilka drobiazgów Średnia/Niska.
-
----
-
-## Co robi aplikacja (do przepisania na Rust)
-
-Klient desktopowy Windows dla własnego serwera Modlight (Next.js + PostgreSQL). Logowanie przez przeglądarkę (RFC 8252 loopback), potem każdy zrzut/nagranie/plik ląduje w bibliotece konta.
-
-### Okna (ShareX/Presentation/**)
-- **MySpace** — biblioteka: foldery i pliki jako kafelki, podgląd animowany wideo/GIF, szuflada szczegółów, drag&drop, kosz.
-- **SignIn** — logowanie: pole adresu serwera + logowanie przez przeglądarkę; awaryjnie wklejenie tokenu z panelu.
-- **Download** — pobieranie przez yt-dlp (YouTube/TikTok/X), opcjonalne logowanie do YouTube w WebView2.
-- **Admin** — podgląd dysku serwera (tylko dla roli admin).
-- **Components** — pobieranie ffmpeg/yt-dlp/modelu ONNX/ExifTool.
-- **Settings / AccountSettings**, **Upload (Paste)**, **Notification** (toasty), **FirstTimeConfig**, plus przeniesione z ShareX okna ustawień zadań, hotkeyów, edytora obrazu, efektów, przechwytywania.
-
-### Endpointy serwera używane przez klienta (metoda, ścieżka, po co)
-Wszystkie na host konta (`account.Host`), token w nagłówku `x-api-key`:
-- `GET /api/me` — kto jest tokenem (tag, nazwa, e-mail, avatar, host linków, quota, rola) — `ModlightApi.cs:191`
-- `POST /upload` — zwykły upload (plik/obraz/tekst), multipart `upload`, opcjonalnie `folderId` — `ShareX.UploadersLib/FileUploaders/Modlight.cs:125`
-- `POST /api/files` (tus 1.0.0), `HEAD`, `PATCH`, `DELETE` — wznawialny upload offline — `ModlightResumableUpload.cs:98`
-- `GET/PUT /api/client-settings?client=desktop` — synchronizacja ustawień (blob z wersją) — `ModlightSettingsSync.cs:574`
-- `GET/PUT /api/theme` — synchronizacja skórki — `ModlightTheme.cs:53,61`
-- `GET /api/folders`, `POST/PATCH/DELETE /api/folders` — foldery — `ModlightLibrary.cs`
-- `GET /api/uploads`, `PATCH/DELETE /api/uploads` — lista/edycja/kosz plików — `ModlightLibrary.cs`
-- `GET /api/duplicates`, `POST /api/duplicates` — duplikaty — `ModlightDuplicates.cs`
-- `GET /api/admin/disk` — statystyki dysku (admin) — `ModlightServerDisk.cs:346`
-- `POST /api/shortlinks` — skracanie linków — `ModlightURLShortener.cs:105`
-- `GET /api/releases/app` — manifest aktualizacji (patrz niżej, host STAŁY, nie konta) — `ModlightReleaseClient.cs:94`
-- `GET {host}/authorize?port=&name=&state=` — otwierane w przeglądarce przy logowaniu — `ModlightSignIn.cs:140`
-- `GET .../download`, `.../convert`, thumbnails — pobieranie plików/konwersja/miniatury.
-
-### Hosty zewnętrzne (poza serwerem konta)
-- `github.com` / `api.github.com` — pobieranie komponentów (ffmpeg, yt-dlp, model) i auto-aktualizacja yt-dlp (adresy pinowane).
-- `accounts.google.com` / `youtube.com` — tylko w oknie logowania YouTube w WebView2 (uruchamiane ręcznie).
-- `api.openai.com` / `generativelanguage.googleapis.com` / `openrouter.ai` — tylko narzędzie „Analyze Image", tylko gdy użytkownik wpisze klucz i użyje funkcji.
-- host aktualizacji = `ModlightDefaultHost` (w kodzie PUSTY; ustawiany przy budowaniu dystrybucji).
+**No. I found no backdoor, no telemetry and no sending of data to a third party.** The code is clearly written defensively (token only in a header, an allow-list of fields in sync, pinned SHA-256 digests, host validation). The detailed verdict and the full list of connections are in the section "Does the application exfiltrate data". There are no findings of Critical or High severity. The findings are mostly notes for the Rust port and a few Medium/Low minor items.
 
 ---
 
-## Czy aplikacja wykrada dane (pełna lista, dowody)
+## What the application does (to be rewritten in Rust)
 
-### Połączenia wychodzące — dokąd, co, kiedy, czy użytkownik decyduje
+A Windows desktop client for a self-hosted Modlight server (Next.js + PostgreSQL). Sign-in goes through the browser (RFC 8252 loopback), after which every screenshot, recording or file lands in the account's library.
 
-| Dokąd | Co wysyłane | Kiedy | Decyzja użytkownika |
+### Windows (ShareX/Presentation/**)
+- **MySpace**: the library: folders and files as tiles, animated video/GIF preview, a details drawer, drag and drop, trash.
+- **SignIn**: sign-in: a server address field + sign-in through the browser; as a fallback, pasting a token from the panel.
+- **Download**: downloading through yt-dlp (YouTube/TikTok/X), optional YouTube sign-in in WebView2.
+- **Admin**: a view of the server's disk (admin role only).
+- **Components**: downloading ffmpeg/yt-dlp/the ONNX model/ExifTool.
+- **Settings / AccountSettings**, **Upload (Paste)**, **Notification** (toasts), **FirstTimeConfig**, plus the task settings, hotkey, image editor, effects and capture windows carried over from ShareX.
+
+### Server endpoints used by the client (method, path, purpose)
+All go to the account's host (`account.Host`), with the token in the `x-api-key` header:
+- `GET /api/me`: who the token belongs to (tag, name, e-mail, avatar, link host, quota, role) (`ModlightApi.cs:191`)
+- `POST /upload`: plain upload (file/image/text), multipart `upload`, optional `folderId` (`ShareX.UploadersLib/FileUploaders/Modlight.cs:125`)
+- `POST /api/files` (tus 1.0.0), `HEAD`, `PATCH`, `DELETE`: resumable offline upload (`ModlightResumableUpload.cs:98`)
+- `GET/PUT /api/client-settings?client=desktop`: settings sync (a versioned blob) (`ModlightSettingsSync.cs:574`)
+- `GET/PUT /api/theme`: skin sync (`ModlightTheme.cs:53,61`)
+- `GET /api/folders`, `POST/PATCH/DELETE /api/folders`: folders (`ModlightLibrary.cs`)
+- `GET /api/uploads`, `PATCH/DELETE /api/uploads`: list/edit/trash files (`ModlightLibrary.cs`)
+- `GET /api/duplicates`, `POST /api/duplicates`: duplicates (`ModlightDuplicates.cs`)
+- `GET /api/admin/disk`: disk statistics (admin) (`ModlightServerDisk.cs:346`)
+- `POST /api/shortlinks`: link shortening (`ModlightURLShortener.cs:105`)
+- `GET /api/releases/app`: update manifest (see below; a FIXED host, not the account's) (`ModlightReleaseClient.cs:94`)
+- `GET {host}/authorize?port=&name=&state=`: opened in the browser during sign-in (`ModlightSignIn.cs:140`)
+- `GET .../download`, `.../convert`, thumbnails: file download, conversion and thumbnails.
+
+### External hosts (other than the account's server)
+- `github.com` / `api.github.com`: downloading components (ffmpeg, yt-dlp, the model) and yt-dlp auto-update (pinned addresses).
+- `accounts.google.com` / `youtube.com`: only in the YouTube sign-in window in WebView2 (started manually).
+- `api.openai.com` / `generativelanguage.googleapis.com` / `openrouter.ai`: only the "Analyze Image" tool, and only when the user enters a key and uses the feature.
+- the update host = `ModlightDefaultHost` (EMPTY in the code; set when a distribution is built).
+
+---
+
+## Does the application exfiltrate data (full list, evidence)
+
+### Outgoing connections: where to, what, when, whether the user decides
+
+| Destination | What is sent | When | User's decision |
 |---|---|---|---|
-| `account.Host` (serwer konta) | token w `x-api-key`, pliki, nazwy, metadane folderów, blob ustawień/skórki | upload, przeglądanie biblioteki, sync | logowanie świadome; upload wg ustawień zadania |
-| host aktualizacji (stały, build-time) | tylko `GET /api/releases/app` + pobranie instalatora | start + ręcznie | instalacja tylko po zgodzie i po zgodności SHA-256 |
-| `github.com`, `api.github.com` | zwykłe GET (bez danych użytkownika) | pobieranie komponentów, auto-update yt-dlp co 24 h | komponenty wybierane w instalatorze/ustawieniach |
-| Google/YouTube (WebView2) | logowanie Google użytkownika | tylko gdy klika „zaloguj do YouTube" | w pełni świadome |
-| OpenAI/Gemini/OpenRouter | obraz + klucz użytkownika | tylko „Analyze Image" z własnym kluczem | w pełni świadome |
+| `account.Host` (the account's server) | token in `x-api-key`, files, names, folder metadata, settings/skin blob | upload, library browsing, sync | deliberate sign-in; upload according to the task settings |
+| update host (fixed, build-time) | only `GET /api/releases/app` + download of the installer | at start + manually | installation only with consent and a matching SHA-256 |
+| `github.com`, `api.github.com` | plain GETs (no user data) | downloading components, yt-dlp auto-update every 24 h | components chosen in the installer/settings |
+| Google/YouTube (WebView2) | the user's Google sign-in | only when they click "sign in to YouTube" | fully deliberate |
+| OpenAI/Gemini/OpenRouter | image + the user's key | only "Analyze Image" with the user's own key | fully deliberate |
 
-Dowody braku wycieku:
-- **Token** trafia wyłącznie do nagłówka `x-api-key` na `account.Host`; nigdy do URL (żeby nie wpadł do logów proxy). Potwierdzone we wszystkich `Modlight*`. `ModlightSignIn.Save` (linie 419-451) i `Adopt` (359-385) nie nadpisują hosta/tokenu odpowiedzią z serwera — komentarz wprost: „letting a reply rewrite the credential it was authorised by is how a redirect becomes an account takeover".
-- **Synchronizacja ustawień to lista dozwolonych** (`ModlightSettingsDocument.cs:96-208`). Nie wchodzą: token, klucze AI (`OpenAIAPIKey/GeminiAPIKey/OpenRouterAPIKey`), hasło proxy, ścieżki lokalne, pozycje okien, nazwa drukarki, ciasteczka YouTube (ich w ogóle nie ma w configu). Jawnie wykluczone w `NormalizeTaskSettings` (usuwa `AIOptions`, `CLIPath`, ścieżki).
-- **Ciasteczka YouTube** (`YouTubeCookies.cs`): plik `YouTubeSignIn/cookies.txt` w folderze profilu, chroniony DPAPI-ACL (`Prepare`/`ProtectFile`), przekazywany TYLKO yt-dlp przez `--cookies` i TYLKO dla linków YouTube (`FileFor` zwraca null dla nie-YouTube). Nigdy nie jest uploadowany, nie trafia do configu, nie jest logowany (loguje się tylko liczbę ciasteczek). `NetscapeCookieFile.cs` to czyste IO plikowe, bez sieci. Używana własna profilowa instancja WebView2 (`userDataFolder` własny), NIE baza ciasteczek Chrome użytkownika, NIE `--cookies-from-browser`.
-- **Brak telemetrii/analityki** — grep: żadnego Sentry/AppCenter/GA/Mixpanel/Plausible itp.
-- **Brak wyłączonej walidacji TLS** — brak `ServerCertificateCustomValidationCallback`/`DangerousAccept...`. `HttpClientFactory` i własne handlery (`ModlightComponentDownload`, `ModlightResumableUpload`) używają domyślnej walidacji; `ResumableUpload` dodatkowo `AllowAutoRedirect=false` (nie przekazuje tokenu przez redirect) i `ResolveLocation` wymusza własny host/scheme.
-- **Brak sprawdzania aktualizacji ShareX** — stary kanał GitHub `ShareX/ShareX` i dev-build AppVeyor zostały odcięte (`ShareXUpdateManager.cs` — komentarz wyjaśnia, że przy wersji 0.7.x każdy start widziałby „aktualizację" i wgrałby instalator ShareX). `getsharex.com` zostało tylko jako link WWW/docs (`Links.cs:30`, `BackgroundRemoverViewModel.cs:39`), nie jako źródło kodu.
+Evidence that nothing leaks:
+- The **token** goes only into the `x-api-key` header on `account.Host`; never into a URL (so that it does not end up in proxy logs). Confirmed across all `Modlight*` files. `ModlightSignIn.Save` (lines 419-451) and `Adopt` (359-385) do not overwrite the host/token with the server's reply; the comment says it outright: "letting a reply rewrite the credential it was authorised by is how a redirect becomes an account takeover".
+- **Settings sync is an allow-list** (`ModlightSettingsDocument.cs:96-208`). It does not include: the token, the AI keys (`OpenAIAPIKey/GeminiAPIKey/OpenRouterAPIKey`), the proxy password, local paths, window positions, the printer name, or the YouTube cookies (they are not in the config at all). Explicitly excluded in `NormalizeTaskSettings` (it removes `AIOptions`, `CLIPath` and paths).
+- **YouTube cookies** (`YouTubeCookies.cs`): the file `YouTubeSignIn/cookies.txt` in the profile folder, protected by a DPAPI ACL (`Prepare`/`ProtectFile`), handed ONLY to yt-dlp via `--cookies` and ONLY for YouTube links (`FileFor` returns null for non-YouTube). It is never uploaded, never goes into the config and is never logged (only the number of cookies is logged). `NetscapeCookieFile.cs` is pure file I/O, with no network. A dedicated profile instance of WebView2 is used (its own `userDataFolder`), NOT the user's Chrome cookie store, NOT `--cookies-from-browser`.
+- **No telemetry/analytics**: grep found no Sentry/AppCenter/GA/Mixpanel/Plausible or similar.
+- **No disabled TLS validation**: there is no `ServerCertificateCustomValidationCallback`/`DangerousAccept...`. `HttpClientFactory` and the custom handlers (`ModlightComponentDownload`, `ModlightResumableUpload`) use the default validation; `ResumableUpload` additionally sets `AllowAutoRedirect=false` (it does not pass the token through a redirect) and `ResolveLocation` enforces its own host/scheme.
+- **No ShareX update check**: the old GitHub channel `ShareX/ShareX` and the AppVeyor dev build were cut off (`ShareXUpdateManager.cs`: a comment explains that with version 0.7.x every start would see an "update" and install the ShareX installer). `getsharex.com` remains only as a web/docs link (`Links.cs:30`, `BackgroundRemoverViewModel.cs:39`), not as a source of code.
 
-### Dostęp do danych prywatnych (schowek, klawiatura, pliki, przeglądarka)
-- **Schowek — odczyt**: tylko na żądanie — podgląd „Paste" wstępnie wypełnia treść (`PasteWindow.axaml.cs:65 ClipboardHelpers.GetText`) oraz ręczny „Clipboard upload". **Brak monitora schowka** (grep: brak `AddClipboardFormatListener`/`WM_CLIPBOARDUPDATE`). Zapis — kopiowanie linków/obrazów.
-- **Klawiatura**: globalne hotkeye przez `RegisterHotKey` (nie keylogger). `KeyboardHook` (WH_KEYBOARD_LL) istnieje w `ShareX.HelpersLib/Input/KeyboardHook.cs` jako spadek po ShareX, ale **nigdzie nie jest tworzony** (grep `new KeyboardHook` = brak). Przy porcie na Rust nie przenosić.
-- **Pliki/przeglądarki**: brak odczytu plików przeglądarek, historii, magazynów haseł. WatchFolder i AutoCapture działają tylko po świadomej konfiguracji przez użytkownika (`WatchFolderEnabled`, ręczne okno AutoCapture z timerem) — nie są ukryte.
-
----
-
-## Ustalenia (waga, plik:linia, scenariusz, pewność, poprawka)
-
-### [Średnia] Loopback logowania — ACAO:* + Allow-Private-Network; możliwy DoS logowania (NIE wstrzyknięcie tokenu)
-`ShareX/Modlight/ModlightLoopbackListener.cs:172-178` — na preflight OPTIONS odpowiada `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Private-Network: true`. Nasłuch na losowym porcie `127.0.0.1` (`:81`), przyjmuje pierwszy poprawny POST.
-- **Wstrzyknięcie tokenu napastnika: NIE jest możliwe.** `ModlightSignIn.cs:138` generuje `state` = 32 znaki z `RandomCrypto` (CSPRNG, `RandomCrypto.cs:36 RandomNumberGenerator.Create`), a `NonceEquals` (`ModlightSignIn.cs:402-417`) porównuje go w stałym czasie; przy niezgodności logowanie jest **przerywane** (StateMismatch), nie kontynuowane. Obca strona/proces nie zna `state`, więc nie poda akceptowanego ciała.
-- **Realne ryzyko (Niska/DoS)**: dowolny lokalny proces może połączyć się z portem i wysłać POST z błędnym `state` zanim zrobi to przeglądarka; listener zwraca to pierwsze ciało, a SignIn je odrzuca i KOŃCZY logowanie — da się tym uniemożliwić zalogowanie (nie przejąć konta). Okno 10 minut.
-- **Scenariusz**: złośliwa strona WWW otwarta w oknie logowania robi `fetch` na `127.0.0.1:port` — bez `state` dostaje tylko przerwanie logowania.
-- **Pewność: potwierdzone** (przeczytana cała ścieżka listener→SignIn).
-- **Poprawka na Rust**: zachować obowiązkowy, stałoczasowy test `state`, pojedynczy strzał i losowy port. Rozważyć zawężenie ACAO do origin serwera zamiast `*` i niewychodzenie z pętli przy złym `state` (odporność na DoS). Nie opierać bezpieczeństwa na samym CORS.
-
-### [Niska] `FileDownloader` uznaje pobranie bez Content-Length za kompletne
-`ShareX.HelpersLib/FileDownloader.cs` (zmiana w forku, ~138-175): zwraca sukces gdy `DownloadedSize >= FileSize`; przy braku `Content-Length` `FileSize=0` i każde (nawet puste) pobranie = „kompletne".
-- W wydanym kliencie ścieżkę tę wywołuje tylko aktualizator, który i tak weryfikuje `ExpectedSha256` przed uruchomieniem — plik niezgodny jest odrzucany (`DownloaderWindow.VerifyDownloadAsync`). Narzędzie build-time `ShareX.Setup/Program.cs` (pobranie ffmpeg/exiftool) hasha nie sprawdza, ale nie jest dostarczane użytkownikowi.
-- **Pewność: potwierdzone.** **Poprawka na Rust**: nie uznawać pobrania za udane bez znanego rozmiaru/hasza; każdy pobierany wykonywalny plik musi mieć sprawdzony SHA-256.
-
-### [Niska] Auto-aktualizacja yt-dlp pobiera i podmienia plik wykonywalny bez interakcji
-`ShareX/Modlight/ModlightComponentUpdates.cs` — co 24 h (`CheckInterval`), domyślnie włączone (`ApplicationConfig.ExternalComponentsAutoUpdate = true`), pobiera najnowszy `yt-dlp.exe` z `yt-dlp/yt-dlp releases/latest` i podmienia go.
-- Zabezpieczenia są solidne: `IsArtefactUrl` wymusza `https` i host dokładnie `github.com` (`ModlightToolUpdate.cs`), digest brany z pola `digest` API GitHuba i/lub pliku `SHA2-256SUMS`, przy obu musi być zgodność (`WithPublishedDigest`), inaczej odmowa. yt-dlp jest potem uruchamiany, więc to ścieżka „pobierz i wykonaj".
-- **Pewność: potwierdzone.** To świadomy kompromis (yt-dlp starzeje się w tygodnie). **Poprawka na Rust**: zachować wymóg zgody dwóch źródeł digestu i pin na `github.com+https`; rozważyć pokazanie, że auto-update jest domyślnie włączony.
-
-### [Niska] ExifTool — SHA-256 bez niezależnej publikacji
-`ShareX/Modlight/ModlightComponent.cs:287` — digest ExifTool to własny hash autora; w komentarzu (`:157-161`) uczciwie zaznaczone, że wydanie `ShareX/ExifTool` nie publikuje sumy. Sprawdziłem: repo `ShareX/ExifTool` dziś nie istnieje/jest niedostępne przez API (404). Pozostałe trzy digesty **zweryfikowałem i zgadzają się**: ffmpeg x64 `1838932e...` i arm64 `7ac6c5db...` oraz yt-dlp x64 `66674953...` i arm64 `05b43899...` zgodne z polem `digest` wydań na GitHubie; model rembg `5b486f08...` zgodny z wartością w źródle rembg (`rembg/sessions/bria_rmbg.py`). **Poprawka na Rust**: przy braku publikacji trzymać pin na stałej w kodzie i nie dodawać dla ExifTool śledzenia „latest".
-
-### [Info] Martwy kod po ShareX (nie przenosić)
-- `TaskHelpers.DownloadAppVeyorBuild()` (`:2298`) i `AppVeyorUpdateChecker`/`GitHubUpdateChecker` — bez żadnego wywołania w forku (grep potwierdza brak callera). 
-- `KeyboardHook` (opisany wyżej) — nieużywany.
-- `Links.Website = https://getsharex.com` — otwierane w About/menu; kosmetyka, nie wyciek.
+### Access to private data (clipboard, keyboard, files, browser)
+- **Clipboard, reading**: only on demand: the "Paste" preview pre-fills its content (`PasteWindow.axaml.cs:65 ClipboardHelpers.GetText`) and there is a manual "Clipboard upload". **There is no clipboard monitor** (grep: no `AddClipboardFormatListener`/`WM_CLIPBOARDUPDATE`). Writing: copying links/images.
+- **Keyboard**: global hotkeys through `RegisterHotKey` (not a keylogger). `KeyboardHook` (WH_KEYBOARD_LL) exists in `ShareX.HelpersLib/Input/KeyboardHook.cs` as a leftover from ShareX, but **it is never instantiated** (grep for `new KeyboardHook` finds nothing). Do not carry it over to the Rust port.
+- **Files/browsers**: no reading of browser files, history or password stores. WatchFolder and AutoCapture work only after deliberate configuration by the user (`WatchFolderEnabled`, a manual AutoCapture window with a timer); they are not hidden.
 
 ---
 
-## Błędy logiczne
+## Findings (severity, file:line, scenario, confidence, fix)
 
-Przejrzałem kolejkę uploadu, synchronizację ustawień i pobieranie. Kod jest wyjątkowo starannie napisany pod kątem właśnie tych błędów; poniżej to, co znalazłem — głównie potwierdzenie braku błędów plus jedna uwaga.
+### [Medium] Sign-in loopback: ACAO:* + Allow-Private-Network; possible sign-in DoS (NOT token injection)
+`ShareX/Modlight/ModlightLoopbackListener.cs:172-178`: on an OPTIONS preflight it answers `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Private-Network: true`. It listens on a random port on `127.0.0.1` (`:81`) and accepts the first valid POST.
+- **Injection of an attacker's token is NOT possible.** `ModlightSignIn.cs:138` generates `state` = 32 characters from `RandomCrypto` (CSPRNG, `RandomCrypto.cs:36 RandomNumberGenerator.Create`), and `NonceEquals` (`ModlightSignIn.cs:402-417`) compares it in constant time; on a mismatch the sign-in is **aborted** (StateMismatch), not continued. A foreign page or process does not know `state`, so it cannot supply an acceptable body.
+- **Real risk (Low/DoS)**: any local process can connect to the port and send a POST with a wrong `state` before the browser does; the listener returns that first body, and SignIn rejects it and ENDS the sign-in, so signing in can be prevented (the account cannot be taken over). The window is 10 minutes.
+- **Scenario**: a malicious web page open during sign-in does a `fetch` to `127.0.0.1:port`; without `state` all it achieves is aborting the sign-in.
+- **Confidence: confirmed** (the whole path listener -> SignIn was read).
+- **Fix in the Rust port**: keep the mandatory, constant-time `state` check, the single shot and the random port. Consider narrowing ACAO to the server's origin instead of `*` and not leaving the loop on a wrong `state` (resistance to DoS). Do not base security on CORS alone.
 
-1. **Upload na zły serwer po zmianie konta — NIE występuje.** `ModlightUploadQueue.Matches` (`:1066`) porównuje host (TrimEnd '/') i tag; element kolejki dla serwera A po zalogowaniu na B jest pomijany (`AccountChanged`) z 14-dniowym terminem, NIE wysyłany do B. `Verify` (`:653`) sprawdza, że plik źródłowy istnieje i ma ten sam rozmiar/czas zapisu, inaczej zaczyna od nowa. Pewność: potwierdzone.
-2. **Utrata/podwójne wysłanie — zabezpieczone.** Element trzyma claim aż do zapisania wyniku (komentarz `:588-594`), więc Cancel tuż po sukcesie jest no-opem (nie tworzy drugiego „anulowano" dla wysłanego pliku). Zapis kolejki atomowy (tmp + `File.Move` over, `ModlightQueueStore.Save`). `IsWorthQueuing` (`:974`) kolejkuje tylko brak odpowiedzi i 408/429/502/503/504; 507 (brak miejsca) jest zgłaszane od razu, nie w pętli. Pewność: potwierdzone.
-3. **Fresh-install guard w synchronizacji** (`ModlightSettingsPlan.cs:172`): instalacja bez potwierdzonego markera NIE może wypchnąć swoich ustawień — chmura wygrywa, więc świeży install nie nadpisze hotkeyów zbudowanych latami. Marker nie jest synchronizowany (słusznie). Schemat nieznany → nic nie robi. Pewność: potwierdzone, logika solidna.
-4. **(Niska) `FileDownloader`** — opisane wyżej, jedyny realny błąd logiczny (sukces przy braku Content-Length), zneutralizowany przez weryfikację SHA aktualizatora.
-5. **Kosz zamiast trwałego usunięcia** — wszystkie akcje usuwania z UI (MySpace, duplikaty) wołają tryb `"trash"` (`MainWindow.MySpace.Actions.cs:595`, `DuplicatesViewModel.cs:579`, `ModlightLibrary.TrashAsync:652`). Trwałe usuwanie nie jest podpięte pod UI. Domyślny wybór w duplikatach zostawia najstarszą kopię (`IsSelected = !IsOldest`). Pewność: potwierdzone, bezpieczne.
-6. **Wstrzyknięcie argumentów do yt-dlp/ffmpeg z URL — NIE występuje.** `YtDlpRun` buduje argumenty jako listę (`ArgumentList`, nie string) i kończy `--` przed URL (`:505-506`), URL przechodzi przez whitelistę `DownloadLink.TryParse` (tylko absolutne http/https z hostem, `:63-100`). Brak `--exec`. yt-dlp dostaje `--ignore-config` tylko przy odpytaniu o wersję; przy pobieraniu config użytkownika mógłby coś dołożyć, ale to plik lokalny użytkownika, nie wejście z sieci. QuickJS podawany pełną ścieżką. Pewność: potwierdzone.
+### [Low] `FileDownloader` treats a download without Content-Length as complete
+`ShareX.HelpersLib/FileDownloader.cs` (a change in the fork, ~138-175): returns success when `DownloadedSize >= FileSize`; with no `Content-Length`, `FileSize=0` and any download (even an empty one) counts as "complete".
+- In the released client only the updater calls this path, and it verifies `ExpectedSha256` before running anything, so a mismatching file is rejected (`DownloaderWindow.VerifyDownloadAsync`). The build-time tool `ShareX.Setup/Program.cs` (downloading ffmpeg/exiftool) does not check the hash, but it is not shipped to users.
+- **Confidence: confirmed.** **Fix in the Rust port**: do not treat a download as successful without a known size/hash; every downloaded executable must have its SHA-256 verified.
+
+### [Low] The yt-dlp auto-update downloads and replaces an executable without interaction
+`ShareX/Modlight/ModlightComponentUpdates.cs`: every 24 h (`CheckInterval`), enabled by default (`ApplicationConfig.ExternalComponentsAutoUpdate = true`), it downloads the latest `yt-dlp.exe` from `yt-dlp/yt-dlp releases/latest` and replaces the existing one.
+- The safeguards are solid: `IsArtefactUrl` enforces `https` and the host exactly `github.com` (`ModlightToolUpdate.cs`), the digest is taken from the GitHub API `digest` field and/or the `SHA2-256SUMS` file, and when both are present they must agree (`WithPublishedDigest`), otherwise it refuses. yt-dlp is run afterwards, so this is a "download and execute" path.
+- **Confidence: confirmed.** This is a deliberate trade-off (yt-dlp goes stale within weeks). **Fix in the Rust port**: keep the requirement that two digest sources agree and the pin to `github.com+https`; consider making it visible that auto-update is on by default.
+
+### [Low] ExifTool: SHA-256 without independent publication
+`ShareX/Modlight/ModlightComponent.cs:287`: the ExifTool digest is the author's own hash; the comment (`:157-161`) honestly notes that the `ShareX/ExifTool` release does not publish a checksum. I checked: the `ShareX/ExifTool` repository does not exist today / is unavailable through the API (404). The other three digests I **verified and they match**: ffmpeg x64 `1838932e...` and arm64 `7ac6c5db...`, and yt-dlp x64 `66674953...` and arm64 `05b43899...` match the `digest` field of the GitHub releases; the rembg model `5b486f08...` matches the value in the rembg source (`rembg/sessions/bria_rmbg.py`). **Fix in the Rust port**: without a publication, keep the pin as a constant in the code and do not add "latest" tracking for ExifTool.
+
+### [Info] Dead code left over from ShareX (do not carry over)
+- `TaskHelpers.DownloadAppVeyorBuild()` (`:2298`) and `AppVeyorUpdateChecker`/`GitHubUpdateChecker`: no call anywhere in the fork (grep confirms there is no caller).
+- `KeyboardHook` (described above): unused.
+- `Links.Website = https://getsharex.com`: opened in About/menu; cosmetic, not a leak.
 
 ---
 
-## Wykonanie kodu przy budowaniu/instalacji
+## Logic errors
 
-- **Directory.build.props / .targets / Directory.Packages.props** — bez `Exec`, bez pobierania. `ModlightDefaultHost` w źródle PUSTY (jedyne `https://files.example.com` to przykład w komentarzu). `.targets` identyczne z upstream. Pakiety NuGet standardowe (Avalonia 12.1.1, Newtonsoft 13.0.4, SkiaSharp, ZXing, Microsoft.Web.WebView2 1.0.4129.50, ML.OnnxRuntime.DirectML, Vortice); usunięto `FluentFTP` i `SSH.NET`. Brak `nuget.config` (źródło = domyślny nuget.org). Centralne wersjonowanie. Nietypowych/podszywających się pakietów brak.
-- **ShareX.UploadersLib.csproj** — `Target ModlightBuildInfo` (`:29-43`) generuje w czasie kompilacji stałą `ModlightBuildInfo.DefaultHost` z `ModlightDefaultHost`, z walidacją `https://` i braku końcowego `/`. Nieszkodliwe (WriteLinesToFile).
-- **.github/workflows/build.yml** — `windows-latest`, `dotnet build ShareX/ShareX.csproj -c Release` + `dotnet run --project ShareX.Tests`. Uprawnienia `contents: read`. Bez sekretów, bez publikacji artefaktów, bez dociągania skryptów.
-- **ShareX.Setup/Program.cs** — narzędzie build-time: pobiera ffmpeg/exiftool z `github.com/ShareX/...` (bez sprawdzania SHA — build-time, nie u użytkownika), woła lokalny ISCC.exe. Bez niespodzianek.
-- **InnoSetup/Modlight-setup.iss** — osobny `AppId`/`AppMutex` (GUID `3030612E-...`, ≠ ShareX `82E6AC09-...`), więc nie przejmuje wpisu ShareX. Rejestr tylko pod `Software\Classes\...\Modlight`, `Software\Modlight\Setup` (SkipComponents) i `Control Panel\Keyboard` PrintScreen (zadanie opcjonalne). Import ShareX kopiuje **tylko** `ApplicationConfig.json` i `HotkeysConfig.json` — świadomie NIE `PersonalPath.cfg`, NIE `History.db`, NIE `UploadersConfig.json` (komentarz `:200-226` — ten ostatni zawiera klucze API usuniętych usług; kopiowanie go byłoby przeniesieniem sekretów). `taskkill` na ShareX bez `/f` (grzeczne zamknięcie). To naprawia realne pułapki, nie wprowadza nowych.
-- **Tools/generate-skins.py**, **ValidateTranslations.ps1**, **Generate-LucideIcons.ps1** — narzędzia deweloperskie. Python importuje tylko stdlib (argparse/io/json/math/os/re/sys), czyta pliki panelu, pisze `Skins.axaml`/`SkinVariants.g.cs`; bez subprocess/eval/exec/sieci. PS1 bez `Invoke-WebRequest/Expression`, `DownloadString`, rejestru. Nie są częścią buildu klienta.
-- **.resx** — żadnego zserializowanego obiektu binarnego poza standardowymi (ikony/bitmapy WinForms w `*.resx` edytora, niezmienione względem upstream; w zmienionych plikach różnice to tylko `ShareX.HelpersLib`→`Modlight.HelpersLib` w nazwach typów i teksty tytułów). `KnownTypesSerializationBinder` ogranicza deserializację efektów do podklas `ImageEffect`; brak `TypeNameHandling` ustawianego na danych z sieci.
-- **Binaria w repo**:
-  - `Tools/quickjs/qjs.exe` (SHA-256 `433a35a5...`) i `libwinpthread-1.dll` (`1933c3f0...`) — PE32+ x86-64, MinGW/Fedora, „QuickJS version 2026-06-04". Tabela importów (llvm-objdump): `qjs.exe` importuje tylko KERNEL32, msvcrt, i `MessageBoxW` z USER32 oraz pthready z libwinpthread — **brak ws2_32/wininet/winhttp** (żadnej sieci). `libwinpthread` tylko KERNEL32/msvcrt. Statycznie żadnej czerwonej flagi; pełnej analizy bajtowej nie da się zrobić statycznie, ale import table jest czysty. Reszta binariów (ikony .ico, .wav, .cur, .ttf lucide, .bmp kreatora, .webp zrzuty, docs/logo.svg) to zasoby — żaden .dll/.exe nie udaje innego pliku.
-  - `ShareX.Setup/InnoSetup/puush` — **pusty plik (0 bajtów)**, odziedziczony z upstream (tam `-puush` branding puush.me). W forku tryb puush całkowicie usunięty z `Program.cs`/`MainForm.cs`, a plik nie jest już wymieniony w `.iss`. Nieszkodliwy, do usunięcia.
+I reviewed the upload queue, settings sync and downloading. The code is unusually carefully written with respect to exactly these errors; below is what I found, mostly confirmation that errors are absent, plus one remark.
+
+1. **Upload to the wrong server after an account change: does NOT occur.** `ModlightUploadQueue.Matches` (`:1066`) compares the host (TrimEnd '/') and the tag; a queue item for server A is skipped after signing in to B (`AccountChanged`), with a 14-day deadline, and NOT sent to B. `Verify` (`:653`) checks that the source file exists and has the same size/modification time, otherwise it starts over. Confidence: confirmed.
+2. **Loss/double send: guarded against.** An item holds its claim until the result is stored (comment `:588-594`), so a Cancel right after success is a no-op (it does not create a second "cancelled" for an already uploaded file). The queue is written atomically (tmp + `File.Move` over, `ModlightQueueStore.Save`). `IsWorthQueuing` (`:974`) queues only a missing response and 408/429/502/503/504; 507 (no space) is reported at once, not in a loop. Confidence: confirmed.
+3. **Fresh-install guard in sync** (`ModlightSettingsPlan.cs:172`): an installation without a confirmed marker must NOT push its settings: the cloud wins, so a fresh install will not overwrite hotkeys built up over years. The marker is not synced (rightly). Unknown schema -> it does nothing. Confidence: confirmed, the logic is sound.
+4. **(Low) `FileDownloader`**: described above; the only real logic error (success when Content-Length is missing), neutralised by the updater's SHA verification.
+5. **Trash instead of permanent deletion**: all delete actions in the UI (MySpace, duplicates) call the `"trash"` mode (`MainWindow.MySpace.Actions.cs:595`, `DuplicatesViewModel.cs:579`, `ModlightLibrary.TrashAsync:652`). Permanent deletion is not wired to the UI. The default selection in duplicates keeps the oldest copy (`IsSelected = !IsOldest`). Confidence: confirmed, safe.
+6. **Argument injection into yt-dlp/ffmpeg from a URL: does NOT occur.** `YtDlpRun` builds arguments as a list (`ArgumentList`, not a string) and ends with `--` before the URL (`:505-506`); the URL goes through the allow-list `DownloadLink.TryParse` (only absolute http/https with a host, `:63-100`). No `--exec`. yt-dlp gets `--ignore-config` only when queried for its version; when downloading, the user's config could add something, but that is the user's local file, not network input. QuickJS is passed by full path. Confidence: confirmed.
 
 ---
 
-## Uwagi do przepisania na Rust (czego pilnować / nie przenosić)
+## Code execution at build/install time
 
-1. Zachować: token tylko w nagłówku `x-api-key`; host aktualizacji STAŁY (build-time), nigdy z pola logowania; weryfikacja SHA-256 instalatora i komponentów przed uruchomieniem; lista dozwolonych pól przy synchronizacji (bez sekretów i ścieżek); ciasteczka YouTube tylko lokalnie i tylko do yt-dlp; argumenty podprocesów jako lista + `--`.
-2. Loopback: obowiązkowy stałoczasowy `state` z CSPRNG, pojedynczy strzał, losowy port; zawęzić CORS i nie przerywać nasłuchu przy złym `state`.
-3. Nie przenosić: `KeyboardHook`, `DownloadAppVeyorBuild`/AppVeyor/GitHubUpdateChecker, pozostałości puush, linki `getsharex.com`.
-4. Pobieranie: nigdy nie uznawać pobrania za udane bez znanego rozmiaru/hasza.
-5. Token przechowywany szyfrowany przez DPAPI (`[JsonEncrypt]` + `DPAPIEncryptedStringPropertyResolver`) — na Macu odpowiednik to Keychain; nie zapisywać tokenu/kluczy AI jawnym tekstem.
+- **Directory.build.props / .targets / Directory.Packages.props**: no `Exec`, no downloads. `ModlightDefaultHost` is EMPTY in the source (the only `https://files.example.com` is an example in a comment). The `.targets` are identical to upstream. The NuGet packages are standard (Avalonia 12.1.1, Newtonsoft 13.0.4, SkiaSharp, ZXing, Microsoft.Web.WebView2 1.0.4129.50, ML.OnnxRuntime.DirectML, Vortice); `FluentFTP` and `SSH.NET` were removed. There is no `nuget.config` (the source = the default nuget.org). Central versioning. No unusual or impersonating packages.
+- **ShareX.UploadersLib.csproj**: `Target ModlightBuildInfo` (`:29-43`) generates the constant `ModlightBuildInfo.DefaultHost` at compile time from `ModlightDefaultHost`, validating `https://` and no trailing `/`. Harmless (WriteLinesToFile).
+- **.github/workflows/build.yml**: `windows-latest`, `dotnet build ShareX/ShareX.csproj -c Release` + `dotnet run --project ShareX.Tests`. Permissions `contents: read`. No secrets, no artifact publishing, no pulling of scripts.
+- **ShareX.Setup/Program.cs**: a build-time tool: downloads ffmpeg/exiftool from `github.com/ShareX/...` (without checking SHA: build-time, not on the user's machine), calls a local ISCC.exe. No surprises.
+- **InnoSetup/Modlight-setup.iss**: a separate `AppId`/`AppMutex` (GUID `3030612E-...`, != ShareX `82E6AC09-...`), so it does not take over ShareX's entry. The registry is touched only under `Software\Classes\...\Modlight`, `Software\Modlight\Setup` (SkipComponents) and `Control Panel\Keyboard` PrintScreen (an optional task). The ShareX import copies **only** `ApplicationConfig.json` and `HotkeysConfig.json`, deliberately NOT `PersonalPath.cfg`, NOT `History.db`, NOT `UploadersConfig.json` (comment `:200-226`: the last one contains API keys of removed services; copying it would carry secrets over). `taskkill` on ShareX without `/f` (a polite close). This fixes real pitfalls and introduces no new ones.
+- **Tools/generate-skins.py**, **ValidateTranslations.ps1**, **Generate-LucideIcons.ps1**: developer tools. The Python imports only the stdlib (argparse/io/json/math/os/re/sys), reads the panel's files and writes `Skins.axaml`/`SkinVariants.g.cs`; no subprocess/eval/exec/network. The PS1 files have no `Invoke-WebRequest/Expression`, `DownloadString` or registry access. They are not part of the client build.
+- **.resx**: no serialized binary object other than the standard ones (WinForms icons/bitmaps in the editor's `*.resx`, unchanged from upstream; in the changed files the differences are only `ShareX.HelpersLib`->`Modlight.HelpersLib` in type names and title texts). `KnownTypesSerializationBinder` restricts effect deserialization to subclasses of `ImageEffect`; no `TypeNameHandling` is set on data from the network.
+- **Binaries in the repository**:
+  - `Tools/quickjs/qjs.exe` (SHA-256 `433a35a5...`) and `libwinpthread-1.dll` (`1933c3f0...`): PE32+ x86-64, MinGW/Fedora, "QuickJS version 2026-06-04". Import table (llvm-objdump): `qjs.exe` imports only KERNEL32, msvcrt, and `MessageBoxW` from USER32, plus pthreads from libwinpthread; **no ws2_32/wininet/winhttp** (no networking at all). `libwinpthread` imports only KERNEL32/msvcrt. Statically there is no red flag; a full byte-level analysis cannot be done statically, but the import table is clean. The remaining binaries (.ico icons, .wav, .cur, the .ttf lucide, the wizard .bmp, .webp screenshots, docs/logo.svg) are resources: no .dll/.exe masquerades as another file.
+  - `ShareX.Setup/InnoSetup/puush`: an **empty file (0 bytes)**, inherited from upstream (where `-puush` was puush.me branding). In the fork the puush mode was removed entirely from `Program.cs`/`MainForm.cs`, and the file is no longer listed in the `.iss`. Harmless, to be deleted.
+
+---
+
+## Notes for the Rust rewrite (what to watch for / not to carry over)
+
+1. Keep: the token only in the `x-api-key` header; the update host FIXED (build-time), never taken from the sign-in field; SHA-256 verification of the installer and components before running them; an allow-list of fields in sync (no secrets or paths); YouTube cookies only local and only for yt-dlp; subprocess arguments as a list + `--`.
+2. Loopback: a mandatory constant-time `state` from a CSPRNG, a single shot, a random port; narrow CORS and do not abort listening on a wrong `state`.
+3. Do not carry over: `KeyboardHook`, `DownloadAppVeyorBuild`/AppVeyor/GitHubUpdateChecker, puush leftovers, `getsharex.com` links.
+4. Downloading: never treat a download as successful without a known size/hash.
+5. The token is stored encrypted with DPAPI (`[JsonEncrypt]` + `DPAPIEncryptedStringPropertyResolver`); on the Mac the equivalent is the Keychain; do not store the token/AI keys as plain text.
