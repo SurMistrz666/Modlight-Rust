@@ -72,6 +72,12 @@ winrt = { package = "windows", version = "0.62", features = [
     "Win32_System_WinRT",
     "Win32_UI_Shell",
 ] }
+# The print preview's PDF: the picture as a Flate-compressed image (already in the tree
+# through modlight-core).
+flate2 = "1"
+# WebView2 (the YouTube sign-in window): the COM bindings and the static loader, built on
+# the same `windows` 0.62 as `winrt`.
+webview2-com = "=0.39.1"
 
 [dev-dependencies]
 tempfile.workspace = true
