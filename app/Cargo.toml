@@ -73,3 +73,8 @@ opt-level = 2
 # Effects run per preview change on the UI thread; keep them fast in debug builds too.
 [profile.dev.package.modlight-effects]
 opt-level = 2
+# tiny-skia's u16x16 arithmetic wraps by design: its NEON path (Apple Silicon) uses
+# wrapping vector instructions, but the portable path that x86_64 builds take is plain
+# `-` and `+`, which panic on overflow in debug builds. Release builds wrap anyway.
+[profile.dev.package.tiny-skia]
+overflow-checks = false
