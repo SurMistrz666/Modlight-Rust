@@ -10,6 +10,7 @@ pub mod config;
 pub mod culture;
 pub mod debug_log;
 pub mod dotnet;
+pub mod folders;
 pub mod format;
 pub mod history;
 pub mod hotkeys;
@@ -29,6 +30,8 @@ pub mod watch;
 pub mod components;
 pub mod download;
 pub mod update;
+
+pub use folders::personal_folder;
 
 /// The product's name, as upstream's `Program.AppName`.
 pub const APP_NAME: &str = "Modlight";

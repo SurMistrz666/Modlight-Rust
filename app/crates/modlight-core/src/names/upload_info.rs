@@ -158,6 +158,15 @@ impl UploadInfoParser {
 mod tests {
     use super::*;
 
+    /// A fixture path as this system writes it: "/a/b" is "C:\a\b" on Windows.
+    fn native(path: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{}", path.replace('/', "\\"))
+        } else {
+            path.to_string()
+        }
+    }
+
     fn uploaded() -> UploadInfo {
         UploadInfo {
             result: Some(UploadLinks {
@@ -167,8 +176,8 @@ mod tests {
                 shortened_url: String::new(),
             }),
             file_name: "Shot 2026.10.19.png".to_string(),
-            file_path: "/Users/me/Pictures/Modlight/2026-10/Shot 2026.10.19.png".to_string(),
-            thumbnail_file_path: "/Users/me/Pictures/Modlight/2026-10/Shot-thumb.jpg".to_string(),
+            file_path: native("/Users/me/Pictures/Modlight/2026-10/Shot 2026.10.19.png"),
+            thumbnail_file_path: native("/Users/me/Pictures/Modlight/2026-10/Shot-thumb.jpg"),
             upload_duration_ms: Some(1234),
         }
     }
@@ -189,11 +198,11 @@ mod tests {
         assert_eq!(parse(&info, "$filename"), "Shot 2026.10.19.png");
         assert_eq!(
             parse(&info, "$filepath"),
-            "/Users/me/Pictures/Modlight/2026-10/Shot 2026.10.19.png"
+            native("/Users/me/Pictures/Modlight/2026-10/Shot 2026.10.19.png")
         );
         assert_eq!(
             parse(&info, "$folderpath"),
-            "/Users/me/Pictures/Modlight/2026-10"
+            native("/Users/me/Pictures/Modlight/2026-10")
         );
         assert_eq!(parse(&info, "$foldername"), "2026-10");
         assert_eq!(parse(&info, "$thumbnailfilenamenoext"), "Shot-thumb");
@@ -244,10 +253,13 @@ mod tests {
             "[||||||]"
         );
         let root = UploadInfo {
-            file_path: "/file.png".to_string(),
+            file_path: native("/file.png"),
             ..UploadInfo::default()
         };
-        assert_eq!(parse(&root, "[$folderpath|$foldername]"), "[/|]");
+        assert_eq!(
+            parse(&root, "[$folderpath|$foldername]"),
+            format!("[{}|]", native("/"))
+        );
         let bare = UploadInfo {
             file_path: "file.png".to_string(),
             ..UploadInfo::default()
