@@ -700,11 +700,12 @@ mod tests {
         release();
         let third = remove(&picture, &model, RemovalDevice::Cpu).unwrap();
         assert!(!third.session_cached);
-        // Core ML (or the CPU when it cannot take the model) gives the same cut.
+        // The system's GPU provider (Core ML on macOS, DirectML on Windows), or the CPU
+        // when it cannot take the model, gives the same cut.
         let auto = remove(&picture, &model, RemovalDevice::Auto).unwrap();
         eprintln!("Auto ran on: {}", auto.execution_device);
         assert!(
-            ["Core ML", "CPU (GPU unavailable)"].contains(&auto.execution_device.as_str()),
+            [GPU_PROVIDER, "CPU (GPU unavailable)"].contains(&auto.execution_device.as_str()),
             "{}",
             auto.execution_device
         );
