@@ -1,6 +1,7 @@
-//! Text from an image (`OCRHelper`, `OCRViewModel`) on Apple's Vision framework instead of
-//! Windows OCR. Vision names its languages with BCP 47 tags ("en-US", "zh-Hans"); the
-//! window lists them by name, in the app's language. Upstream's default `Language`
+//! Text from an image (`OCRHelper`, `OCRViewModel`): the language list and the result's
+//! handling. On macOS the recognizer is Apple's Vision framework instead of Windows OCR.
+//! Vision names its languages with BCP 47 tags ("en-US", "zh-Hans"); the window lists
+//! them by name, in the app's language. Upstream's default `Language`
 //! ("en") and a tag synced from Windows ("pl") meet Vision's by their language subtag.
 
 use image::RgbaImage;

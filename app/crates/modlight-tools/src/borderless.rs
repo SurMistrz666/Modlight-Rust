@@ -1,4 +1,5 @@
-//! "Active window borderless" on macOS (`BorderlessWindowManager`): another app's window
+//! "Active window borderless" on macOS (`BorderlessWindowManager`; on Windows the
+//! platform takes the window styles off as upstream does): another app's window
 //! frame cannot be taken off without private APIs, so the closest behaviour is kept: the
 //! active window is moved and sized to fill its screen (or the screen's area free of the
 //! menu bar and the Dock, upstream's "exclude taskbar area"), and the same hotkey on the
