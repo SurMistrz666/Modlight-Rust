@@ -14,6 +14,11 @@
 //! `Next-Action` header, so a form was never needed to farm it.
 //!
 //! Now the caller learns exactly one thing: whether these credentials work.
+//!
+//! Not upstream: with Cloudflare Turnstile on (src/turnstile.rs) the request
+//! must also carry a token Cloudflare accepts (`x-captcha-response`), else
+//! `{status: "captcha"}`, or `{status: "captcha-unavailable"}` when Cloudflare
+//! cannot be asked.
 
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -22,6 +27,7 @@ use crate::actions::account::js::{Js, js};
 use crate::auth::server::{ServerCallError, call_endpoint};
 use crate::password::check_rate_limit;
 use crate::rpc::{ActionCtx, ActionError, ActionResult, RpcRegistry};
+use crate::turnstile::Verdict;
 
 pub fn register(reg: &mut RpcRegistry) {
     reg.register("login-identifier", "signInWithIdentifier", sign_in_with_identifier);
@@ -98,6 +104,16 @@ async fn sign_in_with_identifier(ctx: ActionCtx) -> ActionResult {
     let ip = ctx.client_ip();
     if !check_rate_limit(&format!("{ip}|signin"), 10, 15 * 60 * 1000).allowed {
         return status("rate-limited");
+    }
+
+    // Not upstream: the optional Cloudflare Turnstile check (src/turnstile.rs),
+    // after the throttle so a flood never reaches Cloudflare, before anything
+    // is looked up. The sign-in below is a server-side call, which the check
+    // on /api/auth/sign-in/email does not see: this token is spent once.
+    match crate::turnstile::check_action(&ctx).await {
+        Verdict::Off | Verdict::Passed => {}
+        Verdict::Unavailable => return status("captcha-unavailable"),
+        Verdict::Missing | Verdict::Failed => return status("captcha"),
     }
 
     let email = match resolve_email(&ctx.state.db, &raw).await {

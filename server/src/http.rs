@@ -258,7 +258,8 @@ impl App {
 
         // 5. next.config.ts headers, on the original path.
         let mut response = response;
-        self.state.security.apply(&raw_path, response.headers_mut());
+        let turnstile = self.state.turnstile.csp_on(&self.state.config);
+        self.state.security.apply(&raw_path, response.headers_mut(), turnstile);
         // 6. Next's compression, on what Next renders itself.
         compression::apply(accept_encoding.as_ref(), &method, response).await
     }

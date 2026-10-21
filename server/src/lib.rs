@@ -65,6 +65,7 @@ pub mod storage;
 pub mod theme_api;
 pub mod theme_cookies;
 pub mod themes;
+pub mod turnstile;
 pub mod upload;
 pub mod uploads;
 

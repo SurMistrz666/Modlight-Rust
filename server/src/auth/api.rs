@@ -7,6 +7,14 @@
 //!
 //! 1. `onRequest`: the rate limiter ([`super::rate_limit`]) on
 //!    `<ip>|<path below /api/auth>`; a refusal is a 429 and is not counted.
+//!
+//!    1b. Not upstream: when the optional Cloudflare Turnstile check is on
+//!    ([`crate::turnstile`]), a POST to `/sign-in/email`, `/sign-up/email` or
+//!    `/request-password-reset` without a token Cloudflare accepts is refused
+//!    here, before the body is read, with better-auth's captcha plugin's codes
+//!    (that plugin's `onRequest`). After the rate limiter, not before it as
+//!    the plugin runs, so a flood of bad tokens is throttled before it reaches
+//!    Cloudflare; a refusal is counted like any other answer.
 //! 2. The path below the base path; empty or containing `//`: 404.
 //! 3. Route lookup by method and path (static, then `:params`); a path
 //!    whose trailing slash differs, or no route: 404 with no body. Only GET
@@ -263,6 +271,14 @@ async fn handle(State(state): State<AppState>, req: Request) -> Response {
     let rl_path = normalize_pathname(&pathname);
     if let Some(retry_after) = super::rate_limit::check(ip.as_deref(), &rl_path) {
         return super::rate_limit::too_many_requests(retry_after);
+    }
+    // 1b. Not upstream: the optional Cloudflare Turnstile check.
+    if method == Method::POST && crate::turnstile::guards_auth_path(&rl_path) {
+        let verdict = crate::turnstile::check_request(&state, &headers, peer).await;
+        if let Some(refusal) = crate::turnstile::auth_refusal(verdict) {
+            super::rate_limit::record(ip.as_deref(), &rl_path);
+            return api_error_response(&refusal);
+        }
     }
     let res = process(&state, method, headers, peer, &pathname, query, body).await;
     // 7. onResponse

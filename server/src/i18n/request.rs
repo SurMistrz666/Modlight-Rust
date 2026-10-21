@@ -58,6 +58,9 @@ pub const NAMESPACES: &[&str] = &[
     "upload",
     "download",
     "authorize",
+    // Not upstream: the optional Cloudflare Turnstile widget and its admin card
+    // (src/turnstile.rs). A file of its own, so upstream's stay verbatim.
+    "turnstile",
 ];
 
 /// The resolution rule itself, on plain values.

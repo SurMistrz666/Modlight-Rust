@@ -8,7 +8,9 @@
 //! `<ServerDisk>` awaited itself while the page rendered.
 //!
 //! Props (`AdminPageProps` in the SPA): `{ session: { user: { id, email } },
-//! regEnabled, keyState, mail, stats, disk, diskInsights, defaultQuota }`.
+//! regEnabled, keyState, mail, stats, disk, diskInsights, defaultQuota,
+//! turnstile }` (`turnstile` is not upstream: the optional Cloudflare
+//! Turnstile card's `TurnstileStatus`, read through like `mail`).
 //! Metadata `{ title: "Admin" }` (not translated). No database writes; the
 //! process-wide mail snapshot is refreshed (read through, not from the 30 s
 //! snapshot: an operator who has just saved SMTP settings must not be shown
@@ -27,6 +29,7 @@ use crate::pages::{PageCtx, PageData, PageResult};
 use crate::quota::is_unlimited;
 use crate::registration::{RegistrationKeyState, registration_key_state};
 use crate::settings::is_registration_enabled;
+use crate::turnstile::{TurnstileStatus, to_status};
 
 /// `GlobalStats` (components/admin/StatsCards.tsx), in the order
 /// `loadGlobalStats` builds it.
@@ -67,6 +70,8 @@ pub struct AdminPageProps {
     pub disk: ServerStorageUsage,
     pub disk_insights: DiskInsights,
     pub default_quota: Option<String>,
+    /// Not upstream: the optional Cloudflare Turnstile card (src/turnstile.rs).
+    pub turnstile: TurnstileStatus,
 }
 
 /// Two aggregate queries instead of shipping the whole user table to the
@@ -113,13 +118,14 @@ pub async fn load(ctx: PageCtx) -> PageResult {
     let state = &ctx.state;
     let (db, config) = (&state.db, &state.config);
 
-    let (reg_enabled, key_state, mail, stats, disk, insights) = tokio::try_join!(
+    let (reg_enabled, key_state, mail, stats, disk, insights, turnstile) = tokio::try_join!(
         is_registration_enabled(db, config.auth.registration_enabled),
         registration_key_state(db, &config.auth.secret),
         load_mail_settings(state, true),
         load_global_stats(db),
         server_storage_usage(db, config),
         disk_insights(db, config, JsDate::now()),
+        state.turnstile.load(db, config, true),
     )?;
 
     let default_quota = if is_unlimited(Some(config.default_user_quota)) {
@@ -139,6 +145,7 @@ pub async fn load(ctx: PageCtx) -> PageResult {
         disk,
         disk_insights: insights,
         default_quota,
+        turnstile: to_status(&turnstile, config),
     };
     PageData::new(&props, PageMeta::titled("Admin"))
 }
