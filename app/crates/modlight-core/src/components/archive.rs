@@ -33,7 +33,8 @@ pub fn too_large_message(total: u64, limit: u64) -> String {
 }
 
 /// A relative path made only of ordinary names, or `None` for anything that could
-/// leave the destination (absolute, `..`, a drive prefix) or that is empty.
+/// leave the destination (absolute, `..`, a drive prefix; on Windows also a name with a
+/// colon or a DOS device name) or that is empty.
 pub fn safe_relative(name: &str) -> Option<PathBuf> {
     if name.is_empty() || name.contains('\0') || name.contains('\\') {
         return None;
@@ -41,6 +42,10 @@ pub fn safe_relative(name: &str) -> Option<PathBuf> {
     let mut out = PathBuf::new();
     for component in Path::new(name).components() {
         match component {
+            #[cfg(windows)]
+            Component::Normal(part) if !is_plain_windows_name(&part.to_string_lossy()) => {
+                return None;
+            }
             Component::Normal(part) => out.push(part),
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
@@ -51,6 +56,41 @@ pub fn safe_relative(name: &str) -> Option<PathBuf> {
     } else {
         Some(out)
     }
+}
+
+/// Whether a name is an ordinary file name on Windows: no colon (a drive or another
+/// file's stream) and no DOS device name (`CON`, `NUL`, `COM1`..., with or without an
+/// extension), which Windows opens as the device wherever the name sits. Upstream's
+/// `Path.GetFullPath` turns such a name into `\\.\CON`, which then fails its "inside the
+/// destination" test.
+#[cfg(windows)]
+pub fn is_plain_windows_name(name: &str) -> bool {
+    if name.contains(':') {
+        return false;
+    }
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return false;
+    }
+    // COM0-9 and LPT0-9, the superscript digits included.
+    let port = stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"));
+    !port.is_some_and(|number| {
+        let mut chars = number.chars();
+        matches!(
+            (chars.next(), chars.next()),
+            (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+        )
+    })
 }
 
 /// Copy at most `limit` bytes; more than that is an error, not a truncation.
@@ -338,6 +378,18 @@ mod tests {
         assert!(safe_relative("/etc/passwd").is_none());
         assert!(safe_relative("a\\..\\b").is_none());
         assert!(safe_relative("").is_none());
+        #[cfg(windows)]
+        {
+            assert!(safe_relative("C:/x").is_none());
+            assert!(safe_relative("a/b.png:stream").is_none());
+            assert!(safe_relative("CON").is_none());
+            assert!(safe_relative("tools/nul.txt").is_none());
+            assert!(safe_relative("com1.png").is_none());
+            assert!(safe_relative("LPT9").is_none());
+            assert!(safe_relative("console.png").is_some());
+            assert!(safe_relative("com10.png").is_some());
+            assert!(safe_relative("exiftool_files/perl.exe").is_some());
+        }
         assert!(safe_relative(".").is_none());
     }
 

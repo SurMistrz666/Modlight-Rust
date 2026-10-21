@@ -56,6 +56,7 @@ pub fn position(
 /// `ImageEffectPathHelpers.TryGetSafeLocalPath`: folder variables expanded, only local
 /// paths (no `//` shares, only `file:` URIs), relative ones from the app's folder, and
 /// nothing under a symbolic link.
+#[cfg(not(windows))]
 pub fn safe_local_path(path: &str, folder: bool) -> Option<PathBuf> {
     if path.trim().is_empty() {
         return None;
@@ -107,6 +108,133 @@ pub fn safe_local_path(path: &str, folder: bool) -> Option<PathBuf> {
     Some(clean)
 }
 
+/// `ImageEffectPathHelpers.TryGetSafeLocalPath` as upstream runs it on Windows: folder
+/// variables expanded; an absolute URI only when it is a local `file:` one (no host);
+/// no UNC share or device path (`\\server\share`, `\\?\`, `\\.\`, and a DOS device name
+/// that `GetFullPathNameW` turns into one); a relative path taken from the app's folder;
+/// and no reparse point (symbolic link, junction, mount point, cloud placeholder) on any
+/// existing folder of the way or on the file itself.
+#[cfg(windows)]
+pub fn safe_local_path(path: &str, folder: bool) -> Option<PathBuf> {
+    use modlight_core::names::file_helpers::{self, path as dotnet};
+    if path.trim().is_empty() {
+        return None;
+    }
+    let mut p = file_helpers::expand_folder_variables(path, true);
+    match uri_scheme(&p) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("file") => p = local_file_uri(&p)?,
+        Some(_) => return None,
+        None => {}
+    }
+    if is_remote_or_device(&p) {
+        return None;
+    }
+    if !dotnet::is_path_rooted(&p) {
+        p = dotnet::combine(&file_helpers::base_directory(), &p);
+    }
+    let full = dotnet::get_full_path(&p);
+    if is_remote_or_device(&full) || has_reparse_point(Path::new(&full), folder) {
+        return None;
+    }
+    Some(PathBuf::from(full))
+}
+
+/// The scheme of an absolute URI (`Uri.TryCreate(path, UriKind.Absolute)`): letters,
+/// digits, `+`, `-` and `.` before a colon, at least two of them, because a single
+/// letter before a colon followed by a separator is a drive ("C:\", "C:/"). `None` for
+/// a plain path.
+#[cfg(windows)]
+fn uri_scheme(text: &str) -> Option<&str> {
+    let colon = text.find(':')?;
+    let scheme = &text[..colon];
+    let mut chars = scheme.chars();
+    let first = chars.next()?;
+    if !first.is_ascii_alphabetic()
+        || !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    {
+        return None;
+    }
+    let after = &text[colon + 1..];
+    if scheme.len() == 1 && (after.starts_with('\\') || after.starts_with('/')) {
+        return None;
+    }
+    Some(scheme)
+}
+
+/// `Uri.LocalPath` of a `file:` URI with no host ("file:///C:/a%20b.png" is
+/// "C:\a b.png"); `None` for a share (`IsUnc`), a host, a path that does not decode or
+/// one that is not on a drive.
+#[cfg(windows)]
+fn local_file_uri(uri: &str) -> Option<String> {
+    let rest = &uri[5..];
+    let rest = rest.strip_prefix("//")?;
+    // An empty authority: "file:///C:/...". Anything else names a host or a share.
+    let path = rest.strip_prefix('/')?;
+    let mut bytes = Vec::with_capacity(path.len());
+    let raw = path.as_bytes();
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'%'
+            && i + 2 < raw.len()
+            && let (Some(high), Some(low)) = (hex_value(raw[i + 1]), hex_value(raw[i + 2]))
+        {
+            bytes.push(high << 4 | low);
+            i += 3;
+            continue;
+        }
+        bytes.push(raw[i]);
+        i += 1;
+    }
+    let decoded = String::from_utf8(bytes).ok()?;
+    // Only a drive path: "file:////server/share" is a share (`IsUnc`), and anything
+    // else is not a local file this app should read.
+    let drive = decoded.as_bytes();
+    if drive.len() < 3
+        || !drive[0].is_ascii_alphabetic()
+        || drive[1] != b':'
+        || !matches!(drive[2], b'/' | b'\\')
+    {
+        return None;
+    }
+    Some(decoded.replace('/', "\\"))
+}
+
+#[cfg(windows)]
+fn hex_value(byte: u8) -> Option<u8> {
+    (byte as char).to_digit(16).map(|value| value as u8)
+}
+
+/// `IsRemoteOrDevicePath`: blank, or starting (or rooted) with `\\` or `//`.
+#[cfg(windows)]
+fn is_remote_or_device(path: &str) -> bool {
+    let path = path.trim();
+    path.is_empty() || path.starts_with("\\\\") || path.starts_with("//")
+}
+
+/// `HasReparsePoint`: a reparse point on an existing folder from the file's (or the
+/// folder's own) up to the root, or on the file itself.
+#[cfg(windows)]
+fn has_reparse_point(path: &Path, folder: bool) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    let attributes = |at: &Path| std::fs::symlink_metadata(at).map(|m| m.file_attributes());
+    let mut check = if folder { Some(path) } else { path.parent() };
+    while let Some(dir) = check {
+        if attributes(dir).is_ok_and(|a| {
+            a & FILE_ATTRIBUTE_DIRECTORY != 0 && a & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        }) {
+            return true;
+        }
+        check = dir.parent();
+    }
+    !folder
+        && attributes(path).is_ok_and(|a| {
+            a & FILE_ATTRIBUTE_DIRECTORY == 0 && a & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        })
+}
+
+#[cfg(not(windows))]
 fn is_link(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
 }
@@ -114,6 +242,7 @@ fn is_link(path: &Path) -> bool {
 /// macOS's own links at the root (`/tmp`, `/var`, `/etc` into `/private`), which every
 /// temporary path passes through; Windows has no counterpart, so they are not counted
 /// as the reparse points upstream refuses.
+#[cfg(not(windows))]
 fn is_system_link(dir: &Path) -> bool {
     dir.parent() == Some(Path::new("/"))
         && std::fs::read_link(dir).is_ok_and(|target| {
@@ -122,7 +251,9 @@ fn is_system_link(dir: &Path) -> bool {
         })
 }
 
-/// `ImageEffectPathHelpers.IsPathInFolder`.
+/// `ImageEffectPathHelpers.IsPathInFolder`: the same path or one below it, ignoring
+/// case, after both are made safe and lose a trailing separator (a drive's root keeps
+/// its own, as `Path.TrimEndingDirectorySeparator` leaves it).
 pub fn is_path_in_folder(path: &str, folder: &Path) -> bool {
     let Some(full) = safe_local_path(path, false) else {
         return false;
@@ -130,9 +261,20 @@ pub fn is_path_in_folder(path: &str, folder: &Path) -> bool {
     let Some(folder) = safe_local_path(&folder.to_string_lossy(), true) else {
         return false;
     };
+    let separator = std::path::MAIN_SEPARATOR;
+    #[cfg(not(windows))]
     let lower = |p: &Path| p.to_string_lossy().trim_end_matches('/').to_lowercase();
+    #[cfg(windows)]
+    let lower = |p: &Path| {
+        let text = p.to_string_lossy().to_lowercase();
+        if text.len() == 3 && text.ends_with(":\\") {
+            text
+        } else {
+            text.strip_suffix('\\').unwrap_or(&text).to_string()
+        }
+    };
     let (f, d) = (lower(&full), lower(&folder));
-    f == d || f.starts_with(&(d + "/"))
+    f == d || f.starts_with(&format!("{d}{separator}"))
 }
 
 /// `ImageHelpers.LoadImage` of a local file, decoded as `SKBitmap`/`Bitmap` stores it.
@@ -949,6 +1091,7 @@ mod tests {
     fn unsafe_paths_are_refused() {
         assert!(safe_local_path("//server/share/a.png", false).is_none());
         assert!(safe_local_path("https://example.com/a.png", false).is_none());
+        #[cfg(not(windows))]
         assert_eq!(
             safe_local_path("/tmp/../tmp/x.png", false),
             Some(PathBuf::from("/tmp/x.png"))
@@ -970,6 +1113,74 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn unsafe_paths_are_refused_on_windows() {
+        // Shares, devices and URIs other than a local file.
+        for refused in [
+            "\\\\server\\share\\a.png",
+            "//server/share/a.png",
+            "\\\\?\\C:\\a.png",
+            "\\\\.\\C:\\a.png",
+            "file://server/share/a.png",
+            "file:////server/share/a.png",
+            "https://example.com/a.png",
+            "mailto:a@example.com",
+            "  ",
+        ] {
+            assert!(safe_local_path(refused, false).is_none(), "{refused}");
+        }
+        assert_eq!(
+            safe_local_path("C:\\a\\..\\b\\x.png", false),
+            Some(PathBuf::from("C:\\b\\x.png"))
+        );
+        assert_eq!(
+            safe_local_path("C:/a/./x.png", false),
+            Some(PathBuf::from("C:\\a\\x.png"))
+        );
+        assert_eq!(
+            safe_local_path("file:///C:/My%20Pictures/x.png", false),
+            Some(PathBuf::from("C:\\My Pictures\\x.png"))
+        );
+        // A relative path is the app's folder's.
+        let base = modlight_core::names::file_helpers::base_directory();
+        assert_eq!(
+            safe_local_path("fx\\a.png", false),
+            Some(PathBuf::from(format!("{base}fx\\a.png")))
+        );
+
+        // A junction on the way (made without any privilege) is a reparse point.
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("a.png"), b"x").unwrap();
+        let junction = dir.path().join("junction");
+        let made = std::process::Command::new("cmd.exe")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&junction)
+            .arg(&real)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let through = junction.join("a.png");
+        assert!(through.is_file());
+        assert!(safe_local_path(&through.to_string_lossy(), false).is_none());
+        assert!(safe_local_path(&junction.to_string_lossy(), true).is_none());
+        assert!(safe_local_path(&real.join("a.png").to_string_lossy(), false).is_some());
+        // Case is ignored and a trailing separator does not matter.
+        let inside = real.join("a.png").to_string_lossy().to_uppercase();
+        assert!(is_path_in_folder(
+            &inside,
+            Path::new(&format!("{}\\", real.display()))
+        ));
+        assert!(!is_path_in_folder(
+            &dir.path().join("realer\\a.png").to_string_lossy(),
+            &real
+        ));
+    }
     /// Every class with its defaults on one sheet, for looking at by eye:
     /// `CLASSIC_SHEET=/path/sheet.png cargo test -p modlight-effects contact_sheet -- --ignored`.
     #[test]

@@ -206,7 +206,8 @@ pub fn extract_package(package_file: &Path, destination: &Path) -> Result<Extrac
 }
 
 /// No folder between `destination` and `target` is a link (a planted link could carry a
-/// later entry out of the destination).
+/// later entry out of the destination). On Windows any reparse point counts, a junction
+/// or a mount point as much as a symbolic link.
 fn lands_inside(destination: &Path, target: &Path) -> bool {
     let Ok(rest) = target.strip_prefix(destination) else {
         return false;
@@ -215,11 +216,24 @@ fn lands_inside(destination: &Path, target: &Path) -> bool {
     let parts: Vec<_> = rest.components().collect();
     for part in parts.iter().take(parts.len().saturating_sub(1)) {
         at.push(part);
-        if std::fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
+        if std::fs::symlink_metadata(&at).is_ok_and(|m| is_link(&m)) {
             return false;
         }
     }
     true
+}
+
+#[cfg(not(windows))]
+fn is_link(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+#[cfg(windows)]
+fn is_link(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_type().is_symlink()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 #[cfg(test)]
@@ -283,7 +297,17 @@ mod tests {
         let got = extract_package(&file, &dest).unwrap();
         assert!(!dir.join("outside.png").exists());
         assert!(dest.join("ok/fine.png").is_file());
+        // "C:" is a folder name on macOS and a drive on Windows.
+        #[cfg(not(windows))]
         assert_eq!(got.files.len(), 2, "{:?}", got.files);
+        #[cfg(windows)]
+        {
+            assert_eq!(got.files.len(), 1, "{:?}", got.files);
+            assert!(
+                got.skipped
+                    .contains(&Skipped::UnsafePath("C:/drive.png".into()))
+            );
+        }
         assert!(
             got.skipped
                 .contains(&Skipped::UnsafePath("../outside.png".into()))
@@ -324,6 +348,50 @@ mod tests {
         let got = extract_package(&file, &dest).unwrap();
         assert!(!elsewhere.join("x.png").exists());
         assert_eq!(got.skipped, vec![Skipped::UnsafePath("sub/x.png".into())]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn planted_junctions_and_device_names_are_refused() {
+        let dir = scratch("junction");
+        let dest = dir.join("dest");
+        let elsewhere = dir.join("elsewhere");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        // A junction needs no privilege, unlike a symbolic link.
+        let made = std::process::Command::new("cmd.exe")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(dest.join("sub"))
+            .arg(&elsewhere)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let file = dir.join("p.sxie");
+        write_zip(
+            &file,
+            &[
+                ("sub/x.png", b"x"),
+                ("aux.png", b"x"),
+                ("ok/con.png", b"x"),
+                ("ok/a.png:stream", b"x"),
+                ("ok/b.png", b"x"),
+            ],
+        );
+        let got = extract_package(&file, &dest).unwrap();
+        assert!(!elsewhere.join("x.png").exists());
+        assert!(dest.join("ok").join("b.png").is_file());
+        assert_eq!(got.files.len(), 1, "{:?}", got.files);
+        for name in ["sub/x.png", "aux.png", "ok/con.png"] {
+            assert!(
+                got.skipped.contains(&Skipped::UnsafePath(name.into())),
+                "{name}: {:?}",
+                got.skipped
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
