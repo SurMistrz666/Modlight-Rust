@@ -54,7 +54,7 @@ impl Recognizer {
             Recognizer::Vision => {
                 let scaled = ocr::scale(image, scale);
                 let png = modlight_tools::images::png(&scaled);
-                let lines = modlight_macos::ocr::recognize(&png, language)?;
+                let lines = crate::platform::ocr::recognize(&png, language)?;
                 Ok(ocr::join_lines(&lines, single_line))
             }
         }
@@ -764,7 +764,7 @@ static VISION_LANGUAGES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock:
 
 /// The real app reads Vision's list once.
 pub fn use_vision_languages() {
-    let _ = VISION_LANGUAGES.get_or_init(modlight_macos::ocr::languages);
+    let _ = VISION_LANGUAGES.get_or_init(crate::platform::ocr::languages);
 }
 
 fn language_tags() -> Vec<String> {

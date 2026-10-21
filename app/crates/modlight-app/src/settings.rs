@@ -534,7 +534,7 @@ pub struct SettingsWindow {
     /// The application pages' selections, editor and backup status.
     pub app_pages: crate::app_pages::AppPagesState,
     /// `StartupManager.State`, read when the integration page opens.
-    pub startup: Option<modlight_macos::integration::StartupState>,
+    pub startup: Option<crate::platform::integration::StartupState>,
     /// Where the page is drawn (the editors' veil covers it).
     pub page_area: Rect,
     /// The keyboard shortcuts page.
@@ -1233,14 +1233,14 @@ fn app_page(
     };
     if section == "application.integration" && window.startup.is_none() {
         window.startup = Some(if qa {
-            modlight_macos::integration::StartupState::NotAvailable
+            crate::platform::integration::StartupState::NotAvailable
         } else {
-            modlight_macos::integration::startup_state()
+            crate::platform::integration::startup_state()
         });
     }
     let startup = window
         .startup
-        .unwrap_or(modlight_macos::integration::StartupState::NotAvailable);
+        .unwrap_or(crate::platform::integration::StartupState::NotAvailable);
     let mut pages = std::mem::take(&mut window.app_pages);
     let area = window.page_area;
     let mut ctx = AppPagesCtx {

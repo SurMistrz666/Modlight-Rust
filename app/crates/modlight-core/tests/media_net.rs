@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use modlight_core::components::download::{self, DownloadOutcome};
 use modlight_core::components::install::{self, InstallOutcome};
+#[cfg(unix)]
 use modlight_core::components::updates::{self, UpdateOutcome};
 use modlight_core::components::{self, ComponentSource, net};
 use modlight_core::update;
@@ -291,6 +292,8 @@ async fn a_wrong_hash_installs_nothing_and_leaves_nothing() {
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
+// The installed tools are POSIX shell scripts.
+#[cfg(unix)]
 #[tokio::test]
 async fn every_packaging_installs_and_removes() {
     let stub = Stub::start().await;
@@ -404,6 +407,7 @@ async fn every_packaging_installs_and_removes() {
 }
 
 /// A GitHub release document whose assets live on the stub.
+#[cfg(unix)]
 fn release(origin: &str, tag: &str, artefact: &[u8], api_digest: Option<&str>) -> String {
     let digest = api_digest
         .map(|d| format!("\"sha256:{d}\""))
@@ -418,6 +422,7 @@ fn release(origin: &str, tag: &str, artefact: &[u8], api_digest: Option<&str>) -
 
 /// Every step of the yt-dlp update, in one test because the GitHub API origin is a
 /// process-wide switch.
+#[cfg(unix)]
 #[tokio::test]
 async fn yt_dlp_follows_its_publisher_only_on_two_agreeing_digests() {
     let stub = Stub::start().await;

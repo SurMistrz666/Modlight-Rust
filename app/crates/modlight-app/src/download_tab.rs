@@ -338,7 +338,7 @@ impl AppState {
         }
         if general.disable_notifications_on_fullscreen
             && self.mode == crate::app::Mode::Normal
-            && modlight_macos::system::active_window_fullscreen()
+            && crate::platform::system::active_window_fullscreen()
         {
             return;
         }
@@ -390,7 +390,7 @@ impl AppState {
             modlight_core::l10n::Language::Polish => "pl",
             modlight_core::l10n::Language::English => "en",
         };
-        let opened = modlight_macos::webview::open_youtube_sign_in(
+        let opened = crate::platform::webview::open_youtube_sign_in(
             t(s::Download_SignInWindowTitle),
             &modlight_core::download::cookies::login_url(language),
             self.colors.dark,
@@ -404,13 +404,13 @@ impl AppState {
 
     /// What the sign-in window decided, when it has closed.
     pub fn downloads_poll_sign_in(&mut self) {
-        let Some(result) = modlight_macos::webview::take_result() else {
+        let Some(result) = crate::platform::webview::take_result() else {
             return;
         };
         self.downloads.signing_in = false;
         let mut captured = false;
         match result {
-            modlight_macos::webview::SignInResult::Captured(cookies) => {
+            crate::platform::webview::SignInResult::Captured(cookies) => {
                 let jar: Vec<modlight_core::download::cookies::NetscapeCookie> = cookies
                     .into_iter()
                     .map(|c| modlight_core::download::cookies::NetscapeCookie {
@@ -430,12 +430,12 @@ impl AppState {
                     _ => self.downloads.sign_in_message = t(s::Download_SignInFailed).to_string(),
                 }
             }
-            modlight_macos::webview::SignInResult::Failed(reason) => {
+            crate::platform::webview::SignInResult::Failed(reason) => {
                 log::warn!("Download: the sign-in window failed: {reason}");
                 self.downloads.sign_in_message = t(s::Download_SignInFailed).to_string();
             }
             // Closed without finishing: not an error.
-            modlight_macos::webview::SignInResult::Abandoned => {}
+            crate::platform::webview::SignInResult::Abandoned => {}
         }
         self.downloads_refresh_sign_in();
         if captured {
@@ -521,7 +521,7 @@ impl AppState {
     /// Stop everything: the app is going away.
     pub fn downloads_shutdown(&mut self) {
         self.downloads.queue.shutdown();
-        modlight_macos::webview::close_youtube_sign_in();
+        crate::platform::webview::close_youtube_sign_in();
     }
 }
 

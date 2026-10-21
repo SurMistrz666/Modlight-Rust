@@ -2869,6 +2869,7 @@ dependencies = [
  "modlight-effects",
  "modlight-macos",
  "modlight-tools",
+ "modlight-windows",
  "rfd",
  "serde",
  "serde_json",
@@ -2906,6 +2907,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
@@ -2988,6 +2990,20 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "modlight-windows"
+version = "0.7.7"
+dependencies = [
+ "global-hotkey",
+ "hex",
+ "image",
+ "log",
+ "modlight-core",
+ "tempfile",
+ "windows",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

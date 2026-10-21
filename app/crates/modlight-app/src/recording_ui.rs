@@ -610,10 +610,9 @@ impl AppState {
             })
         } else {
             Arc::new(move |rect: IRect, cursor: bool| {
-                Ok(
-                    Box::new(modlight_macos::capture::MacFrames::new(rect, cursor, fps))
-                        as Box<dyn FrameSource>,
-                )
+                Ok(Box::new(crate::platform::capture::ScreenFrames::new(
+                    rect, cursor, fps,
+                )) as Box<dyn FrameSource>)
             })
         };
         let params = SessionParams {

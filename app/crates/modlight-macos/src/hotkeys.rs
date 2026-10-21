@@ -95,6 +95,9 @@ pub fn hotkey_for(info: HotkeyInfo) -> Option<HotKey> {
     Some(HotKey::new(Some(mods), code))
 }
 
+/// The name the app uses on every system (`platform::hotkeys::SystemHotkeys`).
+pub type SystemHotkeys = MacHotkeys;
+
 /// The Mac's registration. Create it on the main thread.
 pub struct MacHotkeys {
     #[cfg(target_os = "macos")]

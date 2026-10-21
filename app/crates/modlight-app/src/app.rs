@@ -87,13 +87,13 @@ impl ModlightApp {
             app.start(ctx);
         }
         if matches!(mode, Mode::Normal | Mode::Qa) {
-            modlight_macos::keys::install();
+            crate::platform::keys::install();
             modlight_core::tasks::manager::set_fullscreen_probe(
-                modlight_macos::system::active_window_fullscreen,
+                crate::platform::system::active_window_fullscreen,
             );
         }
         if mode == Mode::Normal {
-            modlight_macos::integration::install_services_provider();
+            crate::platform::integration::install_services_provider();
             crate::editor_window::install_system_services();
         }
         if mode == Mode::Normal && app.state.config.show_tray() {
@@ -117,7 +117,7 @@ impl ModlightApp {
         // launch of the app bundle does.
         if state.first_launch
             && state.mode == Mode::Normal
-            && modlight_macos::integration::in_app_bundle()
+            && crate::platform::integration::in_app_bundle()
         {
             state.show_first_run();
         }
@@ -172,8 +172,8 @@ impl ModlightApp {
         // Cmd+V outside a text field uploads the clipboard (`ClipboardUploadMainWindow`);
         // upstream's window keys answer on My space only. The flag is read every frame
         // so a press on another tab does not fire later.
-        let pasted = if modlight_macos::keys::monitoring() {
-            modlight_macos::keys::take_command_v()
+        let pasted = if crate::platform::keys::monitoring() {
+            crate::platform::keys::take_command_v()
         } else {
             ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
         };
@@ -264,7 +264,7 @@ impl ModlightApp {
         match effect {
             Effect::OpenUrl(url) => {
                 if real {
-                    modlight_macos::system::open_url(&url);
+                    crate::platform::system::open_url(&url);
                 } else {
                     log::info!("QA mode: not opening {url}");
                 }
@@ -309,14 +309,14 @@ impl ModlightApp {
             }
             Effect::Reveal(path) => {
                 if real {
-                    modlight_macos::system::reveal_in_finder(&path);
+                    crate::platform::system::reveal_in_finder(&path);
                 } else {
                     log::info!("QA mode: not revealing {}", path.display());
                 }
             }
             Effect::OpenFile(path) => {
                 if real {
-                    modlight_macos::system::open_path(&path);
+                    crate::platform::system::open_path(&path);
                 } else {
                     log::info!("QA mode: not opening {}", path.display());
                 }
@@ -722,7 +722,7 @@ impl ModlightApp {
         let Some(window) = state.uploads.windows.drop_window.as_mut() else {
             return;
         };
-        let area = modlight_macos::system::visible_frame()
+        let area = crate::platform::system::visible_frame()
             .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h)))
             .unwrap_or_else(|| Rect::from_min_size(pos2(0.0, 25.0), vec2(1440.0, 850.0)));
         let builder = ViewportBuilder::default()
@@ -773,7 +773,7 @@ impl ModlightApp {
             return;
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
-        let area = modlight_macos::system::visible_frame()
+        let area = crate::platform::system::visible_frame()
             .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h)))
             .unwrap_or_else(|| Rect::from_min_size(pos2(0.0, 25.0), vec2(1440.0, 850.0)));
         let size = notice.window_size();
@@ -893,7 +893,7 @@ impl Placement {
 
     pub(crate) fn screen(topmost: bool) -> Placement {
         Placement {
-            area: modlight_macos::system::visible_frame()
+            area: crate::platform::system::visible_frame()
                 .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h))),
             topmost,
         }

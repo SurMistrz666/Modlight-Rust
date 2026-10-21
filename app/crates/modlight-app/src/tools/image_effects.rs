@@ -2014,7 +2014,7 @@ impl PackagerWindow {
         match package::package(Path::new(&output), &self.json, assets.as_deref()) {
             Ok(path) => {
                 if path.is_file() && state.mode == crate::app::Mode::Normal && !state.env.qa {
-                    modlight_macos::system::reveal_in_finder(&path);
+                    crate::platform::system::reveal_in_finder(&path);
                 }
                 self.status = t(fx::ImageEffectPackagerWindow_Created_successfully).to_string();
             }
@@ -2150,7 +2150,7 @@ impl ToolWindow for PackagerWindow {
         if kit::button_at(ui, &colors, left[0], None, Some(open), true).clicked() {
             let _ = std::fs::create_dir_all(&self.effects_folder);
             if state.mode == crate::app::Mode::Normal && !state.env.qa {
-                modlight_macos::system::open_path(&self.effects_folder);
+                crate::platform::system::open_path(&self.effects_folder);
             }
         }
         let right = kit::right_aligned(

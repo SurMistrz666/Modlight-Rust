@@ -1270,7 +1270,7 @@ impl AppState {
                 self.env.profile.display()
             )))
         } else {
-            Box::new(modlight_macos::KeychainStore::new("Modlight", account))
+            Box::new(crate::platform::SecretStore::new("Modlight", account))
         }
     }
 

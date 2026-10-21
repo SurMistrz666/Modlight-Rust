@@ -60,7 +60,7 @@ pub struct PendingImage {
 /// Everything captures need, held by the app state.
 pub struct Captures {
     pub source: SharedSource,
-    pub mac: Option<Arc<modlight_macos::capture::MacSource>>,
+    pub mac: Option<Arc<crate::platform::capture::ScreenSource>>,
     pub overlay: Option<RegionOverlay>,
     pub scheduled: Vec<Scheduled>,
     /// A picture is being taken on the background pool.
@@ -93,7 +93,7 @@ impl Captures {
         let (source, mac): (SharedSource, _) = if qa {
             (Captures::fake_source(profile), None)
         } else {
-            let mac = modlight_macos::capture::MacSource::new();
+            let mac = crate::platform::capture::ScreenSource::new();
             (mac.clone() as SharedSource, Some(mac))
         };
         Captures {
@@ -134,7 +134,7 @@ impl AppState {
             .unwrap_or(false);
         let backend: Box<dyn modlight_core::hotkeys::HotkeyBackend> =
             if self.mode == Mode::Normal && !self.env.qa {
-                Box::new(modlight_macos::hotkeys::MacHotkeys::new())
+                Box::new(crate::platform::hotkeys::SystemHotkeys::new())
             } else {
                 Box::new(FakeBackend::default())
             };
@@ -158,14 +158,14 @@ impl AppState {
     pub fn pump_hotkeys(&mut self) {
         let mut pressed: Vec<HotkeySettings> = Vec::new();
         if self.mode == Mode::Normal && !self.env.qa {
-            for id in modlight_macos::hotkeys::MacHotkeys::pressed() {
+            for id in crate::platform::hotkeys::SystemHotkeys::pressed() {
                 // `DisableHotkeysOnFullscreen`.
                 let fullscreen_block = self
                     .config
                     .get("DisableHotkeysOnFullscreen")
                     .and_then(|v| v.as_bool())
                     == Some(true)
-                    && modlight_macos::system::active_window_fullscreen();
+                    && crate::platform::system::active_window_fullscreen();
                 if fullscreen_block {
                     continue;
                 }
@@ -383,7 +383,7 @@ impl AppState {
         self.tick_auto_capture(ctx);
         self.tick_recording(ctx);
         // Files Finder handed to "Upload with Modlight".
-        let files = modlight_macos::integration::take_service_files();
+        let files = crate::platform::integration::take_service_files();
         if !files.is_empty() {
             let settings = self.default_task_settings();
             self.upload_files_with(files, settings);
