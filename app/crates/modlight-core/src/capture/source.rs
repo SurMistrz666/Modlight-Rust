@@ -1,7 +1,8 @@
 //! Where pictures of the screen come from: the displays, the windows on them, the
 //! pointer, and the pixels (`Screenshot`, `CaptureHelpers`, `WindowsList`).
 //!
-//! The real source is ScreenCaptureKit (`modlight-macos`); automated runs use
+//! The real source is the platform's (`modlight-windows` with upstream's GDI and
+//! window APIs, `modlight-macos` with ScreenCaptureKit); automated runs use
 //! [`FakeSource`], a desktop drawn from PNG files, so nothing ever asks macOS for the
 //! Screen Recording permission.
 
@@ -150,6 +151,8 @@ pub struct FakeSource {
     active: Option<usize>,
     /// Every area taken, for tests.
     pub taken: Mutex<Vec<IRect>>,
+    /// Every window taken by itself (its title and how), for tests.
+    pub windows_taken: Mutex<Vec<(String, WindowCapture)>>,
 }
 
 #[derive(Deserialize)]
@@ -189,6 +192,7 @@ impl FakeSource {
             cursor: Mutex::new(cursor),
             active: Some(0),
             taken: Mutex::new(Vec::new()),
+            windows_taken: Mutex::new(Vec::new()),
         }
     }
 
@@ -349,8 +353,12 @@ impl CaptureSource for FakeSource {
     fn capture_window(
         &self,
         window: &WindowInfo,
-        _how: WindowCapture,
+        how: WindowCapture,
     ) -> Result<RgbaImage, CaptureError> {
+        self.windows_taken
+            .lock()
+            .unwrap()
+            .push((window.title.clone(), how));
         self.crop(window.rect)
     }
 }
