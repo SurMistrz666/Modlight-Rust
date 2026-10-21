@@ -31,7 +31,7 @@ pub enum State {
 /// What the tab has to do with a finished file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Delivery {
-    /// Stayed on this Mac: show the "saved" notice.
+    /// Stayed on this computer: show the "saved" notice.
     Saved(PathBuf),
     /// Hand it to the upload flow (and, for `Both`, it also stays).
     Upload(PathBuf),
