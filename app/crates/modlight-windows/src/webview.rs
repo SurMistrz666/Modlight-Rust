@@ -13,6 +13,8 @@
 
 use std::sync::Mutex;
 
+mod host;
+
 /// One cookie, as the store gave it. The value never leaves the app's own jar.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CookieData {
@@ -97,16 +99,31 @@ pub fn is_signed_in_page(address: &str) -> bool {
     !path.to_ascii_lowercase().starts_with("/signin")
 }
 
+/// Whether a cookie of this domain belongs to the session the jar keeps: YouTube's and
+/// Google's own (suffix match, a leading dot or none). Whatever else the sign-in pages
+/// left in the browser stays out of the jar.
+pub fn is_session_domain(domain: &str) -> bool {
+    let host = domain.trim().trim_start_matches('.').to_ascii_lowercase();
+    ["youtube.com", "google.com"]
+        .iter()
+        .any(|site| host == *site || host.ends_with(&format!(".{site}")))
+}
+
 /// Open the window, or bring the open one forward (one at a time). `false` when it
 /// could not be opened (not on the main thread, no WebView2 runtime).
 pub fn open_youtube_sign_in(title: &str, url: &str, dark: bool) -> bool {
-    let _ = (title, url, dark);
-    let _ = finish;
-    false
+    if !host::on_main_thread() {
+        return false;
+    }
+    host::open(title, url, dark)
 }
 
 /// Close the window if one is open, because the app is going away.
-pub fn close_youtube_sign_in() {}
+pub fn close_youtube_sign_in() {
+    if host::on_main_thread() {
+        host::close();
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -154,5 +171,28 @@ mod tests {
         // Tests run on worker threads: nothing may appear on the owner's screen.
         let handle = std::thread::spawn(|| open_youtube_sign_in("t", "https://example.com", true));
         assert!(!handle.join().unwrap());
+    }
+
+    #[test]
+    fn the_test_thread_is_not_the_main_thread_either() {
+        assert!(!host::on_main_thread());
+        assert!(!open_youtube_sign_in("t", "https://example.com", false));
+        close_youtube_sign_in();
+        assert_eq!(take_result(), None);
+    }
+
+    #[test]
+    fn only_youtube_and_google_cookies_go_to_the_jar() {
+        assert!(is_session_domain(".youtube.com"));
+        assert!(is_session_domain("www.youtube.com"));
+        assert!(is_session_domain("youtube.com"));
+        assert!(is_session_domain(".google.com"));
+        assert!(is_session_domain("accounts.google.com"));
+        assert!(is_session_domain(".YouTube.COM"));
+        assert!(!is_session_domain(".google.pl"));
+        assert!(!is_session_domain("notyoutube.com"));
+        assert!(!is_session_domain("youtube.com.evil.example"));
+        assert!(!is_session_domain(".gstatic.com"));
+        assert!(!is_session_domain(""));
     }
 }
