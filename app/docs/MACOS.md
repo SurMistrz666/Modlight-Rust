@@ -178,8 +178,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **Deleting the folder you stand in** reloads the folder list; upstream loses that
   refresh and keeps showing the deleted folder until the next reload.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
-  server's origin, no `Access-Control-Allow-Private-Network`, and a request with the
-  wrong `state` is answered and ignored instead of ending the sign-in.
+  server's origin, and a request with the wrong `state` is answered and ignored instead
+  of ending the sign-in. `Access-Control-Allow-Private-Network: true` is granted, but only
+  to the server's origin: without it Chrome's Private Network Access stops a public
+  server's page (e.g. behind Cloudflare) from handing the token to 127.0.0.1.
 - **Redirects** are never followed by any request that carries the token (upstream
   followed them in the library client). A stored tus session URL is moved onto the
   account's current origin before every request, so the token can never follow a
