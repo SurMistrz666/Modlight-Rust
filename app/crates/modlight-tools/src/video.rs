@@ -2,15 +2,37 @@
 //! `TaskHelpers.RunVideoConversionAsync`): which controls apply to an encoder, the output
 //! path, and ffmpeg's arguments, as a vector (nothing passes through a shell).
 //!
-//! NVENC, AMF and Quick Sync are Windows hardware encoders. As in the screen recorder,
-//! the list does not offer them on a Mac; a value synced from Windows that names one is
-//! encoded with VideoToolbox and keeps only its bitrate.
+//! NVENC, AMF and Quick Sync are Windows hardware encoders. On Windows the list offers
+//! them as upstream does, with upstream's arguments. As in the screen recorder, the list
+//! does not offer them on a Mac; a value synced from Windows that names one is encoded
+//! with VideoToolbox and keeps only its bitrate.
 
 use std::path::{Path, PathBuf};
 
 use crate::settings::{ConverterVideoCodecs as C, VideoConverterOptions};
 
+/// The encoders the list offers on Windows: all of upstream's, in its order.
+#[cfg(windows)]
+pub const OFFERED: &[C] = &[
+    C::X264,
+    C::X265,
+    C::H264Nvenc,
+    C::HevcNvenc,
+    C::H264Amf,
+    C::HevcAmf,
+    C::H264Qsv,
+    C::HevcQsv,
+    C::Vp8,
+    C::Vp9,
+    C::Av1,
+    C::Xvid,
+    C::Gif,
+    C::Webp,
+    C::Apng,
+];
+
 /// The encoders the list offers on a Mac, in upstream's order.
+#[cfg(not(windows))]
 pub const OFFERED: &[C] = &[
     C::X264,
     C::X265,
@@ -194,10 +216,45 @@ impl Conversion {
                 push(&["-c:v", "libx265", "-preset", "medium"]);
                 args.extend(rate(self.use_bitrate, "-crf"));
             }
+            #[cfg(windows)]
+            C::H264Nvenc => {
+                push(&["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "hq"]);
+                push(&["-profile:v", "high"]);
+                args.extend(["-b:v".to_string(), format!("{bitrate}k")]);
+            }
+            #[cfg(windows)]
+            C::HevcNvenc => {
+                push(&["-c:v", "hevc_nvenc", "-preset", "p4", "-tune", "hq"]);
+                push(&["-profile:v", "main"]);
+                args.extend(["-b:v".to_string(), format!("{bitrate}k")]);
+            }
+            #[cfg(windows)]
+            C::H264Amf | C::HevcAmf => {
+                let encoder = if self.codec == C::H264Amf {
+                    "h264_amf"
+                } else {
+                    "hevc_amf"
+                };
+                push(&["-c:v", encoder, "-usage", "transcoding", "-profile", "main"]);
+                push(&["-quality", "balanced"]);
+                args.extend(["-b:v".to_string(), format!("{bitrate}k")]);
+            }
+            #[cfg(windows)]
+            C::H264Qsv | C::HevcQsv => {
+                let encoder = if self.codec == C::H264Qsv {
+                    "h264_qsv"
+                } else {
+                    "hevc_qsv"
+                };
+                push(&["-c:v", encoder, "-preset", "medium"]);
+                args.extend(["-b:v".to_string(), format!("{bitrate}k")]);
+            }
+            #[cfg(not(windows))]
             C::H264Nvenc | C::H264Amf | C::H264Qsv => {
                 push(&["-c:v", "h264_videotoolbox"]);
                 args.extend(["-b:v".to_string(), format!("{bitrate}k")]);
             }
+            #[cfg(not(windows))]
             C::HevcNvenc | C::HevcAmf | C::HevcQsv => {
                 push(&["-c:v", "hevc_videotoolbox"]);
                 args.extend(["-b:v".to_string(), format!("{bitrate}k")]);
@@ -293,9 +350,34 @@ pub fn last_line(output: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// A fixture path as this system writes it: "/v/a" is "C:\\v\\a" on Windows.
+    fn native(path: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{}", path.replace('/', "\\"))
+        } else {
+            path.to_string()
+        }
+    }
+
+    /// `text` with every fixture path in it written as this system writes it.
+    fn natives(text: &str) -> String {
+        text.split(' ')
+            .map(|word| {
+                if word.starts_with("/v") {
+                    native(word)
+                } else {
+                    word.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     fn conversion(codec: C) -> Conversion {
-        let mut c =
-            Conversion::from_options(&VideoConverterOptions::default(), Some("/v/clip.mov"));
+        let mut c = Conversion::from_options(
+            &VideoConverterOptions::default(),
+            Some(&native("/v/clip.mov")),
+        );
         c.set_codec(codec);
         c
     }
@@ -303,12 +385,14 @@ mod tests {
     #[test]
     fn x264_by_quality() {
         let c = conversion(C::X264);
-        assert_eq!(c.output_folder, "/v");
+        assert_eq!(c.output_folder, native("/v"));
         assert_eq!(c.output_name, "clip-output");
-        assert_eq!(c.output_path(), "/v/clip-output.mp4");
+        assert_eq!(c.output_path(), native("/v/clip-output.mp4"));
         assert_eq!(
             c.arguments().join(" "),
-            "-i /v/clip.mov -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 128k -y /v/clip-output.mp4"
+            natives(
+                "-i /v/clip.mov -c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 128k -y /v/clip-output.mp4"
+            )
         );
     }
 
@@ -320,19 +404,25 @@ mod tests {
         assert_eq!(c.quality, 63.0);
         assert_eq!(
             c.arguments().join(" "),
-            "-i /v/clip.mov -c:v libvpx-vp9 -crf 63 -b:v 0 -c:a libvorbis -q:a 3 -y /v/clip-output.webm"
+            natives(
+                "-i /v/clip.mov -c:v libvpx-vp9 -crf 63 -b:v 0 -c:a libvorbis -q:a 3 -y /v/clip-output.webm"
+            )
         );
         c.use_bitrate = true;
         assert!(c.shows_bitrate() && !c.shows_quality_slider());
         assert_eq!(
             c.arguments().join(" "),
-            "-i /v/clip.mov -c:v libvpx-vp9 -b:v 3000k -c:a libvorbis -q:a 3 -y /v/clip-output.webm"
+            natives(
+                "-i /v/clip.mov -c:v libvpx-vp9 -b:v 3000k -c:a libvorbis -q:a 3 -y /v/clip-output.webm"
+            )
         );
         let mut c = conversion(C::Xvid);
         c.quality = 0.0;
         assert_eq!(
             c.arguments().join(" "),
-            "-i /v/clip.mov -c:v libxvid -q:v 1 -c:a libmp3lame -q:a 4 -y /v/clip-output.avi"
+            natives(
+                "-i /v/clip.mov -c:v libxvid -q:v 1 -c:a libmp3lame -q:a 4 -y /v/clip-output.avi"
+            )
         );
         let c = conversion(C::Vp8);
         assert!(
@@ -346,26 +436,28 @@ mod tests {
     fn animations() {
         let mut c = conversion(C::Gif);
         assert!(!c.shows_quality_controls() && !c.shows_bitrate());
-        c.load_input("/v/anim.webp");
+        c.load_input(&native("/v/anim.webp"));
         assert_eq!(
             c.arguments(),
             vec![
-                "-i",
-                "/v/anim.webp",
-                "-lavfi",
-                "palettegen=stats_mode=full[palette],[0:v][palette]paletteuse=dither=sierra2_4a",
-                "-y",
-                "/v/clip-output.gif"
+                "-i".to_string(),
+                native("/v/anim.webp"),
+                "-lavfi".to_string(),
+                "palettegen=stats_mode=full[palette],[0:v][palette]paletteuse=dither=sierra2_4a"
+                    .to_string(),
+                "-y".to_string(),
+                native("/v/clip-output.gif")
             ]
         );
         // An animated input loses the audio encoder.
         let mut c = conversion(C::X265);
-        c.load_input("/v/a.gif");
+        c.load_input(&native("/v/a.gif"));
         let text = c.arguments().join(" ");
         assert!(text.contains("-tag:v hvc1"));
         assert!(!text.contains("-c:a"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn windows_hardware_encoders_become_videotoolbox() {
         let c = conversion(C::HevcNvenc);
@@ -381,7 +473,7 @@ mod tests {
     fn names_with_an_extension_keep_it() {
         let mut c = conversion(C::X264);
         c.output_name = "final.mov".into();
-        assert_eq!(c.output_path(), "/v/final.mov");
+        assert_eq!(c.output_path(), native("/v/final.mov"));
         c.output_name = " ".into();
         assert_eq!(c.output_path(), "");
         let mut options = VideoConverterOptions::default();
@@ -398,5 +490,54 @@ mod tests {
             Some("Unknown encoder 'libxvid'")
         );
         assert_eq!(last_line(""), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hardware_encoders_as_upstream() {
+        assert_eq!(OFFERED.len(), 15);
+        assert_eq!(OFFERED[2], C::H264Nvenc);
+        assert_eq!(OFFERED[7], C::HevcQsv);
+        let line = |codec: C| {
+            let c = conversion(codec);
+            assert!(c.shows_bitrate() && !c.can_choose_rate_control());
+            c.arguments().join(" ")
+        };
+        assert_eq!(
+            line(C::H264Nvenc),
+            natives(
+                "-i /v/clip.mov -c:v h264_nvenc -preset p4 -tune hq -profile:v high -b:v 3000k -c:a aac -b:a 128k -y /v/clip-output.mp4"
+            )
+        );
+        assert_eq!(
+            line(C::HevcNvenc),
+            natives(
+                "-i /v/clip.mov -c:v hevc_nvenc -preset p4 -tune hq -profile:v main -b:v 3000k -tag:v hvc1 -c:a aac -b:a 128k -y /v/clip-output.mp4"
+            )
+        );
+        assert_eq!(
+            line(C::H264Amf),
+            natives(
+                "-i /v/clip.mov -c:v h264_amf -usage transcoding -profile main -quality balanced -b:v 3000k -c:a aac -b:a 128k -y /v/clip-output.mp4"
+            )
+        );
+        assert_eq!(
+            line(C::HevcAmf),
+            natives(
+                "-i /v/clip.mov -c:v hevc_amf -usage transcoding -profile main -quality balanced -b:v 3000k -tag:v hvc1 -c:a aac -b:a 128k -y /v/clip-output.mp4"
+            )
+        );
+        assert_eq!(
+            line(C::H264Qsv),
+            natives(
+                "-i /v/clip.mov -c:v h264_qsv -preset medium -b:v 3000k -c:a aac -b:a 128k -y /v/clip-output.mp4"
+            )
+        );
+        assert_eq!(
+            line(C::HevcQsv),
+            natives(
+                "-i /v/clip.mov -c:v hevc_qsv -preset medium -b:v 3000k -tag:v hvc1 -c:a aac -b:a 128k -y /v/clip-output.mp4"
+            )
+        );
     }
 }
