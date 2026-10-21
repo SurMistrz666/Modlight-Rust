@@ -1,11 +1,19 @@
-//! Modlight App for macOS.
+//! Modlight App for macOS and Windows.
 //!
 //! ```text
-//! Modlight                                  the app (settings in ~/Library/Application Support/Modlight)
+//! Modlight                                  the app (settings in ~/Library/Application Support/Modlight;
+//!                                           on Windows in Documents\Modlight, or where PersonalPath.cfg says)
+//! Modlight [-silent] [<file or folder>...]  Windows: start in the tray (Start with Windows passes
+//!                                           -silent); upload the files (Explorer's menu, Send to)
 //! Modlight --qa-profile <dir>               QA: settings and token in <dir>, no tray, no Keychain
 //! Modlight --qa-shot <screen> <out.png>     QA: draw one screen headlessly and exit
 //!          [--qa-lang en|pl] [--qa-skin <id>] [--qa-light] [--qa-size WxH] [--qa-scale N]
 //! ```
+//!
+//! On Windows this is a GUI program: no console window opens with it. Started from a
+//! console, `--qa-shot`, `--help` and argument errors write into that console.
+
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -22,11 +30,25 @@ struct Args {
     qa_profile: Option<PathBuf>,
     shot: Option<(String, PathBuf)>,
     look: qa::Look,
+    /// Windows: files and folders to upload (`UseCommandLineArgs`, one upload each).
+    #[cfg(windows)]
+    files: Vec<PathBuf>,
+    /// Windows: `-silent`, start in the tray without showing the window.
+    #[cfg(windows)]
+    silent: bool,
+    /// Windows: upstream's other commands, which this port does not take (logged).
+    #[cfg(windows)]
+    ignored: Vec<String>,
 }
 
 fn usage() -> String {
     format!(
-        "usage: Modlight [--qa-profile <dir>] [--qa-shot <screen> <out.png> [--qa-lang en|pl] [--qa-skin <id>] [--qa-light] [--qa-size WxH] [--qa-scale N]]\nscreens: {}",
+        "usage: Modlight [--qa-profile <dir>] [--qa-shot <screen> <out.png> [--qa-lang en|pl] [--qa-skin <id>] [--qa-light] [--qa-size WxH] [--qa-scale N]]{}\nscreens: {}",
+        if cfg!(windows) {
+            " [-silent] [<file or folder>...]"
+        } else {
+            ""
+        },
         qa::SCREENS.join(", ")
     )
 }
@@ -36,6 +58,12 @@ fn parse() -> Result<Args, String> {
         qa_profile: None,
         shot: None,
         look: qa::Look::default(),
+        #[cfg(windows)]
+        files: Vec::new(),
+        #[cfg(windows)]
+        silent: false,
+        #[cfg(windows)]
+        ignored: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -72,28 +100,83 @@ fn parse() -> Result<Args, String> {
             "-h" | "--help" => return Err(usage()),
             // macOS passes a process serial number to apps opened from Finder.
             other if other.starts_with("-psn_") => {}
+            // Upstream's command line (`CLIManager`): a word with one dash is a command,
+            // `-silent` (`-s`) the one this port takes; anything else is a file or folder.
+            #[cfg(windows)]
+            other if other.len() > 1 && other.starts_with('-') && !other.starts_with("--") => {
+                let name = &other[1..];
+                if name.eq_ignore_ascii_case("silent") || name.eq_ignore_ascii_case("s") {
+                    args.silent = true;
+                } else {
+                    args.ignored.push(other.to_string());
+                }
+            }
+            #[cfg(windows)]
+            other if !other.starts_with('-') => args.files.push(PathBuf::from(other)),
             other => return Err(format!("unknown argument '{other}'\n{}", usage())),
         }
     }
     Ok(args)
 }
 
+/// The personal folder (`Program.PersonalFolder`).
 fn profile_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(modlight_core::APP_NAME)
+    #[cfg(windows)]
+    {
+        modlight_app::personal_folder::resolve()
+    }
+    #[cfg(not(windows))]
+    {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(modlight_core::APP_NAME)
+    }
+}
+
+/// Say why the app cannot start: on the console, and on Windows, where nobody sees a
+/// console, in a message box too (upstream's `MessageBox.Show`).
+fn fail(message: &str, qa_mode: bool) {
+    eprintln!("{message}");
+    #[cfg(windows)]
+    if !qa_mode {
+        let _ = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title(modlight_core::APP_NAME)
+            .set_description(message)
+            .show();
+    }
+    #[cfg(not(windows))]
+    let _ = qa_mode;
+}
+
+/// `SingleInstanceManager`: when this user already runs Modlight, this start's files go
+/// to it, or it comes forward, and this start ends. A `-silent` start with nothing to
+/// hand over only asks whether one runs: a start with Windows must not raise a window.
+#[cfg(windows)]
+fn handed_to_running_instance(args: &Args) -> bool {
+    if !args.files.is_empty() {
+        platform::integration::forward_to_running_instance(&args.files)
+    } else if args.silent {
+        platform::integration::forward_to_running_instance(&[])
+    } else {
+        platform::integration::activate_running_instance()
+    }
 }
 
 fn main() -> ExitCode {
     let args = match parse() {
         Ok(args) => args,
         Err(message) => {
+            #[cfg(windows)]
+            modlight_app::win32::attach_parent_console();
             eprintln!("{message}");
             return ExitCode::from(2);
         }
     };
 
     if let Some((screen, out)) = &args.shot {
+        #[cfg(windows)]
+        modlight_app::win32::attach_parent_console();
         return match qa::render(screen, &args.look)
             .and_then(|image| image.save(out).map_err(|e| e.to_string()))
         {
@@ -109,11 +192,18 @@ fn main() -> ExitCode {
     }
 
     let qa_mode = args.qa_profile.is_some();
+    #[cfg(windows)]
+    if !qa_mode && handed_to_running_instance(&args) {
+        return ExitCode::SUCCESS;
+    }
     let profile = args.qa_profile.clone().unwrap_or_else(profile_dir);
     if let Err(error) = std::fs::create_dir_all(&profile) {
-        eprintln!(
-            "the settings folder {} cannot be created: {error}",
-            profile.display()
+        fail(
+            &format!(
+                "the settings folder {} cannot be created: {error}",
+                profile.display()
+            ),
+            qa_mode,
         );
         return ExitCode::FAILURE;
     }
@@ -125,6 +215,10 @@ fn main() -> ExitCode {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
+    #[cfg(windows)]
+    for command in &args.ignored {
+        log::info!("Command line: {command} is not supported here and was ignored");
+    }
     let first_launch = !profile
         .join(modlight_core::config::APPLICATION_CONFIG_FILE)
         .exists();
@@ -160,25 +254,59 @@ fn main() -> ExitCode {
         system_dark: None,
     };
     let bounds = config.main_window();
+    // `MainForm`: `-silent` or "Minimize to tray on start" keep the window hidden, when
+    // there is a tray icon to bring it back from.
+    #[cfg(windows)]
+    let start_hidden = !qa_mode && (args.silent || config.silent_run()) && config.show_tray();
+    #[cfg(not(windows))]
+    let start_hidden = false;
     let mut state = AppState::new(env, config, account);
     state.first_launch = first_launch && !qa_mode;
+    // This start's own files wait for the window like those of later starts.
+    #[cfg(windows)]
+    if !args.files.is_empty() {
+        platform::integration::receive_files(args.files.clone());
+    }
 
     let mut viewport = ViewportBuilder::default()
         .with_title(modlight_core::title())
         .with_inner_size(MAIN_SIZE)
-        .with_min_inner_size(MAIN_MIN_SIZE)
-        .with_fullsize_content_view(true)
-        .with_titlebar_shown(false)
-        .with_title_shown(false);
-    if bounds.remember_size
-        && let Some((w, h)) = bounds.size
+        .with_min_inner_size(MAIN_MIN_SIZE);
+    // The window draws its own title band (`ExtendClientAreaToDecorationsHint`): on a Mac
+    // under the traffic lights of a full-size content view; on Windows without the system
+    // frame, with its own caption buttons and resize edges (`shell::caption_buttons`).
+    #[cfg(not(windows))]
     {
-        viewport = viewport.with_inner_size(vec2(w as f32, h as f32).max(MAIN_MIN_SIZE));
+        viewport = viewport
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false);
     }
-    if bounds.remember_position
-        && let Some((x, y)) = bounds.position
+    #[cfg(windows)]
     {
+        viewport = viewport.with_decorations(false);
+    }
+    let remembered_size = bounds
+        .size
+        .filter(|_| bounds.remember_size)
+        .map(|(w, h)| vec2(w as f32, h as f32).max(MAIN_MIN_SIZE));
+    if let Some(size) = remembered_size {
+        viewport = viewport.with_inner_size(size);
+    }
+    let remembered = bounds.position.filter(|_| bounds.remember_position);
+    if let Some((x, y)) = remembered {
         viewport = viewport.with_position(egui::pos2(x as f32, y as f32));
+    }
+    // `WindowStartupLocation="CenterScreen"`.
+    #[cfg(windows)]
+    if remembered.is_none()
+        && let Some((x, y, w, h)) = platform::system::visible_frame()
+    {
+        let size = remembered_size.unwrap_or(MAIN_SIZE);
+        viewport = viewport.with_position(egui::pos2(
+            (x + (w - size.x) / 2.0).max(x),
+            (y + (h - size.y) / 2.0).max(y),
+        ));
     }
     if bounds.maximized {
         viewport = viewport.with_maximized(true);
@@ -199,11 +327,15 @@ fn main() -> ExitCode {
     match eframe::run_native(
         modlight_core::APP_NAME,
         options,
-        Box::new(move |cc| Ok(Box::new(ModlightApp::new(cc, state, mode)))),
+        Box::new(move |cc| {
+            let mut app = ModlightApp::new(cc, state, mode);
+            app.start_hidden = start_hidden;
+            Ok(Box::new(app))
+        }),
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Modlight could not start: {error}");
+            fail(&format!("Modlight could not start: {error}"), qa_mode);
             ExitCode::FAILURE
         }
     }

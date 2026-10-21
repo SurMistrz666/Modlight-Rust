@@ -102,3 +102,9 @@ pub fn forward_to_running_instance(files: &[PathBuf]) -> bool {
 pub fn activate_running_instance() -> bool {
     false
 }
+
+/// Whether a later start of the program asked this one to come forward since the last
+/// call.
+pub fn take_activation_request() -> bool {
+    false
+}

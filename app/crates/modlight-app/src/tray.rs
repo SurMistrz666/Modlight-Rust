@@ -1,12 +1,21 @@
-//! The menu bar icon and its menu (`TrayIconService`, `MainMenuBuilder.BuildTrayMenu`).
+//! The tray icon and its menu (`TrayIconService`, `MainMenuBuilder.BuildTrayMenu`): the
+//! notification area icon on Windows, the menu bar extra on a Mac.
 //!
 //! Only in the real app: QA runs never create it. The menu is built from the same
 //! [`Entry`] lists the window's menus use, in upstream's order, with what exists so far:
 //! the account, Upload, the after-capture and after-upload tasks, Settings, the
 //! screenshots folder, recent items, Show Modlight, Exit. Capture, Tools and the hotkey
 //! switch join it with phase 3.
+//!
+//! On Windows the icon answers the mouse as upstream's `WinFormsTrayIconService`: the
+//! right button opens the menu, the left button runs "On tray icon left click", a double
+//! click "On tray icon double left click" (the single click waits the system's
+//! double-click time when a double-click action is set), the middle button "On tray icon
+//! middle click". A Mac's menu bar extra opens its menu on any click.
 
 use std::sync::mpsc::{Receiver, channel};
+#[cfg(windows)]
+use std::time::{Duration, Instant};
 
 use modlight_core::icons;
 use modlight_core::l10n::{Arg, format, s, t};
@@ -18,6 +27,8 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use crate::commands::Command;
 use crate::menus::{Entry, Toggle};
 use crate::state::AppState;
+#[cfg(windows)]
+use modlight_core::hotkeys::HotkeyType;
 
 const EXIT: &str = "exit";
 /// Ids of entries that bring the app forward (they open a window) start with this;
@@ -36,6 +47,119 @@ pub struct Tray {
     /// The command behind each id, by index.
     commands: Vec<Command>,
     events: Receiver<String>,
+    /// Windows: the icon's own clicks.
+    #[cfg(windows)]
+    clicks: Clicks,
+    /// Windows: Exit was chosen; the window closes the app on its next pass.
+    #[cfg(windows)]
+    exit: bool,
+}
+
+/// Windows: a button of the mouse let go over the icon, and when.
+#[cfg(windows)]
+enum Click {
+    Left(Instant),
+    Middle,
+}
+
+/// Windows: the icon's clicks, and the single click that may still become a double one
+/// (`_leftClickCount` and `_singleClickTimer`).
+#[cfg(windows)]
+struct Clicks {
+    events: Receiver<Click>,
+    first_left: Option<Instant>,
+    double_click: Duration,
+    wake: egui::Context,
+}
+
+/// Windows: the job a tray action setting names (`ApplicationConfig.Tray...Action`).
+#[cfg(windows)]
+fn tray_action(state: &AppState, member: &str, default: HotkeyType) -> HotkeyType {
+    state
+        .config
+        .get(member)
+        .and_then(|v| v.as_str())
+        .and_then(HotkeyType::parse)
+        .unwrap_or(default)
+}
+
+#[cfg(windows)]
+impl Clicks {
+    fn new(wake: &egui::Context) -> Clicks {
+        let (sender, events) = channel();
+        let repaint = wake.clone();
+        tray_icon::TrayIconEvent::set_event_handler(Some(move |event| {
+            use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+            let click = match event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => Click::Left(Instant::now()),
+                TrayIconEvent::Click {
+                    button: MouseButton::Middle,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => Click::Middle,
+                _ => return,
+            };
+            let _ = sender.send(click);
+            repaint.request_repaint();
+        }));
+        Clicks {
+            events,
+            first_left: None,
+            double_click: crate::win32::double_click_time(),
+            wake: wake.clone(),
+        }
+    }
+
+    /// `OnMouseUp` and `OnSingleClickTimerTick`: the jobs the clicks since the last call
+    /// asked for.
+    fn jobs(&mut self, state: &AppState) -> Vec<Command> {
+        let left = tray_action(state, "TrayLeftClickAction", HotkeyType::RectangleRegion);
+        let double = tray_action(
+            state,
+            "TrayLeftDoubleClickAction",
+            HotkeyType::OpenMainWindow,
+        );
+        let middle = tray_action(
+            state,
+            "TrayMiddleClickAction",
+            HotkeyType::ClipboardUploadWithContentViewer,
+        );
+        let mut jobs = Vec::new();
+        for click in self.events.try_iter() {
+            match click {
+                Click::Middle => jobs.push(middle),
+                Click::Left(_) if double == HotkeyType::None => jobs.push(left),
+                Click::Left(at) => match self.first_left.take() {
+                    Some(first) if at.duration_since(first) < self.double_click => {
+                        jobs.push(double)
+                    }
+                    Some(_) => {
+                        // The first click's wait ran out unseen: it was a single click.
+                        jobs.push(left);
+                        self.first_left = Some(at);
+                    }
+                    None => self.first_left = Some(at),
+                },
+            }
+        }
+        if let Some(first) = self.first_left {
+            let waited = first.elapsed();
+            if waited >= self.double_click {
+                self.first_left = None;
+                jobs.push(left);
+            } else {
+                self.wake.request_repaint_after(self.double_click - waited);
+            }
+        }
+        jobs.into_iter()
+            .filter(|job| *job != HotkeyType::None)
+            .map(Command::RunJob)
+            .collect()
+    }
 }
 
 /// `BuildTrayMenu`, as entries.
@@ -273,9 +397,12 @@ impl Tray {
         let wake = ctx.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let id = event.id().0.clone();
+            // A Mac's hidden window may never be redrawn to receive a close: leave from
+            // here; the settings are saved as they change. Windows draws a hidden window
+            // on request, so there the window closes the app properly and the icon
+            // leaves the notification area with it.
+            #[cfg(not(windows))]
             if id == EXIT {
-                // The window may be hidden and not drawing: leave from here. The settings
-                // are saved as they change, so there is nothing left to write.
                 std::process::exit(0);
             }
             if id.starts_with(SHOWS) {
@@ -286,10 +413,14 @@ impl Tray {
         }));
         let entries = tray_entries(state);
         let (menu, commands) = build_menu(&entries);
-        let tray = TrayIconBuilder::new()
+        let builder = TrayIconBuilder::new()
             .with_icon(icon.clone())
             .with_tooltip(modlight_core::APP_NAME)
-            .with_menu(Box::new(menu))
+            .with_menu(Box::new(menu));
+        // Windows: the left button runs its action instead of opening the menu.
+        #[cfg(windows)]
+        let builder = builder.with_menu_on_left_click(false);
+        let tray = builder
             .build()
             .map_err(|error| log::warn!("Modlight: the tray icon could not be created: {error}"))
             .ok()?;
@@ -300,6 +431,10 @@ impl Tray {
             built_for: entries,
             commands,
             events,
+            #[cfg(windows)]
+            clicks: Clicks::new(ctx),
+            #[cfg(windows)]
+            exit: false,
         })
     }
 
@@ -333,22 +468,51 @@ impl Tray {
         self.shown_progress = progress;
     }
 
-    /// What the menu asked for since the last frame.
-    pub fn commands(&self) -> Vec<Command> {
-        self.events
-            .try_iter()
+    /// What the menu (and on Windows the icon's clicks) asked for since the last frame.
+    pub fn commands(&mut self, state: &AppState) -> Vec<Command> {
+        let ids: Vec<String> = self.events.try_iter().collect();
+        #[cfg(windows)]
+        if ids.iter().any(|id| id == EXIT) {
+            self.exit = true;
+        }
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut commands: Vec<Command> = ids
+            .iter()
             .filter_map(|id| {
                 let index: usize = id.get(1..)?.parse().ok()?;
                 self.commands.get(index).cloned()
             })
-            .collect()
+            .collect();
+        #[cfg(windows)]
+        commands.extend(self.clicks.jobs(state));
+        #[cfg(not(windows))]
+        let _ = state;
+        commands
+    }
+
+    /// Windows: whether Exit was chosen since the last call.
+    #[cfg(windows)]
+    pub fn take_exit(&mut self) -> bool {
+        std::mem::take(&mut self.exit)
     }
 }
 
+/// The icon's side in pixels: the menu bar's at 2x on a Mac; on Windows twice the
+/// notification area's 16, which the system scales to its own size.
+#[cfg(not(windows))]
+const ICON_SIZE: u32 = 36;
+#[cfg(windows)]
+const ICON_SIZE: u32 = 32;
+
 fn app_tray_icon() -> Option<Icon> {
     crate::app::app_icon().and_then(|image| {
-        let small = image::imageops::resize(&image, 36, 36, image::imageops::FilterType::Lanczos3);
-        Icon::from_rgba(small.into_raw(), 36, 36).ok()
+        let small = image::imageops::resize(
+            &image,
+            ICON_SIZE,
+            ICON_SIZE,
+            image::imageops::FilterType::Lanczos3,
+        );
+        Icon::from_rgba(small.into_raw(), ICON_SIZE, ICON_SIZE).ok()
     })
 }
 
@@ -369,9 +533,9 @@ const DIGITS: [[u8; 7]; 10] = [
 
 /// `Helpers.GetProgressIcon`: a dark square filled from the bottom in (16, 116, 193)
 /// up to the percentage, a lighter line on the fill's edge, and the number (0 to 99)
-/// in white in the middle. Drawn at the menu bar's 2x size.
+/// in white in the middle. Drawn at the icon's size, digits at twice upstream's pixels.
 pub fn progress_image(percentage: i32) -> image::RgbaImage {
-    const SIZE: u32 = 36;
+    const SIZE: u32 = ICON_SIZE;
     const SCALE: u32 = 2;
     let percentage = percentage.clamp(0, 100);
     let fill = image::Rgba([16, 116, 193, 255]);
@@ -432,12 +596,13 @@ fn progress_icon(percentage: i32) -> Option<Icon> {
 mod tests {
     #[test]
     fn the_progress_icon_fills_from_the_bottom() {
+        let size = super::ICON_SIZE;
         let image = super::progress_image(50);
         assert_eq!(image.get_pixel(0, 0).0[3], 0, "the corner pixel is cleared");
-        assert_eq!(image.get_pixel(1, 35).0, [16, 116, 193, 255]);
+        assert_eq!(image.get_pixel(1, size - 1).0, [16, 116, 193, 255]);
         assert_eq!(image.get_pixel(1, 1).0, [39, 39, 39, 255]);
         assert_eq!(
-            image.get_pixel(1, 18).0,
+            image.get_pixel(1, size / 2).0,
             [87, 157, 211, 255],
             "the edge line"
         );

@@ -40,6 +40,12 @@ pub struct ModlightApp {
     tray_checked_at: f64,
     /// The window title last given to the system.
     window_title: String,
+    /// Windows, `-silent` or "Minimize to tray on start": hide the window after its first
+    /// frame (eframe shows the window once it has drawn it).
+    pub start_hidden: bool,
+    /// Windows: the taskbar button's progress (`TaskbarManager`).
+    #[cfg(windows)]
+    taskbar: Option<crate::win32::TaskbarProgress>,
 }
 
 /// The app icon (`ShareX/Modlight_Icon.ico`), decoded at its largest.
@@ -82,6 +88,9 @@ impl ModlightApp {
             copied: Vec::new(),
             tray_checked_at: f64::NEG_INFINITY,
             window_title: modlight_core::title(),
+            start_hidden: false,
+            #[cfg(windows)]
+            taskbar: None,
         };
         if mode != Mode::Shot {
             app.start(ctx);
@@ -99,6 +108,11 @@ impl ModlightApp {
         if mode == Mode::Normal && app.state.config.show_tray() {
             app.tray = crate::tray::Tray::new(ctx, &app.state);
         }
+        #[cfg(windows)]
+        if mode == Mode::Normal {
+            app.taskbar = crate::win32::window_handle(cc).map(crate::win32::TaskbarProgress::new);
+            crate::win32::wake_for_hotkeys(ctx.clone());
+        }
         app
     }
 
@@ -113,8 +127,8 @@ impl ModlightApp {
         state.start_uploads();
         state.start_hotkeys();
         crate::media_windows::on_start(state);
-        // A Mac has no installer to open the first-time configuration; the first
-        // launch of the app bundle does.
+        // There is no installer to open the first-time configuration: the first launch
+        // of the app bundle (on Windows, of an installed copy) does.
         if state.first_launch
             && state.mode == Mode::Normal
             && crate::platform::integration::in_app_bundle()
@@ -209,10 +223,75 @@ impl ModlightApp {
                 _ => -1,
             };
             tray.show_progress(progress);
-            for command in tray.commands() {
+            for command in tray.commands(&self.state) {
                 self.state.push(command);
             }
         }
+        // `TaskbarManager`: the same average on the taskbar button, when asked for.
+        #[cfg(windows)]
+        if let Some(taskbar) = &mut self.taskbar {
+            let enabled = self
+                .state
+                .config
+                .get("TaskbarProgressEnabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let progress = self
+                .state
+                .uploads
+                .tasks
+                .average_progress()
+                .filter(|_| enabled)
+                .map(|progress| progress as i32);
+            taskbar.show(progress);
+        }
+    }
+
+    /// Windows, before every frame, and alone while the window is minimised (eframe then
+    /// draws nothing and runs no frame): Exit from the tray menu closes the app; a later
+    /// start asked for the window (`ForceActivate`); and what the tray icon, the hotkeys
+    /// and Explorer asked for while the window was minimised brings it back so it runs
+    /// now, as upstream's `ForceActivate` does for the command line, instead of at the
+    /// next restore.
+    #[cfg(windows)]
+    fn windows_logic(&mut self, ctx: &egui::Context) {
+        if self.mode != Mode::Normal {
+            return;
+        }
+        let mut show = crate::platform::integration::take_activation_request();
+        let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        if let Some(tray) = &mut self.tray {
+            if tray.take_exit() {
+                self.state.save_config();
+                self.allow_close = true;
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+                return;
+            }
+            if minimized {
+                let commands = tray.commands(&self.state);
+                show |= !commands.is_empty();
+                for command in commands {
+                    self.state.push(command);
+                }
+            }
+        }
+        if minimized {
+            show |= self.state.pump_hotkeys();
+            let files = crate::platform::integration::take_service_files();
+            if !files.is_empty() {
+                let settings = self.state.default_task_settings();
+                self.state.upload_files_with(files, settings);
+                show = true;
+            }
+        }
+        if show {
+            ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
+        }
+        // Files from Explorer and requests from later starts arrive on another thread,
+        // which cannot wake the window: look for them twice a second.
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
 
     /// The main window's close button: hide to the tray, or quit (`OnClosing`).
@@ -825,6 +904,9 @@ impl ModlightApp {
     /// One frame of the whole app, drawn into `ui` (the main window).
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        if std::mem::take(&mut self.start_hidden) && self.tray.is_some() {
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        }
         self.before(&ctx);
         self.handle_close(&ctx);
         crate::shell::ui(ui, &mut self.state, self.logo.as_ref());
@@ -847,6 +929,11 @@ impl ModlightApp {
 }
 
 impl eframe::App for ModlightApp {
+    #[cfg(windows)]
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.windows_logic(ctx);
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.frame(ui);
     }
