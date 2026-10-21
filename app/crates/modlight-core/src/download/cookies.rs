@@ -3,9 +3,10 @@
 //! The file is a live Google login. It lives under the personal folder and nowhere else:
 //! never in `ApplicationConfig.json`, never in a setting, never uploaded, never logged
 //! (only the cookie count is). It is handed to yt-dlp with `--cookies` for YouTube links
-//! only. On macOS the folder is created 0700 and the file written 0600, the Unix
-//! spelling of the owner-only ACL upstream puts on both (yt-dlp replaces the jar through
-//! a temporary file and a rename after every run, so the folder is where the rule has to
+//! only. On Windows the folder and the file get upstream's owner-only ACL (the user as
+//! owner, one entry, inherited entries dropped); on macOS the folder is created 0700 and
+//! the file written 0600, the Unix spelling of it (yt-dlp replaces the jar through a
+//! temporary file and a rename after every run, so the folder is where the rule has to
 //! live).
 
 use std::io::Write;
@@ -100,10 +101,166 @@ fn owner_only_dir(path: &Path) -> std::io::Result<()> {
 
 #[cfg(not(unix))]
 fn owner_only_dir(path: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(path)
+    std::fs::create_dir_all(path)?;
+    #[cfg(windows)]
+    if let Err(error) = acl::protect(path, true) {
+        // Best effort, as upstream: refusing the sign-in over a permission the person
+        // may have no way to grant would be worse.
+        log::warn!("YouTube sign-in: the folder could not be made owner-only: {error}");
+    }
+    Ok(())
 }
 
-/// Write the jar in one go, born 0600 (never widened afterwards), and say how many
+/// Windows: upstream's owner-only ACL (`YouTubeCookies.Prepare` and `ProtectFile`): the
+/// current user as owner and the one entry, full control, inherited by what the folder
+/// holds; the inherited entries are dropped (a protected DACL), so whoever could read
+/// the personal folder cannot read this.
+#[cfg(windows)]
+pub(crate) mod acl {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        EXPLICIT_ACCESS_W, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW,
+        SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
+    };
+    use windows_sys::Win32::Security::{
+        ACL, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, GetTokenInformation, NO_INHERITANCE,
+        OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+        TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// `FileSystemRights.FullControl`.
+    const FULL_CONTROL: u32 = 0x001F_01FF;
+
+    /// The current user's SID, as the bytes of its `TOKEN_USER`.
+    fn token_user() -> std::io::Result<Vec<u64>> {
+        // SAFETY: the token handle is ours and closed below; the buffer is sized by the
+        // first call and aligned for TOKEN_USER (u64 words).
+        unsafe {
+            let mut token: HANDLE = std::ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mut needed = 0u32;
+            GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed);
+            let mut buffer = vec![0u64; (needed as usize).div_ceil(8).max(1)];
+            let ok = GetTokenInformation(
+                token,
+                TokenUser,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+                &mut needed,
+            );
+            let error = std::io::Error::last_os_error();
+            CloseHandle(token);
+            if ok == 0 {
+                return Err(error);
+            }
+            Ok(buffer)
+        }
+    }
+
+    /// Make `path` owned by and open to the current user alone; a folder passes the
+    /// rule on to everything created in it.
+    pub fn protect(path: &Path, folder: bool) -> std::io::Result<()> {
+        let user = token_user()?;
+        // SAFETY: `user` holds a TOKEN_USER whose SID points inside the same buffer,
+        // which outlives every call below; the ACL SetEntriesInAclW allocates is freed
+        // with LocalFree.
+        unsafe {
+            let sid = (*(user.as_ptr() as *const TOKEN_USER)).User.Sid;
+            let access = EXPLICIT_ACCESS_W {
+                grfAccessPermissions: FULL_CONTROL,
+                grfAccessMode: SET_ACCESS,
+                grfInheritance: if folder {
+                    CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE
+                } else {
+                    NO_INHERITANCE
+                },
+                Trustee: TRUSTEE_W {
+                    pMultipleTrustee: std::ptr::null_mut(),
+                    MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+                    TrusteeForm: TRUSTEE_IS_SID,
+                    TrusteeType: TRUSTEE_IS_USER,
+                    ptstrName: sid.cast(),
+                },
+            };
+            let mut acl: *mut ACL = std::ptr::null_mut();
+            let result = SetEntriesInAclW(1, &access, std::ptr::null(), &mut acl);
+            if result != ERROR_SUCCESS {
+                return Err(std::io::Error::from_raw_os_error(result as i32));
+            }
+            let wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let result = SetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION
+                    | DACL_SECURITY_INFORMATION
+                    | PROTECTED_DACL_SECURITY_INFORMATION,
+                sid,
+                std::ptr::null_mut(),
+                acl,
+                std::ptr::null(),
+            );
+            LocalFree(acl.cast());
+            if result != ERROR_SUCCESS {
+                return Err(std::io::Error::from_raw_os_error(result as i32));
+            }
+        }
+        Ok(())
+    }
+
+    /// For tests: whether the DACL is protected and how many entries it has.
+    #[cfg(test)]
+    pub fn describe(path: &Path) -> (bool, u32) {
+        use windows_sys::Win32::Security::Authorization::GetNamedSecurityInfoW;
+        use windows_sys::Win32::Security::{
+            ACL_SIZE_INFORMATION, AclSizeInformation, GetAclInformation,
+            GetSecurityDescriptorControl, PSECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
+        };
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: plain queries on a path; the descriptor is freed with LocalFree.
+        unsafe {
+            let mut dacl: *mut ACL = std::ptr::null_mut();
+            let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+            let result = GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            );
+            assert_eq!(result, ERROR_SUCCESS);
+            let mut control = 0u16;
+            let mut revision = 0u32;
+            GetSecurityDescriptorControl(descriptor, &mut control, &mut revision);
+            let mut size: ACL_SIZE_INFORMATION = std::mem::zeroed();
+            GetAclInformation(
+                dacl,
+                (&mut size as *mut ACL_SIZE_INFORMATION).cast(),
+                std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            );
+            LocalFree(descriptor);
+            (control & SE_DACL_PROTECTED != 0, size.AceCount)
+        }
+    }
+}
+// Write the jar in one go, born 0600 (never widened afterwards), and say how many
 /// cookies it holds. UTF-8 without a byte order mark: Python refuses the whole file
 /// otherwise.
 pub fn write(path: &Path, cookies: &[NetscapeCookie]) -> std::io::Result<usize> {
@@ -126,6 +283,11 @@ pub fn write(path: &Path, cookies: &[NetscapeCookie]) -> std::io::Result<usize> 
         file.sync_all()?;
     }
     std::fs::rename(&temporary, path)?;
+    // `ProtectFile`: the same rule on the jar itself, whatever it inherited.
+    #[cfg(windows)]
+    if let Err(error) = acl::protect(path, false) {
+        log::warn!("YouTube sign-in: the cookie file could not be made owner-only: {error}");
+    }
     Ok(written)
 }
 
@@ -332,6 +494,17 @@ mod tests {
                 .mode();
             assert_eq!(file & 0o777, 0o600);
             assert_eq!(folder & 0o777, 0o700);
+        }
+        #[cfg(windows)]
+        {
+            // A protected DACL with the one entry for this user, on both.
+            assert_eq!(acl::describe(jar.folder()), (true, 1));
+            assert_eq!(acl::describe(&jar.file_path()), (true, 1));
+            // The folder passes it on to what yt-dlp writes there.
+            let written_by_ytdlp = jar.folder().join("cookies.txt.tmp-yt");
+            std::fs::write(&written_by_ytdlp, b"x").unwrap();
+            assert_eq!(acl::describe(&written_by_ytdlp).1, 1);
+            std::fs::remove_file(&written_by_ytdlp).unwrap();
         }
         assert!(jar.is_signed_in());
         assert_eq!(
