@@ -37,7 +37,7 @@ ort.workspace = true
 ort = { workspace = true, features = ["coreml"] }
 
 [target.'cfg(windows)'.dependencies]
-ort = { workspace = true, features = ["directml"] }
+ort = { workspace = true, features = ["directml", "copy-dylibs"] }
 # Windows: job objects for child processes, free disk space, file identity.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
 
