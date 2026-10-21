@@ -104,6 +104,7 @@ action errors), so upstream `.env` files keep their meaning.
 | `data/{uploads,upload_query,folders,duplicates,admin_files}.rs` | `lib/data/` same names | done |
 | `routes/api/{uploads,uploads_check,folders,duplicates,shortlinks,link_info,avatar,background,admin_disk}.rs`, `routes/{avatar,s_code,s_code_name}.rs` | `app/api/{uploads,uploads/check,folders,duplicates,shortlinks,link-info,avatar,background,admin/disk}`, `app/avatar/[userCode]`, `app/bg/[userCode]`, `app/s/[code]`, `app/s/[code]/[name]` | done (parity: `library.py`, `library_routes.py`) |
 | `runtime/limits.rs` | `lib/runtime/limits.ts` | done |
+| `turnstile.rs`, `actions/turnstile.rs` | none (not upstream) | optional Cloudflare Turnstile on the public entry points and its admin card (section 9, item 43) |
 
 Reference sources (read-only, never executed) of the exact library versions
 upstream pins are unpacked in `_scratch/srv-skeleton/src/`: better-auth 1.6.13,
@@ -532,6 +533,89 @@ Deliberate, each for a reason:
     Accept-Encoding`; route handlers (`/api/*`, media, `/oembed`, `/embed`,
     `/icon.svg`), the raw upload paths and every `206` never are
     (`http::compression`). Bytes differ from Node's zlib (same content).
+43. **Intended difference: optional Cloudflare Turnstile** (2026-10-21, a new
+    feature the owner asked for on top of the 1:1 port; `src/turnstile.rs`,
+    `src/actions/turnstile.rs`, the SPA's `src/turnstile/`). **With no
+    complete configuration nothing changes**: no check, no outbound call, the
+    CSP and every payload as before except `layouts.root.config.turnstileSiteKey:
+    null`, the `turnstile` dictionary in `layouts.root.messages` and the admin
+    page's `turnstile` prop.
+    - *Configuration*: the admin panel's "Cloudflare Turnstile" card (Admin ->
+      Settings: switch, site key, write-only secret key, "Test") stores
+      `turnstile_enabled` ("on"/"off"), `turnstile_site_key` and
+      `turnstile_secret_enc` (secret box, purpose `turnstile`). Env fallback
+      `TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY` (both, trimmed; one alone
+      warns once and stays off). Block precedence as for SMTP: once the switch
+      row holds a value the panel decides everything (an environment secret
+      never fills a panel block), "use the environment" sets the three rows to
+      NULL. On = switch on + site key + a secret that decrypts. A 30 s
+      snapshot per process (`AppState::turnstile`), re-read by the root layout
+      and the admin page, warmed at boot; a database failure keeps the last
+      known configuration (or the environment's) for one period.
+    - *Where*: `POST /api/auth/sign-in/email`, `/sign-up/email`,
+      `/request-password-reset` (any POST whose path below `/api/auth`
+      contains one of them, better-auth's captcha plugin's `defaultEndpoints`
+      and `includes` match), in `auth::api::handle` after the rate limiter
+      and before the body is read; and the actions
+      `login-identifier.signInWithIdentifier` (after its own throttle) and
+      `invite.acceptInvitation` (after its throttle, before the invitation is
+      read). Server-side calls (`auth::server::call_endpoint`) are not checked,
+      so the sign-in those actions perform does not spend a second siteverify
+      on a single-use token. Not: 2FA, reset-password itself, verification
+      links, API tokens.
+    - *Token and refusals*: header `x-captcha-response` (the plugin's), so no
+      action signature or body changes. Better Auth routes answer the plugin's
+      codes as better-call APIErrors: missing `400 MISSING_RESPONSE`, refused
+      `403 VERIFICATION_FAILED`; Cloudflare unreachable `503
+      SERVICE_UNAVAILABLE` "CAPTCHA service unavailable" (the plugin answers
+      500 `UNKNOWN_ERROR` "Something went wrong" and logs that code). Actions
+      answer in their own shape: `{status: "captcha" | "captcha-unavailable"}`,
+      `{ok: false, reason: "captcha" | "captcha-unavailable"}`. The SPA shows
+      `turnstile.widget.*` texts (en, pl) for each.
+    - *Verification*: `POST https://challenges.cloudflare.com/turnstile/v0/siteverify`,
+      form-encoded `secret`, `response`, `remoteip` (the plugin posts JSON;
+      Cloudflare takes both). `remoteip` = `password::client_ip` (the action
+      throttles' rule: `X-Real-IP` only behind TRUST_PROXY, else the socket
+      peer) when it is an IP, sent unnormalised (Better Auth's limiter key
+      cuts IPv6 to /64, which is no address). hyper-util client with
+      hyper-rustls (ring, Mozilla roots like the mail transport), 10 s for the
+      whole exchange, answer capped at 64 KiB; only HTTP 200 with
+      `"success": true` passes; anything else unanswered is "unavailable" and
+      refuses (fails closed). A token over 2048 characters is refused without
+      a call, an empty one is "missing" without a call. Logged: Cloudflare's
+      error codes and transport errors, never the secret or the token.
+    - *Order*: the plugin runs before the rate limiter; here after it, so a
+      flood of bad tokens is throttled before it reaches Cloudflare, and a
+      refusal is recorded against the bucket like any other answer.
+    - *Saving*: a save that turns the check on first sends the secret with
+      Cloudflare's dummy token (`XXXX.DUMMY.TOKEN.XXXX`): `invalid-input-secret`
+      / `missing-input-secret` refuses the save (`secret-rejected`), no answer
+      refuses it (`unreachable`), because a wrong secret would refuse every
+      sign-in, the administrator's included. A changed site key forgets the
+      stored secret. The "Test" button does the same probe (also reporting a
+      test secret that accepts everyone); both share a throttle of 10 per 10
+      minutes per administrator. Audit entries `turnstile.settings_changed`
+      (row names, `secretChanged`) and `turnstile.settings_cleared`.
+    - *CSP*: while on, `appCsp` and the `/authorize` policy get
+      `https://challenges.cloudflare.com` appended to `script-src` and
+      `frame-src` (`http/headers.rs`, both variants built at startup, the
+      snapshot picks one per response), on every page, because the SPA reaches
+      `/login` from any page without a new document. `connect-src` is not
+      needed (the widget talks to Cloudflare from its own frame; checked in
+      Chrome with the test keys: no violation).
+    - *SPA and i18n*: the four auth forms became ports in
+      `web/src/overrides/components/auth/` (CONTRACT.md 11); the strings are
+      `messages/<locale>/turnstile.json`, an 18th client namespace
+      (`i18n::NAMESPACES`), so upstream's files stay verbatim.
+    - *Locked out* (a widget whose host names do not match, a secret revoked
+      at Cloudflare): `UPDATE settings SET value = 'off' WHERE key =
+      'turnstile_enabled';` takes effect within 30 s (or restart); setting the
+      three `turnstile_*` rows to NULL hands control back to the environment.
+    - Tests: `turnstile::tests` (precedence, codes, CSP in `http::headers`),
+      `tests/turnstile.rs` (a siteverify stub on 127.0.0.1: pass, refused,
+      missing, oversized, network error, timeout, off; every entry point),
+      `tests/turnstile_db.rs` (the card, the secret box, the audit, block
+      precedence, real sign-ups and sign-ins), `web/tests/turnstile.test.tsx`.
 
 ## 10. Verified on 2026-10-18
 

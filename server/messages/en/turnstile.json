@@ -27,6 +27,7 @@
     "secret": "Secret key",
     "secretKeep": "Leave empty to keep the stored secret key",
     "secretEmpty": "No secret key stored",
+    "secretEnvPlaceholder": "Set in TURNSTILE_SECRET_KEY",
     "secretUnreadablePlaceholder": "Type the secret key again",
     "secretSet": "A secret key is stored. It is encrypted at rest and never sent back to the browser, so this field is always empty.",
     "secretUnset": "No secret key is stored. A new site key needs its own secret key.",

@@ -27,6 +27,7 @@
     "secret": "Klucz tajny",
     "secretKeep": "Puste pole zostawia zapisany klucz tajny",
     "secretEmpty": "Brak zapisanego klucza tajnego",
+    "secretEnvPlaceholder": "Ustawiony w TURNSTILE_SECRET_KEY",
     "secretUnreadablePlaceholder": "Wpisz klucz tajny ponownie",
     "secretSet": "Klucz tajny jest zapisany. Przechowujemy go zaszyfrowanego i nigdy nie odsyłamy do przeglądarki, dlatego to pole zawsze jest puste.",
     "secretUnset": "Nie ma zapisanego klucza tajnego. Nowy klucz witryny wymaga własnego klucza tajnego.",
