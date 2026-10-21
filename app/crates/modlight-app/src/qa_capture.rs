@@ -233,9 +233,9 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         }
         "after-capture" | "after-capture-recording" => {
             let file = (screen == "after-capture-recording").then(|| {
-                std::path::PathBuf::from(
+                std::path::PathBuf::from(crate::qa::fixture_path(
                     "/Users/alex/Pictures/Modlight/2026-10/Notes_k3P9xQ2mWz.mp4",
-                )
+                ))
             });
             let metadata = if file.is_some() {
                 TaskMetadata::default()
