@@ -2,6 +2,10 @@
 //! (`ShareX.UploadersLib/FileUploaders/Modlight.cs` on top of `Uploader.SendRequestFile`,
 //! `TransferData` and `ProcessWebResponse`, and `Helpers/RequestHelpers.cs`).
 //!
+//! The app sends only files up to one tus chunk (50 MiB) this way: a larger one goes over
+//! tus in chunks (`modlight_core::tasks::uploader`), because a proxy such as Cloudflare's
+//! refuses a single request body over 100 MB before the server sees it.
+//!
 //! On the wire, what ShareX writes:
 //!
 //! * the boundary is twenty dashes and `DateTime.Now.Ticks` in lower-case hex;
