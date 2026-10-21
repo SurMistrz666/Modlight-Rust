@@ -274,9 +274,11 @@ impl AppState {
             ));
     }
 
-    /// `MakeActiveWindowBorderless` the macOS way (`modlight_tools::borderless`): the
-    /// active window fills its screen, and goes back the second time. QA and headless
-    /// runs never touch other apps' windows.
+    /// `MakeActiveWindowBorderless`: the active window fills its screen
+    /// (`modlight_tools::borderless` picks which), and goes back the second time. On
+    /// Windows it also loses its caption and frame, as upstream; on macOS the frame
+    /// stays (another app's title bar cannot be taken off). QA and headless runs never
+    /// touch other apps' windows.
     pub fn active_window_borderless(&mut self, settings: TaskSettings) {
         if self.env.qa || self.mode != crate::app::Mode::Normal {
             log::info!("QA run: the active window is left as it is");
@@ -317,9 +319,28 @@ impl AppState {
         }
     }
 
-    /// `MakeActiveWindowTopMost`: macOS has no public way to keep another app's window
-    /// above the others (window levels belong to the app that owns the window), so the
-    /// hotkey says so and points at Pin to screen.
+    /// `MakeActiveWindowTopMost`: on Windows the active window's top-most state is
+    /// toggled (`WS_EX_TOPMOST`) and the "action completed" sound plays, as upstream.
+    /// macOS has no public way to keep another app's window above the others (window
+    /// levels belong to the app that owns the window), so there the hotkey says so and
+    /// points at Pin to screen. QA and headless runs never touch other apps' windows.
+    #[cfg(windows)]
+    pub fn active_window_top_most(&mut self, settings: TaskSettings) {
+        if self.env.qa || self.mode != crate::app::Mode::Normal {
+            log::info!("QA run: the active window is left as it is");
+            return;
+        }
+        if crate::platform::ax::toggle_active_window_topmost().is_some() {
+            self.play_task_sound(NotificationSound::ActionCompleted, &settings);
+        }
+    }
+
+    /// `MakeActiveWindowTopMost`: on Windows the active window's top-most state is
+    /// toggled (`WS_EX_TOPMOST`) and the "action completed" sound plays, as upstream.
+    /// macOS has no public way to keep another app's window above the others (window
+    /// levels belong to the app that owns the window), so there the hotkey says so and
+    /// points at Pin to screen.
+    #[cfg(not(windows))]
     pub fn active_window_top_most(&mut self, settings: TaskSettings) {
         let _ = settings;
         self.window_tool_message(
