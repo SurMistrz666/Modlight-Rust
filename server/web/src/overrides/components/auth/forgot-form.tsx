@@ -1,5 +1,12 @@
 "use client";
 
+// Port of upstream components/auth/forgot-form.tsx with the optional Cloudflare
+// Turnstile check added (server/src/turnstile.rs; not upstream). Everything
+// else is upstream's, line for line; the additions are marked "Turnstile".
+// With no site key configured `captcha.enabled` is false, no widget renders,
+// no header is sent and the form behaves exactly as upstream's.
+// @upstream components/auth/forgot-form.tsx
+
 import { useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -10,6 +17,8 @@ import { Input } from "@/components/ui/input";
 import { Field, FormError } from "@/components/auth/form-bits";
 import { SubmitButton } from "@/components/auth/submit-button";
 import { authErrorMessage } from "@/components/auth/auth-error";
+// Turnstile
+import { captchaErrorKey, useCaptcha } from "../../../turnstile/widget";
 
 export function ForgotForm() {
   const t = useTranslations("auth");
@@ -17,17 +26,38 @@ export function ForgotForm() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  // Turnstile
+  const captcha = useCaptcha();
+  const tCaptcha = useTranslations("turnstile.widget");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (pending) return;
     setError(null);
+    // Turnstile: no token yet, nothing to send.
+    if (captcha.enabled && !captcha.token) {
+      setError(tCaptcha("required"));
+      return;
+    }
     setPending(true);
 
     const { error: err } = await authClient.requestPasswordReset({
       email: email.trim(),
       redirectTo: "/reset",
+      // Turnstile: the token travels in a header; it is spent either way.
+      fetchOptions: { headers: captcha.headers() },
     });
+    captcha.reset();
+
+    // Turnstile: a refused check is no confirmation (403 and 503 included).
+    const captchaKey = captchaErrorKey(err);
+    if (captchaKey) {
+      const msg = tCaptcha(captchaKey);
+      setError(msg);
+      toast.error(msg);
+      setPending(false);
+      return;
+    }
 
     // Only surface hard failures (network/validation). For a missing account we
     // still show the neutral confirmation to avoid leaking which emails exist.
@@ -90,6 +120,8 @@ export function ForgotForm() {
           className="h-10"
         />
       </Field>
+
+      {captcha.widget}
 
       <FormError message={error} />
 

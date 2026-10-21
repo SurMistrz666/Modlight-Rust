@@ -23,6 +23,11 @@ export interface PublicConfig {
   appDomains: string[];
   /** SHORTLINK_URL, falling back to APP_URL. */
   shortUrl: string;
+  /**
+   * Not upstream: the Cloudflare Turnstile site key while the optional check is
+   * on (server/src/turnstile.rs), else null. Absent from an older server: off.
+   */
+  turnstileSiteKey?: string | null;
 }
 
 /**

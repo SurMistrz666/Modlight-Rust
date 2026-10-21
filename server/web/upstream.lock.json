@@ -19,12 +19,8 @@
     "components/auth/auth-card.tsx": "f79fbc7f4926a022648316566ba22e73a8bd2c74bec54e3c24183acdeb6eef57",
     "components/auth/auth-error.ts": "8772de7af8144d44454be627d24914efeff0a3d48bb9834541845d2f3c3d4c9a",
     "components/auth/brand-mark.tsx": "415c39cfcf15f71678cb4f65b51ef98ad8ed5e07d803a8a58537ca2abd34e3ac",
-    "components/auth/forgot-form.tsx": "8b2373e79728594f5072b3a0128844d35c41d347871d726924caeb2cf77a8894",
     "components/auth/form-bits.tsx": "bd6d8b25daf44c0366767a5fe500ed570a9067c2861fc26093b181eb37e1773b",
-    "components/auth/invite-form.tsx": "a1384d5f5a4a6aefc87ba5f8f7b6708bbae4563ab6e7ec2c8857559ed00642f0",
-    "components/auth/login-form.tsx": "0932ad70e9e7cead6d74f59b6439206b480ffa1b883a928e3b43b5a943a8debf",
     "components/auth/password-input.tsx": "a96eb968f4c6886b8b6df9e2df27e8ef711da83a0f5dac3701a8417c5eec28fa",
-    "components/auth/register-form.tsx": "77e6b47e2a12de70d5530de94646edeb301b0d56dbd3a8687898c5eb34f6221f",
     "components/auth/reset-form.tsx": "bfa04fae9b1ea94c6eb097a269270d405226468ae87cd3ad40c17c1dd001c245",
     "components/auth/submit-button.tsx": "98ca0ed7bfb05376bccfc25138d898b27053e78aaf964cb418ebc379669b6614",
     "components/auth/two-factor-form.tsx": "8b4a58997720fb675f394df52af3d1b1bc961d345f56092a20986ea773e01517",
@@ -478,6 +474,30 @@
       "sha256": "2d8dbf8ff5c69b6cb48cbeda2353eeede0fe4c7582da70d87e254df5fc768d58",
       "ports": [
         "src/overrides/components/admin/ServerDisk.tsx"
+      ]
+    },
+    "components/auth/forgot-form.tsx": {
+      "sha256": "8b2373e79728594f5072b3a0128844d35c41d347871d726924caeb2cf77a8894",
+      "ports": [
+        "src/overrides/components/auth/forgot-form.tsx"
+      ]
+    },
+    "components/auth/invite-form.tsx": {
+      "sha256": "a1384d5f5a4a6aefc87ba5f8f7b6708bbae4563ab6e7ec2c8857559ed00642f0",
+      "ports": [
+        "src/overrides/components/auth/invite-form.tsx"
+      ]
+    },
+    "components/auth/login-form.tsx": {
+      "sha256": "0932ad70e9e7cead6d74f59b6439206b480ffa1b883a928e3b43b5a943a8debf",
+      "ports": [
+        "src/overrides/components/auth/login-form.tsx"
+      ]
+    },
+    "components/auth/register-form.tsx": {
+      "sha256": "77e6b47e2a12de70d5530de94646edeb301b0d56dbd3a8687898c5eb34f6221f",
+      "ports": [
+        "src/overrides/components/auth/register-form.tsx"
       ]
     },
     "components/dashboard/EmptyState.tsx": {

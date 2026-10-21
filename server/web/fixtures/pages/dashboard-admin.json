@@ -112,7 +112,15 @@
           "overdueBytes": 0
         }
       },
-      "defaultQuota": null
+      "defaultQuota": null,
+      "turnstile": {
+        "source": "none",
+        "enabled": false,
+        "active": false,
+        "siteKey": "",
+        "secretState": "unset",
+        "envAvailable": false
+      }
     },
     "meta": {
       "title": "Admin - Modlight",
