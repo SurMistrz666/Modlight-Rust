@@ -26,6 +26,8 @@ pub mod media;
 pub mod menus;
 pub mod myspace;
 pub mod notification;
+#[cfg(windows)]
+pub mod personal_folder;
 pub mod qa;
 pub mod qa_capture;
 pub mod qa_editor;
@@ -48,6 +50,8 @@ pub mod tray;
 pub mod upload_tab;
 pub mod uploads;
 pub mod widgets;
+#[cfg(windows)]
+pub mod win32;
 // Phase 3, media: components, the Download tab, the app update.
 pub mod components_window;
 pub mod download_tab;

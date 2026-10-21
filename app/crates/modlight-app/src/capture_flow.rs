@@ -154,8 +154,8 @@ impl AppState {
         self.save_config();
     }
 
-    /// Hotkeys pressed since the last frame, and those QA pressed.
-    pub fn pump_hotkeys(&mut self) {
+    /// Hotkeys pressed since the last frame, and those QA pressed. Whether any ran.
+    pub fn pump_hotkeys(&mut self) -> bool {
         let mut pressed: Vec<HotkeySettings> = Vec::new();
         if self.mode == Mode::Normal && !self.env.qa {
             for id in crate::platform::hotkeys::SystemHotkeys::pressed() {
@@ -181,6 +181,7 @@ impl AppState {
                 pressed.push(hotkey.clone());
             }
         }
+        let any = !pressed.is_empty();
         for hotkey in pressed {
             let defaults = self
                 .config
@@ -190,6 +191,7 @@ impl AppState {
             let settings = hotkey.task_settings(&defaults);
             self.execute_job(hotkey.job(), settings);
         }
+        any
     }
 
     /// `TaskHelpers.ToggleHotkeys`.
