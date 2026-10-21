@@ -8,7 +8,10 @@
 //! Off macOS the crate still builds (its functions answer "not here"), so the workspace
 //! and its tests build everywhere; what only macOS uses is then unused.
 
-#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
+#![cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, unused_imports, clippy::needless_return)
+)]
 
 pub mod ax;
 pub mod capture;
