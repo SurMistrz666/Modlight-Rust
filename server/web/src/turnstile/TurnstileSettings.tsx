@@ -118,7 +118,9 @@ export function TurnstileSettings({ initial }: { initial: TurnstileStatus }) {
   }
 
   const secretPlaceholder =
-    status.source === "panel" && status.secretState === "set"
+    status.source === "env" && locked
+      ? t("secretEnvPlaceholder")
+      : status.source === "panel" && status.secretState === "set"
       ? t("secretKeep")
       : status.secretState === "undecryptable"
         ? t("secretUnreadablePlaceholder")
