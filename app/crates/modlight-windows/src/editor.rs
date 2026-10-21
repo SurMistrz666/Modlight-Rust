@@ -26,6 +26,22 @@ pub fn desktop_wallpaper() -> Option<(PathBuf, WallpaperOptions)> {
     None
 }
 
+/// How Windows lays the desktop picture out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WallpaperStyle {
+    Fill,
+    Fit,
+    Stretch,
+    Tile,
+    Center,
+    Span,
+}
+
+/// The desktop picture's layout.
+pub fn desktop_wallpaper_style() -> Option<WallpaperStyle> {
+    None
+}
+
 /// A picture file read by WIC (HEIC, JPEG XR and the other codecs Windows has).
 pub fn load_image(path: &Path) -> Option<RgbaImage> {
     let _ = path;

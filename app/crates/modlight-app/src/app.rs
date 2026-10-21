@@ -103,6 +103,12 @@ impl ModlightApp {
         }
         if mode == Mode::Normal {
             crate::platform::integration::install_services_provider();
+            // Windows: files and requests from later starts wake the window.
+            #[cfg(windows)]
+            {
+                let wake = ctx.clone();
+                crate::platform::integration::set_waker(move || wake.request_repaint());
+            }
             crate::editor_window::install_system_services();
         }
         if mode == Mode::Normal && app.state.config.show_tray() {
@@ -248,11 +254,11 @@ impl ModlightApp {
     }
 
     /// Windows, before every frame, and alone while the window is minimised (eframe then
-    /// draws nothing and runs no frame): Exit from the tray menu closes the app; a later
-    /// start asked for the window (`ForceActivate`); and what the tray icon, the hotkeys
-    /// and Explorer asked for while the window was minimised brings it back so it runs
-    /// now, as upstream's `ForceActivate` does for the command line, instead of at the
-    /// next restore.
+    /// draws nothing and runs no frame): the tray's commands (Exit closes the app; an
+    /// entry that opens a window shows the main one too); a later start asked for the
+    /// window (`ForceActivate`); and what the tray icon, the hotkeys and Explorer asked for
+    /// while the window was minimised brings it back so it runs now, as upstream's
+    /// `ForceActivate` does for the command line, instead of at the next restore.
     #[cfg(windows)]
     fn windows_logic(&mut self, ctx: &egui::Context) {
         if self.mode != Mode::Normal {
@@ -261,18 +267,18 @@ impl ModlightApp {
         let mut show = crate::platform::integration::take_activation_request();
         let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         if let Some(tray) = &mut self.tray {
+            let commands = tray.commands(&self.state);
             if tray.take_exit() {
                 self.state.save_config();
                 self.allow_close = true;
                 ctx.send_viewport_cmd(ViewportCommand::Close);
                 return;
             }
-            if minimized {
-                let commands = tray.commands(&self.state);
-                show |= !commands.is_empty();
-                for command in commands {
-                    self.state.push(command);
-                }
+            // The menu's handler showed the windows through Win32 (`show_app_windows`):
+            // winit hears it here too, or it would ignore the next hide (a capture's).
+            show |= tray.take_showed() || (minimized && !commands.is_empty());
+            for command in commands {
+                self.state.push(command);
             }
         }
         if minimized {
@@ -289,9 +295,6 @@ impl ModlightApp {
             ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(ViewportCommand::Focus);
         }
-        // Files from Explorer and requests from later starts arrive on another thread,
-        // which cannot wake the window: look for them twice a second.
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
 
     /// The main window's close button: hide to the tray, or quit (`OnClosing`).

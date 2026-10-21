@@ -108,3 +108,14 @@ pub fn activate_running_instance() -> bool {
 pub fn take_activation_request() -> bool {
     false
 }
+
+/// The callback the listening thread calls to wake the window when files or an
+/// activation request arrive.
+pub fn set_waker(f: impl Fn() + Send + Sync + 'static) {
+    let _ = f;
+}
+
+/// Another copy of Modlight.exe the Startup entry points at, when it is not this one.
+pub fn startup_other_copy() -> Option<PathBuf> {
+    None
+}

@@ -3,8 +3,10 @@
 //! ```text
 //! Modlight                                  the app (settings in ~/Library/Application Support/Modlight;
 //!                                           on Windows in Documents\Modlight, or where PersonalPath.cfg says)
-//! Modlight [-silent] [<file or folder>...]  Windows: start in the tray (Start with Windows passes
-//!                                           -silent); upload the files (Explorer's menu, Send to)
+//! Modlight [-silent] [-multi] [<file or folder>...]
+//!                                           Windows: start in the tray (Start with Windows passes
+//!                                           -silent); another instance beside a running one;
+//!                                           upload the files (Explorer's menu, Send to)
 //! Modlight --qa-profile <dir>               QA: settings and token in <dir>, no tray, no Keychain
 //! Modlight --qa-shot <screen> <out.png>     QA: draw one screen headlessly and exit
 //!          [--qa-lang en|pl] [--qa-skin <id>] [--qa-light] [--qa-size WxH] [--qa-scale N]
@@ -36,6 +38,9 @@ struct Args {
     /// Windows: `-silent`, start in the tray without showing the window.
     #[cfg(windows)]
     silent: bool,
+    /// Windows: `-multi`, run beside a Modlight already running (`MultiInstance`).
+    #[cfg(windows)]
+    multi: bool,
     /// Windows: upstream's other commands, which this port does not take (logged).
     #[cfg(windows)]
     ignored: Vec<String>,
@@ -45,7 +50,7 @@ fn usage() -> String {
     format!(
         "usage: Modlight [--qa-profile <dir>] [--qa-shot <screen> <out.png> [--qa-lang en|pl] [--qa-skin <id>] [--qa-light] [--qa-size WxH] [--qa-scale N]]{}\nscreens: {}",
         if cfg!(windows) {
-            " [-silent] [<file or folder>...]"
+            " [-silent] [-multi] [<file or folder>...]"
         } else {
             ""
         },
@@ -62,6 +67,8 @@ fn parse() -> Result<Args, String> {
         files: Vec::new(),
         #[cfg(windows)]
         silent: false,
+        #[cfg(windows)]
+        multi: false,
         #[cfg(windows)]
         ignored: Vec::new(),
     };
@@ -100,13 +107,20 @@ fn parse() -> Result<Args, String> {
             "-h" | "--help" => return Err(usage()),
             // macOS passes a process serial number to apps opened from Finder.
             other if other.starts_with("-psn_") => {}
-            // Upstream's command line (`CLIManager`): a word with one dash is a command,
-            // `-silent` (`-s`) the one this port takes; anything else is a file or folder.
+            // Upstream's command line (`CLIManager`, `Program.cs`): a word with one dash is
+            // a command, anything else a file or folder. `-silent` (`-s`) and `-multi`
+            // (`-m`) are taken; `-portable` (`-p`), `-sandbox`, `-NoHotkeys` and the task
+            // commands are accepted and left aside (logged): the personal folder is always
+            // the installed one's, and the hotkey warning is a notice in the window.
             #[cfg(windows)]
             other if other.len() > 1 && other.starts_with('-') && !other.starts_with("--") => {
                 let name = &other[1..];
-                if name.eq_ignore_ascii_case("silent") || name.eq_ignore_ascii_case("s") {
+                let is =
+                    |a: &str, b: &str| name.eq_ignore_ascii_case(a) || name.eq_ignore_ascii_case(b);
+                if is("silent", "s") {
                     args.silent = true;
+                } else if is("multi", "m") {
+                    args.multi = true;
                 } else {
                     args.ignored.push(other.to_string());
                 }
@@ -193,7 +207,7 @@ fn main() -> ExitCode {
 
     let qa_mode = args.qa_profile.is_some();
     #[cfg(windows)]
-    if !qa_mode && handed_to_running_instance(&args) {
+    if !qa_mode && !args.multi && handed_to_running_instance(&args) {
         return ExitCode::SUCCESS;
     }
     let profile = args.qa_profile.clone().unwrap_or_else(profile_dir);
