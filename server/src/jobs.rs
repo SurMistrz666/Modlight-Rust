@@ -86,6 +86,14 @@ pub fn start(state: &AppState) -> JoinSet<()> {
     // `void warmMailSettings()`: before traffic arrives, not awaited.
     let warm = state.clone();
     set.spawn(async move { crate::mail_settings::warm_mail_settings(&warm).await });
+    // Not upstream: the Turnstile snapshot, which the CSP of every response
+    // reads, from the table rather than the environment from the first request.
+    let warm = state.clone();
+    set.spawn(async move {
+        if let Err(err) = warm.turnstile.load(&warm.db, &warm.config, true).await {
+            tracing::warn!("[turnstile] could not preload settings: {err}");
+        }
+    });
     for job in jobs() {
         set.spawn(run_job(state.clone(), job));
     }

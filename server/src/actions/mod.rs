@@ -23,6 +23,7 @@ pub mod releases;
 pub mod shortlink_unlock;
 pub mod shortlinks;
 pub mod tokens;
+pub mod turnstile;
 pub mod unlock;
 pub mod uploads;
 
@@ -49,4 +50,5 @@ pub fn register_all(reg: &mut RpcRegistry) {
     admin_library::register(reg); // app/actions/admin.ts (orphans, account deletion, maintenance)
     convert::register(reg); // app/actions/convert.ts
     unlock::register(reg); // app/actions/unlock.ts
+    turnstile::register(reg); // not upstream: the optional Cloudflare Turnstile card
 }

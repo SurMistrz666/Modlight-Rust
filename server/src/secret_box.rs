@@ -40,6 +40,8 @@ const TAG_BYTES: usize = 16;
 pub enum SecretPurpose {
     Smtp,
     RegistrationKey,
+    /// Not upstream: the Cloudflare Turnstile secret key (src/turnstile.rs).
+    Turnstile,
 }
 
 impl SecretPurpose {
@@ -47,6 +49,7 @@ impl SecretPurpose {
         match self {
             SecretPurpose::Smtp => "smtp",
             SecretPurpose::RegistrationKey => "registration-key",
+            SecretPurpose::Turnstile => "turnstile",
         }
     }
 }

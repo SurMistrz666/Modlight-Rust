@@ -128,6 +128,19 @@ pub mod admin {
     pub const INVALID_ROLE_TYPE: ErrorCode = ec("INVALID_ROLE_TYPE", "Invalid role type");
 }
 
+/// Not used by upstream (lib/auth.ts has no captcha plugin): the codes of
+/// better-auth 1.6.13's `captcha` plugin (`plugins/captcha/error-codes.mjs`),
+/// answered by the optional Cloudflare Turnstile check (src/turnstile.rs).
+/// `SERVICE_UNAVAILABLE` is the plugin's internal code (the plugin logs it and
+/// answers 500 `UNKNOWN_ERROR` "Something went wrong"); here the client gets
+/// it, with 503, so a Cloudflare outage reads as one.
+pub mod captcha {
+    use super::{ErrorCode, ec};
+    pub const VERIFICATION_FAILED: ErrorCode = ec("VERIFICATION_FAILED", "Captcha verification failed");
+    pub const MISSING_RESPONSE: ErrorCode = ec("MISSING_RESPONSE", "Missing CAPTCHA response");
+    pub const SERVICE_UNAVAILABLE: ErrorCode = ec("SERVICE_UNAVAILABLE", "CAPTCHA service unavailable");
+}
+
 /// better-call's `statusCodes` table, name -> number.
 pub fn status_from_name(name: &str) -> StatusCode {
     let n = match name {
@@ -144,6 +157,7 @@ pub fn status_from_name(name: &str) -> StatusCode {
         "UNPROCESSABLE_ENTITY" => 422,
         "TOO_MANY_REQUESTS" => 429,
         "INTERNAL_SERVER_ERROR" => 500,
+        "SERVICE_UNAVAILABLE" => 503,
         _ => 500,
     };
     StatusCode::from_u16(n).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)

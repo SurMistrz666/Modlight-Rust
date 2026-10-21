@@ -21,6 +21,7 @@ use crate::pages::shell::SpaShell;
 use crate::paths::Paths;
 use crate::rpc::RpcRegistry;
 use crate::storage::Storage;
+use crate::turnstile::Turnstile;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -42,6 +43,9 @@ pub struct AppState {
     pub rpc: Arc<RpcRegistry>,
     pub pages: Arc<PageRegistry>,
     pub shell: Arc<SpaShell>,
+    /// Not upstream: the optional Cloudflare Turnstile check (its settings
+    /// snapshot, HTTPS client and siteverify endpoint).
+    pub turnstile: Arc<Turnstile>,
 }
 
 impl AppState {
@@ -72,6 +76,7 @@ impl AppState {
             rpc: Arc::new(rpc),
             pages: Arc::new(pages),
             shell: Arc::new(shell),
+            turnstile: Arc::new(Turnstile::new()),
         })
     }
 }

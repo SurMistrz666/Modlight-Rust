@@ -1,6 +1,8 @@
 //! Shared helpers for the integration tests.
 #![allow(dead_code)]
 
+pub mod siteverify;
+
 use std::collections::HashMap;
 
 use axum::body::Body;
