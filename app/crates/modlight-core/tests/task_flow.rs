@@ -12,7 +12,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use modlight_api::{Api, Credential, UploadQuery};
+use modlight_api::{Api, Credential, TusClient, UploadQuery};
 use modlight_core::config::AppConfig;
 use modlight_core::tasks::context::TaskContext;
 use modlight_core::tasks::host::{TaskAnswer, TaskChannel, TaskEffect, TaskMessage, TaskQuestion};
@@ -204,6 +204,11 @@ struct Host {
 impl Host {
     /// The task machinery over `profile`, signed in as `account` at `host`.
     fn new(profile: &Path, account: Option<(&str, &Credential)>) -> Host {
+        Host::with_tus(profile, account, TusClient::new("0.7.7").unwrap())
+    }
+
+    /// The same, with large uploads and the queue going through `tus`.
+    fn with_tus(profile: &Path, account: Option<(&str, &Credential)>, tus: TusClient) -> Host {
         let runtime = runtime();
         let api = Api::new("0.7.7").unwrap();
         let slot: AccountSlot = Arc::new(RwLock::new(account.map(|(host, me)| QueueAccount {
@@ -215,12 +220,13 @@ impl Host {
         let queue = UploadQueue::new(
             QueueStore::new(profile),
             slot.clone(),
-            Arc::new(ApiTransport::new(api.clone())),
+            Arc::new(ApiTransport::with_tus(api.clone(), tus.clone())),
             Arc::new(|| true),
         );
         let (channel, receiver) = TaskChannel::new(Arc::new(|| {}));
         let ctx = TaskContext {
             api,
+            tus,
             account: slot,
             queue,
             channel,
@@ -777,6 +783,103 @@ fn a_large_queued_upload_is_cut_and_resumes_where_it_stopped_after_a_restart() {
         "only the rest went over the wire the second time ({sent} bytes)"
     );
     let stored = profile.path().join("stored");
+    host.runtime
+        .block_on(
+            host.ctx
+                .api
+                .download_to_file(&me, &outcome.raw_url, &stored),
+        )
+        .unwrap();
+    assert_eq!(sha256(&std::fs::read(&stored).unwrap()), sha256(&bytes));
+}
+
+/// A file larger than one tus chunk goes up over tus in chunks through the whole task
+/// (behind Cloudflare one `POST /upload` of it would be refused). When the link dies in
+/// the second chunk, the task's retry cannot reach the server either and hands the file
+/// to the queue together with its session, and the queue sends only the rest.
+#[test]
+fn a_file_over_one_chunk_goes_over_tus_and_a_cut_one_is_carried_on_by_the_queue() {
+    let Some(me) = qa("live tus") else { return };
+    let mut cleanup = Cleanup::new(&me);
+    let switch = Switch::start();
+    let profile = tempfile::tempdir().unwrap();
+    let name = format!("{}.bin", unique("qa-live-tus"));
+    cleanup.add(&name);
+    let path = profile.path().join(&name);
+    let bytes = random_bytes(3 * MIB + 4321);
+    std::fs::write(&path, &bytes).unwrap();
+    let chunk = MIB as u64;
+    let tus = || TusClient::new("0.7.7").unwrap().with_chunk_size(chunk);
+
+    // 1. A good link: the whole task, over tus.
+    switch.set(PASS, 0);
+    {
+        let mut host = Host::with_tus(profile.path(), Some((&switch.origin, &me)), tus());
+        let settings = host.settings();
+        upload_manager::upload_file(&mut host.tasks, &path, &settings, &host.ctx);
+        host.run_until_finished(1, 60);
+        let state = &host.finished[0];
+        assert_eq!(
+            state.status,
+            TaskStatus::Completed,
+            "{:?}",
+            state.info.result.errors
+        );
+        let result = &state.info.result;
+        assert!(result.url.starts_with("http"), "a link: {}", result.url);
+        assert_eq!(host.copied(), vec![result.url.clone()]);
+        assert!(result.deletion_url.is_empty(), "tus answers carry none");
+        assert!(host.ctx.queue.snapshot().is_empty(), "nothing queued");
+        let stored = profile.path().join("stored-1");
+        host.runtime
+            .block_on(
+                host.ctx
+                    .api
+                    .download_to_file(&me, &result.thumbnail_url, &stored),
+            )
+            .unwrap();
+        assert_eq!(sha256(&std::fs::read(&stored).unwrap()), sha256(&bytes));
+    }
+
+    // 2. The link dies half way into the second chunk, and stays dead for the retry.
+    switch.set(CUT, chunk + chunk / 2);
+    {
+        let mut host = Host::with_tus(profile.path(), Some((&switch.origin, &me)), tus());
+        let settings = host.settings();
+        upload_manager::upload_file(&mut host.tasks, &path, &settings, &host.ctx);
+        host.run_until_finished(1, 60);
+        assert_eq!(
+            host.finished[0].status,
+            TaskStatus::Stopped,
+            "handed over, not failed"
+        );
+        let items = host.ctx.queue.snapshot();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].tus_url.is_some(), "the live upload's session");
+        assert_eq!(
+            items[0].tus_offset, chunk as i64,
+            "the first chunk, confirmed"
+        );
+    }
+    let saved = std::fs::read_to_string(profile.path().join("Queue.json")).unwrap();
+    assert!(saved.contains("\"TusUrl\""), "the session is kept on disk");
+
+    // 3. Another start, a good link: the queue carries on from what the server holds.
+    switch.set(PASS, 0);
+    let host = Host::with_tus(profile.path(), Some((&switch.origin, &me)), tus());
+    host.ctx.queue.initialize(host.runtime.handle());
+    let outcome = host.queue_outcome(60);
+    assert!(
+        outcome.succeeded,
+        "{:?}: {}",
+        outcome.reason, outcome.detail
+    );
+    let sent = switch.forwarded();
+    assert!(
+        sent < bytes.len() as u64 - chunk + 64 * 1024,
+        "only the rest went over the wire ({sent} bytes)"
+    );
+    let stored = profile.path().join("stored-2");
     host.runtime
         .block_on(
             host.ctx

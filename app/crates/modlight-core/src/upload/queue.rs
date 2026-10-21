@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use modlight_api::tus::TusSession;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -186,17 +187,23 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// Progress callback of a transfer: bytes confirmed so far, and the total.
 pub type ProgressFn<'a> = Box<dyn FnMut(i64, i64) + Send + 'a>;
 
+/// Called by a transfer with the item as the server has just confirmed it (the session
+/// made or found, then each chunk the server took whole), for the queue to save at once.
+pub type CheckpointFn<'a> = Box<dyn FnMut(&TransferItem) + Send + 'a>;
+
 /// The network side of the queue: the tus client and `/api/me`. A trait so the queue's
 /// rules can be tested without a server.
 pub trait QueueTransport: Send + Sync + 'static {
     /// Send one item as far as it will go this time. Updates the session URL, offset
-    /// and folder on `item` as they are learned, however it returns.
+    /// and folder on `item` as they are learned, however it returns, and hands the item
+    /// to `checkpoint` whenever the server confirmed a new point to resume from.
     fn send<'a>(
         &'a self,
         account: &'a QueueAccount,
         item: &'a mut TransferItem,
         cancel: CancellationToken,
         progress: ProgressFn<'a>,
+        checkpoint: CheckpointFn<'a>,
     ) -> BoxFuture<'a, TransferResult>;
 
     /// Tell the server to forget a half-finished upload. Best effort.
@@ -218,6 +225,17 @@ pub struct TakeOver {
     pub data: Option<Vec<u8>>,
     /// The HTTP status the server answered with, or `None` when it never answered.
     pub answer: Option<u16>,
+    /// The resumable session a live upload of these same bytes left on the server, to
+    /// carry on from rather than send everything again.
+    pub session: Option<LiveSession>,
+}
+
+/// A resumable session a live upload left on the server, and the length of the file it
+/// was made for: a session is only any use for exactly those bytes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LiveSession {
+    pub length: u64,
+    pub session: TusSession,
 }
 
 /// Whether a failure is one the queue should take: no answer at all, or the four codes
@@ -440,6 +458,15 @@ impl UploadQueue {
         };
         if !self.attach(&mut item, &request) {
             return false;
+        }
+        if let Some(live) = request.session.filter(|live| {
+            live.session.url.is_some() && i64::try_from(live.length) == Ok(item.length)
+        }) {
+            // The live upload's own session: the queue carries on from the server's
+            // offset (asked again first) instead of sending the file a second time.
+            item.tus_url = live.session.url;
+            item.tus_offset = live.session.offset as i64;
+            item.folder_id = live.session.folder_id;
         }
         let name = item.file_name.clone();
         let length = item.length;
@@ -695,10 +722,23 @@ impl UploadQueue {
             }
         });
 
+        // A crash mid-file must find the last confirmed chunk in Queue.json, not the
+        // offset the attempt started from.
+        let queue = self.clone();
+        let id_owned = id.to_string();
+        let checkpoint: CheckpointFn<'_> = Box::new(move |confirmed: &TransferItem| {
+            queue.with_item(&id_owned, |item| {
+                item.tus_url = confirmed.tus_url.clone();
+                item.tus_offset = confirmed.tus_offset;
+                item.folder_id = confirmed.folder_id.clone();
+            });
+            queue.persist();
+        });
+
         let result = self
             .shared
             .transport
-            .send(account, &mut transfer, cancel.clone(), progress)
+            .send(account, &mut transfer, cancel.clone(), progress, checkpoint)
             .await;
 
         // Whatever happened, the offset and the session URL are worth keeping: they are
