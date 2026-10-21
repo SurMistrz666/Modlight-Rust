@@ -2,7 +2,7 @@
  * The segments between the root and a page: the two route-group layouts, the
  * dashboard segment (error.tsx + loading.tsx), the page itself, and the catch-all.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigation, useRouteLoaderData } from "react-router";
 import DashboardError from "@/app/(app)/dashboard/error";
 import DashboardLoading from "../pages/(app)/dashboard/loading";
@@ -72,10 +72,24 @@ function dashboardChild(pathname: string): string | null {
 }
 
 /**
+ * How long a navigation may be on its way before loading.tsx replaces the page
+ * that is still on screen.
+ *
+ * Deliberate difference from Next, which swaps to loading.tsx at once: there
+ * the page data is a server render that takes long enough for the skeleton to
+ * read as "loading". Here /_page answers in tens of milliseconds, so an
+ * immediate swap only flashes the skeleton between two pages, which people see
+ * as the screen flickering. The old page stays up until the new one is ready,
+ * and the skeleton still appears when the server is genuinely slow.
+ */
+const LOADING_DELAY_MS = 300;
+
+/**
  * app/(app)/dashboard/: error.tsx around everything below, loading.tsx while
- * a navigation to another dashboard page is on its way. As in Next 16, a change
- * of search params alone does not count (same segment, the old page stays up),
- * and nor does a deeper change under the same child (admin -> admin/users/x).
+ * a navigation to another dashboard page is on its way (after LOADING_DELAY_MS).
+ * As in Next 16, a change of search params alone does not count (same segment,
+ * the old page stays up), and nor does a deeper change under the same child
+ * (admin -> admin/users/x).
  */
 export function DashboardSegment() {
   const payload = useRootPayload();
@@ -86,10 +100,19 @@ export function DashboardSegment() {
     target !== null &&
     dashboardChild(target.pathname) !== null &&
     dashboardChild(target.pathname) !== dashboardChild(location.pathname);
+  const targetKey = pending ? target.key : null;
+
+  const [slowKey, setSlowKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (targetKey === null) return;
+    const timer = setTimeout(() => setSlowKey(targetKey), LOADING_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [targetKey]);
+  const showLoading = targetKey !== null && slowKey === targetKey;
 
   return (
     <SegmentErrorBoundary errorComponent={DashboardError} resetKey={payload}>
-      {pending ? <DashboardLoading /> : <Outlet />}
+      {showLoading ? <DashboardLoading /> : <Outlet />}
     </SegmentErrorBoundary>
   );
 }
