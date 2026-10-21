@@ -1,0 +1,71 @@
+{
+  "widget": {
+    "label": "Human verification",
+    "required": "Complete the verification below first.",
+    "failed": "The verification did not go through. Try again.",
+    "unavailable": "The verification service could not be reached. Try again in a moment.",
+    "loadFailed": "The verification could not load. Reload the page, or allow challenges.cloudflare.com if a blocker stopped it."
+  },
+  "admin": {
+    "title": "Cloudflare Turnstile",
+    "intro": "Asks visitors to show they are human on the sign-in, registration, password reset and invitation forms. It is off until a site key and a secret key are saved and the switch is on.",
+    "source": {
+      "panel": "Configured here",
+      "env": "From environment variables",
+      "none": "Not configured"
+    },
+    "active": "On",
+    "inactive": "Off",
+    "enabledLabel": "Protect the sign-in forms",
+    "enabledDesc": "While this is on, signing in, registering, asking for a password reset and accepting an invitation all need the check.",
+    "fromEnv": "This configuration comes from the environment (TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY). The fields stay read-only until you take it over here.",
+    "configureHere": "Configure here",
+    "overridesEnv": "These settings override TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY in the environment.",
+    "useEnv": "Use the environment settings",
+    "siteKey": "Site key",
+    "siteKeyPlaceholder": "0x4AAAAAAA…",
+    "secret": "Secret key",
+    "secretKeep": "Leave empty to keep the stored secret key",
+    "secretEmpty": "No secret key stored",
+    "secretEnvPlaceholder": "Set in TURNSTILE_SECRET_KEY",
+    "secretUnreadablePlaceholder": "Type the secret key again",
+    "secretSet": "A secret key is stored. It is encrypted at rest and never sent back to the browser, so this field is always empty.",
+    "secretUnset": "No secret key is stored. A new site key needs its own secret key.",
+    "secretUnreadable": "The stored secret key can no longer be decrypted, which usually means AUTH_SECRET changed. The check stays off until you type it again.",
+    "secretFromEnv": "The secret key comes from TURNSTILE_SECRET_KEY and is not shown.",
+    "save": "Save Turnstile settings",
+    "savedTitle": "Turnstile settings saved",
+    "savedOn": "The forms now ask for the check. Try signing in from a private window before you sign out.",
+    "savedOff": "The forms no longer ask for the check.",
+    "saveErrorTitle": "Couldn't save the Turnstile settings",
+    "invalid": {
+      "invalid-site-key": "That site key does not look like a Cloudflare key (letters, digits, - and _ only).",
+      "invalid-secret": "That secret key does not look like a Cloudflare key (letters, digits, - and _ only).",
+      "site-key-required": "Turning the check on needs a site key.",
+      "secret-required": "Turning the check on needs a secret key. A changed site key needs its own secret key too.",
+      "secret-rejected": "Cloudflare rejected this secret key, so nothing was saved: with a wrong secret key nobody could sign in, you included.",
+      "unreachable": "Cloudflare could not be reached to confirm the secret key, so nothing was saved. Try again.",
+      "rate-limited": "Too many requests to Cloudflare from this account. Wait a few minutes."
+    },
+    "revertedTitle": "Back to the environment settings",
+    "revertedDesc": "The values saved here were removed.",
+    "testTitle": "Test the secret key",
+    "testDesc": "Sends the secret key (the one typed above, otherwise the one in use) to Cloudflare and shows whether Cloudflare accepts it. Nothing is saved.",
+    "test": "Test",
+    "testing": "Asking Cloudflare…",
+    "testOk": "Cloudflare accepted the secret key.",
+    "testAlwaysPasses": "This is one of Cloudflare's test secret keys: it lets every visitor through. Use it only to try things out.",
+    "testError": {
+      "no-secret": "There is no secret key to test. Type one above.",
+      "invalid-secret": "That secret key does not look like a Cloudflare key (letters, digits, - and _ only).",
+      "rejected": "Cloudflare rejected this secret key.",
+      "unreachable": "Cloudflare could not be reached from this server.",
+      "rate-limited": "Too many requests to Cloudflare from this account. Wait a few minutes."
+    },
+    "testTook": "Took {ms} ms",
+    "howToTitle": "How to get the keys",
+    "howTo": "In the Cloudflare dashboard open Turnstile and add a widget. List every host name this panel is reached on (this one is {host}), keep the Managed mode, then copy the site key and the secret key here.",
+    "testKeys": "To try it out, Cloudflare's test keys work on any host, localhost included: site key 1x00000000000000000000AA with secret key 1x0000000000000000000000000000000AA lets everyone through, secret key 2x0000000000000000000000000000000AA refuses everyone.",
+    "lockout": "Keep this tab signed in until you have signed in once from a private window: a widget that does not match its host names would keep everyone out."
+  }
+}

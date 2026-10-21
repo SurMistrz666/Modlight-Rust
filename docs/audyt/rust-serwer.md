@@ -32,13 +32,15 @@ w większości będące wiernym odwzorowaniem zachowania oryginału (parytet), a
 Pełny przegląd połączeń wychodzących (grep: `reqwest`, `TcpStream`, `UdpSocket`, `tokio::net`,
 `std::net::Tcp`, `hyper*client`, `aws_sdk`, `lettre`, `rustls`, `to_socket_addrs`, `lookup_host`,
 `curl`, `fetch`). Zależności: `Cargo.toml` nie zawiera `reqwest`; jedyne biblioteki sieciowe to
-`aws-sdk-s3`, `lettre`, `sqlx`.
+`aws-sdk-s3`, `lettre`, `sqlx` (od 2026-10-21 także klient `hyper-util` + `hyper-rustls`, używany
+wyłącznie przez `turnstile.rs`).
 
 | Miejsce | Dokąd | Jakie dane | Decyduje administrator? |
 |---|---|---|---|
 | `mail/smtp.rs`, `mail.rs` (lettre, rustls) | serwer SMTP z konfiguracji | maile weryfikacji/resetu/zaproszeń do użytkowników | TAK (host z env/panelu; brak hosta = brak wysyłki) |
 | `storage/s3.rs`, `storage/s3/lib_storage.rs`, `upload/tus_server/s3_store.rs` (aws-sdk-s3) | `S3_ENDPOINT` z konfiguracji | pliki użytkowników | TAK (tylko gdy `STORAGE_DRIVER=s3`) |
 | `db/*`, `main.rs` (sqlx) | `DATABASE_URL` | dane aplikacji | TAK |
+| `turnstile.rs` (hyper-util + hyper-rustls, ring, korzenie Mozilli), dodane 2026-10-21, po audycie | `https://challenges.cloudflare.com/turnstile/v0/siteverify` (adres stały w kodzie) | token z widżetu w formularzu, klucz tajny Turnstile i adres IP odwiedzającego (`remoteip`, ta sama reguła co limity: `X-Real-IP` tylko przy `TRUST_PROXY`); przy „Sprawdź” i zapisie włączającym w panelu: klucz tajny z tokenem testowym Cloudflare | TAK (tylko gdy administrator włączy Turnstile w panelu albo ustawi oba `TURNSTILE_*`; bez tego zero połączeń) |
 | `main.rs::health()` | 127.0.0.1:PORT (pętla zwrotna) | jedno żądanie `GET /api/health` dla healthchecku kontenera | — (lokalne) |
 
 - **Brak SSRF.** `routes/api/link_info.rs` + `link_info/parse.rs` odpowiadają wyłącznie z wiersza
@@ -52,11 +54,19 @@ Pełny przegląd połączeń wychodzących (grep: `reqwest`, `TcpStream`, `UdpSo
 - Front (`server/web`): `fetch` wyłącznie na własny origin (`/_page`, `/_rpc`, `/api/*`) i na
   `http://127.0.0.1:<port>` dla handoffu desktopowego (RFC 8252, osobne CSP). Jedyne zewnętrzne
   URL-e to statyczne linki do GitHuba na stronie lądowania. Brak telemetrii/beaconów/analityki.
+- **Cloudflare Turnstile (od 2026-10-21, opcjonalny)**: gdy administrator go włączy, serwer przy
+  logowaniu, rejestracji, prośbie o reset hasła i przyjęciu zaproszenia wysyła do Cloudflare token
+  odwiedzającego i jego adres IP (limit 10 s, bez odpowiedzi = odmowa), a przeglądarka ładuje
+  `https://challenges.cloudflare.com/turnstile/v0/api.js` (CSP dopuszcza ten origin w `script-src`
+  i `frame-src` tylko wtedy). Klucz tajny i token nigdy nie trafiają do logów; klucz tajny leży
+  w bazie zaszyfrowany (secret box, cel `turnstile`). Wyłączony = brak skryptu, brak połączeń, CSP
+  bez zmian. Szczegóły: `server/docs/SKELETON.md` sekcja 9, punkt 43.
   `index.html`: skrypt inline to bootstrap motywu (`localStorage`), bez sieci.
 
 **Werdykt: serwer nie wykrada danych. Brak backdoora, ukrytego konta, hasła-wytrychu, telemetrii
 ani „phone home”. Jedyne wyjścia sieciowe to SMTP/S3/Postgres konfigurowane przez administratora
-oraz lokalny healthcheck.**
+oraz lokalny healthcheck.** Od 2026-10-21 trzecim, też włączanym tylko przez administratora, jest
+Cloudflare Turnstile (wyżej).
 
 ---
 

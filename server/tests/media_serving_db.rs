@@ -448,7 +448,9 @@ async fn fix1_preview_bots_get_no_content_of_a_capped_file() {
     assert_eq!(viewer["renderPath"], Value::Null);
     // The card carries no excerpt of it either.
     let doc = w.get("/bt/note", &[("user-agent", "TelegramBot (like TwitterBot)")]).await.text();
-    assert!(!doc.contains("the secret"), "{doc}");
+    // The file's own words (the dictionaries inlined in the document say "the
+    // secret key" in the Turnstile card's texts).
+    assert!(!doc.contains("the secret is"), "{doc}");
     assert_eq!(w.views(id).await.0, 0);
     // A person pays the view and reads it.
     let a = w.get("/_page?path=%2Fbt%2Fnote", &[("user-agent", "Mozilla/5.0 Safari")]).await;

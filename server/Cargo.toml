@@ -21,8 +21,8 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["multipart", "macros"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "catch-panic", "trace"] }
-hyper = { version = "1", features = ["http1", "server"] }
-hyper-util = { version = "0.1", features = ["tokio", "server", "server-graceful", "http1", "service"] }
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-graceful", "http1", "service", "client-legacy"] }
 http = "1"
 http-body-util = "0.1"
 bytes = "1"
@@ -63,6 +63,11 @@ sha1 = "0.10"
 hkdf = "0.12"
 unicode-normalization = "0.1"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "hostname", "tokio1-rustls-tls"] }
+# Optional Cloudflare Turnstile (src/turnstile.rs): the siteverify call over
+# HTTPS, rustls with ring and the Mozilla roots like the mail transport. Both
+# crates are already in the graph (aws-smithy-http-client).
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "tls12", "webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 # S3 storage (lib/storage/s3.ts, lib-storage's Upload, @tus/s3-store): the
 # official AWS SDK, as upstream uses @aws-sdk/client-s3. HTTPS through rustls

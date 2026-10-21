@@ -26,6 +26,13 @@ pub struct SecurityHeaders {
     pub authorize_csp: String,
     pub raw_csp: String,
     pub render_csp: String,
+    /// Not upstream: `app_csp` and `authorize_csp` with Cloudflare Turnstile's
+    /// origin added to `script-src` and `frame-src`, sent instead of them
+    /// while the optional check is on (src/turnstile.rs). Every page gets it,
+    /// not only the four forms: the SPA reaches /login from any page without
+    /// loading a new document.
+    pub app_csp_turnstile: String,
+    pub authorize_csp_turnstile: String,
 }
 
 /// Every origin this deployment serves on: APP_URL plus APP_DOMAINS plus the
@@ -59,26 +66,32 @@ impl SecurityHeaders {
         let joined = self_origins.join(" ");
         let own = if joined.is_empty() { "'self'".to_string() } else { format!("'self' {joined}") };
         let connect = if is_dev { format!("connect-src {own} ws: wss:") } else { format!("connect-src {own}") };
-        let app_csp = [
-            "default-src 'self'".to_string(),
-            "base-uri 'self'".to_string(),
-            "object-src 'none'".to_string(),
-            "frame-ancestors 'self'".to_string(),
-            "form-action 'self'".to_string(),
-            format!("img-src {own} data: blob:"),
-            format!("media-src {own} blob:"),
-            format!("frame-src {own}"),
-            "font-src 'self' data:".to_string(),
-            "worker-src 'self' blob:".to_string(),
-            "style-src 'self' 'unsafe-inline'".to_string(),
-            if is_dev {
-                "script-src 'self' 'unsafe-inline' 'unsafe-eval'".to_string()
-            } else {
-                "script-src 'self' 'unsafe-inline'".to_string()
-            },
-            connect.clone(),
-        ]
-        .join("; ");
+        // `extra`: an origin added to script-src and frame-src (Turnstile).
+        let app_policy = |extra: Option<&str>| {
+            let plus = extra.map(|o| format!(" {o}")).unwrap_or_default();
+            [
+                "default-src 'self'".to_string(),
+                "base-uri 'self'".to_string(),
+                "object-src 'none'".to_string(),
+                "frame-ancestors 'self'".to_string(),
+                "form-action 'self'".to_string(),
+                format!("img-src {own} data: blob:"),
+                format!("media-src {own} blob:"),
+                format!("frame-src {own}{plus}"),
+                "font-src 'self' data:".to_string(),
+                "worker-src 'self' blob:".to_string(),
+                "style-src 'self' 'unsafe-inline'".to_string(),
+                if is_dev {
+                    format!("script-src 'self' 'unsafe-inline' 'unsafe-eval'{plus}")
+                } else {
+                    format!("script-src 'self' 'unsafe-inline'{plus}")
+                },
+                connect.clone(),
+            ]
+            .join("; ")
+        };
+        let app_csp = app_policy(None);
+        let app_csp_turnstile = app_policy(Some(crate::turnstile::CHALLENGES_ORIGIN));
         // `/authorize` needs one thing the rest of the app must never have:
         // permission to talk to a port on this machine (RFC 8252 loopback
         // handoff). This policy REPLACES app_csp for that path.
@@ -88,6 +101,7 @@ impl SecurityHeaders {
             format!("connect-src {own} http://127.0.0.1:*")
         };
         let authorize_csp = app_csp.replacen(&connect, &authorize_connect, 1);
+        let authorize_csp_turnstile = app_csp_turnstile.replacen(&connect, &authorize_connect, 1);
         // User-uploaded bytes get a policy of their own.
         let raw_csp = [
             "default-src 'none'",
@@ -113,7 +127,7 @@ impl SecurityHeaders {
             "frame-ancestors 'self'",
         ]
         .join("; ");
-        SecurityHeaders { app_csp, authorize_csp, raw_csp, render_csp }
+        SecurityHeaders { app_csp, authorize_csp, raw_csp, render_csp, app_csp_turnstile, authorize_csp_turnstile }
     }
 
     /// Build from the process environment the way next.config.ts read it.
@@ -124,18 +138,24 @@ impl SecurityHeaders {
 
     /// The headers every matching rule sets for `raw_path`, later rules
     /// overriding earlier ones. Empty for paths no rule matches
-    /// (`/authorize/anything`).
-    pub fn for_path(&self, raw_path: &str) -> Vec<(HeaderName, HeaderValue)> {
+    /// (`/authorize/anything`). `turnstile`: the optional Cloudflare
+    /// Turnstile check is on (the two app policies let its widget in).
+    pub fn for_path(&self, raw_path: &str, turnstile: bool) -> Vec<(HeaderName, HeaderValue)> {
         let lower = raw_path.to_ascii_lowercase();
         let mut csp: Option<&str> = None;
         let rest = lower.strip_prefix('/').unwrap_or(&lower);
+        let (app, authorize) = if turnstile {
+            (&self.app_csp_turnstile, &self.authorize_csp_turnstile)
+        } else {
+            (&self.app_csp, &self.authorize_csp)
+        };
         // "/:path((?!authorize$|authorize/).*)"
         if lower.starts_with('/') && !(rest == "authorize" || rest.starts_with("authorize/")) {
-            csp = Some(&self.app_csp);
+            csp = Some(app);
         }
         // "/authorize"
         if lower == "/authorize" {
-            csp = Some(&self.authorize_csp);
+            csp = Some(authorize);
         }
         let segments: Vec<&str> = match lower.strip_prefix('/') {
             Some(rest) => rest.split('/').collect(),
@@ -161,8 +181,8 @@ impl SecurityHeaders {
     }
 
     /// Apply to a response: config headers win over handler headers.
-    pub fn apply(&self, raw_path: &str, headers: &mut HeaderMap) {
-        for (name, value) in self.for_path(raw_path) {
+    pub fn apply(&self, raw_path: &str, headers: &mut HeaderMap, turnstile: bool) {
+        for (name, value) in self.for_path(raw_path, turnstile) {
             headers.insert(name, value);
         }
     }
@@ -198,7 +218,11 @@ mod tests {
     }
 
     fn csp(h: &SecurityHeaders, path: &str) -> Option<String> {
-        h.for_path(path)
+        csp_with(h, path, false)
+    }
+
+    fn csp_with(h: &SecurityHeaders, path: &str, turnstile: bool) -> Option<String> {
+        h.for_path(path, turnstile)
             .into_iter()
             .find(|(k, _)| k == "content-security-policy")
             .map(|(_, v)| v.to_str().unwrap().to_string())
@@ -221,7 +245,7 @@ mod tests {
             csp(&h, "/authorize").unwrap().ends_with("connect-src 'self' http://localhost:8420 http://127.0.0.1:*")
         );
         assert!(csp(&h, "/AUTHORIZE").unwrap().contains("http://127.0.0.1:*"));
-        assert!(h.for_path("/authorize/x").is_empty());
+        assert!(h.for_path("/authorize/x", false).is_empty());
         assert!(csp(&h, "/authorized").unwrap().ends_with("connect-src 'self' http://localhost:8420"));
     }
 
@@ -235,6 +259,27 @@ mod tests {
         // Matched on the raw path: an encoded segment is not "render".
         assert!(csp(&h, "/tag/code/%72ender").unwrap().starts_with("default-src 'self'"));
         assert!(csp(&h, "/tag/code/raw.").unwrap().starts_with("default-src 'self'"));
+    }
+
+    /// Not upstream: with Turnstile on, Cloudflare's origin joins script-src
+    /// and frame-src of the two app policies, and nothing else changes.
+    #[test]
+    fn turnstile_adds_its_origin_to_script_and_frame_src_only() {
+        let h = prod();
+        assert_eq!(
+            csp_with(&h, "/login", true).unwrap(),
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; img-src 'self' http://localhost:8420 data: blob:; media-src 'self' http://localhost:8420 blob:; frame-src 'self' http://localhost:8420 https://challenges.cloudflare.com; font-src 'self' data:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; connect-src 'self' http://localhost:8420"
+        );
+        let authorize = csp_with(&h, "/authorize", true).unwrap();
+        assert!(authorize.contains("script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com;"));
+        assert!(authorize.ends_with("connect-src 'self' http://localhost:8420 http://127.0.0.1:*"));
+        // User content keeps its own policies.
+        assert_eq!(csp_with(&h, "/tag/code/raw", true), csp(&h, "/tag/code/raw"));
+        assert_eq!(csp_with(&h, "/tag/code/render", true), csp(&h, "/tag/code/render"));
+        // Off: byte for byte the policy without it.
+        assert!(!csp(&h, "/login").unwrap().contains("cloudflare"));
+        let dev = SecurityHeaders::new(&[], true);
+        assert!(dev.app_csp_turnstile.contains("'unsafe-eval' https://challenges.cloudflare.com;"));
     }
 
     #[test]
