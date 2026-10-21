@@ -536,6 +536,13 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                 match screen {
                     "history-advanced" => {
                         window.advanced = true;
+                        // A fixed day in the date boxes, which otherwise show today and
+                        // would change the snapshot every day.
+                        let day = super::history_list::short_date(
+                            chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap(),
+                        );
+                        window.adv.from = day.clone();
+                        window.adv.to = day;
                         window.adv.type_on = true;
                         window.adv.kind = window.types.iter().position(|t| t == "Image");
                         window.refilter(state);
