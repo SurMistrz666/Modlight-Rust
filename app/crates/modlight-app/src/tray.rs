@@ -53,6 +53,9 @@ pub struct Tray {
     /// Windows: Exit was chosen; the window closes the app on its next pass.
     #[cfg(windows)]
     exit: bool,
+    /// Windows: an entry that shows the app's windows was chosen.
+    #[cfg(windows)]
+    showed: bool,
 }
 
 /// Windows: a button of the mouse let go over the icon, and when.
@@ -435,6 +438,8 @@ impl Tray {
             clicks: Clicks::new(ctx),
             #[cfg(windows)]
             exit: false,
+            #[cfg(windows)]
+            showed: false,
         })
     }
 
@@ -472,8 +477,9 @@ impl Tray {
     pub fn commands(&mut self, state: &AppState) -> Vec<Command> {
         let ids: Vec<String> = self.events.try_iter().collect();
         #[cfg(windows)]
-        if ids.iter().any(|id| id == EXIT) {
-            self.exit = true;
+        {
+            self.exit |= ids.iter().any(|id| id == EXIT);
+            self.showed |= ids.iter().any(|id| id.starts_with(SHOWS));
         }
         #[cfg_attr(not(windows), allow(unused_mut))]
         let mut commands: Vec<Command> = ids
@@ -494,6 +500,13 @@ impl Tray {
     #[cfg(windows)]
     pub fn take_exit(&mut self) -> bool {
         std::mem::take(&mut self.exit)
+    }
+
+    /// Windows: whether an entry that shows the app's windows was chosen since the last
+    /// call. The menu's handler showed them through Win32, behind winit's back.
+    #[cfg(windows)]
+    pub fn take_showed(&mut self) -> bool {
+        std::mem::take(&mut self.showed)
     }
 }
 

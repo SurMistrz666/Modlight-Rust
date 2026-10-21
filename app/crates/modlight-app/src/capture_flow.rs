@@ -1296,7 +1296,9 @@ pub fn tools_menu() -> Vec<crate::menus::Entry> {
     ]
 }
 
-/// `HotkeyProblemViewModel.Describe`: the keys macOS would not give, or nothing.
+/// `HotkeyProblemViewModel.Describe`: the keys the system would not give, or nothing. On
+/// Windows upstream's words, which blame a running ShareX when its mutex exists and the
+/// Snipping Tool otherwise; on a Mac the port's own.
 pub fn hotkey_problem(state: &AppState) -> Option<String> {
     let failed = state.captures.hotkeys.failed();
     if failed.is_empty() {
@@ -1307,8 +1309,13 @@ pub fn hotkey_problem(state: &AppState) -> Option<String> {
         .map(|h| h.info.text())
         .collect::<Vec<_>>()
         .join(", ");
-    Some(format(
-        t(modlight_core::l10n::mac::HotkeyProblem),
-        &[Arg::from(keys)],
-    ))
+    #[cfg(windows)]
+    let text = if state.mode == Mode::Normal && !state.env.qa && crate::win32::sharex_running() {
+        s::MainWindow_HotkeyProblemShareX
+    } else {
+        s::MainWindow_HotkeyProblem
+    };
+    #[cfg(not(windows))]
+    let text = modlight_core::l10n::mac::HotkeyProblem;
+    Some(format(t(text), &[Arg::from(keys)]))
 }
