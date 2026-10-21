@@ -3,6 +3,12 @@
 //! translation service (editable list), read another region or picture. Silent mode reads
 //! straight to the clipboard. The text of a picture file is also written beside it.
 //!
+//! On Windows the text is read by Windows OCR, as upstream, and its languages are listed
+//! as upstream lists them: the engine's tags with the names Windows gives them
+//! (`Language.DisplayName`), sorted by name. A saved tag selects the same tag, else one
+//! of the same language (a tag saved on a Mac, "pl-PL", meets Windows' "pl"), else the
+//! first, and an engine with no language at all is upstream's "unavailable".
+//!
 //! Upstream's help button opened ShareX's documentation (getsharex.com), which the port
 //! leaves out; the button is not drawn.
 
@@ -767,11 +773,49 @@ pub fn use_vision_languages() {
     let _ = VISION_LANGUAGES.get_or_init(crate::platform::ocr::languages);
 }
 
-fn language_tags() -> Vec<String> {
+/// The tags the lists show, and whether they are the system's own (else the fixed list).
+fn language_tags() -> (Vec<String>, bool) {
     match VISION_LANGUAGES.get() {
-        Some(list) if !list.is_empty() => list.clone(),
-        _ => QA_LANGUAGES.iter().map(|s| s.to_string()).collect(),
+        Some(list) if !list.is_empty() => (list.clone(), true),
+        // Windows may have no OCR language installed; the lists then say so.
+        #[cfg(windows)]
+        Some(_) => (Vec::new(), true),
+        _ => (QA_LANGUAGES.iter().map(|s| s.to_string()).collect(), false),
     }
+}
+
+/// The tags named for the lists: the system's own on Windows by Windows, everything else
+/// in the app's language.
+fn named_languages((tags, system): (Vec<String>, bool)) -> Vec<LanguageOption> {
+    #[cfg(windows)]
+    {
+        if system {
+            return windows_languages(&tags);
+        }
+    }
+    let _ = system;
+    ocr::language_options(&tags)
+}
+
+/// Windows OCR's languages with the names Windows gives them (`OCRHelper.
+/// AvailableLanguages`: `DisplayName`, in the language of Windows' own interface), sorted
+/// by name. Read once: the names do not follow the app's language.
+#[cfg(windows)]
+fn windows_languages(tags: &[String]) -> Vec<LanguageOption> {
+    static NAMED: std::sync::OnceLock<Vec<LanguageOption>> = std::sync::OnceLock::new();
+    NAMED
+        .get_or_init(|| {
+            let mut options: Vec<LanguageOption> = tags
+                .iter()
+                .map(|tag| LanguageOption {
+                    name: crate::platform::ocr::language_name(tag).unwrap_or_else(|| tag.clone()),
+                    tag: tag.clone(),
+                })
+                .collect();
+            options.sort_by_key(|o| o.name.to_lowercase());
+            options
+        })
+        .clone()
 }
 
 /// The task settings' "Default language" (`OCROptions.Language`), with upstream's
@@ -782,7 +826,7 @@ pub fn settings_language_combo(
     b: &mut crate::settings_kit::Binder,
     path: &[&str],
 ) {
-    let languages = ocr::language_options(&language_tags());
+    let languages = named_languages(language_tags());
     if languages.is_empty() {
         ui.add_enabled_ui(false, |ui| {
             let list = vec![(
@@ -809,13 +853,13 @@ pub fn settings_language_combo(
 impl AppState {
     /// Vision's languages (QA renders use the list this was written with).
     pub fn ocr_languages(&self) -> Vec<LanguageOption> {
-        let tags: Vec<String> = if self.env.qa || self.mode != crate::app::Mode::Normal {
-            QA_LANGUAGES.iter().map(|s| s.to_string()).collect()
+        let tags = if self.env.qa || self.mode != crate::app::Mode::Normal {
+            (QA_LANGUAGES.iter().map(|s| s.to_string()).collect(), false)
         } else {
             use_vision_languages();
             language_tags()
         };
-        ocr::language_options(&tags)
+        named_languages(tags)
     }
 
     fn ocr_recognizer(&self) -> Recognizer {
