@@ -73,7 +73,7 @@ fn params(dir: &std::path::Path, codec: FFmpegVideoCodec, two_pass: bool) -> Ses
 #[test]
 fn a_fixed_length_recording_becomes_an_mp4() {
     if ffmpeg().is_none() {
-        eprintln!("no ffmpeg on this Mac: skipped");
+        eprintln!("no ffmpeg on this computer: skipped");
         return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -94,7 +94,7 @@ fn a_fixed_length_recording_becomes_an_mp4() {
 #[test]
 fn a_gif_goes_through_the_lossless_first_pass() {
     if ffmpeg().is_none() {
-        eprintln!("no ffmpeg on this Mac: skipped");
+        eprintln!("no ffmpeg on this computer: skipped");
         return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -113,7 +113,7 @@ fn a_gif_goes_through_the_lossless_first_pass() {
 #[test]
 fn stopping_and_aborting_from_the_window() {
     if ffmpeg().is_none() {
-        eprintln!("no ffmpeg on this Mac: skipped");
+        eprintln!("no ffmpeg on this computer: skipped");
         return;
     }
     // Stop: an open-ended recording ends with a file when Stop is pressed.
@@ -152,7 +152,7 @@ fn stopping_and_aborting_from_the_window() {
 #[test]
 fn a_paused_recording_is_joined_into_one_file() {
     if ffmpeg().is_none() {
-        eprintln!("no ffmpeg on this Mac: skipped");
+        eprintln!("no ffmpeg on this computer: skipped");
         return;
     }
     let dir = tempfile::tempdir().unwrap();
