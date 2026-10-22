@@ -1320,7 +1320,8 @@ fn radio(
     resp.clicked()
 }
 
-/// An emoji from Apple Color Emoji into `rect` (falls back to nothing).
+/// An emoji from the emoji font (`emoji::EMOJI_FAMILY`) into `rect` (falls back to
+/// nothing).
 fn paint_emoji(ui: &Ui, sequence: &str, rect: Rect) {
     let ppp = ui.ctx().pixels_per_point();
     let size = (rect.width() * ppp).round() as u32;
