@@ -15,7 +15,7 @@ both directions. The only intended differences are security and bug fixes, liste
 |---|---|
 | [`server/`](server/) | The server: Rust (axum, sqlx, PostgreSQL), ~90k lines. The web panel keeps the original React components, served as a single-page app without Next.js. Ships as one Docker image. |
 | [`app/`](app/) | The desktop app for macOS and Windows: Rust (egui), ~190k lines in eight crates. Everything but the system glue (`modlight-macos`, `modlight-windows`) is shared. |
-| [`docs/audyt/`](docs/audyt/) | Security audits of the original code and of this rewrite (in Polish). |
+| [`docs/audit/`](docs/audit/) | Security audits of the original code and of this rewrite. |
 | [`docs/handoff/`](docs/handoff/) | Notes from each stage of the port. |
 
 ### Server
@@ -144,8 +144,8 @@ fixes what the audits found:
   known size and digest, a backup import that cannot redirect the account token or delete
   files, programs from imported settings arriving disabled, and decoding limits for images.
 
-Reviews of this code: [`docs/audyt/rust-serwer.md`](docs/audyt/rust-serwer.md) and
-[`docs/audyt/rust-aplikacja.md`](docs/audyt/rust-aplikacja.md). Neither component sends data
+Reviews of this code: [`docs/audit/rust-server.md`](docs/audit/rust-server.md) and
+[`docs/audit/rust-app.md`](docs/audit/rust-app.md). Neither component sends data
 anywhere except the account's own server, the mail and S3 services an administrator
 configures, Cloudflare Turnstile when enabled, and GitHub for verified app components.
 

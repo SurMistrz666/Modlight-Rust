@@ -22,6 +22,9 @@ struct Fake {
     sent_names: Mutex<Vec<String>>,
     /// When set, a send waits for its cancellation instead of answering.
     hang: AtomicBool,
+    /// Points the next send has the server confirm (session URL, offset), in order,
+    /// before it answers or hangs: the chunks of a tus transfer.
+    confirms: Mutex<Vec<(String, i64)>>,
 }
 
 impl Fake {
@@ -41,9 +44,17 @@ impl QueueTransport for Fake {
         item: &'a mut TransferItem,
         cancel: CancellationToken,
         mut progress: ProgressFn<'a>,
+        mut checkpoint: CheckpointFn<'a>,
     ) -> BoxFuture<'a, TransferResult> {
         Box::pin(async move {
             self.sent_names.lock().unwrap().push(item.file_name.clone());
+            let confirms = std::mem::take(&mut *self.confirms.lock().unwrap());
+            for (url, offset) in confirms {
+                item.tus_url = Some(url);
+                item.tus_offset = offset;
+                progress(offset, item.length);
+                checkpoint(item);
+            }
             if self.hang.load(Ordering::SeqCst) {
                 cancel.cancelled().await;
                 return TransferResult::failure(TransferOutcome::Canceled, QueueReason::None, "");
@@ -151,6 +162,7 @@ impl Bench {
             file_path: Some(path),
             data: None,
             answer,
+            session: None,
         })
     }
 
@@ -601,6 +613,81 @@ async fn the_queue_comes_back_after_a_restart() {
     });
     restarted.pump().await;
     assert_eq!(restarted.count(), 0);
+}
+
+/// A transfer that dies with the process mid-file: what was confirmed chunk by chunk is
+/// already in `Queue.json`, so the next start resumes from the last confirmed chunk.
+#[tokio::test]
+async fn each_confirmed_chunk_is_saved_before_the_transfer_ends() {
+    let b = bench();
+    b.take_over("big.bin", None);
+    let url = "https://files.example.com/api/files/c7";
+    b.fake.confirms.lock().unwrap().extend([
+        (url.to_string(), 0),
+        (url.to_string(), 4),
+        (url.to_string(), 8),
+    ]);
+    b.fake.hang.store(true, Ordering::SeqCst);
+    b.advance(3600);
+    let queue = b.queue.clone();
+    let worker = tokio::spawn(async move { queue.pump().await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(b.item().state, QueueState::Sending, "still in flight");
+
+    // The process dies here: a new one reads the file.
+    let restored = QueueStore::new(b.dir.path()).load(Utc::now());
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].tus_url.as_deref(), Some(url));
+    assert_eq!(restored[0].tus_offset, 8, "the last confirmed chunk");
+    assert_eq!(restored[0].state, QueueState::Waiting);
+
+    let id = b.item().id;
+    b.queue.cancel(&id);
+    worker.await.unwrap();
+    assert_eq!(b.queue.count(), 0);
+}
+
+#[test]
+fn a_live_session_is_carried_on_by_the_queue() {
+    let b = bench();
+    let path = b.file("big.bin", b"0123456789");
+    let live = |length: u64| LiveSession {
+        length,
+        session: TusSession {
+            url: Some("https://files.example.com/api/files/l1".into()),
+            offset: 6,
+            folder_id: None,
+        },
+    };
+    assert!(b.queue.try_take_over(TakeOver {
+        file_name: "big.bin".into(),
+        folder_id: Some("f1".into()),
+        file_path: Some(path.clone()),
+        session: Some(live(10)),
+        ..TakeOver::default()
+    }));
+    let item = b.item();
+    assert_eq!(
+        item.tus_url.as_deref(),
+        Some("https://files.example.com/api/files/l1")
+    );
+    assert_eq!(item.tus_offset, 6);
+    assert_eq!(item.folder_id, None, "the folder the session was made with");
+
+    // A session for other bytes is no use: the queue starts from nothing.
+    let b = bench();
+    let path = b.file("big.bin", b"0123456789");
+    assert!(b.queue.try_take_over(TakeOver {
+        file_name: "big.bin".into(),
+        folder_id: Some("f1".into()),
+        file_path: Some(path),
+        session: Some(live(12)),
+        ..TakeOver::default()
+    }));
+    let item = b.item();
+    assert_eq!(item.tus_url, None);
+    assert_eq!(item.tus_offset, 0);
+    assert_eq!(item.folder_id.as_deref(), Some("f1"));
 }
 
 #[test]

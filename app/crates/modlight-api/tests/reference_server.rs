@@ -761,13 +761,14 @@ async fn the_loopback_listener_ignores_strangers_and_takes_our_answer() {
 
     let expected = state.clone();
     let browser = std::thread::spawn(move || {
-        // CORS is granted to the server's origin only, and never for private networks.
+        // CORS, the private-network grant included, goes to the server's origin only.
         let foreign = preflight(port, "https://evil.example");
         assert!(foreign.starts_with("HTTP/1.1 204"));
         assert!(!foreign.contains("Access-Control-Allow-Origin"));
+        assert!(!foreign.to_ascii_lowercase().contains("private-network"));
         let ours = preflight(port, SERVER);
         assert!(ours.contains(&format!("Access-Control-Allow-Origin: {SERVER}")));
-        assert!(!ours.to_ascii_lowercase().contains("private-network"));
+        assert!(ours.contains("Access-Control-Allow-Private-Network: true"));
 
         // A GET is not a handoff; junk and a wrong state are answered and ignored.
         let mut get = TcpStream::connect(("127.0.0.1", port)).unwrap();

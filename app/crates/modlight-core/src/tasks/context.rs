@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 
-use modlight_api::{Api, Credential};
+use modlight_api::{Api, Credential, TusClient};
 
 use crate::tasks::host::{MessageIcon, TaskChannel, TaskEffect};
 use crate::tasks::info::TaskMetadata;
@@ -20,6 +20,9 @@ pub const SCREENSHOTS_FOLDER_NAME: &str = "Screenshots";
 #[derive(Clone)]
 pub struct TaskContext {
     pub api: Api,
+    /// What a live upload larger than one tus chunk goes through (the queue's transport
+    /// shares it).
+    pub tus: TusClient,
     pub account: AccountSlot,
     pub queue: UploadQueue,
     pub channel: TaskChannel,
