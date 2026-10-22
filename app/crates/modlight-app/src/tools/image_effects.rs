@@ -2658,7 +2658,9 @@ pub fn qa_prepare(screen: &str, state: &mut AppState) -> Option<egui::Vec2> {
                 source,
                 presets,
                 selected,
-                Some("/Users/alex/Pictures/mountain-sunset.png".into()),
+                Some(crate::qa::fixture_path(
+                    "/Users/alex/Pictures/mountain-sunset.png",
+                )),
                 settings,
                 &colors,
             );
@@ -2712,8 +2714,10 @@ pub fn qa_prepare(screen: &str, state: &mut AppState) -> Option<egui::Vec2> {
             });
         }
         "image-effects-packager" => {
-            let folder = PathBuf::from("/Users/alex/Library/Application Support/Modlight")
-                .join(EFFECTS_FOLDER);
+            let folder = PathBuf::from(crate::qa::fixture_path(
+                "/Users/alex/Library/Application Support/Modlight",
+            ))
+            .join(EFFECTS_FOLDER);
             let preset = qa_presets().remove(0);
             state.tools.open_keyed(|key| {
                 Box::new(PackagerWindow::new(
@@ -2811,7 +2815,12 @@ mod tests {
         let mut draw = ClassicEffect::new(Kind::DrawImage);
         draw.set("ImageLocation", Value::Text("/etc/passwd".into()));
         let mut inside = ClassicEffect::new(Kind::DrawBackgroundImage);
-        let kept = folder.join("Preset/bg.png").to_string_lossy().into_owned();
+        // Built a part at a time: one separator throughout, the system's.
+        let kept = folder
+            .join("Preset")
+            .join("bg.png")
+            .to_string_lossy()
+            .into_owned();
         inside.set("ImageFilePath", Value::Text(kept.clone()));
         let preset = Preset {
             name: "P".into(),

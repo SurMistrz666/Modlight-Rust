@@ -12,7 +12,9 @@ use serde_json::{Value, json};
 use crate::platform::integration::StartupState;
 use modlight_core::hotkeys::HotkeyType;
 use modlight_core::icons;
-use modlight_core::l10n::{Arg, LanguageSetting, format, helpers, mac, s, t};
+#[cfg(not(windows))]
+use modlight_core::l10n::mac;
+use modlight_core::l10n::{Arg, Key, LanguageSetting, format, helpers, s, t};
 
 use crate::commands::Command;
 use crate::menus::Entry;
@@ -21,6 +23,12 @@ use crate::settings_kit::{
 };
 use crate::theme::{Colors, Weight};
 use crate::widgets::{Field, Look, button, combo, layout, paint_icon, trimmed, wrapped};
+
+/// "Don't show the print dialog": upstream's on Windows, the Mac's own text elsewhere.
+#[cfg(windows)]
+const DONT_SHOW_PRINT_DIALOG: Key = s::ApplicationSettingsWindow_DontShowWindowsPrintDialog;
+#[cfg(not(windows))]
+const DONT_SHOW_PRINT_DIALOG: Key = mac::DontShowPrintDialog;
 
 /// What a page asks of the app.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,6 +46,15 @@ pub enum AppPageAsk {
     StartAtLogin(bool),
     OpenLoginItems,
     OpenServicesSettings,
+    /// Windows: "Upload with Modlight" in Explorer's context menu.
+    #[cfg(windows)]
+    ContextMenu(bool),
+    /// Windows: Modlight in Explorer's "Send to" menu.
+    #[cfg(windows)]
+    SendTo(bool),
+    /// Windows: pick another personal folder (`OnBrowsePersonalFolderClick`).
+    #[cfg(windows)]
+    BrowsePersonalFolder,
     DisableHotkeys(bool),
     /// "Automatically check for updates" was turned on: arm the hourly check.
     UpdatesOn,
@@ -53,6 +70,10 @@ pub struct AppPagesState {
     pub export_history: bool,
     pub status: String,
     pub busy: bool,
+    /// Windows: the personal folder box (`PersonalFolderPath`), read from
+    /// `PersonalPath.cfg` when the page first shows, and whether it was edited.
+    pub personal_path: Option<String>,
+    pub personal_path_dirty: bool,
 }
 
 impl Default for AppPagesState {
@@ -64,8 +85,18 @@ impl Default for AppPagesState {
             export_history: true,
             status: String::new(),
             busy: false,
+            personal_path: None,
+            personal_path_dirty: false,
         }
     }
+}
+
+/// Windows: Modlight's entries in Explorer's menus (`CheckShellContextMenuButton`,
+/// `CheckSendToMenuButton`), read when the integration page opens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExplorerMenus {
+    pub context_menu: bool,
+    pub send_to: bool,
 }
 
 /// Where the pages are drawn and what they show that is not a setting.
@@ -75,8 +106,14 @@ pub struct AppPagesCtx<'a> {
     pub asks: Vec<AppPageAsk>,
     pub language: LanguageSetting,
     pub personal_folder: String,
+    /// Windows: the folder an empty personal folder box means (`DefaultPersonalFolder`).
+    pub personal_default: String,
     pub screenshots_preview: String,
     pub startup: StartupState,
+    /// Windows: the folder of another copy Windows starts (`OtherCopyStartupTargetPath`).
+    pub startup_other_copy: Option<String>,
+    /// Windows: the Explorer menu check boxes.
+    pub explorer: ExplorerMenus,
     pub updates_visible: bool,
     pub dialogs: bool,
 }
@@ -196,8 +233,8 @@ fn general(ui: &mut Ui, ctx: &mut AppPagesCtx, b: &mut Binder) {
                 true,
                 t(s::ApplicationSettingsWindow_ShowProgressInTrayIcon),
             );
-            // `TaskbarManager.IsPlatformSupported` is false on a Mac (MACOS.md).
-            ui.add_enabled_ui(false, |ui| {
+            // `TaskbarManager.IsPlatformSupported`: Windows only (MACOS.md).
+            ui.add_enabled_ui(cfg!(windows), |ui| {
                 check(
                     ui,
                     colors,
@@ -310,6 +347,103 @@ fn general(ui: &mut Ui, ctx: &mut AppPagesCtx, b: &mut Binder) {
     }
 }
 
+/// `RefreshStartWithWindows`: the check box's text, whether it can change, whether it is
+/// on. `other_copy` is the folder of another Modlight.exe that Windows starts instead of
+/// this one (the settings page names it; the first-run window does not).
+#[cfg(windows)]
+pub fn start_with_windows(
+    state: StartupState,
+    first_run: bool,
+    other_copy: Option<&str>,
+) -> (String, bool, bool) {
+    let (text, disabled_by_user) = if first_run {
+        (
+            s::FirstTimeConfigWindow_StartWithWindows,
+            s::FirstTimeConfigWindow_StartWithWindowsDisabledByUser,
+        )
+    } else {
+        (
+            s::ApplicationSettingsForm_cbStartWithWindows_Text,
+            s::ApplicationSettingsForm_cbStartWithWindows_DisabledByUser_Text,
+        )
+    };
+    // "Off" must not read as "nothing starts": say which copy Windows starts.
+    let text = match other_copy {
+        Some(folder) if !first_run => format(
+            t(s::ApplicationSettingsForm_cbStartWithWindows_OtherCopy_Text),
+            &[Arg::from(folder)],
+        ),
+        _ => t(text).to_string(),
+    };
+    match state {
+        // Turned off in Task Manager's Startup apps.
+        StartupState::DisabledByUser => (t(disabled_by_user).to_string(), false, false),
+        // A development build: registration is refused there.
+        StartupState::NotAvailable => (text, false, false),
+        StartupState::Enabled | StartupState::RequiresApproval => (text, true, true),
+        StartupState::Disabled => (text, true, false),
+    }
+}
+
+/// The Integration page (`IsIntegrationPage`): the "Windows" card with Start with Windows
+/// and Modlight's entries in Explorer's context menu and "Send to" menu. Upstream's
+/// "Edit with Modlight" entry is not offered: the platform layer does not register it.
+#[cfg(windows)]
+fn integration(ui: &mut Ui, ctx: &mut AppPagesCtx) {
+    let colors = ctx.colors;
+    card(
+        ui,
+        colors,
+        t(s::ApplicationSettingsWindow_Windows),
+        true,
+        |ui| {
+            let (label, enabled, mut on) =
+                start_with_windows(ctx.startup, false, ctx.startup_other_copy.as_deref());
+            if crate::widgets::checkbox_weighted(
+                ui,
+                colors,
+                &mut on,
+                Some(&label),
+                enabled,
+                Weight::Normal,
+            )
+            .changed()
+            {
+                ctx.asks.push(AppPageAsk::StartAtLogin(on));
+            }
+            let mut context_menu = ctx.explorer.context_menu;
+            if crate::widgets::checkbox_weighted(
+            ui,
+            colors,
+            &mut context_menu,
+            Some(t(
+                s::ApplicationSettingsWindow_ShowUploadWithShareXButtonInWindowsExplorerContextMenu,
+            )),
+            true,
+            Weight::Normal,
+        )
+        .changed()
+        {
+            ctx.asks.push(AppPageAsk::ContextMenu(context_menu));
+        }
+            let mut send_to = ctx.explorer.send_to;
+            if crate::widgets::checkbox_weighted(
+                ui,
+                colors,
+                &mut send_to,
+                Some(t(s::ApplicationSettingsWindow_ShowShareXInSendToMenu)),
+                true,
+                Weight::Normal,
+            )
+            .changed()
+            {
+                ctx.asks.push(AppPageAsk::SendTo(send_to));
+            }
+        },
+    );
+}
+
+#[cfg(not(windows))]
 fn integration(ui: &mut Ui, ctx: &mut AppPagesCtx) {
     let colors = ctx.colors;
     card(ui, colors, t(mac::MacTitle), true, |ui| {
@@ -351,8 +485,71 @@ fn integration(ui: &mut Ui, ctx: &mut AppPagesCtx) {
     });
 }
 
+/// Windows: the personal folder card as upstream draws it: the box (`PersonalFolderPath`,
+/// stored in `PersonalPath.cfg` when the window closes), Browse, Open, the folder it means
+/// and the note that a change waits for a restart.
+#[cfg(windows)]
+fn personal_folder_card(ui: &mut Ui, ctx: &mut AppPagesCtx) {
+    let colors = ctx.colors;
+    card(
+        ui,
+        colors,
+        t(s::ApplicationSettingsWindow_ShareXPersonalFolder),
+        true,
+        |ui| {
+            let mut text = ctx.state.personal_path.clone().unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let open_w = crate::widgets::button_width(
+                    ui,
+                    &compact_look(colors),
+                    crate::widgets::Content::label(t(s::ApplicationSettingsWindow_Open)),
+                );
+                let browse_w = crate::widgets::button_width(
+                    ui,
+                    &compact_look(colors),
+                    crate::widgets::Content::label(t(s::ApplicationSettingsWindow_Browse)),
+                );
+                let response = Field {
+                    height: 32.0,
+                    width: Some(ui.available_width() - open_w - browse_w - 16.0),
+                    id: Some(egui::Id::new("personal-folder")),
+                    ..Field::new(&mut text)
+                }
+                .show(ui, colors);
+                if response.changed() {
+                    ctx.state.personal_path = Some(text.clone());
+                    ctx.state.personal_path_dirty = true;
+                }
+                if compact_button(ui, colors, t(s::ApplicationSettingsWindow_Browse)).clicked() {
+                    ctx.asks.push(AppPageAsk::BrowsePersonalFolder);
+                }
+                if compact_button(ui, colors, t(s::ApplicationSettingsWindow_Open)).clicked() {
+                    ctx.asks.push(AppPageAsk::OpenPersonalFolder);
+                }
+            });
+            let preview = if text.trim().is_empty() {
+                ctx.personal_default.clone()
+            } else {
+                crate::personal_folder::absolute(&text)
+                    .display()
+                    .to_string()
+            };
+            hint(ui, colors, &preview);
+            hint(
+                ui,
+                colors,
+                t(s::ApplicationSettingsWindow_ChangesToThePersonalFolderAreStoredImmediatelyAndTakeEffectAfterRestart),
+            );
+        },
+    );
+}
+
 fn paths(ui: &mut Ui, ctx: &mut AppPagesCtx, b: &mut Binder) {
     let colors = ctx.colors;
+    #[cfg(windows)]
+    personal_folder_card(ui, ctx);
+    #[cfg(not(windows))]
     card(
         ui,
         colors,
@@ -1062,7 +1259,7 @@ fn print(ui: &mut Ui, ctx: &mut AppPagesCtx, b: &mut Binder) {
             b,
             &["PrintSettings", "ShowPrintDialog"],
             true,
-            t(mac::DontShowPrintDialog),
+            t(DONT_SHOW_PRINT_DIALOG),
         );
         if !b.bool(&["PrintSettings", "ShowPrintDialog"], true) {
             row(
@@ -1822,13 +2019,35 @@ impl crate::state::AppState {
                 self.set_language_setting(language);
                 self.save_config();
             }
-            // The menu bar extra follows `ShowTray` on its own.
+            // The tray icon follows `ShowTray` on its own (on Windows from the next frame).
             AppPageAsk::ShowTray(_) => {}
             AppPageAsk::EditQuickTaskMenu => self.open_quick_task_menu_editor(),
             AppPageAsk::OpenPersonalFolder => {
-                let folder = self.env.profile.clone();
-                self.effects.push(crate::state::Effect::OpenFile(folder));
+                let folder = self.personal_folder_preview();
+                if folder.is_dir() {
+                    self.effects.push(crate::state::Effect::OpenFile(folder));
+                }
             }
+            #[cfg(windows)]
+            AppPageAsk::BrowsePersonalFolder => {
+                if !self.dialogs_allowed() {
+                    return;
+                }
+                if let Some(folder) = rfd::FileDialog::new()
+                    .set_title(t(
+                        s::ApplicationSettingsWindow_ChooseShareXPersonalFolderPath,
+                    ))
+                    .pick_folder()
+                    && let Some(window) = self.windows.settings.as_mut()
+                {
+                    window.app_pages.personal_path = Some(folder.display().to_string());
+                    window.app_pages.personal_path_dirty = true;
+                }
+            }
+            #[cfg(windows)]
+            AppPageAsk::ContextMenu(on) => self.set_explorer_menu(on, false),
+            #[cfg(windows)]
+            AppPageAsk::SendTo(on) => self.set_explorer_menu(on, true),
             AppPageAsk::OpenScreenshotsFolder => {
                 let folder = std::path::PathBuf::from(self.screenshots_folder_preview());
                 if folder.is_dir() {
@@ -1875,12 +2094,17 @@ impl crate::state::AppState {
                         }
                     }
                     Err(error) => {
-                        log::warn!("Login item: {error}");
+                        log::warn!("Start at login: {error}");
                         self.app_status(error, false);
                         if let Some(window) = self.windows.settings.as_mut() {
                             window.startup = Some(crate::platform::integration::startup_state());
                         }
                     }
+                }
+                #[cfg(windows)]
+                if let Some(window) = self.windows.settings.as_mut() {
+                    window.startup_other_copy = crate::platform::integration::startup_other_copy()
+                        .and_then(|exe| exe.parent().map(|f| f.display().to_string()));
                 }
             }
             AppPageAsk::OpenLoginItems => {
@@ -1895,6 +2119,77 @@ impl crate::state::AppState {
             }
             AppPageAsk::DisableHotkeys(disabled) => self.captures.hotkeys.toggle(disabled),
             AppPageAsk::UpdatesOn => crate::update_window::on_startup(self),
+        }
+    }
+
+    /// The folder Open shows on the Paths page (`PersonalFolderPreview`): on Windows the
+    /// one the box names, on a Mac the fixed one.
+    fn personal_folder_preview(&self) -> std::path::PathBuf {
+        #[cfg(windows)]
+        if let Some(text) = self
+            .windows
+            .settings
+            .as_ref()
+            .and_then(|w| w.app_pages.personal_path.as_deref())
+            .filter(|text| !text.trim().is_empty())
+        {
+            return crate::personal_folder::absolute(text);
+        }
+        #[cfg(windows)]
+        if !self.env.qa {
+            return crate::personal_folder::default_folder();
+        }
+        self.env.profile.clone()
+    }
+
+    /// Windows: `CreateShellContextMenuButton` / `CreateSendToMenuButton`, then the box
+    /// shows what Explorer has now.
+    #[cfg(windows)]
+    fn set_explorer_menu(&mut self, on: bool, send_to: bool) {
+        if !self.dialogs_allowed() {
+            return;
+        }
+        use crate::platform::integration as i;
+        let result = if send_to {
+            i::set_send_to(on)
+        } else {
+            i::set_context_menu(on)
+        };
+        if let Err(error) = result {
+            log::warn!("Explorer integration: {error}");
+            self.app_status(error, false);
+        }
+        if let Some(window) = self.windows.settings.as_mut() {
+            window.explorer = Some(ExplorerMenus {
+                context_menu: i::context_menu_enabled(),
+                send_to: i::send_to_enabled(),
+            });
+        }
+    }
+
+    /// Windows, when the settings window closes (`FlushPersonalPath`): write an edited
+    /// personal folder to `PersonalPath.cfg`. A file that cannot be written says so as
+    /// upstream does.
+    #[cfg(windows)]
+    pub(crate) fn flush_personal_path(&mut self, pages: &AppPagesState) {
+        if !pages.personal_path_dirty || !self.dialogs_allowed() {
+            return;
+        }
+        let text = pages.personal_path.clone().unwrap_or_default();
+        if let Err(error) = crate::personal_folder::write_config(&text) {
+            log::warn!("PersonalPath.cfg: {error}");
+            let file = crate::personal_folder::config_file();
+            self.uploads
+                .windows
+                .messages
+                .push_back(crate::dialogs::message::MessageBox::new(
+                    "Modlight",
+                    &format(
+                        t(s::Program_WritePersonalPathConfig_Cant_access_to_file),
+                        &[Arg::from(file.display().to_string())],
+                    ),
+                    modlight_core::tasks::host::MessageIcon::Warning,
+                ));
         }
     }
 

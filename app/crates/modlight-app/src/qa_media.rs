@@ -32,15 +32,32 @@ pub const SCREENS: &[&str] = &[
 
 const TOOLS: &str = "/Users/alex/Library/Application Support/Modlight/Tools";
 
+/// A tool's file name in `Tools` (`.exe` on Windows).
+fn program(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
 fn tools(yt_dlp: bool, ffmpeg: bool) -> ToolPaths {
+    let folder = PathBuf::from(crate::qa::fixture_path(TOOLS));
     ToolPaths {
-        yt_dlp: yt_dlp.then(|| PathBuf::from(TOOLS).join("yt-dlp")),
-        ffmpeg: ffmpeg.then(|| PathBuf::from(TOOLS).join("ffmpeg")),
+        yt_dlp: yt_dlp.then(|| folder.join(program("yt-dlp"))),
+        ffmpeg: ffmpeg.then(|| folder.join(program("ffmpeg"))),
         quickjs: None,
     }
 }
 
 fn manifest() -> modlight_core::update::ReleaseManifest {
+    // Windows' release is upstream's installer, when the update check takes one.
+    #[cfg(windows)]
+    if let Ok(manifest) = modlight_core::update::parse_manifest(
+        r#"{"name":"Modlight App","version":"0.8.0","url":"https://files.example.com/r/Modlight-0.8.0-setup.exe","filename":"Modlight-0.8.0-setup.exe","size":41200000,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","notes":"Download tab and screen recording on Windows. Faster uploads of large files."}"#,
+    ) {
+        return manifest;
+    }
     modlight_core::update::parse_manifest(
         r#"{"name":"Modlight App","version":"0.8.0","url":"https://files.example.com/r/Modlight-0.8.0.dmg","filename":"Modlight-0.8.0.dmg","size":41200000,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","notes":"Download tab and screen recording on the Mac. Faster uploads of large files."}"#,
     )
@@ -53,7 +70,7 @@ fn link(url: &str) -> DownloadLink {
 
 /// Rows in every state the queue shows.
 fn busy_queue(state: &mut AppState) {
-    let movies = PathBuf::from("/Users/alex/Movies");
+    let movies = PathBuf::from(crate::qa::fixture_path("/Users/alex/Movies"));
     let queue = crate::download_tab::qa_queue(&mut state.downloads);
     let video = |q| DownloadFormat::new(MediaKind::Video, q, AudioFormat::M4a);
     let audio = DownloadFormat::new(MediaKind::Audio, Quality::Best, AudioFormat::Mp3);
@@ -199,7 +216,7 @@ fn busy_queue(state: &mut AppState) {
         item.title = "Mars sunset [7404291234294299].mp4".into();
         item.detail = modlight_core::l10n::format(
             t(s::Download_SavedAndSent),
-            &["/Users/alex/Movies".into()],
+            &[crate::qa::fixture_path("/Users/alex/Movies").into()],
         );
         item.percent = 100.0;
         item.size_text = "18.4 MB".into();
@@ -250,9 +267,9 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
     if !SCREENS.contains(&screen) {
         return None;
     }
-    state.components.display_profile = Some(PathBuf::from(
+    state.components.display_profile = Some(PathBuf::from(crate::qa::fixture_path(
         "/Users/alex/Library/Application Support/Modlight",
-    ));
+    )));
     let size = match screen {
         "tab-download" => {
             state.tab = Tab::Download;
@@ -262,7 +279,10 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         "tab-download-busy" => {
             state.tab = Tab::Download;
             crate::download_tab::qa_fill(&mut state.downloads, tools(true, true), true);
-            settings::set_folder(&mut state.config, "/Users/alex/Movies");
+            settings::set_folder(
+                &mut state.config,
+                &crate::qa::fixture_path("/Users/alex/Movies"),
+            );
             settings::set_video_quality(&mut state.config, Quality::H1080);
             busy_queue(state);
             crate::app::MAIN_SIZE
@@ -273,7 +293,10 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
             settings::set_media_kind(&mut state.config, MediaKind::Audio);
             settings::set_audio_format(&mut state.config, AudioFormat::M4a);
             settings::set_destination(&mut state.config, Destination::Both);
-            settings::set_folder(&mut state.config, "/Users/alex/Music/Downloads");
+            settings::set_folder(
+                &mut state.config,
+                &crate::qa::fixture_path("/Users/alex/Music/Downloads"),
+            );
             state.downloads.url_text = "not a link".into();
             state.downloads.url_error = t(s::Download_BadUrl).to_string();
             crate::app::MAIN_SIZE

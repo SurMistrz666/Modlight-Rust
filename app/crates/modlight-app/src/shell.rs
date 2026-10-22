@@ -19,7 +19,24 @@ pub const TITLE_HEIGHT: f32 = 34.0;
 /// The tab strip row: 6 above, 38 of content, the 1 px rule.
 pub const STRIP_HEIGHT: f32 = 45.0;
 /// Where the window's own buttons sit on a Mac; the logo and title start after them.
+#[cfg(not(windows))]
 pub const TRAFFIC_LIGHTS_WIDTH: f32 = 78.0;
+/// Where the logo starts: after the Mac's traffic lights, or at the band's own margin
+/// (`Margin="12,0,0,0"`) on Windows, whose caption buttons are drawn at the right.
+#[cfg(not(windows))]
+const LOGO_LEFT: f32 = TRAFFIC_LIGHTS_WIDTH;
+#[cfg(windows)]
+const LOGO_LEFT: f32 = 12.0;
+/// Windows: one caption button (`Button.caption`: 46 by 34).
+#[cfg(windows)]
+pub const CAPTION_BUTTON_WIDTH: f32 = 46.0;
+/// Windows: how far in from the window's edges a press resizes it. The system frame is
+/// gone with the title bar, so the edges are part of the window's own surface.
+#[cfg(windows)]
+pub const RESIZE_EDGE: f32 = 5.0;
+/// Windows: the corner squares that resize both ways.
+#[cfg(windows)]
+const RESIZE_CORNER: f32 = 12.0;
 
 /// Draw the whole window into `ui`.
 pub fn ui(ui: &mut Ui, state: &mut AppState, logo: Option<&egui::TextureHandle>) {
@@ -52,6 +69,8 @@ pub fn ui(ui: &mut Ui, state: &mut AppState, logo: Option<&egui::TextureHandle>)
     }
     toasts(ui, state, full);
     drop_overlay(ui, state, full);
+    #[cfg(windows)]
+    resize_edges(ui, full);
 }
 
 // ---------------------------------------------------------------------- title band
@@ -60,8 +79,18 @@ fn title_band(ui: &mut Ui, state: &mut AppState, rect: Rect, logo: Option<&egui:
     let colors = &state.colors;
     let painter = ui.painter().clone();
     painter.rect_filled(rect, 0.0, colors.background_toolbar());
-    // Dragging the band moves the window; a double click zooms it, as on any Mac title bar.
-    let band = ui.interact(rect, Id::new("title-band"), Sense::click_and_drag());
+    // Windows: minimise, maximise and close at the right end of the band.
+    #[cfg(windows)]
+    let end = caption_buttons(ui, colors, rect);
+    #[cfg(not(windows))]
+    let end = rect.right();
+    // Dragging the band moves the window; a double click zooms it (maximises it on
+    // Windows), as on the system's own title bar.
+    let band = ui.interact(
+        Rect::from_min_max(rect.min, pos2(end, rect.bottom())),
+        Id::new("title-band"),
+        Sense::click_and_drag(),
+    );
     if band.drag_started() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
@@ -70,7 +99,7 @@ fn title_band(ui: &mut Ui, state: &mut AppState, rect: Rect, logo: Option<&egui:
         ui.ctx()
             .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
     }
-    let mut x = rect.left() + TRAFFIC_LIGHTS_WIDTH;
+    let mut x = rect.left() + LOGO_LEFT;
     let cy = rect.center().y;
     if let Some(logo) = logo {
         let r = Rect::from_min_size(pos2(x, cy - 8.5), vec2(17.0, 17.0));
@@ -91,7 +120,7 @@ fn title_band(ui: &mut Ui, state: &mut AppState, rect: Rect, logo: Option<&egui:
             12.0,
             Weight::Normal,
             colors.text_secondary(),
-            (rect.right() - 12.0 - x).max(10.0),
+            (end - 12.0 - x).max(10.0),
             1,
         ),
     );
@@ -100,6 +129,169 @@ fn title_band(ui: &mut Ui, state: &mut AppState, rect: Rect, logo: Option<&egui:
         galley,
         colors.text_secondary(),
     );
+}
+
+/// What a caption button does.
+#[cfg(windows)]
+#[derive(Clone, Copy, PartialEq)]
+enum Caption {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+/// Windows: upstream's caption buttons (`Button.caption` in `ControlStyles.axaml`, the
+/// title bar of `MainWindow.axaml`). Square, 46 by 34, welded to the window's top right
+/// corner: Lucide minus (15), square or, maximised, copy (13), x (15), in
+/// `Text.Secondary`, `Text` under the pointer. The fill is `Control.Background.Hover`
+/// under the pointer and `Control.Background` pressed; close alone turns
+/// `TaskMode.Cancel.Background` (`.Border` pressed) with `TaskMode.Foreground`. Out of the
+/// tab order like the system's. Returns where the buttons start.
+#[cfg(windows)]
+fn caption_buttons(ui: &mut Ui, colors: &Colors, band: Rect) -> f32 {
+    let ctx = ui.ctx().clone();
+    let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+    let buttons = [
+        (
+            Caption::Minimize,
+            icons::MINUS,
+            15.0,
+            t(s::MainWindow_Minimize),
+        ),
+        if maximized {
+            (
+                Caption::Maximize,
+                icons::COPY,
+                13.0,
+                t(s::MainWindow_Restore),
+            )
+        } else {
+            (
+                Caption::Maximize,
+                icons::SQUARE,
+                13.0,
+                t(s::MainWindow_Maximize),
+            )
+        },
+        (Caption::Close, icons::X, 15.0, t(s::MainWindow_Close)),
+    ];
+    let left = band.right() - CAPTION_BUTTON_WIDTH * buttons.len() as f32;
+    let painter = ui.painter().clone();
+    for (index, (caption, glyph, size, tip)) in buttons.into_iter().enumerate() {
+        let rect = Rect::from_min_size(
+            pos2(left + CAPTION_BUTTON_WIDTH * index as f32, band.top()),
+            vec2(CAPTION_BUTTON_WIDTH, TITLE_HEIGHT),
+        );
+        let response = ui.interact(rect, Id::new(("caption-button", index)), Sense::click());
+        let close = caption == Caption::Close;
+        let (fill, glyph_color) = if response.is_pointer_button_down_on() {
+            if close {
+                (colors.cancel_border(), colors.task_foreground())
+            } else {
+                (colors.control_background(), colors.text())
+            }
+        } else if response.hovered() {
+            if close {
+                (colors.cancel_background(), colors.task_foreground())
+            } else {
+                (colors.control_background_hover(), colors.text())
+            }
+        } else {
+            (Color32::TRANSPARENT, colors.text_secondary())
+        };
+        painter.rect_filled(rect, 0.0, fill);
+        paint_icon(ui, &painter, rect.center(), glyph, size, glyph_color);
+        if response.on_hover_text(tip).clicked() {
+            ctx.send_viewport_cmd(match caption {
+                Caption::Minimize => egui::ViewportCommand::Minimized(true),
+                Caption::Maximize => egui::ViewportCommand::Maximized(!maximized),
+                // Through `OnClosing`, like the system's close: to the tray or out.
+                Caption::Close => egui::ViewportCommand::Close,
+            });
+        }
+    }
+    left
+}
+
+/// Windows: the window's edges and corners resize it (`BeginResize`), with the resize
+/// pointer over them; nothing while maximised or full screen. Registered after the
+/// window's contents, so a press there is the edge's, not the widget's under it.
+#[cfg(windows)]
+fn resize_edges(ui: &mut Ui, full: Rect) {
+    use egui::viewport::ResizeDirection as D;
+    use egui::{CursorIcon as C, ViewportCommand};
+    let ctx = ui.ctx().clone();
+    let (maximized, fullscreen) = ctx.input(|i| {
+        (
+            i.viewport().maximized.unwrap_or(false),
+            i.viewport().fullscreen.unwrap_or(false),
+        )
+    });
+    if maximized || fullscreen {
+        return;
+    }
+    let (e, c) = (RESIZE_EDGE, RESIZE_CORNER);
+    let (l, r, t, b) = (full.left(), full.right(), full.top(), full.bottom());
+    let zones = [
+        // Corners first: they win where they overlap the edges.
+        (
+            Rect::from_min_max(pos2(l, t), pos2(l + c, t + c)),
+            D::NorthWest,
+            C::ResizeNorthWest,
+        ),
+        (
+            Rect::from_min_max(pos2(r - c, t), pos2(r, t + c)),
+            D::NorthEast,
+            C::ResizeNorthEast,
+        ),
+        (
+            Rect::from_min_max(pos2(l, b - c), pos2(l + c, b)),
+            D::SouthWest,
+            C::ResizeSouthWest,
+        ),
+        (
+            Rect::from_min_max(pos2(r - c, b - c), pos2(r, b)),
+            D::SouthEast,
+            C::ResizeSouthEast,
+        ),
+        (
+            Rect::from_min_max(pos2(l, t), pos2(r, t + e)),
+            D::North,
+            C::ResizeNorth,
+        ),
+        (
+            Rect::from_min_max(pos2(l, b - e), pos2(r, b)),
+            D::South,
+            C::ResizeSouth,
+        ),
+        (
+            Rect::from_min_max(pos2(l, t), pos2(l + e, b)),
+            D::West,
+            C::ResizeWest,
+        ),
+        (
+            Rect::from_min_max(pos2(r - e, t), pos2(r, b)),
+            D::East,
+            C::ResizeEast,
+        ),
+    ];
+    // A corner square only counts within the edge strips, not over its whole area.
+    let pointer = ctx.input(|i| i.pointer.hover_pos());
+    let near_edge = |p: egui::Pos2| p.x < l + e || p.x > r - e || p.y < t + e || p.y > b - e;
+    // Registered in reverse, so the corners (registered last) are on top.
+    for (index, (rect, direction, cursor)) in zones.into_iter().enumerate().rev() {
+        let corner = index < 4;
+        if corner && !pointer.is_some_and(|p| rect.contains(p) && near_edge(p)) {
+            continue;
+        }
+        let response = ui.interact(rect, Id::new(("resize-edge", index)), Sense::drag());
+        if response.hovered() || response.dragged() {
+            ctx.set_cursor_icon(cursor);
+        }
+        if response.drag_started() {
+            ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------- tab strip
