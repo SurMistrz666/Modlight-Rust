@@ -56,6 +56,9 @@ pub struct Tray {
     /// Windows: an entry that shows the app's windows was chosen.
     #[cfg(windows)]
     showed: bool,
+    /// Windows: whether the icon is in the notification area (`ShowTray`).
+    #[cfg(windows)]
+    visible: bool,
 }
 
 /// Windows: a button of the mouse let go over the icon, and when.
@@ -440,6 +443,8 @@ impl Tray {
             exit: false,
             #[cfg(windows)]
             showed: false,
+            #[cfg(windows)]
+            visible: true,
         })
     }
 
@@ -500,6 +505,18 @@ impl Tray {
     #[cfg(windows)]
     pub fn take_exit(&mut self) -> bool {
         std::mem::take(&mut self.exit)
+    }
+
+    /// Windows: `ShowTray` switched: the icon leaves or comes back to the notification
+    /// area (`TrayIconService.Visible`).
+    #[cfg(windows)]
+    pub fn set_visible(&mut self, visible: bool) {
+        if visible != self.visible {
+            if let Err(error) = self.icon.set_visible(visible) {
+                log::warn!("Modlight: the tray icon could not be shown or hidden: {error}");
+            }
+            self.visible = visible;
+        }
     }
 
     /// Windows: whether an entry that shows the app's windows was chosen since the last
