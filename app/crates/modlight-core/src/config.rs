@@ -1,12 +1,12 @@
 //! `ApplicationConfig.json` and `HotkeysConfig.json`: this installation's settings.
 //!
 //! The file keeps the member names and shapes of the Windows `ApplicationConfig`, and it
-//! is held as a JSON object rather than as a struct. That is what lets a Mac adopt the
-//! whole document another installation synced (hotkeys, task settings, everything this
-//! build has no screen for yet) and push it back later WITHOUT dropping what it does not
-//! understand: a member the Mac does not read is kept byte for byte.
+//! is held as a JSON object rather than as a struct. That is what lets this port adopt
+//! the whole document another installation synced (hotkeys, task settings, everything
+//! this build has no screen for yet) and push it back later WITHOUT dropping what it
+//! does not understand: a member the port does not read is kept byte for byte.
 //!
-//! Members the Mac uses are read through typed accessors with upstream's defaults.
+//! Members the port uses are read through typed accessors with upstream's defaults.
 
 use std::path::{Path, PathBuf};
 
