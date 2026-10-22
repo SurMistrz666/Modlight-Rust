@@ -160,6 +160,46 @@ fn modifier_bits(m: egui::Modifiers) -> (bool, bool, bool, bool) {
     }
 }
 
+/// Windows: whether a Win key is held (egui has no Win modifier). The keyboard hook that
+/// knows is installed in normal mode only, so QA and tests never read the real keyboard.
+#[cfg(windows)]
+fn win_held() -> bool {
+    crate::platform::keys::monitoring() && crate::platform::keys::win_down()
+}
+
+#[cfg(not(windows))]
+fn win_held() -> bool {
+    false
+}
+
+/// Windows: the binding of a key egui never reports (Print Screen, Scroll Lock, Pause,
+/// the media and browser keys), pressed while the row captures; the keyboard hook saw
+/// it with the modifiers held at that moment.
+#[cfg(windows)]
+fn special_binding() -> Option<HotkeyInfo> {
+    use modlight_core::hotkeys::Keys;
+    let key = crate::platform::keys::take_special_key()?;
+    let mut bits = key.key;
+    if key.ctrl {
+        bits |= Keys::CONTROL;
+    }
+    if key.shift {
+        bits |= Keys::SHIFT;
+    }
+    if key.alt {
+        bits |= Keys::ALT;
+    }
+    Some(HotkeyInfo {
+        hotkey: Keys(bits),
+        win: key.win,
+    })
+}
+
+#[cfg(not(windows))]
+fn special_binding() -> Option<HotkeyInfo> {
+    None
+}
+
 /// The binding while only modifiers are down (`LeftCtrl` and friends): "Ctrl + ..." on
 /// Windows, "Cmd + ..." on a Mac.
 fn modifiers_only(m: egui::Modifiers) -> HotkeyInfo {
@@ -869,7 +909,15 @@ fn capture_keys(ui: &mut Ui, state: &mut AppState, page: &mut HotkeyPageState) {
     let modifiers = ui.input(|i| i.modifiers);
     let mut done = false;
     let mut seen_key = false;
+    if let Some(info) = special_binding() {
+        seen_key = true;
+        state.set_hotkey_binding(index, info);
+        done = info.is_valid();
+    }
     for event in events {
+        if done {
+            break;
+        }
         if let egui::Event::Key {
             key,
             pressed: true,
@@ -887,7 +935,7 @@ fn capture_keys(ui: &mut Ui, state: &mut AppState, page: &mut HotkeyPageState) {
                 continue;
             };
             let (control, shift, alt, win) = modifier_bits(modifiers);
-            let info = gesture(Some(name), control, shift, alt, win);
+            let info = gesture(Some(name), control, shift, alt, win || win_held());
             state.set_hotkey_binding(index, info);
             if info.is_valid() {
                 done = true;
@@ -1103,6 +1151,9 @@ impl AppState {
                 } else {
                     self.stop_hotkey_capture(&mut page);
                     page.capturing = Some(index);
+                    // A key egui misses that was pressed before this is not the binding.
+                    #[cfg(windows)]
+                    let _ = crate::platform::keys::take_special_key();
                     // `SetCaptureMode(true)`, and nothing registered (above).
                     self.captures.hotkeys.ignore = true;
                     self.captures.hotkeys.unregister_all(false);
