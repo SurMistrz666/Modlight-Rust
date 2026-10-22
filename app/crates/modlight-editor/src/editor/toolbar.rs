@@ -472,8 +472,12 @@ fn key_display_name(key: egui::Key) -> String {
     name.to_string()
 }
 
-/// How a stored hotkey is shown on a Mac: `Ctrl` reads as `Cmd`, the key it stands for.
+/// How a stored hotkey is shown: as upstream writes it on Windows; on a Mac `Ctrl` reads
+/// as `Cmd` and `Alt` as `Option`, the keys they stand for.
 pub fn display_hotkey(text: &str) -> String {
+    if cfg!(windows) {
+        return text.to_string();
+    }
     text.split('+')
         .map(|p| match p.trim() {
             "Ctrl" | "Control" | "CTRL" => "Cmd",
@@ -598,5 +602,16 @@ mod tests {
             }
         ));
         assert!(!matches("A", egui::Key::A, egui::Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn hotkeys_show_as_the_system_names_them() {
+        if cfg!(windows) {
+            assert_eq!(display_hotkey("Ctrl+Shift+S"), "Ctrl+Shift+S");
+            assert_eq!(display_hotkey("Alt+D2"), "Alt+D2");
+        } else {
+            assert_eq!(display_hotkey("Ctrl+Shift+S"), "Cmd+Shift+S");
+            assert_eq!(display_hotkey("Alt+D2"), "Option+D2");
+        }
     }
 }
