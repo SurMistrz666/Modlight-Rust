@@ -20,12 +20,10 @@ fn program_folder() -> Option<PathBuf> {
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
 }
 
-/// `DefaultPersonalFolder`: `Documents\Modlight`.
+/// `DefaultPersonalFolder`: `Documents\Modlight` (the shell's Documents folder, so a
+/// moved or OneDrive-backed Documents is followed).
 pub fn default_folder() -> PathBuf {
-    dirs::document_dir()
-        .or_else(dirs::home_dir)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(modlight_core::APP_NAME)
+    modlight_core::personal_folder()
 }
 
 /// `PersonalPathConfigFilePath`: beside the program when that file exists, else inside
