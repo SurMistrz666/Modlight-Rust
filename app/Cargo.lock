@@ -2857,10 +2857,12 @@ dependencies = [
  "anyhow",
  "arboard",
  "chrono",
+ "dify",
  "dirs",
  "eframe",
  "egui",
  "egui_kittest",
+ "global-hotkey",
  "image",
  "log",
  "modlight-api",
@@ -2870,6 +2872,7 @@ dependencies = [
  "modlight-macos",
  "modlight-tools",
  "modlight-windows",
+ "raw-window-handle",
  "rfd",
  "serde",
  "serde_json",
@@ -2878,6 +2881,7 @@ dependencies = [
  "tokio-util",
  "tray-icon",
  "url",
+ "windows",
  "winresource",
 ]
 

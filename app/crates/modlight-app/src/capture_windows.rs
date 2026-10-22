@@ -249,6 +249,29 @@ impl ModlightApp {
                             }
                         }
                     }
+                    // `CreateShellContextMenuButton` / `CreateSendToMenuButton`, then the
+                    // boxes show what Explorer has now.
+                    #[cfg(windows)]
+                    f::FirstRunAsk::ContextMenu(on) | f::FirstRunAsk::SendTo(on) => {
+                        use crate::platform::integration as i;
+                        if !state.env.qa
+                            && let Some(window) = state.windows.first_run.as_mut()
+                        {
+                            let result = if matches!(ask, f::FirstRunAsk::SendTo(_)) {
+                                i::set_send_to(on)
+                            } else {
+                                i::set_context_menu(on)
+                            };
+                            match result {
+                                Ok(()) => window.status.clear(),
+                                Err(error) => window.status = error,
+                            }
+                            window.explorer = crate::app_pages::ExplorerMenus {
+                                context_menu: i::context_menu_enabled(),
+                                send_to: i::send_to_enabled(),
+                            };
+                        }
+                    }
                 }
             }
             if finished {

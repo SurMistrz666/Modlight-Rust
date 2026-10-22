@@ -44,6 +44,13 @@ modlight-macos.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 modlight-windows.workspace = true
+# What the window itself asks of Windows: its parent's console (`--qa-shot`), the
+# taskbar button's progress (`TaskbarManager`), the update installer, the double-click
+# time of the tray icon, ShareX's mutex. The `windows` crate for the COM taskbar list.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+raw-window-handle = "0.6"
+# Only to see that a hotkey is waiting, so an idle window wakes for it.
+global-hotkey = "0.9"
 
 # Windows: Modlight.exe's icon, version information and manifest (build.rs).
 [target.'cfg(windows)'.build-dependencies]
@@ -51,3 +58,7 @@ winresource = "0.1"
 
 [dev-dependencies]
 tempfile.workspace = true
+
+# The snapshot test compares a Windows render with the shared picture without writing.
+[target.'cfg(windows)'.dev-dependencies]
+dify = { version = "0.8", default-features = false }
