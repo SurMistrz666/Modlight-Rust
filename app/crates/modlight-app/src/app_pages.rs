@@ -2019,7 +2019,7 @@ impl crate::state::AppState {
                 self.set_language_setting(language);
                 self.save_config();
             }
-            // The menu bar extra follows `ShowTray` on its own.
+            // The tray icon follows `ShowTray` on its own (on Windows from the next frame).
             AppPageAsk::ShowTray(_) => {}
             AppPageAsk::EditQuickTaskMenu => self.open_quick_task_menu_editor(),
             AppPageAsk::OpenPersonalFolder => {

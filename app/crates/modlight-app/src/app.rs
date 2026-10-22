@@ -233,6 +233,16 @@ impl ModlightApp {
                 self.state.push(command);
             }
         }
+        // Windows: "Show tray icon" takes the icon away and brings it back at once.
+        #[cfg(windows)]
+        if self.mode == Mode::Normal {
+            let wanted = self.state.config.show_tray();
+            match &mut self.tray {
+                Some(tray) => tray.set_visible(wanted),
+                None if wanted => self.tray = crate::tray::Tray::new(ctx, &self.state),
+                None => {}
+            }
+        }
         // `TaskbarManager`: the same average on the taskbar button, when asked for.
         #[cfg(windows)]
         if let Some(taskbar) = &mut self.taskbar {
