@@ -52,7 +52,8 @@ impl TaskContext {
     }
 
     /// `TaskHelpers.IsUploadAllowed`. The system-wide switch (`SystemOptions`, a
-    /// Windows registry policy) has no macOS counterpart; the app's own one remains.
+    /// Windows registry policy) is not read, on Windows either (upstream's registry
+    /// options are not ported); the app's own one remains.
     pub fn is_upload_allowed(&self) -> bool {
         if self.app_settings().disable_upload {
             self.channel.effect(TaskEffect::MessageBox {

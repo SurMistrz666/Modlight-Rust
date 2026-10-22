@@ -448,7 +448,8 @@ impl AiProvider {
 }
 
 /// `AIOptions`. The three keys are `[JsonEncrypt]` upstream (DPAPI); here they live in
-/// the Keychain and the settings file keeps them empty (see `analyze::keys`).
+/// the system's credential store and the settings file keeps them empty (the app's
+/// `tools::analyze`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct AiOptions {

@@ -1,12 +1,14 @@
 //! Hotkeys (`HotkeyType`, `HotkeyInfo`, `HotkeySettings`, `HotkeysConfig`,
 //! `HotkeyManager.GetDefaultHotkeyList`) without the system registration, which is the
-//! platform's (`modlight-macos::hotkeys`).
+//! platform's (`RegisterHotKey` in `modlight-windows`, `modlight-macos::hotkeys`).
 //!
 //! Bindings are stored exactly as the Windows app stores them, as WinForms `Keys` values
 //! (`"D2, Shift, Control"`), so the synced hotkeys document stays one document for every
-//! installation of an account. A Mac reads the modifiers the way its keyboard has them
-//! (MACOS.md): Control is Command, Alt is Option, Win is Control; Print Screen, Scroll Lock
-//! and Pause are F13, F14 and F15, the keys in their place on an Apple keyboard.
+//! installation of an account. On Windows everything reads as upstream: Ctrl, Shift, Alt
+//! and Win, Print Screen, Scroll Lock and Pause, and upstream's Print Screen defaults. A
+//! Mac reads the modifiers the way its keyboard has them (MACOS.md): Control is Command,
+//! Alt is Option, Win is Control; Print Screen, Scroll Lock and Pause are F13, F14 and
+//! F15, the keys in their place on an Apple keyboard.
 
 use serde_json::{Map, Value, json};
 
@@ -438,9 +440,20 @@ pub struct HotkeyInfo {
     pub win: bool,
 }
 
-/// The Mac's names for the four modifiers, in the order upstream prints them.
+/// The names of the four modifiers (`Keys.Control`, `Keys.Shift`, `Keys.Alt`, Win), in
+/// the order upstream prints them: upstream's own on Windows (Ctrl, Shift, Alt, Win),
+/// the Mac's keys on a Mac (Cmd, Shift, Option, Control).
 pub fn modifier_names() -> [&'static str; 4] {
-    ["Cmd", t(helpers::HotkeyInfo_Shift), "Option", "Control"]
+    if cfg!(windows) {
+        [
+            t(helpers::HotkeyInfo_Ctrl),
+            t(helpers::HotkeyInfo_Shift),
+            t(helpers::HotkeyInfo_Alt),
+            t(helpers::HotkeyInfo_Win),
+        ]
+    } else {
+        ["Cmd", t(helpers::HotkeyInfo_Shift), "Option", "Control"]
+    }
 }
 
 impl HotkeyInfo {
@@ -455,7 +468,7 @@ impl HotkeyInfo {
         self.hotkey.key_code()
     }
 
-    /// Command on a Mac (`Keys.Control`).
+    /// `Keys.Control`: Ctrl on Windows, Command on a Mac.
     pub fn control(&self) -> bool {
         self.hotkey.has(Keys::CONTROL)
     }
@@ -464,7 +477,7 @@ impl HotkeyInfo {
         self.hotkey.has(Keys::SHIFT)
     }
 
-    /// Option on a Mac (`Keys.Alt`).
+    /// `Keys.Alt`: Alt on Windows, Option on a Mac.
     pub fn alt(&self) -> bool {
         self.hotkey.has(Keys::ALT)
     }
@@ -480,7 +493,7 @@ impl HotkeyInfo {
         self.key_code() != 0 && !self.is_only_modifiers()
     }
 
-    /// `HotkeyInfo.ToString`, with the Mac's modifier names.
+    /// `HotkeyInfo.ToString`, with this system's modifier names ([`modifier_names`]).
     pub fn text(&self) -> String {
         let names = modifier_names();
         let mut text = String::new();
@@ -511,13 +524,15 @@ impl HotkeyInfo {
             text.push_str(t(helpers::HotkeyInfo_Caps_lock));
         } else if code == 34 {
             text.push_str(t(helpers::HotkeyInfo_Page_down));
-        } else if code == 44 {
+        } else if code == 145 && cfg!(windows) {
+            text.push_str(t(helpers::HotkeyInfo_Scroll_lock));
+        } else if !cfg!(windows) && code == 44 {
             // Print Screen, Scroll Lock and Pause are F13, F14 and F15 on a Mac
             // (`code_for` in modlight-macos), and the label says so.
             text.push_str("F13");
-        } else if code == 145 {
+        } else if !cfg!(windows) && code == 145 {
             text.push_str("F14");
-        } else if code == 19 {
+        } else if !cfg!(windows) && code == 19 {
             text.push_str("F15");
         } else if (48..=57).contains(&code) {
             text.push_str(&(code - 48).to_string());
@@ -549,37 +564,32 @@ impl HotkeyInfo {
     }
 }
 
-/// `HotkeySettingsAvaloniaService.ConvertGesture` for a key pressed on a Mac: the key's
-/// WinForms name (`None` while only modifiers are down), then Command (`Control`), Shift,
-/// Option (`Alt`) and Control (`Win`). F13, F14 and F15 are stored as Print Screen,
+/// `HotkeySettingsAvaloniaService.ConvertGesture`: the key's WinForms name (`None` while
+/// only modifiers are down), then the modifiers by their `Keys` meaning: `control`
+/// (`Keys.Control`: Ctrl on Windows, Command on a Mac), `shift`, `alt` (Alt, Option) and
+/// `win` (Win, the Mac's Control). On a Mac F13, F14 and F15 are stored as Print Screen,
 /// Scroll Lock and Pause, the keys in their place, so a binding means the same key on
-/// Windows.
-pub fn gesture(
-    key: Option<&str>,
-    command: bool,
-    shift: bool,
-    option: bool,
-    control: bool,
-) -> HotkeyInfo {
+/// Windows; on Windows every key is itself.
+pub fn gesture(key: Option<&str>, control: bool, shift: bool, alt: bool, win: bool) -> HotkeyInfo {
     let name = match key {
-        Some("F13") => Some("PrintScreen"),
-        Some("F14") => Some("Scroll"),
-        Some("F15") => Some("Pause"),
+        Some("F13") if !cfg!(windows) => Some("PrintScreen"),
+        Some("F14") if !cfg!(windows) => Some("Scroll"),
+        Some("F15") if !cfg!(windows) => Some("Pause"),
         other => other,
     };
     let mut bits = name.and_then(key_code).unwrap_or(0);
-    if command {
+    if control {
         bits |= Keys::CONTROL;
     }
     if shift {
         bits |= Keys::SHIFT;
     }
-    if option {
+    if alt {
         bits |= Keys::ALT;
     }
     HotkeyInfo {
         hotkey: Keys(bits),
-        win: control,
+        win,
     }
 }
 
@@ -989,6 +999,23 @@ impl HotkeyBackend for FakeBackend {
     }
 }
 
+/// Upstream's defaults on Windows (`HotkeyManager.GetDefaultHotkeyList`): Print Screen
+/// alone and with modifiers.
+#[cfg(windows)]
+pub fn default_hotkeys() -> Vec<HotkeySettings> {
+    const PRINT_SCREEN: u32 = 44;
+    vec![
+        HotkeySettings::new(HotkeyType::RectangleRegion, Keys::CONTROL | PRINT_SCREEN),
+        HotkeySettings::new(HotkeyType::PrintScreen, PRINT_SCREEN),
+        HotkeySettings::new(HotkeyType::ActiveWindow, Keys::ALT | PRINT_SCREEN),
+        HotkeySettings::new(HotkeyType::ScreenRecorder, Keys::SHIFT | PRINT_SCREEN),
+        HotkeySettings::new(
+            HotkeyType::ScreenRecorderGIF,
+            Keys::CONTROL | Keys::SHIFT | PRINT_SCREEN,
+        ),
+    ]
+}
+
 /// The Mac's defaults (`HotkeyManager.GetDefaultHotkeyList`).
 ///
 /// Upstream binds Print Screen with and without modifiers. A Mac keyboard has no Print
@@ -1002,6 +1029,7 @@ impl HotkeyBackend for FakeBackend {
 /// | Active window | Alt + Print Screen | Cmd + Shift + 7 |
 /// | Screen recording | Shift + Print Screen | Cmd + Shift + 8 |
 /// | GIF recording | Ctrl + Shift + Print Screen | Cmd + Shift + 9 |
+#[cfg(not(windows))]
 pub fn default_hotkeys() -> Vec<HotkeySettings> {
     let cmd_shift = Keys::CONTROL | Keys::SHIFT;
     vec![
@@ -1150,6 +1178,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn a_mac_gesture_becomes_a_windows_binding() {
         let info = super::gesture(Some("D2"), true, true, false, false);
@@ -1195,6 +1224,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn hotkeys_print_with_the_macs_modifier_names() {
         set_thread_language(Some(Language::English));
@@ -1216,6 +1246,7 @@ mod tests {
         set_thread_language(None);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn the_defaults_avoid_the_system_screenshot_keys() {
         let defaults = default_hotkeys();
@@ -1308,8 +1339,11 @@ mod tests {
 
     #[test]
     fn the_manager_registers_reports_failures_and_toggles() {
+        set_thread_language(Some(Language::English));
+        // The default PrintScreen job's key is taken by another app.
+        let taken = default_hotkeys()[1].info;
         let backend = FakeBackend {
-            taken: vec![HotkeyInfo::new(Keys::CONTROL | Keys::SHIFT | 49)],
+            taken: vec![taken],
             ..FakeBackend::default()
         };
         let registered = backend.registered.clone();
@@ -1326,9 +1360,14 @@ mod tests {
         manager.ignore = true;
         assert!(manager.triggered(id).is_none());
         manager.ignore = false;
+        let region = if cfg!(windows) {
+            "Ctrl + Print Screen"
+        } else {
+            "Cmd + Shift + 2"
+        };
         assert_eq!(
             manager.shortcut_for(HotkeyType::RectangleRegion).as_deref(),
-            Some("Cmd + Shift + 2")
+            Some(region)
         );
         assert_eq!(
             manager.shortcut_for(HotkeyType::PrintScreen),
@@ -1350,6 +1389,7 @@ mod tests {
         assert_eq!(registered.lock().unwrap().len(), 4);
         manager.reset();
         assert_eq!(manager.hotkeys.len(), 5);
+        set_thread_language(None);
     }
 
     #[test]
@@ -1366,6 +1406,65 @@ mod tests {
         assert_eq!(HotkeyType::ExitShareX.category(), HotkeyCategory::Other);
         assert_eq!(HotkeyType::OCR.category(), HotkeyCategory::Tools);
         assert!(!HotkeyType::RectangleRegion.text().is_empty());
+        set_thread_language(None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_names_keys_and_defaults_are_upstreams() {
+        set_thread_language(Some(Language::English));
+        assert_eq!(modifier_names(), ["Ctrl", "Shift", "Alt", "Win"]);
+        assert_eq!(
+            HotkeyInfo::new(Keys::CONTROL | 44).text(),
+            "Ctrl + Print Screen"
+        );
+        assert_eq!(HotkeyInfo::new(Keys::ALT | 44).text(), "Alt + Print Screen");
+        assert_eq!(
+            HotkeyInfo::new(145).text(),
+            t(helpers::HotkeyInfo_Scroll_lock)
+        );
+        assert_eq!(HotkeyInfo::new(19).text(), "Pause");
+        assert_eq!(HotkeyInfo::new(124).text(), "F13");
+        assert_eq!(
+            HotkeyInfo::new(Keys::CONTROL | Keys::SHIFT | 50).text(),
+            "Ctrl + Shift + 2"
+        );
+        assert_eq!(
+            HotkeyInfo::new(Keys::CONTROL | 99).text(),
+            "Ctrl + Numpad 3"
+        );
+        let only = HotkeyInfo::new(Keys::CONTROL | 17);
+        assert_eq!(only.text(), "Ctrl + ...");
+        let win = HotkeyInfo {
+            hotkey: Keys(Keys::SHIFT | 65),
+            win: true,
+        };
+        assert_eq!(win.text(), "Shift + Win + A");
+        // Keys are themselves on Windows: F13 is F13.
+        let typed = gesture(Some("F13"), true, false, false, false);
+        assert_eq!(typed.hotkey.to_value(), json!("F13, Control"));
+        let print = gesture(Some("PrintScreen"), false, true, false, false);
+        assert_eq!(print.hotkey.to_value(), json!("PrintScreen, Shift"));
+        // Upstream's defaults.
+        let defaults = default_hotkeys();
+        let bindings: Vec<(HotkeyType, Value)> = defaults
+            .iter()
+            .map(|h| (h.job(), h.info.hotkey.to_value()))
+            .collect();
+        assert_eq!(
+            bindings,
+            [
+                (HotkeyType::RectangleRegion, json!("PrintScreen, Control")),
+                (HotkeyType::PrintScreen, json!("PrintScreen")),
+                (HotkeyType::ActiveWindow, json!("PrintScreen, Alt")),
+                (HotkeyType::ScreenRecorder, json!("PrintScreen, Shift")),
+                (
+                    HotkeyType::ScreenRecorderGIF,
+                    json!("PrintScreen, Shift, Control")
+                ),
+            ]
+        );
+        assert!(defaults.iter().all(|h| h.info.is_valid() && !h.info.win));
         set_thread_language(None);
     }
 }

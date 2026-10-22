@@ -16,7 +16,7 @@ mod generated {
 }
 
 pub use generated::{
-    avalonia, capture, editor, effects, helpers, history, mac, s, tools, uploaders,
+    avalonia, capture, editor, effects, helpers, history, mac, s, tools, uploaders, windows,
 };
 
 /// One entry of the string tables.

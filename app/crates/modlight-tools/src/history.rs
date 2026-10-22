@@ -846,11 +846,13 @@ mod tests {
         assert!(open_target(&items[2]).is_none());
         assert_eq!(icon(&items[2]), modlight_core::icons::STAR);
         assert_eq!(icon(&items[1]), modlight_core::icons::FILE_TEXT);
-        assert_eq!(
-            renamed("/a/old.png", "New"),
-            Some(("New.png".into(), "/a/New.png".into()))
-        );
-        assert_eq!(renamed("/a/old.png", " OLD "), None);
+        let (old, new) = if cfg!(windows) {
+            ("C:\\a\\old.png", "C:\\a\\New.png")
+        } else {
+            ("/a/old.png", "/a/New.png")
+        };
+        assert_eq!(renamed(old, "New"), Some(("New.png".into(), new.into())));
+        assert_eq!(renamed(old, " OLD "), None);
     }
 
     #[test]

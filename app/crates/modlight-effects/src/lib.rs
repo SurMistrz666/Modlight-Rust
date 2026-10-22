@@ -1,4 +1,4 @@
-//! The image effects of Modlight App for macOS.
+//! The image effects of Modlight App (Windows and macOS).
 //!
 //! - `fx`: every effect of upstream `ShareX.ImageEditor/Core/ImageEffects` (the editor's
 //!   effect browser), implemented against `modlight_editor::effects::ImageEffect` with the

@@ -2,8 +2,9 @@
 //! `SignOut`, `Adopt`) and the administrator flag (`ModlightAdmin`).
 //!
 //! Everything but the token is kept in `UploadersConfig.json`, in the shape the Windows
-//! client stores it. The token never goes into that file: it lives in the login Keychain
-//! (or, in QA mode, in a private file of the QA profile), behind [`CredentialStore`].
+//! client stores it. The token never goes into that file: it lives in the system's
+//! credential store (Credential Manager on Windows, the login Keychain on a Mac; or, in QA
+//! mode, a private file of the QA profile), behind [`CredentialStore`].
 //!
 //! The store keeps the token together with the origin it was issued for. The host in
 //! `UploadersConfig.json` can change behind the token's back (an edited file, a settings

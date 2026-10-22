@@ -1,10 +1,13 @@
 //! Finding the executables the Download tab drives (`YtDlpTool`).
 //!
 //! The search order is upstream's - beside the executable, then the personal folder's
-//! `Tools`, then the PATH - with the macOS spelling of "the PATH": an app opened from
-//! Finder inherits only `/usr/bin:/bin:/usr/sbin:/sbin`, so the places a package manager
-//! puts a tool on a Mac (Homebrew on Apple silicon and on Intel, MacPorts, pipx) are
-//! searched after the inherited PATH. A file must be executable to count.
+//! `Tools`, then the PATH. On Windows that is all, as upstream: the names are `.exe`
+//! (a `.cmd` or `.bat` shim would need a shell to start), and an existing file counts.
+//! On macOS "the PATH" is spelled out further: an app opened from Finder inherits only
+//! `/usr/bin:/bin:/usr/sbin:/sbin`, so the places a package manager puts a tool on a Mac
+//! (Homebrew on Apple silicon and on Intel, MacPorts, pipx) are searched after the
+//! inherited PATH, and a file must be executable to count. On both, a PATH entry that is
+//! not an absolute folder is passed over (upstream would look under the working folder).
 
 use std::path::{Path, PathBuf};
 
@@ -12,11 +15,29 @@ use std::path::{Path, PathBuf};
 pub const INSTALL_PAGE: &str = "https://github.com/yt-dlp/yt-dlp/wiki/Installation";
 
 /// yt-dlp resolves the "quickjs" runtime by an executable called `qjs`.
-pub const QUICKJS_FILE_NAME: &str = "qjs";
+pub const QUICKJS_FILE_NAME: &str = if cfg!(windows) { "qjs.exe" } else { "qjs" };
 
-/// The folders a package manager puts tools in on a Mac.
-pub const PACKAGE_MANAGER_FOLDERS: [&str; 3] =
-    ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"];
+/// yt-dlp's executable (`YtDlpTool.Find("yt-dlp.exe")` on Windows).
+pub const YT_DLP_FILE_NAME: &str = if cfg!(windows) {
+    "yt-dlp.exe"
+} else {
+    "yt-dlp"
+};
+
+/// ffmpeg's executable.
+pub const FFMPEG_FILE_NAME: &str = if cfg!(windows) {
+    "ffmpeg.exe"
+} else {
+    "ffmpeg"
+};
+
+/// The folders a package manager puts tools in on a Mac (none are added on Windows,
+/// where winget, scoop and pip put their tools on the PATH).
+pub const PACKAGE_MANAGER_FOLDERS: &[&str] = if cfg!(windows) {
+    &[]
+} else {
+    &["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
+};
 
 /// What was found, as the tab states it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -60,7 +81,9 @@ impl SearchPlaces {
         for folder in PACKAGE_MANAGER_FOLDERS {
             path.push(PathBuf::from(folder));
         }
-        if let Some(home) = dirs_home() {
+        if !cfg!(windows)
+            && let Some(home) = dirs_home()
+        {
             path.push(home.join(".local/bin"));
         }
         SearchPlaces {
@@ -94,8 +117,8 @@ impl SearchPlaces {
             .find(|candidate| executable(candidate))
     }
 
-    /// Look for all three (`YtDlpTool.Ensure`). The bundled QuickJS first (`Tools/qjs`
-    /// beside the app), then the ordinary search.
+    /// Look for all three (`YtDlpTool.Ensure`). The bundled QuickJS first (`Tools/qjs`,
+    /// `Tools\qjs.exe` on Windows, beside the app), then the ordinary search.
     pub fn find_tools(&self) -> ToolPaths {
         let bundled_quickjs = self
             .beside
@@ -103,8 +126,8 @@ impl SearchPlaces {
             .map(|b| b.join("Tools").join(QUICKJS_FILE_NAME))
             .filter(|p| executable(p));
         let tools = ToolPaths {
-            yt_dlp: self.find("yt-dlp"),
-            ffmpeg: self.find("ffmpeg"),
+            yt_dlp: self.find(YT_DLP_FILE_NAME),
+            ffmpeg: self.find(FFMPEG_FILE_NAME),
             quickjs: bundled_quickjs.or_else(|| self.find(QUICKJS_FILE_NAME)),
         };
         log::info!(
@@ -176,5 +199,62 @@ mod tests {
             path: Vec::new(),
         };
         assert_eq!(places.find("ffmpeg"), None);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    fn tool(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"MZ").unwrap();
+    }
+
+    #[test]
+    fn the_order_is_beside_then_tools_then_path_with_exe_names() {
+        let root = tempfile::tempdir().unwrap();
+        let beside = root.path().join("app");
+        let profile = root.path().join("profile");
+        let path_dir = root.path().join("winget");
+        let places = SearchPlaces {
+            beside: Some(beside.clone()),
+            profile: profile.clone(),
+            path: vec![
+                PathBuf::from(""),
+                PathBuf::from("relative"),
+                path_dir.clone(),
+            ],
+        };
+        assert_eq!(places.find_tools(), ToolPaths::default());
+        // A shim without the .exe name never counts.
+        tool(&path_dir.join("yt-dlp.cmd"));
+        tool(&path_dir.join("yt-dlp"));
+        assert_eq!(places.find_tools().yt_dlp, None);
+        tool(&path_dir.join("yt-dlp.exe"));
+        assert_eq!(
+            places.find_tools().yt_dlp,
+            Some(path_dir.join("yt-dlp.exe"))
+        );
+        tool(&profile.join("Tools").join("yt-dlp.exe"));
+        assert_eq!(
+            places.find_tools().yt_dlp,
+            Some(profile.join("Tools").join("yt-dlp.exe"))
+        );
+        tool(&beside.join("yt-dlp.exe"));
+        assert_eq!(places.find_tools().yt_dlp, Some(beside.join("yt-dlp.exe")));
+        tool(&profile.join("Tools").join("ffmpeg.exe"));
+        assert_eq!(
+            places.find_tools().ffmpeg,
+            Some(profile.join("Tools").join("ffmpeg.exe"))
+        );
+        tool(&path_dir.join("qjs.exe"));
+        tool(&beside.join("Tools").join("qjs.exe"));
+        assert_eq!(
+            places.find_tools().quickjs,
+            Some(beside.join("Tools").join("qjs.exe"))
+        );
+        // Any existing file counts: Windows has no executable bit.
+        assert!(PACKAGE_MANAGER_FOLDERS.is_empty());
     }
 }

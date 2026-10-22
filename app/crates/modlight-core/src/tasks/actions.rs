@@ -116,14 +116,21 @@ impl ExternalProgram {
         };
         let args = self.arguments(input, &output);
         log::info!("Action run: \"{program}\" {}", args.join(" "));
-        let status = std::process::Command::new(&program).args(&args).status();
+        let mut command = std::process::Command::new(&program);
+        command.args(&args);
+        // `CreateNoWindow = HiddenWindow`: on Windows a console program shows its
+        // console unless the action asks for a hidden window, as upstream.
+        if self.hidden_window {
+            crate::components::process::no_window(&mut command);
+        }
+        let status = command.status();
         if let Err(error) = status {
             log::warn!("Action failed: {error}");
             return None;
         }
         if output.is_file() {
             let pending_delete =
-                (self.delete_input_file && output != input).then(|| input.to_path_buf());
+                (self.delete_input_file && !same_path(&output, input)).then(|| input.to_path_buf());
             return Some(ActionResult {
                 path: output,
                 pending_delete,
@@ -133,6 +140,17 @@ impl ExternalProgram {
             path: input.to_path_buf(),
             pending_delete: None,
         })
+    }
+}
+
+/// Whether the output is the input itself. Windows compares without case, as upstream
+/// does (`OrdinalIgnoreCase`): "a.png" with the output extension "PNG" is the same file
+/// there, and deleting the input would delete the output.
+fn same_path(output: &Path, input: &Path) -> bool {
+    if cfg!(windows) {
+        output.to_string_lossy().to_lowercase() == input.to_string_lossy().to_lowercase()
+    } else {
+        output == input
     }
 }
 
@@ -171,30 +189,36 @@ mod tests {
             output_extension: Some(".webp".into()),
             ..ExternalProgram::default()
         };
-        let input = Path::new("/tmp/a b; rm -rf ~.png");
+        let folder = if cfg!(windows) { "C:\\tmp\\" } else { "/tmp/" };
+        let input = PathBuf::from(format!("{folder}a b; rm -rf ~.png"));
+        let input = input.as_path();
         let output = program.output_path(input);
-        assert_eq!(output, PathBuf::from("/tmp/a b; rm -rf ~.webp"));
+        assert_eq!(output, PathBuf::from(format!("{folder}a b; rm -rf ~.webp")));
         assert_eq!(
             program.arguments(input, &output),
             [
-                "-i",
-                "/tmp/a b; rm -rf ~.png",
-                "-o",
-                "/tmp/a b; rm -rf ~.webp",
-                "--flag"
+                "-i".to_string(),
+                format!("{folder}a b; rm -rf ~.png"),
+                "-o".to_string(),
+                format!("{folder}a b; rm -rf ~.webp"),
+                "--flag".to_string()
             ]
         );
         let bare = ExternalProgram {
             args: None,
             ..ExternalProgram::default()
         };
-        assert_eq!(bare.arguments(input, input), ["/tmp/a b; rm -rf ~.png"]);
+        assert_eq!(
+            bare.arguments(input, input),
+            [format!("{folder}a b; rm -rf ~.png")]
+        );
         assert_eq!(
             ExternalProgram::default().arguments(input, input),
-            ["/tmp/a b; rm -rf ~.png"]
+            [format!("{folder}a b; rm -rf ~.png")]
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_program_runs_and_its_output_is_taken() {
         let dir = tempfile::tempdir().unwrap();
@@ -212,5 +236,36 @@ mod tests {
         assert_eq!(result.path, dir.path().join("in.out"));
         assert_eq!(result.pending_delete, Some(input.clone()));
         assert!(result.path.is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_program_runs_and_its_output_is_taken_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.txt");
+        std::fs::write(&input, "x").unwrap();
+        // The program's path may hold environment variables, as upstream's `GetFullPath`.
+        let program = ExternalProgram {
+            is_active: true,
+            path: Some("%SystemRoot%\\System32\\cmd.exe".into()),
+            args: Some("/C copy /Y $input $output".into()),
+            output_extension: Some("out".into()),
+            hidden_window: true,
+            delete_input_file: true,
+            ..ExternalProgram::default()
+        };
+        let result = program.run(&input).unwrap();
+        assert_eq!(result.path, dir.path().join("in.out"));
+        assert_eq!(result.pending_delete, Some(input.clone()));
+        assert!(result.path.is_file());
+
+        // An output that differs only in case is the input itself on Windows: it is
+        // never handed over for deletion.
+        let same = ExternalProgram {
+            output_extension: Some("TXT".into()),
+            ..program
+        };
+        let result = same.run(&input).unwrap();
+        assert_eq!(result.pending_delete, None);
     }
 }

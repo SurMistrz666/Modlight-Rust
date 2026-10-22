@@ -2,8 +2,8 @@
 //!
 //! Upstream draws the Windows system cursors and has none elsewhere (its Mac build
 //! creates no cursor annotation at all). The port asks the host for the platform's
-//! cursor images: the macOS app installs a provider reading `NSCursor`; tests and the
-//! QA screens may install their own.
+//! cursor images: the Windows app installs a provider with the system cursors, the
+//! macOS app one reading `NSCursor`; tests and the QA screens may install their own.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};

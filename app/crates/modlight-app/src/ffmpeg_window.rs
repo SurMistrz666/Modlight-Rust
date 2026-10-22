@@ -1,22 +1,33 @@
 //! `FFmpegOptionsWindow`: the screen recording options (sources, video, audio,
 //! advanced) for one task settings object, opened from the screen recorder page.
 //!
+//! On Windows the sources are the screen (GDI frames piped to ffmpeg, upstream's
+//! `gdigrab` title; a `ddagrab` or `screen-capture-recorder` value selects it too) and
+//! the cameras and microphones ffmpeg's DirectShow input lists, with upstream's texts;
+//! NVENC, AMF and Quick Sync are offered with all their settings. "Get recorder devices"
+//! (the screen-capture-recorder installer) is not ported: the screen does not go
+//! through a DirectShow filter here.
+//!
 //! On a Mac the sources are the screen (ScreenCaptureKit) and the cameras and
 //! microphones ffmpeg's avfoundation input lists; NVENC, AMF and Quick Sync are not
 //! offered (a value synced from Windows is encoded with VideoToolbox and keeps only its
 //! bitrate), and there is no "Get recorder devices" (screen-capture-recorder is a
-//! DirectShow filter).
+//! DirectShow filter). Where upstream's text names DirectShow, the Mac's says
+//! AVFoundation (`Mac.resx`).
 
 use std::path::PathBuf;
 
 use egui::{Align, Color32, Layout, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 
 use modlight_core::icons;
-use modlight_core::l10n::{Arg, capture as c, format, mac, t};
+#[cfg(not(windows))]
+use modlight_core::l10n::mac;
+use modlight_core::l10n::{Arg, Key, capture as c, format, t};
 use modlight_core::recording::args::{Devices, ScreenRecordingOptions};
 use modlight_core::recording::options::{
-    FFmpegAudioCodec, FFmpegOptions, FFmpegPaletteGenStatsMode, FFmpegPaletteUseDither,
-    FFmpegPreset, FFmpegQSVPreset, FFmpegVideoCodec, capture_device,
+    FFmpegAMFQuality, FFmpegAMFUsage, FFmpegAudioCodec, FFmpegNVENCPreset, FFmpegNVENCTune,
+    FFmpegOptions, FFmpegPaletteGenStatsMode, FFmpegPaletteUseDither, FFmpegPreset,
+    FFmpegQSVPreset, FFmpegVideoCodec, capture_device,
 };
 
 use crate::state::AppState;
@@ -59,7 +70,7 @@ impl CaptureDevice {
     fn device(name: &str) -> CaptureDevice {
         CaptureDevice {
             value: name.into(),
-            title: format!("avfoundation ({name})"),
+            title: capture_device::device_title(name),
         }
     }
 
@@ -139,7 +150,7 @@ impl FFmpegWindow {
                 .env
                 .profile
                 .join(modlight_core::components::TOOLS_FOLDER)
-                .join("ffmpeg"),
+                .join(modlight_core::download::tool::FFMPEG_FILE_NAME),
         }
     }
 
@@ -176,17 +187,14 @@ impl FFmpegWindow {
             ),
             Some(Err(error)) => {
                 log::warn!("FFmpeg devices: {error}");
-                t(mac::FFmpegDeviceEnumerationFailed).to_string()
+                t(texts::ENUMERATION_FAILED).to_string()
             }
             Some(Ok(_)) => {
                 let count = (video.len() - 2) + (audio.len() - 1);
                 match count {
-                    0 => t(mac::FFmpegNoDevicesFound).to_string(),
-                    1 => format(t(mac::FFmpegOneDeviceFound), &[Arg::from(count as i64)]),
-                    _ => format(
-                        t(mac::FFmpegMultipleDevicesFound),
-                        &[Arg::from(count as i64)],
-                    ),
+                    0 => t(texts::NO_DEVICES).to_string(),
+                    1 => format(t(texts::ONE_DEVICE), &[Arg::from(count as i64)]),
+                    _ => format(t(texts::DEVICES), &[Arg::from(count as i64)]),
                 }
             }
         };
@@ -194,6 +202,38 @@ impl FFmpegWindow {
         self.audio_sources = audio;
         self.refreshing = false;
     }
+}
+
+/// The texts that name the device framework: upstream's (DirectShow) on Windows, the
+/// Mac's (AVFoundation, `Mac.resx`) on a Mac.
+mod texts {
+    use modlight_core::l10n::Key;
+    #[cfg(windows)]
+    use modlight_core::l10n::capture as c;
+    #[cfg(not(windows))]
+    use modlight_core::l10n::mac;
+
+    #[cfg(windows)]
+    pub const ENUMERATION_FAILED: Key = c::FFmpegOptionsWindow_Device_enumeration_failed;
+    #[cfg(windows)]
+    pub const NO_DEVICES: Key = c::FFmpegOptionsWindow_No_devices_found;
+    #[cfg(windows)]
+    pub const ONE_DEVICE: Key = c::FFmpegOptionsWindow_One_device_found;
+    #[cfg(windows)]
+    pub const DEVICES: Key = c::FFmpegOptionsWindow_Multiple_devices_found;
+    #[cfg(windows)]
+    pub const PATH_PLACEHOLDER: Key = c::FFmpegOptionsWindow_Path_to_ffmpeg;
+
+    #[cfg(not(windows))]
+    pub const ENUMERATION_FAILED: Key = mac::FFmpegDeviceEnumerationFailed;
+    #[cfg(not(windows))]
+    pub const NO_DEVICES: Key = mac::FFmpegNoDevicesFound;
+    #[cfg(not(windows))]
+    pub const ONE_DEVICE: Key = mac::FFmpegOneDeviceFound;
+    #[cfg(not(windows))]
+    pub const DEVICES: Key = mac::FFmpegMultipleDevicesFound;
+    #[cfg(not(windows))]
+    pub const PATH_PLACEHOLDER: Key = mac::FFmpegPathPlaceholder;
 }
 
 impl AppState {
@@ -249,12 +289,20 @@ impl AppState {
         let Some(window) = self.captures.ffmpeg_window.as_mut() else {
             return;
         };
+        // `Program Files` on Windows (`SpecialFolder.ProgramFiles`), `/Applications` on
+        // a Mac, when the current path has no folder.
+        let fallback = if cfg!(windows) {
+            modlight_core::names::file_helpers::special_folder_path("ProgramFiles")
+                .unwrap_or_default()
+        } else {
+            "/Applications".to_string()
+        };
         let start = window
             .ffmpeg_path()
             .parent()
             .filter(|p| p.is_dir())
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/Applications"));
+            .unwrap_or_else(|| PathBuf::from(fallback));
         let Some(path) = rfd::FileDialog::new()
             .set_title(t(c::FFmpegOptionsWindow_Browse_for_ffmpeg))
             .set_directory(start)
@@ -408,6 +456,31 @@ fn number(
 }
 
 /// `ComboBox.field`: stretches, at least 220.
+/// A field label over a list whose entries are upstream's texts, one per value in the
+/// enum's order (the hardware encoders' `ItemsSource` arrays).
+fn labelled_choice<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    colors: &Colors,
+    label: Key,
+    id: &str,
+    values: &[T],
+    texts: &[Key],
+    current: &mut T,
+) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        field_label(ui, colors, t(label));
+        let list: Vec<(T, String)> = values
+            .iter()
+            .zip(texts)
+            .map(|(value, key)| (*value, t(*key).to_string()))
+            .collect();
+        if let Some(choice) = field_combo(ui, colors, id, current, &list) {
+            *current = choice;
+        }
+    });
+}
+
 fn field_combo<T: Clone + PartialEq>(
     ui: &mut Ui,
     colors: &Colors,
@@ -708,7 +781,7 @@ fn sources_tab(ui: &mut Ui, window: &mut FFmpegWindow, colors: &Colors, asks: &m
             Field {
                 height: 40.0,
                 width: Some(width),
-                hint: t(mac::FFmpegPathPlaceholder),
+                hint: t(texts::PATH_PLACEHOLDER),
                 enabled: custom,
                 id: Some(egui::Id::new("ffmpeg-path")),
                 ..Field::new(&mut window.options.ffmpeg.CLIPath)
@@ -808,6 +881,18 @@ fn sources_tab(ui: &mut Ui, window: &mut FFmpegWindow, colors: &Colors, asks: &m
     });
 }
 
+/// The hint of a hardware encoder: upstream's on Windows; on a Mac the note that
+/// VideoToolbox does the work and only the bitrate applies.
+#[cfg(windows)]
+fn hardware_hint(upstream: Key) -> &'static str {
+    t(upstream)
+}
+
+#[cfg(not(windows))]
+fn hardware_hint(_upstream: Key) -> &'static str {
+    t(mac::FFmpegVideoToolbox)
+}
+
 /// `GetVideoCodecDescription`.
 fn codec_description(codec: FFmpegVideoCodec) -> (&'static str, &'static str) {
     use FFmpegVideoCodec as V;
@@ -834,27 +919,27 @@ fn codec_description(codec: FFmpegVideoCodec) -> (&'static str, &'static str) {
         ),
         V::h264_nvenc => (
             t(c::FFmpegOptionsWindow_Codec_H264_NVIDIA),
-            t(mac::FFmpegVideoToolbox),
+            hardware_hint(c::FFmpegOptionsWindow_Codec_H264_NVIDIA_hint),
         ),
         V::hevc_nvenc => (
             t(c::FFmpegOptionsWindow_Codec_HEVC_NVIDIA),
-            t(mac::FFmpegVideoToolbox),
+            hardware_hint(c::FFmpegOptionsWindow_Codec_HEVC_NVIDIA_hint),
         ),
         V::h264_amf => (
             t(c::FFmpegOptionsWindow_Codec_H264_AMD),
-            t(mac::FFmpegVideoToolbox),
+            hardware_hint(c::FFmpegOptionsWindow_Codec_H264_AMD_hint),
         ),
         V::hevc_amf => (
             t(c::FFmpegOptionsWindow_Codec_HEVC_AMD),
-            t(mac::FFmpegVideoToolbox),
+            hardware_hint(c::FFmpegOptionsWindow_Codec_HEVC_AMD_hint),
         ),
         V::h264_qsv => (
             t(c::FFmpegOptionsWindow_Codec_H264_Intel_Quick_Sync),
-            t(mac::FFmpegVideoToolbox),
+            hardware_hint(c::FFmpegOptionsWindow_Codec_H264_Intel_Quick_Sync_hint),
         ),
         V::hevc_qsv => (
             t(c::FFmpegOptionsWindow_Codec_HEVC_Intel_Quick_Sync),
-            t(mac::FFmpegVideoToolbox),
+            hardware_hint(c::FFmpegOptionsWindow_Codec_HEVC_Intel_Quick_Sync_hint),
         ),
         V::gif => (
             t(c::FFmpegOptionsWindow_Codec_animated_GIF),
@@ -1057,13 +1142,103 @@ fn encoder_settings(ui: &mut Ui, ffmpeg: &mut FFmpegOptions, colors: &Colors) {
                 );
             });
         }
-        // Windows hardware encoders: VideoToolbox on a Mac, which takes the bitrate.
+        // Windows hardware encoders: upstream's panels on Windows; VideoToolbox on a Mac,
+        // which takes only the bitrate.
         V::h264_nvenc | V::hevc_nvenc => {
+            if cfg!(windows) {
+                let presets = [
+                    c::FFmpegOptionsWindow_NVENC_fastest_lowest_quality,
+                    c::FFmpegOptionsWindow_NVENC_faster_lower_quality,
+                    c::FFmpegOptionsWindow_NVENC_fast_low_quality,
+                    c::FFmpegOptionsWindow_NVENC_medium_medium_quality,
+                    c::FFmpegOptionsWindow_NVENC_slow_good_quality,
+                    c::FFmpegOptionsWindow_NVENC_slower_better_quality,
+                    c::FFmpegOptionsWindow_NVENC_slowest_best_quality,
+                ];
+                labelled_choice(
+                    ui,
+                    colors,
+                    c::FFmpegOptionsWindow_Preset,
+                    "ffmpeg-nvenc-preset",
+                    FFmpegNVENCPreset::ALL,
+                    &presets,
+                    &mut ffmpeg.NVENC_Preset,
+                );
+                let tunes = [
+                    c::FFmpegOptionsWindow_NVENC_high_quality,
+                    c::FFmpegOptionsWindow_NVENC_low_latency,
+                    c::FFmpegOptionsWindow_NVENC_ultra_low_latency,
+                    c::FFmpegOptionsWindow_NVENC_lossless,
+                ];
+                labelled_choice(
+                    ui,
+                    colors,
+                    c::FFmpegOptionsWindow_Tune,
+                    "ffmpeg-nvenc-tune",
+                    FFmpegNVENCTune::ALL,
+                    &tunes,
+                    &mut ffmpeg.NVENC_Tune,
+                );
+            }
             bitrate(ui, "ffmpeg-nvenc-bitrate", &mut ffmpeg.NVENC_Bitrate)
         }
-        V::h264_amf | V::hevc_amf => bitrate(ui, "ffmpeg-amf-bitrate", &mut ffmpeg.AMF_Bitrate),
+        V::h264_amf | V::hevc_amf => {
+            if cfg!(windows) {
+                let usages = [
+                    c::FFmpegOptionsWindow_AMF_generic_transcoding,
+                    c::FFmpegOptionsWindow_AMF_ultra_low_latency_transcoding,
+                    c::FFmpegOptionsWindow_AMF_low_latency_transcoding,
+                    c::FFmpegOptionsWindow_AMF_webcam,
+                    c::FFmpegOptionsWindow_AMF_high_quality_transcoding,
+                    c::FFmpegOptionsWindow_AMF_low_latency_high_quality_transcoding,
+                ];
+                labelled_choice(
+                    ui,
+                    colors,
+                    c::FFmpegOptionsWindow_Usage,
+                    "ffmpeg-amf-usage",
+                    FFmpegAMFUsage::ALL,
+                    &usages,
+                    &mut ffmpeg.AMF_Usage,
+                );
+                let qualities = [
+                    c::FFmpegOptionsWindow_AMF_prefer_speed,
+                    c::FFmpegOptionsWindow_AMF_balanced,
+                    c::FFmpegOptionsWindow_AMF_prefer_quality,
+                ];
+                labelled_choice(
+                    ui,
+                    colors,
+                    c::FFmpegOptionsWindow_Quality,
+                    "ffmpeg-amf-quality",
+                    FFmpegAMFQuality::ALL,
+                    &qualities,
+                    &mut ffmpeg.AMF_Quality,
+                );
+            }
+            bitrate(ui, "ffmpeg-amf-bitrate", &mut ffmpeg.AMF_Bitrate)
+        }
         V::h264_qsv | V::hevc_qsv => {
-            let _ = FFmpegQSVPreset::ALL;
+            if cfg!(windows) {
+                let presets = [
+                    c::FFmpegOptionsWindow_Preset_very_fast,
+                    c::FFmpegOptionsWindow_Preset_faster,
+                    c::FFmpegOptionsWindow_Preset_fast,
+                    c::FFmpegOptionsWindow_Preset_medium,
+                    c::FFmpegOptionsWindow_Preset_slow,
+                    c::FFmpegOptionsWindow_Preset_slower,
+                    c::FFmpegOptionsWindow_Preset_very_slow,
+                ];
+                labelled_choice(
+                    ui,
+                    colors,
+                    c::FFmpegOptionsWindow_Preset,
+                    "ffmpeg-qsv-preset",
+                    FFmpegQSVPreset::ALL,
+                    &presets,
+                    &mut ffmpeg.QSV_Preset,
+                );
+            }
             bitrate(ui, "ffmpeg-qsv-bitrate", &mut ffmpeg.QSV_Bitrate)
         }
         V::gif => {
@@ -1370,5 +1545,24 @@ mod tests {
         assert!(!screen.matches(""));
         assert!(CaptureDevice::none().matches(""));
         assert!(CaptureDevice::device("FaceTime HD Camera").matches("facetime hd camera"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shows_upstreams_titles_and_texts() {
+        assert_eq!(
+            CaptureDevice::screen().title,
+            "gdigrab (Graphics Device Interface)"
+        );
+        assert_eq!(
+            CaptureDevice::device("Integrated Camera").title,
+            "dshow (Integrated Camera)"
+        );
+        modlight_core::l10n::set_thread_language(Some(modlight_core::l10n::Language::English));
+        assert!(t(texts::NO_DEVICES).contains("DirectShow"));
+        assert_eq!(t(texts::PATH_PLACEHOLDER), "Path to ffmpeg.exe");
+        let (_, hint) = codec_description(FFmpegVideoCodec::h264_nvenc);
+        assert_eq!(hint, t(c::FFmpegOptionsWindow_Codec_H264_NVIDIA_hint));
+        modlight_core::l10n::set_thread_language(None);
     }
 }

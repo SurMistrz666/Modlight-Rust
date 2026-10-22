@@ -62,7 +62,7 @@ pub enum TaskEffect {
     CopyFile(PathBuf),
     ClearClipboard,
     OpenUrl(String),
-    /// Reveal the file in Finder (`FileHelpers.OpenFolderWithFile`).
+    /// Reveal the file in Explorer or Finder (`FileHelpers.OpenFolderWithFile`).
     RevealFile(PathBuf),
     PlaySound {
         sound: NotificationSound,

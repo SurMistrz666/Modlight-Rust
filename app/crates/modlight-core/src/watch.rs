@@ -32,6 +32,12 @@
 //!   which macOS has no equivalent of. The closest honest check is that the file can be
 //!   opened for reading. What really waits for a writer to finish, upstream and here, is
 //!   the size test: bigger than zero and unchanged since the previous check, four times.
+//!
+//! On Windows `notify` reads `ReadDirectoryChangesW`, the source of upstream's
+//! FileSystemWatcher; the same rules run on its events (it neither repeats flags nor
+//! splits renames the FSEvents way, so they simply never trigger), the "locked" test is
+//! upstream's own open with no sharing, and a file is known by its volume serial number
+//! and file index.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -459,8 +465,22 @@ impl Probe for Disk {
         }
     }
 
+    /// On Windows this is upstream's own test: the file opens for reading with no
+    /// sharing (`FileShare.None`), which fails while a writer still holds it.
     fn can_read(&self, path: &Path) -> bool {
-        std::fs::File::open(path).is_ok()
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(path)
+                .is_ok()
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::File::open(path).is_ok()
+        }
     }
 
     fn size(&self, path: &Path) -> i64 {
@@ -947,7 +967,15 @@ mod tests {
                 }
                 change(due_ms, &mut self.disk);
                 for path in self.tracker.poll(due, &self.disk) {
-                    self.reports.push((due_ms, path.display().to_string()));
+                    // The tracker joins with the system's separator (`\` on Windows);
+                    // the expectations are written with `/`.
+                    let shown = path.display().to_string();
+                    let shown = if cfg!(windows) {
+                        shown.replace('\\', "/")
+                    } else {
+                        shown
+                    };
+                    self.reports.push((due_ms, shown));
                 }
             }
         }

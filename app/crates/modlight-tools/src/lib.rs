@@ -1,7 +1,8 @@
 //! The ShareX tools of Modlight App (`ShareX.Tools`, the colour picker of
 //! `ShareX.HelpersLib`, the screen colour picker of `ShareX.Avalonia`, the history views of
 //! `ShareX.HistoryLib`) without their windows: what they compute, convert, build and
-//! parse. The windows are in `modlight-app`; the macOS calls in `modlight-macos`.
+//! parse. The windows are in `modlight-app`; the system calls in `modlight-windows` and
+//! `modlight-macos`.
 
 pub mod analyze;
 pub mod background;

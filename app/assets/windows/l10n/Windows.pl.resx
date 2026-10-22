@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- Teksty portu na Windows tam, gdzie upstream nie ma własnego, a tekst Maca wymienia macOS. -->
+  <data name="PersonalFolderFixed" xml:space="preserve">
+    <value>W tej wersji folder osobisty jest zawsze tutaj; nie można go przenieść.</value>
+  </data>
+  <data name="BackupImportRefused" xml:space="preserve">
+    <value>Nie zaimportowano, bo kopia zapasowa Modlight nigdy ich nie zawiera: {0}</value>
+  </data>
+  <data name="BackupImportDisabled" xml:space="preserve">
+    <value>Te ustawienia działałyby same albo uruchamiały programy na tym komputerze, więc zaimportowano je wyłączone albo z wartościami domyślnymi. Ustaw je ponownie w ustawieniach zadań tylko wtedy, gdy ufasz źródłu kopii:
+{0}</value>
+  </data>
+  <data name="BackupImportDefaultTask" xml:space="preserve">
+    <value>Ustawienia zadań</value>
+  </data>
+  <data name="BackupImportProgram" xml:space="preserve">
+    <value>akcja {0} ({1})</value>
+  </data>
+  <data name="BackupImportFFmpegPath" xml:space="preserve">
+    <value>ścieżka FFmpeg {0}, teraz FFmpeg z Komponentów</value>
+  </data>
+</root>
