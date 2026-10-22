@@ -69,7 +69,7 @@ pub fn fixture_names() -> Vec<String> {
         "brand-palette.png",
     ]
     .iter()
-    .map(|n| crate::qa::fixture_path(&format!("/Users/alex/Pictures/{n}")))
+    .map(|n| format!("/Users/alex/Pictures/{n}"))
     .collect()
 }
 
@@ -289,14 +289,12 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
         "video-converter" | "video-converter-encoding" | "video-converter-empty" => {
             let settings = state.default_task_settings();
             let input = (screen != "video-converter-empty")
-                .then(|| crate::qa::fixture_path("/Users/alex/Movies/screen-recording.mov"));
+                .then(|| "/Users/alex/Movies/screen-recording.mov".to_string());
             let key = state.tools.open_keyed(|key| {
                 Box::new(super::video::VideoWindow::new(
                     key,
                     settings,
-                    Some(std::path::PathBuf::from(crate::qa::fixture_path(
-                        "/opt/homebrew/bin/ffmpeg",
-                    ))),
+                    Some(std::path::PathBuf::from("/opt/homebrew/bin/ffmpeg")),
                     input,
                 ))
             });
@@ -328,17 +326,8 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
             {
                 window.started = true;
                 if screen != "metadata-empty" {
-                    window.qa_display = Some(crate::qa::fixture_path(
-                        "/Users/alex/Pictures/mountain-sunset.jpg",
-                    ));
-                    // ExifTool on Windows writes the drive and forward slashes.
-                    let sample = if cfg!(windows) {
-                        METADATA_SAMPLE
-                            .replace("\t/Users/alex/Pictures\n", "\tC:/Users/alex/Pictures\n")
-                    } else {
-                        METADATA_SAMPLE.to_string()
-                    };
-                    window.loaded(Ok(modlight_tools::metadata::parse(&sample)));
+                    window.qa_display = Some("/Users/alex/Pictures/mountain-sunset.jpg".into());
+                    window.loaded(Ok(modlight_tools::metadata::parse(METADATA_SAMPLE)));
                 }
                 window.confirming_strip = screen == "metadata-strip";
             }
@@ -482,10 +471,9 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                 Vec::new()
             } else {
                 vec![modlight_tools::background::ModelFile {
-                    path: crate::qa::fixture_path(
-                        "/Users/alex/Library/Application Support/Modlight/Models/bria-rmbg-2.0.onnx",
-                    )
-                    .into(),
+                    path:
+                        "/Users/alex/Library/Application Support/Modlight/Models/bria-rmbg-2.0.onnx"
+                            .into(),
                     file_name: "bria-rmbg-2.0.onnx".into(),
                     size: 1_024_331_469,
                 }]
@@ -499,9 +487,7 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
             {
                 let picture = sunset(640, 400);
                 window.set_source(picture.clone(), fixture_files()[0].clone());
-                window.qa_display = Some(crate::qa::fixture_path(
-                    "/Users/alex/Pictures/mountain-sunset.png",
-                ));
+                window.qa_display = Some("/Users/alex/Pictures/mountain-sunset.png".into());
                 if screen == "background-remover" {
                     // The "subject": a soft ellipse around the sun and the ridge.
                     let (w, h) = picture.dimensions();
@@ -550,10 +536,10 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                 match screen {
                     "history-advanced" => {
                         window.advanced = true;
-                        // The day the reference pictures were drawn, not this machine's
-                        // today: every day draws the same fields.
+                        // A fixed day in the date boxes, which otherwise show today and
+                        // would change the snapshot every day.
                         let day = super::history_list::short_date(
-                            chrono::NaiveDate::from_ymd_opt(2026, 10, 20).expect("a date"),
+                            chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap(),
                         );
                         window.adv.from = day.clone();
                         window.adv.to = day;
@@ -595,8 +581,7 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Optio
                         if let Some(super::history::Modal::Import(form)) =
                             window.data.modal.as_mut()
                         {
-                            form.folder =
-                                crate::qa::fixture_path("/Users/alex/Pictures/Screenshots");
+                            form.folder = "/Users/alex/Pictures/Screenshots".into();
                             form.status = modlight_core::l10n::format(
                                 modlight_core::l10n::t(modlight_core::l10n::history::ImageHistoryWindow_SuccessfullyImportedFilesFormat),
                                 &[modlight_core::l10n::Arg::Int(1284)],
@@ -686,7 +671,7 @@ pub fn history_items() -> Vec<modlight_core::history::HistoryItem> {
                 "mountain-sunset.png" => files[0].to_string_lossy().into_owned(),
                 "aurora-wallpaper.png" => files[1].to_string_lossy().into_owned(),
                 "brand-palette.png" => files[2].to_string_lossy().into_owned(),
-                other => crate::qa::fixture_path(&format!("/Users/alex/Pictures/Modlight/{other}")),
+                other => format!("/Users/alex/Pictures/Modlight/{other}"),
             };
             let mut tags = HistoryTags::new();
             tags.insert("WindowTitle", Some(format!("{name} - {process}")));

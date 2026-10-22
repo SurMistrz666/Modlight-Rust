@@ -360,6 +360,7 @@ fn upload_and_delete(profile: &Path, me: &Credential, file: &Path) -> String {
         TaskChannel::new(Arc::new(|| {}));
     let ctx = TaskContext {
         api: api.clone(),
+        tus: modlight_api::TusClient::new("0.7.7").unwrap(),
         account: slot,
         queue,
         channel,

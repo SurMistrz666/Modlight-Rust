@@ -37,7 +37,8 @@ pub use mime::{
 pub use models::*;
 pub use signin::{SignInFailure, SignedIn, display_name};
 pub use tus::{
-    TransferOutcome, TransferReason, TransferResult, TusClient, TusFile, TusSession, TusTimings,
+    TUS_CHUNK_SIZE, TransferOutcome, TransferReason, TransferResult, TusClient, TusFile,
+    TusSession, TusSource, TusTimings,
 };
 pub use upload::{
     DEFAULT_BUFFER_SIZE, LiveOutcome, LiveUpload, ServerAnswer, UploadRefusal, UploadSource,

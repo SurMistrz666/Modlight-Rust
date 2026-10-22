@@ -5,11 +5,23 @@
 //! The error texts keep upstream's shape: one sentence a person can act on first
 //! (`ReportRefusal`), then the dump `ProcessError` writes (message, request URL, status,
 //! headers, response text). The stack trace section has no counterpart and is left out.
+//!
+//! One difference from upstream, which sends every live upload as one `POST /upload`: a
+//! file larger than one tus chunk ([`modlight_api::TUS_CHUNK_SIZE`], 50 MiB) goes over
+//! tus instead, in `PATCH`es of that size, as the offline queue sends. Behind
+//! Cloudflare's proxy a single request body over 100 MB is refused with 413 before the
+//! server sees it, so the one `POST` could never carry such a file. The session such an
+//! upload leaves behind is kept by the task for its next attempt, and handed to the queue
+//! with the file.
 
 use std::path::Path;
 
-use modlight_api::ApiError;
+use modlight_api::tus::{
+    TUS_PATH, TransferOutcome as TusOutcome, TransferReason, TransferResult as TusResult, TusFile,
+    TusSession,
+};
 use modlight_api::upload::{LiveOutcome, LiveUpload, ServerAnswer, UploadRefusal, UploadSource};
+use modlight_api::{ApiError, Credential};
 use tokio_util::sync::CancellationToken;
 
 use crate::l10n::{Arg, format, s, t, uploaders};
@@ -19,6 +31,7 @@ use crate::tasks::naming;
 use crate::tasks::settings::{TaskSettings, UrlSharingServices};
 use crate::tasks::worker::TaskData;
 use crate::upload::progress::ProgressManager;
+use crate::upload::queue::LiveSession;
 
 /// How one upload attempt ended, for `DoUpload`.
 #[derive(Debug, Default)]
@@ -165,12 +178,17 @@ fn response_info(answer: &ServerAnswer) -> ResponseInfo {
 }
 
 /// One upload through the Modlight uploader (`UploadData` + `Modlight.Upload`).
+///
+/// A file larger than one tus chunk goes over tus (see the module notes); `live` is the
+/// session such an upload of this task left on an earlier attempt, resumed here, and is
+/// written back for the next attempt (or `None` when there is nothing to resume).
 pub async fn upload(
     ctx: &TaskContext,
     info: &TaskInfo,
     data: Option<TaskData>,
     cancel: CancellationToken,
     mut on_progress: Box<dyn FnMut(ProgressManager) + Send>,
+    live: &mut Option<LiveSession>,
 ) -> UploadOutcome {
     let Some(credential) = ctx.credential() else {
         return UploadOutcome {
@@ -184,6 +202,26 @@ pub async fn upload(
         ..UploaderErrors::default()
     };
     let file_name = naming::upload_name(&info.file_name, &info.settings);
+    let length = data.as_ref().map_or(0, TaskData::len);
+    if let Some(data) = data.as_ref()
+        && length > ctx.tus.chunk_size()
+    {
+        let file = match data {
+            TaskData::File(path) => TusFile::file(path.clone(), &file_name, length),
+            TaskData::Bytes(bytes) => TusFile::bytes(&file_name, bytes.clone()),
+        };
+        return upload_resumable(
+            ctx,
+            &credential,
+            &service,
+            file,
+            errors,
+            cancel,
+            on_progress,
+            live,
+        )
+        .await;
+    }
     let source = match data {
         Some(TaskData::File(path)) => UploadSource::File(path),
         Some(TaskData::Bytes(bytes)) => UploadSource::Bytes(bytes.as_ref().clone()),
@@ -286,6 +324,184 @@ pub async fn upload(
             }
         }
     }
+}
+
+/// A live upload larger than one tus chunk, over tus (see the module notes).
+#[allow(clippy::too_many_arguments)]
+async fn upload_resumable(
+    ctx: &TaskContext,
+    credential: &Credential,
+    service: &Service,
+    file: TusFile,
+    mut errors: UploaderErrors,
+    cancel: CancellationToken,
+    mut on_progress: Box<dyn FnMut(ProgressManager) + Send>,
+    live: &mut Option<LiveSession>,
+) -> UploadOutcome {
+    let url = credential.url(TUS_PATH);
+    let mut session = match live.take() {
+        Some(kept) if kept.length == file.length && kept.session.url.is_some() => kept.session,
+        other => {
+            // A session for other bytes (the file changed between attempts) is no use.
+            if let Some(stale) = other.and_then(|kept| kept.session.url) {
+                abandon_session(ctx, credential.clone(), stale);
+            }
+            TusSession::new(service.folder.as_deref())
+        }
+    };
+    let mut measured: Option<ProgressManager> = None;
+    let result = ctx
+        .tus
+        .send(
+            credential,
+            &file,
+            &mut session,
+            |sent, total| {
+                // Counted from where this attempt starts, so a resumed upload does not
+                // report the bytes already on the server as speed.
+                let progress =
+                    measured.get_or_insert_with(|| ProgressManager::new(total as i64, sent as i64));
+                let moved = sent as i64 - progress.position();
+                if moved > 0 && progress.update_progress(moved) {
+                    on_progress(progress.clone());
+                }
+            },
+            &cancel,
+        )
+        .await;
+    if session.url.is_some() {
+        *live = Some(LiveSession {
+            length: file.length,
+            session: session.clone(),
+        });
+    }
+
+    let failed = |errors: UploaderErrors, answer: Option<u16>| UploadOutcome {
+        result: Some(UploadResult::default()),
+        errors,
+        answer,
+        ..UploadOutcome::default()
+    };
+    match result.outcome {
+        TusOutcome::Canceled => UploadOutcome {
+            result: None,
+            errors,
+            stopped: true,
+            ..UploadOutcome::default()
+        },
+        TusOutcome::Success => {
+            let mut upload = UploadResult {
+                url: result.copy_url.clone(),
+                thumbnail_url: result.raw_url.clone(),
+                ..UploadResult::default()
+            };
+            upload.set_success(true);
+            UploadOutcome {
+                result: Some(upload),
+                errors,
+                answer: result.status,
+                stopped: false,
+                // The folder the session was made with: the one asked for, or none when
+                // the server refused it and the file went to the default folder.
+                landed_folder: service.reports_landing.then(|| session.folder_id.clone()),
+            }
+        }
+        TusOutcome::Retry | TusOutcome::Blocked => match conclusive_status(&result) {
+            None => {
+                errors.add(&transport_error(&no_answer_text(&result), &url));
+                failed(errors, None)
+            }
+            Some(status) if (200..300).contains(&status) => {
+                // Stored, but the answer named no link: `Modlight_Invalid_response`.
+                let mut upload = UploadResult::default();
+                upload.set_success(true);
+                errors.add(t(uploaders::Modlight_Invalid_response));
+                UploadOutcome {
+                    result: Some(upload),
+                    errors,
+                    answer: Some(status),
+                    ..UploadOutcome::default()
+                }
+            }
+            Some(status) => {
+                let words = if result.outcome == TusOutcome::Blocked {
+                    result.detail.clone()
+                } else {
+                    String::new()
+                };
+                let answer = ServerAnswer {
+                    status,
+                    reason_phrase: reqwest::StatusCode::from_u16(status)
+                        .ok()
+                        .and_then(|code| code.canonical_reason())
+                        .unwrap_or_default()
+                        .to_string(),
+                    url: url.clone(),
+                    headers: Vec::new(),
+                    body: words.clone(),
+                    response: None,
+                };
+                errors.add(&refusal_error(&answer, &url));
+                errors.add_first(&resumable_refusal_sentence(&result, status, words));
+                failed(errors, Some(status))
+            }
+        },
+    }
+}
+
+/// The status a tus attempt is judged by, as `LastAnswer` for the live upload: `None`
+/// when nothing conclusive answered. That is a link that died or stalled, and the three
+/// answers about the session rather than the file (404, 409, 410 to a `PATCH`), after
+/// which tus asks the server again where it stands: the task's next attempt or the queue
+/// carries on from there.
+fn conclusive_status(result: &TusResult) -> Option<u16> {
+    if result.reason == TransferReason::Unreachable {
+        return None;
+    }
+    match result.status {
+        Some(404 | 409 | 410) if result.outcome == TusOutcome::Retry => None,
+        status => status,
+    }
+}
+
+/// The text of a tus attempt that got no conclusive answer.
+fn no_answer_text(result: &TusResult) -> String {
+    match result.status {
+        Some(status) if result.reason != TransferReason::Unreachable => {
+            format!("The server answered {status} for the upload session.")
+        }
+        _ if !result.detail.is_empty() => result.detail.clone(),
+        _ => "The transfer stopped before the server confirmed the file.".to_string(),
+    }
+}
+
+/// `ReportRefusal`'s sentence for a refusal of a tus upload, from what the refusal means
+/// rather than the bare status (404 or 409 mean something else to `POST /upload`).
+fn resumable_refusal_sentence(result: &TusResult, status: u16, words: String) -> String {
+    let message = match result.reason {
+        TransferReason::TooLarge => t(uploaders::Modlight_File_too_large).to_string(),
+        TransferReason::OutOfSpace => t(uploaders::Modlight_Out_of_space).to_string(),
+        TransferReason::TokenRejected if status == 403 => {
+            t(uploaders::Modlight_Token_not_allowed).to_string()
+        }
+        TransferReason::TokenRejected => t(uploaders::Modlight_Token_not_recognized).to_string(),
+        _ => format(
+            t(uploaders::Modlight_Server_refused),
+            &[Arg::from(status as i64)],
+        ),
+    };
+    with_server_detail(&message, Some(words))
+}
+
+/// Tell the server to forget a session nobody will resume, in the background: it would
+/// otherwise hold the bytes until it reclaims them a day later.
+pub fn abandon_session(ctx: &TaskContext, credential: Credential, url: String) {
+    let tus = ctx.tus.clone();
+    ctx.runtime.spawn(async move {
+        if let Err(error) = tus.abandon(&credential, &url).await {
+            log::warn!("Modlight: a resumable session could not be abandoned: {error}");
+        }
+    });
 }
 
 /// `ShortenURL` through the Modlight shortener: a result with the short link, or the

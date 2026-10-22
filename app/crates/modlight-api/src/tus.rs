@@ -1,31 +1,50 @@
 //! Resumable uploads over tus 1.0.0 (`ShareX/Modlight/ModlightResumableUpload.cs`): how
-//! the offline queue sends a file so that a dropped link costs only the bytes in flight.
+//! the offline queue sends a file so that a dropped link costs only the bytes in flight,
+//! and how the live upload sends one larger than a chunk (`modlight_core`'s uploader).
 //!
 //! Every queued item goes this way, small ones included, one session per item: `HEAD`
 //! the session for the byte the server got to, or `POST /api/files` for a new one, then
-//! ONE `PATCH` carrying the whole remainder (the store keeps whatever arrived, so chunks
-//! would only add round trips on the worst link in the story). The links come back as
-//! `X-Media-*` headers on the answer that finished the upload.
+//! the remainder as consecutive `PATCH` requests of at most [`TUS_CHUNK_SIZE`] (50 MiB)
+//! each, every one sent from the offset the server confirmed for the one before. The
+//! links come back as `X-Media-*` headers on the answer that finished the upload, and
+//! are read from that answer only.
 //!
 //! What has to survive a restart (the session URL, the confirmed offset and the target
 //! folder, cleared when the server refused it) lives in [`TusSession`], which the caller
 //! owns and persists. [`TusClient::send`] updates it in place as it learns, so however a
-//! call ends, saving the session afterwards saves the progress.
+//! call ends, saving the session afterwards saves the progress;
+//! [`TusClient::send_with_checkpoints`] also hands it to the caller whenever the server
+//! has confirmed something worth keeping (a new session, a resumed one, each chunk), so
+//! a process that dies mid-file resumes from the last confirmed chunk.
 //!
 //! Carried over as they are: a client of its own with no overall timeout and no
 //! redirects (`Location` and `Upload-Offset` must belong to the request we made); 30
-//! seconds for each handshake request, its answer included; a 90-second stall watch on the
-//! body, looked at every 5 seconds, because a laptop that sleeps mid-PATCH leaves a socket
-//! that neither delivers nor fails; `Tus-Resumable: 1.0.0` and `x-api-key` on every
-//! request. The three durations can be shortened for tests ([`TusTimings`]).
+//! seconds for each handshake request, its answer included; a 90-second stall watch on
+//! each `PATCH`, looked at every 5 seconds, because a laptop that sleeps mid-PATCH leaves
+//! a socket that neither delivers nor fails; `Tus-Resumable: 1.0.0` and `x-api-key` on
+//! every request. The three durations can be shortened for tests ([`TusTimings`]).
 //!
-//! One difference, for the rule that the token goes to the account's host and nowhere
-//! else (`docs/PORT.md`, section 5): upstream sent a STORED session URL as it was stored.
-//! Here only its path and query are kept and put on the account's current origin before
-//! every request, exactly as the `Location` of a new session is treated. A session left
-//! on a host the account no longer uses is then simply not found there (404: a new
-//! session), instead of being sent the token.
+//! Where this differs from upstream (`ModlightResumableUpload.cs`), and why:
+//!
+//! * Upstream sends ONE `PATCH` carrying the whole remainder. A server behind
+//!   Cloudflare's proxy never sees that request for a file over 100 MB: Cloudflare
+//!   refuses any single request body past its plan's limit (100 MB on Free and Pro) with
+//!   413, whatever the server would accept, so the upload could never finish however
+//!   often it was resumed. Chunks of 50 MiB stay well under every plan's limit; the web
+//!   panel's Uppy sends the same size (`TUS_CHUNK_SIZE` of the server), and the server
+//!   takes any number of `PATCH`es per upload. The cost is one round trip per 50 MiB.
+//! * The session is handed out after each confirmed chunk (see above); upstream saved
+//!   the queue only when an attempt ended.
+//! * The bytes may come from memory as well as from a file ([`TusSource`]), so the live
+//!   upload can send a large capture that was never saved the same way.
+//! * For the rule that the token goes to the account's host and nowhere else
+//!   (`docs/PORT.md`, section 5): upstream sent a STORED session URL as it was stored.
+//!   Here only its path and query are kept and put on the account's current origin before
+//!   every request, exactly as the `Location` of a new session is treated. A session left
+//!   on a host the account no longer uses is then simply not found there (404: a new
+//!   session), instead of being sent the token.
 
+use std::fmt;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -67,6 +86,17 @@ pub const STALL_TIMEOUT: Duration = Duration::from_secs(90);
 /// How often the stall watch looks.
 pub const STALL_POLL: Duration = Duration::from_secs(5);
 
+/// The most file bytes one `PATCH` carries: 50 MiB.
+///
+/// Cloudflare's proxy refuses any request whose body is larger than the plan allows
+/// (100 MB on Free and Pro, 200 MB on Business, 500 MB on Enterprise) with 413 before the
+/// server sees a byte, so one `PATCH` with the whole remainder of a large file could
+/// never get through, however often it was resumed. Half the smallest limit leaves room
+/// for whatever MB means to a given plan, and it is the size the web panel's Uppy sends
+/// (the server's `TUS_CHUNK_SIZE` default). Also the size above which the live upload
+/// goes over tus instead of one `POST /upload`.
+pub const TUS_CHUNK_SIZE: u64 = 50 * 1024 * 1024;
+
 const TUS_RESUMABLE_HEADER: &str = "Tus-Resumable";
 const OFFSET_CONTENT_TYPE: &str = "application/offset+octet-stream";
 
@@ -75,7 +105,7 @@ const FOLDER_METADATA_KEY: &str = "folderId";
 
 /// What .NET's `StreamContent` pulls per read (`Stream.CopyToAsync`'s buffer), which is
 /// also how often progress and the stall watch hear about the body.
-const PATCH_CHUNK: usize = 81_920;
+const READ_SIZE: usize = 81_920;
 
 /// How much of a refusal's text is kept: enough for a row of the queue to hold.
 const SERVER_TEXT_LIMIT: usize = 200;
@@ -125,6 +155,10 @@ pub struct TransferResult {
     pub raw_url: String,
     /// What the server asked us to wait, when it asked.
     pub retry_after: Option<Duration>,
+    /// The status of the answer this came from, or `None` when no answer decided it (a
+    /// link that died, a stall, a cancellation). The queue does not need it; the live
+    /// upload words its errors with it.
+    pub status: Option<u16>,
 }
 
 impl TransferResult {
@@ -141,7 +175,14 @@ impl TransferResult {
             view_url: String::new(),
             raw_url: String::new(),
             retry_after: None,
+            status: None,
         }
+    }
+
+    /// The same, from an answer with this status.
+    fn answered(mut self, status: StatusCode) -> TransferResult {
+        self.status = Some(status.as_u16());
+        self
     }
 
     pub fn is_success(&self) -> bool {
@@ -170,17 +211,56 @@ impl Default for TusTimings {
     }
 }
 
-/// The file one queued item sends.
+/// Where the bytes of a transfer are read from.
+#[derive(Clone, PartialEq, Eq)]
+pub enum TusSource {
+    /// A file, read from the offset as each `PATCH` goes.
+    File(PathBuf),
+    /// Bytes already in memory: a capture that was never saved, a paste.
+    Bytes(Arc<Vec<u8>>),
+}
+
+impl fmt::Debug for TusSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TusSource::File(path) => f.debug_tuple("File").field(path).finish(),
+            // Somebody's screenshot, and useless in a log.
+            TusSource::Bytes(bytes) => write!(f, "Bytes({} bytes)", bytes.len()),
+        }
+    }
+}
+
+/// The file one transfer sends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TusFile {
     /// Where the bytes are read from.
-    pub path: PathBuf,
+    pub source: TusSource,
     /// The name it is uploaded under, which need not be the name on disk.
     pub name: String,
     /// The size the caller measured, and checks against the file before every attempt
     /// (a changed file needs a new session: reset the [`TusSession`]). It is what
     /// `Upload-Length` declares and exactly what the body carries.
     pub length: u64,
+}
+
+impl TusFile {
+    /// A file on disk, `length` bytes long.
+    pub fn file(path: impl Into<PathBuf>, name: impl Into<String>, length: u64) -> TusFile {
+        TusFile {
+            source: TusSource::File(path.into()),
+            name: name.into(),
+            length,
+        }
+    }
+
+    /// Bytes in memory, all of them.
+    pub fn bytes(name: impl Into<String>, bytes: Arc<Vec<u8>>) -> TusFile {
+        TusFile {
+            length: bytes.len() as u64,
+            source: TusSource::Bytes(bytes),
+            name: name.into(),
+        }
+    }
 }
 
 /// What a transfer has to remember between attempts and across restarts.
@@ -240,15 +320,17 @@ struct Answer {
     body: String,
 }
 
-/// Sends queued files over tus. Cheap to clone; one is enough for every account.
+/// Sends files over tus. Cheap to clone; one is enough for every account.
 #[derive(Clone)]
 pub struct TusClient {
     http: reqwest::Client,
     timings: TusTimings,
+    chunk_size: u64,
 }
 
 impl TusClient {
-    /// A client identifying itself as `Modlight/<version>`, with upstream's durations.
+    /// A client identifying itself as `Modlight/<version>`, with upstream's durations
+    /// and `PATCH`es of [`TUS_CHUNK_SIZE`].
     pub fn new(version: &str) -> ApiResult<TusClient> {
         TusClient::with_timings(version, TusTimings::default())
     }
@@ -258,19 +340,33 @@ impl TusClient {
         Ok(TusClient {
             http: transfer_client(version)?,
             timings,
+            chunk_size: TUS_CHUNK_SIZE,
         })
+    }
+
+    /// The same client sending at most `bytes` per `PATCH` (at least one), for tests
+    /// that cannot send several 50 MiB chunks.
+    pub fn with_chunk_size(mut self, bytes: u64) -> TusClient {
+        self.chunk_size = bytes.max(1);
+        self
     }
 
     pub fn timings(&self) -> TusTimings {
         self.timings
     }
 
+    /// The most file bytes one `PATCH` carries.
+    pub fn chunk_size(&self) -> u64 {
+        self.chunk_size
+    }
+
     /// Send one file as far as it will go this time (`SendAsync`).
     ///
     /// `session` is read for where to resume and written as things are learned: the URL
-    /// of a new session, the offset the server confirms, the folder dropped after a
-    /// refusal, and all of it cleared once the file is stored. `progress` is called on
-    /// this task with (bytes sent so far, file length), starting from the resume point.
+    /// of a new session, the offset the server confirms after each chunk, the folder
+    /// dropped after a refusal, and all of it cleared once the file is stored. `progress`
+    /// is called on this task with (bytes sent so far, file length), starting from the
+    /// resume point and never going back within one call.
     ///
     /// Never fails: everything that stops a request from completing (DNS, TLS, a reset, a
     /// stall, a handshake deadline) is [`TransferOutcome::Retry`] with
@@ -281,18 +377,48 @@ impl TusClient {
         credential: &Credential,
         file: &TusFile,
         session: &mut TusSession,
+        progress: impl FnMut(u64, u64) + Send,
+        cancel: &CancellationToken,
+    ) -> TransferResult {
+        self.send_with_checkpoints(credential, file, session, progress, |_| {}, cancel)
+            .await
+    }
+
+    /// [`send`](Self::send), calling `checkpoint` with the session each time the server
+    /// has confirmed something the next attempt should start from: the session made or
+    /// found (its URL and offset), then the offset after each chunk but the last. Saving
+    /// it there is what lets a process that dies mid-file resume at the last confirmed
+    /// chunk instead of asking the server about a session it never wrote down.
+    pub async fn send_with_checkpoints(
+        &self,
+        credential: &Credential,
+        file: &TusFile,
+        session: &mut TusSession,
         mut progress: impl FnMut(u64, u64) + Send,
+        mut checkpoint: impl FnMut(&TusSession) + Send,
         cancel: &CancellationToken,
     ) -> TransferResult {
         let attempt = async {
+            let before = session.clone();
             match self
                 .ensure_session(credential, file, session, cancel)
                 .await?
             {
                 Ensured::Report(result) => Ok(result),
                 Ensured::Ready(url) => {
-                    self.send_body(credential, file, session, &url, &mut progress, cancel)
-                        .await
+                    if *session != before {
+                        checkpoint(session);
+                    }
+                    self.send_body(
+                        credential,
+                        file,
+                        session,
+                        &url,
+                        &mut progress,
+                        &mut checkpoint,
+                        cancel,
+                    )
+                    .await
                 }
             }
         };
@@ -446,7 +572,7 @@ impl TusClient {
         if answer.status == StatusCode::OK && file.length == 0 {
             session.url = None;
             session.offset = 0;
-            return Ok(Ensured::Report(landed(&answer.headers)));
+            return Ok(Ensured::Report(landed(answer.status, &answer.headers)));
         }
 
         if answer.status != StatusCode::CREATED {
@@ -461,11 +587,14 @@ impl TusClient {
         let Some(location) =
             first_header(&answer.headers, LOCATION.as_str()).filter(|value| !value.is_empty())
         else {
-            return Ok(Ensured::Report(TransferResult::failure(
-                TransferOutcome::Retry,
-                TransferReason::ServerError,
-                "201 without Location",
-            )));
+            return Ok(Ensured::Report(
+                TransferResult::failure(
+                    TransferOutcome::Retry,
+                    TransferReason::ServerError,
+                    "201 without Location",
+                )
+                .answered(answer.status),
+            ));
         };
 
         let url = resolve_location(&credential.host, &location);
@@ -474,7 +603,10 @@ impl TusClient {
         Ok(Ensured::Ready(url))
     }
 
-    /// `SendBodyAsync`: one `PATCH` with everything from the offset to the end.
+    /// `SendBodyAsync`, in chunks: consecutive `PATCH`es of at most
+    /// [`chunk_size`](Self::chunk_size) bytes from the offset to the end, each sent from
+    /// the offset the server confirmed for the one before.
+    #[allow(clippy::too_many_arguments)]
     async fn send_body(
         &self,
         credential: &Credential,
@@ -482,10 +614,10 @@ impl TusClient {
         session: &mut TusSession,
         url: &str,
         progress: &mut (impl FnMut(u64, u64) + Send),
+        checkpoint: &mut (impl FnMut(&TusSession) + Send),
         cancel: &CancellationToken,
     ) -> Result<TransferResult, Stop> {
-        let offset = session.offset;
-        if offset > file.length {
+        if session.offset > file.length {
             // The server holds more bytes than the file has: the file changed under a
             // live session. Abandon it and let the next attempt build a new one.
             session.url = None;
@@ -497,21 +629,113 @@ impl TusClient {
             ));
         }
 
-        progress(offset, file.length);
+        progress(session.offset, file.length);
 
-        let failed = |error: io::Error| Stop::Failed(error.to_string());
-        let mut source = tokio::fs::File::open(&file.path).await.map_err(failed)?;
-        source
-            .seek(io::SeekFrom::Start(offset))
+        loop {
+            let offset = session.offset;
+            // Nothing left still takes one (empty) PATCH: a session that holds every
+            // byte but never finished is finished by it.
+            let size = (file.length - offset).min(self.chunk_size);
+            let Some(response) = self
+                .patch_chunk(credential, file, url, offset, size, progress, cancel)
+                .await?
+            else {
+                // Stalled. Whatever the server did take is still on its disk, and the
+                // next HEAD will say how much.
+                log::info!(
+                    "Modlight queue: the transfer stopped moving, so it was dropped and will be resumed."
+                );
+                return Ok(TransferResult::failure(
+                    TransferOutcome::Retry,
+                    TransferReason::Unreachable,
+                    "",
+                ));
+            };
+
+            let status = response.status();
+            if matches!(
+                status,
+                StatusCode::CONFLICT | StatusCode::NOT_FOUND | StatusCode::GONE
+            ) {
+                // 409 is tus for "that is not where I am". Never a reason to give up: the
+                // next attempt asks again and starts from wherever the server says.
+                session.offset = 0;
+                return Ok(TransferResult::failure(
+                    TransferOutcome::Retry,
+                    TransferReason::ServerError,
+                    status.as_u16().to_string(),
+                )
+                .answered(status));
+            }
+
+            if !status.is_success() {
+                let retry_after = first_header(response.headers(), RETRY_AFTER.as_str());
+                // Upstream read this with no deadline at all; a cancel at least ends it.
+                let body = tokio::select! {
+                    biased;
+                    body = response.bytes() => body.map(|bytes| decode_text(&bytes)).unwrap_or_default(),
+                    _ = cancel.cancelled() => return Err(Stop::Cancelled),
+                };
+                return Ok(classify(status.as_u16(), retry_after.as_deref(), &body));
+            }
+
+            let confirmed = first_header(response.headers(), "upload-offset")
+                .as_deref()
+                .and_then(parse_offset);
+            if let Some(confirmed) = confirmed {
+                session.offset = confirmed;
+            }
+
+            // 200 rather than 204 is how the server says its finish hook ran; the links
+            // come back on that answer and nowhere else.
+            if status != StatusCode::OK && session.offset < file.length {
+                if confirmed == Some(offset + size) {
+                    // The whole chunk is on the server's disk: worth surviving a crash.
+                    checkpoint(session);
+                    continue;
+                }
+                // Short of what was sent (or not said at all): the link went. Keep what
+                // the server confirmed; the next attempt asks it again.
+                return Ok(TransferResult::failure(
+                    TransferOutcome::Retry,
+                    TransferReason::Unreachable,
+                    "",
+                )
+                .answered(status));
+            }
+
+            session.url = None;
+            session.offset = file.length;
+            return Ok(landed(status, response.headers()));
+        }
+    }
+
+    /// One `PATCH` of `size` bytes from `offset`, under its own stall watch: the answer,
+    /// or `None` when the body stopped moving for the stall timeout.
+    #[allow(clippy::too_many_arguments)]
+    async fn patch_chunk(
+        &self,
+        credential: &Credential,
+        file: &TusFile,
+        url: &str,
+        offset: u64,
+        size: u64,
+        progress: &mut (impl FnMut(u64, u64) + Send),
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, Stop> {
+        if cancel.is_cancelled() {
+            return Err(Stop::Cancelled);
+        }
+        let source = Reader::open(&file.source, offset)
             .await
-            .map_err(failed)?;
+            .map_err(|error| Stop::Failed(error.to_string()))?;
 
         let started = Instant::now();
         let activity = Arc::new(AtomicU64::new(0));
         let (told, mut moved) = mpsc::unbounded_channel();
         let body = PatchBody {
             source,
-            remaining: file.length - offset,
+            remaining: size,
             sent: offset,
             started,
             activity: Arc::clone(&activity),
@@ -523,7 +747,7 @@ impl TusClient {
             .header("Upload-Offset", offset.to_string())
             .header(CONTENT_TYPE, OFFSET_CONTENT_TYPE)
             // Stated, so the body is never sent chunked (see the live upload).
-            .header(CONTENT_LENGTH, file.length - offset)
+            .header(CONTENT_LENGTH, size)
             .body(Body::wrap_stream(body.into_stream()));
 
         let poll = self.timings.stall_poll.max(Duration::from_millis(1));
@@ -551,16 +775,7 @@ impl TusClient {
                         .elapsed()
                         .saturating_sub(Duration::from_millis(activity.load(Ordering::Relaxed)));
                     if quiet > stall {
-                        // Whatever the server did take is still on its disk, and the next
-                        // HEAD will say how much.
-                        log::info!(
-                            "Modlight queue: the transfer stopped moving, so it was dropped and will be resumed."
-                        );
-                        return Ok(TransferResult::failure(
-                            TransferOutcome::Retry,
-                            TransferReason::Unreachable,
-                            "",
-                        ));
+                        return Ok(None);
                     }
                 }
                 bytes = moved.recv(), if telling => match bytes {
@@ -572,53 +787,7 @@ impl TusClient {
         while let Ok(bytes) = moved.try_recv() {
             progress(bytes, file.length);
         }
-
-        let status = response.status();
-        if matches!(
-            status,
-            StatusCode::CONFLICT | StatusCode::NOT_FOUND | StatusCode::GONE
-        ) {
-            // 409 is tus for "that is not where I am". Never a reason to give up: the next
-            // attempt asks again and starts from wherever the server says.
-            session.offset = 0;
-            return Ok(TransferResult::failure(
-                TransferOutcome::Retry,
-                TransferReason::ServerError,
-                status.as_u16().to_string(),
-            ));
-        }
-
-        if !status.is_success() {
-            let retry_after = first_header(response.headers(), RETRY_AFTER.as_str());
-            // Upstream read this with no deadline at all; a cancel at least ends it.
-            let body = tokio::select! {
-                biased;
-                body = response.bytes() => body.map(|bytes| decode_text(&bytes)).unwrap_or_default(),
-                _ = cancel.cancelled() => return Err(Stop::Cancelled),
-            };
-            return Ok(classify(status.as_u16(), retry_after.as_deref(), &body));
-        }
-
-        if let Some(confirmed) = first_header(response.headers(), "upload-offset")
-            .as_deref()
-            .and_then(parse_offset)
-        {
-            session.offset = confirmed;
-        }
-
-        // 200 rather than 204 is how the server says its finish hook ran; the links come
-        // back on that answer and nowhere else.
-        if status != StatusCode::OK && session.offset < file.length {
-            return Ok(TransferResult::failure(
-                TransferOutcome::Retry,
-                TransferReason::Unreachable,
-                "",
-            ));
-        }
-
-        session.url = None;
-        session.offset = file.length;
-        Ok(landed(response.headers()))
+        Ok(Some(response))
     }
 
     /// One small request under the handshake deadline, its answer read within the same
@@ -664,7 +833,7 @@ fn decorate(request: RequestBuilder, credential: &Credential) -> RequestBuilder 
 ///
 /// A stored upload with no link in the answer is stopped rather than retried: trying
 /// again would send the whole file a second time and leave the account holding it twice.
-fn landed(headers: &HeaderMap) -> TransferResult {
+fn landed(status: StatusCode, headers: &HeaderMap) -> TransferResult {
     let copy = first_header(headers, "x-media-copy-url").unwrap_or_default();
     let view = first_header(headers, "x-media-url").unwrap_or_default();
     let raw = first_header(headers, "x-media-raw-url").unwrap_or_default();
@@ -673,13 +842,15 @@ fn landed(headers: &HeaderMap) -> TransferResult {
             TransferOutcome::Blocked,
             TransferReason::ServerError,
             "no link in the response",
-        );
+        )
+        .answered(status);
     }
     TransferResult {
         copy_url: if copy.is_empty() { view.clone() } else { copy },
         view_url: view,
         raw_url: raw,
         ..TransferResult::failure(TransferOutcome::Success, TransferReason::None, "")
+            .answered(status)
     }
 }
 
@@ -694,7 +865,7 @@ pub fn classify(status: u16, retry_after: Option<&str>, body: &str) -> TransferR
     let detail = server_text(body);
     let blocked =
         |reason| TransferResult::failure(TransferOutcome::Blocked, reason, detail.clone());
-    match status {
+    let result = match status {
         401 => blocked(TransferReason::TokenRejected),
         403 if is_auth_refusal(&detail) => blocked(TransferReason::TokenRejected),
         // Left for the caller to read as "the folder": every other 403 this endpoint
@@ -714,6 +885,10 @@ pub fn classify(status: u16, retry_after: Option<&str>, body: &str) -> TransferR
                 status.to_string(),
             )
         },
+    };
+    TransferResult {
+        status: Some(status),
+        ..result
     }
 }
 
@@ -828,10 +1003,47 @@ fn first_header(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
 }
 
-/// The `PATCH` body: the file from the offset to the end, saying how far it has got
-/// (`ProgressReportingStream`).
+/// The bytes of one `PATCH`, read from the file or from memory.
+enum Reader {
+    File(tokio::fs::File),
+    Bytes { bytes: Arc<Vec<u8>>, at: usize },
+}
+
+impl Reader {
+    /// The source, positioned at `offset`.
+    async fn open(source: &TusSource, offset: u64) -> io::Result<Reader> {
+        match source {
+            TusSource::File(path) => {
+                let mut file = tokio::fs::File::open(path).await?;
+                file.seek(io::SeekFrom::Start(offset)).await?;
+                Ok(Reader::File(file))
+            }
+            TusSource::Bytes(bytes) => Ok(Reader::Bytes {
+                bytes: Arc::clone(bytes),
+                at: usize::try_from(offset)
+                    .unwrap_or(usize::MAX)
+                    .min(bytes.len()),
+            }),
+        }
+    }
+
+    async fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Reader::File(file) => file.read(buffer).await,
+            Reader::Bytes { bytes, at } => {
+                let count = buffer.len().min(bytes.len() - *at);
+                buffer[..count].copy_from_slice(&bytes[*at..*at + count]);
+                *at += count;
+                Ok(count)
+            }
+        }
+    }
+}
+
+/// One `PATCH` body: `remaining` bytes of the source from the offset, saying how far it
+/// has got (`ProgressReportingStream`).
 struct PatchBody {
-    source: tokio::fs::File,
+    source: Reader,
     remaining: u64,
     /// Offset plus what has been read since.
     sent: u64,
@@ -863,7 +1075,7 @@ impl PatchBody {
         }
         let want = usize::try_from(self.remaining)
             .unwrap_or(usize::MAX)
-            .min(PATCH_CHUNK);
+            .min(READ_SIZE);
         let mut chunk = vec![0; want];
         let read = self.source.read(&mut chunk).await?;
         if read == 0 {
@@ -1081,15 +1293,20 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-media-url", "https://h/u/a".parse().unwrap());
         headers.insert("x-media-raw-url", "https://h/u/a.png".parse().unwrap());
-        let result = landed(&headers);
+        let result = landed(StatusCode::OK, &headers);
         assert!(result.is_success());
+        assert_eq!(result.status, Some(200));
         assert_eq!(result.copy_url, "https://h/u/a", "no copy link: the page");
         assert_eq!(result.raw_url, "https://h/u/a.png");
 
         headers.insert("x-media-copy-url", "https://h/u/a.png".parse().unwrap());
-        assert_eq!(landed(&headers).copy_url, "https://h/u/a.png");
+        assert_eq!(
+            landed(StatusCode::OK, &headers).copy_url,
+            "https://h/u/a.png"
+        );
 
-        let nothing = landed(&HeaderMap::new());
+        let nothing = landed(StatusCode::NO_CONTENT, &HeaderMap::new());
+        assert_eq!(nothing.status, Some(204));
         assert_eq!(
             outcome(&nothing),
             (

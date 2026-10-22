@@ -90,7 +90,7 @@ C#/.NET 10 with an Avalonia UI, GPL-3.0). The upstream checkout is the
   API tokens there freely; record any credentials you create in
   `app/.qa/credentials.env` (gitignored), never in chat output.
 
-## 5. Security rules carried over from the audit (`docs/audyt/klient.md`)
+## 5. Security rules carried over from the audit (`docs/audit/original-client.md`)
 
 - The API token travels only in the `x-api-key` header to the account's host,
   never in a URL, never to another host, never across a redirect.

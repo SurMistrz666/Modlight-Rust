@@ -135,11 +135,7 @@ fn sparse_file(length: u64) -> tempfile::NamedTempFile {
 }
 
 fn tus_file(path: &Path, name: &str, length: u64) -> TusFile {
-    TusFile {
-        path: path.to_path_buf(),
-        name: name.to_string(),
-        length,
-    }
+    TusFile::file(path, name, length)
 }
 
 /// The rows of every upload called `name`, in the library and in the trash.
@@ -457,6 +453,9 @@ struct Reply {
     body: String,
     /// Take the request and never answer.
     silent: bool,
+    /// Take this many bytes of the body, then close the connection without answering:
+    /// a link that dies mid-body.
+    cut_after: Option<usize>,
 }
 
 impl Reply {
@@ -470,6 +469,13 @@ impl Reply {
     fn silent() -> Reply {
         Reply {
             silent: true,
+            ..Reply::default()
+        }
+    }
+
+    fn cut_after(bytes: usize) -> Reply {
+        Reply {
+            cut_after: Some(bytes),
             ..Reply::default()
         }
     }
@@ -544,18 +550,29 @@ async fn serve(
 ) {
     let mut stream = BufReader::new(stream);
     loop {
-        let request = tokio::select! {
+        let head = tokio::select! {
             _ = stop.cancelled() => return,
-            request = read_request(&mut stream) => request,
+            head = read_head(&mut stream) => head,
         };
-        let Some(request) = request else { return };
+        let Some((mut request, length)) = head else {
+            return;
+        };
         let reply = replies
             .lock()
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Reply::new(500).body("no more replies"));
+        let take = reply.cut_after.map_or(length, |cut| cut.min(length));
+        request.body = vec![0; take];
+        if stream.read_exact(&mut request.body).await.is_err() {
+            return;
+        }
         let head_only = request.method == "HEAD";
         seen.lock().unwrap().push(request);
+        if reply.cut_after.is_some() {
+            // Dropping the stream closes the connection under the rest of the body.
+            return;
+        }
         if reply.silent {
             stop.cancelled().await;
             return;
@@ -575,7 +592,8 @@ async fn serve(
     }
 }
 
-async fn read_request(stream: &mut BufReader<TcpStream>) -> Option<Seen> {
+/// A request's line and headers, and the length its body declares (read by the caller).
+async fn read_head(stream: &mut BufReader<TcpStream>) -> Option<(Seen, usize)> {
     let mut line = String::new();
     if stream.read_line(&mut line).await.ok()? == 0 {
         return None;
@@ -601,14 +619,15 @@ async fn read_request(stream: &mut BufReader<TcpStream>) -> Option<Seen> {
         .find(|(name, _)| name == "content-length")
         .and_then(|(_, value)| value.parse::<usize>().ok())
         .unwrap_or(0);
-    let mut body = vec![0; length];
-    stream.read_exact(&mut body).await.ok()?;
-    Some(Seen {
-        method,
-        target,
-        headers,
-        body,
-    })
+    Some((
+        Seen {
+            method,
+            target,
+            headers,
+            body: Vec::new(),
+        },
+        length,
+    ))
 }
 
 fn summary(result: &TransferResult) -> (TransferOutcome, TransferReason, &str) {
@@ -1951,4 +1970,495 @@ async fn cancelling_a_tus_transfer_keeps_the_session() {
         Some(format!("{}/api/files/c1", server.origin).as_str()),
         "the session to resume or abandon"
     );
+}
+
+// ---------------------------------------------------------------------------------
+// Chunks: no PATCH carries more than one chunk (Cloudflare refuses bodies over 100 MB)
+// ---------------------------------------------------------------------------------
+
+/// What one chunked attempt left: the result, the session, what the server saw, every
+/// progress report and every checkpoint (URL, offset) in order.
+struct Chunked {
+    result: TransferResult,
+    session: TusSession,
+    seen: Vec<Seen>,
+    told: Vec<(u64, u64)>,
+    saved: Vec<(Option<String>, u64)>,
+}
+
+async fn chunked_attempt(
+    server: &Scripted,
+    file: &TusFile,
+    chunk: u64,
+    session: TusSession,
+) -> Chunked {
+    let client = TusClient::new("9.9.9").unwrap().with_chunk_size(chunk);
+    assert_eq!(client.chunk_size(), chunk);
+    let mut session = session;
+    let mut told = Vec::new();
+    let mut saved = Vec::new();
+    let before = server.seen().len();
+    let result = client
+        .send_with_checkpoints(
+            &server.credential(),
+            file,
+            &mut session,
+            |sent, total| told.push((sent, total)),
+            |session| saved.push((session.url.clone(), session.offset)),
+            &CancellationToken::new(),
+        )
+        .await;
+    let seen = server.seen()[before..].to_vec();
+    assert_decorated(&seen);
+    Chunked {
+        result,
+        session,
+        seen,
+        told,
+        saved,
+    }
+}
+
+/// Progress never goes back, and every report is of the whole file.
+fn assert_monotonic(told: &[(u64, u64)], total: u64) {
+    assert!(!told.is_empty());
+    for pair in told.windows(2) {
+        assert!(pair[0].0 <= pair[1].0, "progress went back: {pair:?}");
+    }
+    assert!(
+        told.iter()
+            .all(|&(sent, all)| all == total && sent <= total)
+    );
+}
+
+fn links(reply: Reply, page: &str) -> Reply {
+    reply
+        .header("X-Media-Url", page)
+        .header("X-Media-Raw-Url", format!("{page}.bin"))
+        .header("X-Media-Copy-Url", format!("{page}.bin"))
+}
+
+/// Each PATCH of `seen`: (offset header, content length, body length).
+fn patches(seen: &[Seen]) -> Vec<(u64, u64, usize)> {
+    seen.iter()
+        .filter(|request| request.method == "PATCH")
+        .map(|request| {
+            (
+                request.header("upload-offset").unwrap().parse().unwrap(),
+                request.header("content-length").unwrap().parse().unwrap(),
+                request.body.len(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_chunk_is_fifty_mebibytes() {
+    assert_eq!(
+        tus::TUS_CHUNK_SIZE,
+        52_428_800,
+        "the server's TUS_CHUNK_SIZE"
+    );
+    const {
+        assert!(
+            tus::TUS_CHUNK_SIZE < 100_000_000,
+            "under Cloudflare's 100 MB"
+        )
+    };
+    assert_eq!(
+        TusClient::new("9.9.9").unwrap().chunk_size(),
+        tus::TUS_CHUNK_SIZE
+    );
+    assert_eq!(
+        TusClient::new("9.9.9")
+            .unwrap()
+            .with_chunk_size(0)
+            .chunk_size(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_file_of_several_chunks_goes_in_patches_of_one_chunk_at_most() {
+    let (file, bytes) = random_file(2500);
+    let server = Scripted::start(vec![
+        Reply::new(201).header("Location", "/api/files/k1"),
+        // Links on an answer that did not finish the upload are not links.
+        links(Reply::new(204), "http://h/decoy-1").header("Upload-Offset", "1000"),
+        links(Reply::new(204), "http://h/decoy-2").header("Upload-Offset", "2000"),
+        links(Reply::new(200), "http://h/u/k1").header("Upload-Offset", "2500"),
+    ])
+    .await;
+    let run = chunked_attempt(
+        &server,
+        &tus_file(file.path(), "k1.bin", 2500),
+        1000,
+        TusSession::default(),
+    )
+    .await;
+
+    assert_eq!(
+        run.result.outcome,
+        TransferOutcome::Success,
+        "{:?}",
+        run.result
+    );
+    assert_eq!(run.result.view_url, "http://h/u/k1", "from the last answer");
+    assert_eq!(run.result.copy_url, "http://h/u/k1.bin");
+    assert_eq!(run.result.raw_url, "http://h/u/k1.bin");
+    assert_eq!(run.result.status, Some(200));
+    assert_eq!(methods(&run.seen), ["POST", "PATCH", "PATCH", "PATCH"]);
+    assert_eq!(run.seen[0].header("upload-length"), Some("2500"));
+    assert_eq!(
+        patches(&run.seen),
+        [(0, 1000, 1000), (1000, 1000, 1000), (2000, 500, 500)]
+    );
+    for request in &run.seen[1..] {
+        assert_eq!(request.target, "/api/files/k1");
+        assert_eq!(
+            request.header("content-type"),
+            Some("application/offset+octet-stream")
+        );
+    }
+    assert!(run.seen[1].body == bytes[..1000]);
+    assert!(run.seen[2].body == bytes[1000..2000]);
+    assert!(run.seen[3].body == bytes[2000..]);
+
+    let url = format!("{}/api/files/k1", server.origin);
+    assert_eq!(
+        run.saved,
+        [
+            (Some(url.clone()), 0),
+            (Some(url.clone()), 1000),
+            (Some(url.clone()), 2000)
+        ],
+        "the new session, then each chunk the server confirmed"
+    );
+    assert_eq!(
+        run.session,
+        TusSession {
+            url: None,
+            offset: 2500,
+            folder_id: None
+        }
+    );
+    assert_monotonic(&run.told, 2500);
+    assert_eq!(run.told.first(), Some(&(0, 2500)));
+    assert_eq!(run.told.last(), Some(&(2500, 2500)));
+    for edge in [1000, 2000] {
+        assert!(
+            run.told.iter().any(|&(sent, _)| sent == edge),
+            "told at the chunk edge {edge}: {:?}",
+            run.told
+        );
+    }
+}
+
+#[tokio::test]
+async fn files_up_to_one_chunk_go_in_one_patch_and_an_empty_one_in_an_empty_patch() {
+    // Smaller than one chunk, and exactly one chunk: one PATCH with everything.
+    for length in [999usize, 1000] {
+        let (file, bytes) = random_file(length);
+        let server = Scripted::start(vec![
+            Reply::new(201).header("Location", "/api/files/one"),
+            links(Reply::new(200), "http://h/u/one").header("Upload-Offset", length.to_string()),
+        ])
+        .await;
+        let run = chunked_attempt(
+            &server,
+            &tus_file(file.path(), "one.bin", length as u64),
+            1000,
+            TusSession::default(),
+        )
+        .await;
+        assert_eq!(run.result.outcome, TransferOutcome::Success, "{length}");
+        assert_eq!(run.result.view_url, "http://h/u/one");
+        assert_eq!(methods(&run.seen), ["POST", "PATCH"], "{length}");
+        assert_eq!(patches(&run.seen), [(0, length as u64, length)], "{length}");
+        assert!(run.seen[1].body == bytes);
+        assert_eq!(run.saved.len(), 1, "only the new session: {:?}", run.saved);
+        assert_monotonic(&run.told, length as u64);
+        assert_eq!(run.told.last(), Some(&(length as u64, length as u64)));
+    }
+
+    // An empty file the server did not finish at creation: one empty PATCH finishes it.
+    let empty = tempfile::NamedTempFile::new().unwrap();
+    let server = Scripted::start(vec![
+        Reply::new(201).header("Location", "/api/files/e0"),
+        links(Reply::new(200), "http://h/u/e0").header("Upload-Offset", "0"),
+    ])
+    .await;
+    let run = chunked_attempt(
+        &server,
+        &tus_file(empty.path(), "e0.txt", 0),
+        1000,
+        TusSession::default(),
+    )
+    .await;
+    assert_eq!(
+        run.result.outcome,
+        TransferOutcome::Success,
+        "{:?}",
+        run.result
+    );
+    assert_eq!(run.result.view_url, "http://h/u/e0");
+    assert_eq!(methods(&run.seen), ["POST", "PATCH"]);
+    assert_eq!(run.seen[0].header("upload-length"), Some("0"));
+    assert_eq!(patches(&run.seen), [(0, 0, 0)]);
+    assert_eq!(run.told, [(0, 0)]);
+    assert_eq!(run.session.url, None);
+}
+
+#[tokio::test]
+async fn a_cut_in_the_second_chunk_resumes_from_the_end_of_the_first() {
+    let (file, bytes) = random_file(2500);
+    let upload = tus_file(file.path(), "cut.bin", 2500);
+    let server = Scripted::start(vec![
+        Reply::new(201).header("Location", "/api/files/c2"),
+        Reply::new(204).header("Upload-Offset", "1000"),
+        // The link dies 300 bytes into the second chunk.
+        Reply::cut_after(300),
+        // The next attempt: the server kept the first chunk.
+        Reply::new(200)
+            .header("Upload-Offset", "1000")
+            .header("Upload-Length", "2500"),
+        Reply::new(204).header("Upload-Offset", "2000"),
+        links(Reply::new(200), "http://h/u/c2").header("Upload-Offset", "2500"),
+    ])
+    .await;
+
+    let first = chunked_attempt(&server, &upload, 1000, TusSession::default()).await;
+    assert_eq!(
+        (
+            first.result.outcome,
+            first.result.reason,
+            first.result.status
+        ),
+        (TransferOutcome::Retry, TransferReason::Unreachable, None),
+        "{:?}",
+        first.result
+    );
+    assert!(!first.result.detail.is_empty(), "the reason in words");
+    assert_eq!(methods(&first.seen), ["POST", "PATCH", "PATCH"]);
+    assert_eq!(first.seen[2].header("upload-offset"), Some("1000"));
+    assert_eq!(first.seen[2].body.len(), 300, "cut mid-body");
+    let url = format!("{}/api/files/c2", server.origin);
+    assert_eq!(
+        first.session,
+        TusSession {
+            url: Some(url.clone()),
+            offset: 1000,
+            folder_id: None
+        },
+        "the end of the first chunk, confirmed"
+    );
+    assert_eq!(
+        first.saved.last(),
+        Some(&(Some(url.clone()), 1000)),
+        "saved before the second chunk went"
+    );
+    assert_monotonic(&first.told, 2500);
+
+    // A restart in between: the session goes through JSON.
+    let saved = serde_json::to_string(&first.session).unwrap();
+    let session: TusSession = serde_json::from_str(&saved).unwrap();
+    let second = chunked_attempt(&server, &upload, 1000, session).await;
+    assert_eq!(
+        second.result.outcome,
+        TransferOutcome::Success,
+        "{:?}",
+        second.result
+    );
+    assert_eq!(second.result.view_url, "http://h/u/c2");
+    assert_eq!(methods(&second.seen), ["HEAD", "PATCH", "PATCH"]);
+    assert_eq!(second.seen[0].target, "/api/files/c2");
+    assert_eq!(
+        patches(&second.seen),
+        [(1000, 1000, 1000), (2000, 500, 500)]
+    );
+    assert!(second.seen[1].body == bytes[1000..2000]);
+    assert!(second.seen[2].body == bytes[2000..]);
+    assert_eq!(
+        second.told.first(),
+        Some(&(1000, 2500)),
+        "from the first chunk's end"
+    );
+    assert_eq!(second.told.last(), Some(&(2500, 2500)));
+    assert_monotonic(&second.told, 2500);
+    assert_eq!(second.saved, [(Some(url), 2000)]);
+    assert_eq!(second.session.url, None);
+}
+
+#[tokio::test]
+async fn bytes_in_memory_go_in_chunks_too() {
+    let bytes = Arc::new(random_bytes(2100));
+    let server = Scripted::start(vec![
+        Reply::new(201).header("Location", "/api/files/m1"),
+        Reply::new(204).header("Upload-Offset", "1000"),
+        Reply::new(204).header("Upload-Offset", "2000"),
+        links(Reply::new(200), "http://h/u/m1").header("Upload-Offset", "2100"),
+    ])
+    .await;
+    let upload = TusFile::bytes("m1.png", Arc::clone(&bytes));
+    assert_eq!(upload.length, 2100);
+    assert_eq!(format!("{:?}", upload.source), "Bytes(2100 bytes)");
+    let run = chunked_attempt(&server, &upload, 1000, TusSession::default()).await;
+    assert_eq!(
+        run.result.outcome,
+        TransferOutcome::Success,
+        "{:?}",
+        run.result
+    );
+    assert_eq!(
+        patches(&run.seen),
+        [(0, 1000, 1000), (1000, 1000, 1000), (2000, 100, 100)]
+    );
+    let sent: Vec<u8> = run.seen[1..]
+        .iter()
+        .flat_map(|request| request.body.clone())
+        .collect();
+    assert!(sent == *bytes);
+}
+
+#[tokio::test]
+async fn a_refusal_of_a_later_chunk_keeps_what_was_confirmed() {
+    let (file, _) = random_file(2500);
+    let server = Scripted::start(vec![
+        Reply::new(201).header("Location", "/api/files/r1"),
+        Reply::new(204).header("Upload-Offset", "1000"),
+        Reply::new(503)
+            .header("Retry-After", "9")
+            .body("<html>busy</html>"),
+    ])
+    .await;
+    let run = chunked_attempt(
+        &server,
+        &tus_file(file.path(), "r1.bin", 2500),
+        1000,
+        TusSession::default(),
+    )
+    .await;
+    assert_eq!(
+        summary(&run.result),
+        (TransferOutcome::Retry, TransferReason::ServerError, "503")
+    );
+    assert_eq!(run.result.status, Some(503));
+    assert_eq!(run.result.retry_after, Some(Duration::from_secs(9)));
+    assert_eq!(run.session.offset, 1000);
+    assert!(run.session.url.is_some());
+
+    // A 204 that confirms less than the chunk: the link went, as with one PATCH.
+    let server = Scripted::start(vec![
+        Reply::new(201).header("Location", "/api/files/r2"),
+        Reply::new(204).header("Upload-Offset", "1000"),
+        Reply::new(204).header("Upload-Offset", "1500"),
+    ])
+    .await;
+    let run = chunked_attempt(
+        &server,
+        &tus_file(file.path(), "r2.bin", 2500),
+        1000,
+        TusSession::default(),
+    )
+    .await;
+    assert_eq!(
+        summary(&run.result),
+        (TransferOutcome::Retry, TransferReason::Unreachable, "")
+    );
+    assert_eq!(run.session.offset, 1500, "what the server confirmed");
+    assert_eq!(methods(&run.seen), ["POST", "PATCH", "PATCH"]);
+    assert_eq!(run.saved.len(), 2, "the session and the first chunk only");
+}
+
+#[tokio::test]
+async fn a_cancel_between_chunks_keeps_the_session_and_the_confirmed_offset() {
+    let (file, _) = random_file(2500);
+    let server = Scripted::start(vec![
+        Reply::new(201).header("Location", "/api/files/x1"),
+        Reply::new(204).header("Upload-Offset", "1000"),
+        Reply::silent(),
+    ])
+    .await;
+    let client = TusClient::new("9.9.9").unwrap().with_chunk_size(1000);
+    let cancel = CancellationToken::new();
+    let stopper = cancel.clone();
+    let mut session = TusSession::default();
+    let result = client
+        .send_with_checkpoints(
+            &server.credential(),
+            &tus_file(file.path(), "x1.bin", 2500),
+            &mut session,
+            |_, _| {},
+            |session| {
+                if session.offset == 1000 {
+                    stopper.cancel();
+                }
+            },
+            &cancel,
+        )
+        .await;
+    assert_eq!(
+        summary(&result),
+        (TransferOutcome::Canceled, TransferReason::None, "")
+    );
+    assert_eq!(session.offset, 1000);
+    assert!(session.url.is_some());
+    assert_eq!(
+        methods(&server.seen()),
+        ["POST", "PATCH"],
+        "no second chunk"
+    );
+}
+
+/// Several real chunks to the reference server, and a cut in the second one resumed
+/// from what the server holds.
+#[tokio::test]
+async fn tus_sends_several_chunks_to_the_reference_server_and_resumes_a_cut_one() {
+    let Some(qa) = qa().await else { return };
+    let (file, bytes) = random_file(10 * MIB as usize + 12345);
+    let length = bytes.len() as u64;
+    let mut cleanup = Cleanup::new(&qa);
+    let name = cleanup.name("ut-tus-chunks", "bin");
+    let upload = tus_file(file.path(), &name, length);
+    let client = TusClient::new(VERSION).unwrap().with_chunk_size(4 * MIB);
+    let mut session = TusSession::default();
+
+    // The link dies 6 MiB in: in the second chunk.
+    let cut = Proxy::start(Link::CutAfter(6 * MIB)).await;
+    let mut saved = Vec::new();
+    let result = client
+        .send_with_checkpoints(
+            &qa.via(&cut.origin),
+            &upload,
+            &mut session,
+            |_, _| {},
+            |session| saved.push(session.offset),
+            &CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(result.outcome, TransferOutcome::Retry, "{result:?}");
+    assert_eq!(saved, [0, 4 * MIB], "the session, then the first chunk");
+    assert_eq!(session.offset, 4 * MIB);
+    drop(cut);
+
+    let mut told = Vec::new();
+    let result = client
+        .send(
+            &qa.me,
+            &upload,
+            &mut session,
+            |sent, total| told.push((sent, total)),
+            &CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(result.outcome, TransferOutcome::Success, "{result:?}");
+    let resumed_at = told.first().unwrap().0;
+    assert!(
+        (4 * MIB..6 * MIB).contains(&resumed_at),
+        "resumed at {resumed_at}"
+    );
+    assert_monotonic(&told, length);
+    assert_eq!(told.last(), Some(&(length, length)));
+    assert_eq!(stored_sha256(&qa, &result.raw_url).await, sha256(&bytes));
+    assert_eq!(purge(&qa, &name).await, 1);
 }

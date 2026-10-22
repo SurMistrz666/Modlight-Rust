@@ -9,8 +9,11 @@
 //! * `state` is 32 characters from a CSPRNG and is compared in constant time;
 //! * a body with the WRONG state is answered and ignored, and the wait goes on. Upstream
 //!   ended the whole sign-in on it, which let any local process abort a sign-in at will;
-//! * a CORS preflight is answered only for the server's own origin, and never with
-//!   `Access-Control-Allow-Private-Network` (upstream answered `*` to anybody);
+//! * a CORS preflight is answered only for the server's own origin (upstream answered `*`
+//!   and `Access-Control-Allow-Private-Network: true` to anybody). The private-network
+//!   permission is granted to that one origin too: when the server is public (behind
+//!   Cloudflare, say) Chrome's Private Network Access sends a preflight before the page
+//!   may reach 127.0.0.1, and without the grant the handoff never arrives;
 //! * one shot: the first body carrying our state ends the wait and the listener closes.
 
 use std::sync::Arc;
@@ -194,9 +197,10 @@ async fn serve(mut stream: TcpStream, allowed_origin: &str) -> Option<Handoff> {
     let request_origin = header(&head, "origin");
 
     if method == "OPTIONS" {
-        // Answered so a browser that insists on a preflight gets one, but the
-        // permission is granted only to the server's own origin, and never the
-        // private-network one. Nothing is read from a preflight.
+        // Answered so a browser that insists on a preflight gets one; every permission,
+        // the private-network one included, goes to the server's own origin only. A
+        // public server's page needs that one to reach 127.0.0.1 in Chrome (Private
+        // Network Access). Nothing is read from a preflight.
         let mut response = String::from("HTTP/1.1 204 No Content\r\n");
         if request_origin.as_deref() == Some(allowed_origin) {
             response.push_str(&format!(
@@ -206,6 +210,11 @@ async fn serve(mut stream: TcpStream, allowed_origin: &str) -> Option<Handoff> {
                  Access-Control-Max-Age: 600\r\n\
                  Vary: Origin\r\n"
             ));
+            if header(&head, "access-control-request-private-network")
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
+            {
+                response.push_str("Access-Control-Allow-Private-Network: true\r\n");
+            }
         }
         response.push_str("Connection: close\r\n\r\n");
         let _ = write(&mut stream, &response).await;

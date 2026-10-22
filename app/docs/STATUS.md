@@ -146,11 +146,11 @@ The map of the crate and the effect registry contract are in `EDITOR.md`. Snapsh
 | Upstream | State |
 |---|---|
 | Name patterns (`NameParser`), after-upload formats (`UploadInfoParser`), `FileHelpers` / `URLHelpers` pieces | done |
-| Live upload (`Modlight.Upload`: one streamed multipart `POST /upload`) and its refusal sentences | done |
+| Live upload (`Modlight.Upload`: one streamed multipart `POST /upload`) and its refusal sentences | done; files over 50 MiB go over tus in 50 MiB chunks (Cloudflare's 100 MB request limit, see MACOS.md) |
 | Duplicate check before uploading (`POST /api/uploads/check`) | not in upstream's desktop app (only the web panel calls it), so not ported |
 | API client: every endpoint the desktop app uses, refusal handling, timeouts | done |
 | Task flow (`TaskManager`, `WorkerTask`, `UploadManager`, `UploadInfoManager`) | done for uploads (file, folder, clipboard, text, paste, URL download, shorten, share); capture jobs phase 3. Tested against the reference server (`modlight-core/tests/task_flow.rs`). |
-| Offline queue (`ModlightUploadQueue`, `ModlightQueueStore`, `Queue.json`) and resumable uploads (tus) | done; resume after a cut and after a restart tested against the reference server |
+| Offline queue (`ModlightUploadQueue`, `ModlightQueueStore`, `Queue.json`) and resumable uploads (tus) | done; resume after a cut and after a restart tested against the reference server; `PATCH`es of at most 50 MiB, each confirmed chunk saved at once |
 | History store (`History.db`) | done (same table and value shapes as the Windows app) |
 | Watch folders | done (FSEvents; see `MACOS.md`) |
 | Captures (fullscreen, monitor, window, region, last/custom region and window, auto, scrolling), recording (video and GIF through ffmpeg, two-pass, pause), hotkeys, components with pinned SHA-256, yt-dlp | done; captures tested from the fake desktop through upload to the reference server and back (`modlight-app/tests/capture_upload.rs`), recording against Homebrew's ffmpeg (`modlight-core/tests/recording.rs`) |

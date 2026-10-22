@@ -178,8 +178,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **Deleting the folder you stand in** reloads the folder list; upstream loses that
   refresh and keeps showing the deleted folder until the next reload.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
-  server's origin, no `Access-Control-Allow-Private-Network`, and a request with the
-  wrong `state` is answered and ignored instead of ending the sign-in.
+  server's origin, and a request with the wrong `state` is answered and ignored instead
+  of ending the sign-in. `Access-Control-Allow-Private-Network: true` is granted, but only
+  to the server's origin: without it Chrome's Private Network Access stops a public
+  server's page (e.g. behind Cloudflare) from handing the token to 127.0.0.1.
 - **Redirects** are never followed by any request that carries the token (upstream
   followed them in the library client). A stored tus session URL is moved onto the
   account's current origin before every request, so the token can never follow a
@@ -187,6 +189,29 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **Live upload refusals** are read as soon as the server answers, without sending the
   rest of the body (upstream wrote the whole file first). A file name containing `"`,
   CR or LF goes out percent-encoded in the multipart header.
+- **Uploads behind Cloudflare: no request carries more than 50 MiB of a file.**
+  Cloudflare's proxy refuses any single request body over the plan's limit (100 MB on
+  Free and Pro) with 413 before the server sees it, so upstream's two single requests
+  could never carry a large file through it:
+  - **Resumable (tus) uploads** send the remainder as consecutive `PATCH`es of at most
+    50 MiB (`modlight_api::tus::TUS_CHUNK_SIZE`, the size the web panel's Uppy sends),
+    each from the offset the server confirmed for the one before; upstream sent ONE
+    `PATCH` with everything. The stall watch (90 s) and every other rule apply to each
+    `PATCH`; the links are read from the answer that finishes the upload only. The
+    session URL and confirmed offset are written to `Queue.json` as soon as the server
+    confirms them (the session made or found, then each chunk), so a crash or a forced
+    quit mid-file resumes from the last confirmed chunk; upstream saved the queue only
+    when an attempt ended.
+  - **Live uploads of files over 50 MiB** (the `POST /upload` path, used upstream for
+    every size) go over tus instead, in the same chunks. Their history entry has no
+    deletion URL (tus answers carry none; the file is deleted from My space, as with
+    the queue's uploads upstream), and the error sentences follow what the refusal means
+    (too large, out of space, token) rather than the bare status. The session is kept
+    by the task between its attempts (`MaxUploadFailRetry`) and handed to the offline
+    queue with the file when nothing answered, so a cut large upload resumes instead of
+    starting again; a session nobody will resume (stopped, or failed for good) is
+    deleted on the server at once. Files up to 50 MiB, the ordinary screenshot or clip,
+    still go as one `POST /upload` byte for byte as upstream sends it.
 - **Error texts** keep upstream's shape (the readable sentence, then the request URL,
   status, headers and response) without the .NET stack trace section; transport errors
   are Rust's wording, and the HTTP reason phrase is the standard one for the status.
