@@ -646,7 +646,14 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
             stub.origin
         )
     };
-    stub.set("/r/Modlight-99.dmg", Answer::Bytes(artefact.clone()));
+    // This system's release, and the other system's, which is never offered here.
+    let (ours, theirs) = if cfg!(windows) {
+        ("Modlight-99-setup.exe", "Modlight-99.dmg")
+    } else {
+        ("Modlight-99.dmg", "Modlight-99-setup.exe")
+    };
+    let route = format!("/r/{ours}");
+    stub.set(&route, Answer::Bytes(artefact.clone()));
 
     // Nothing published: up to date, not a failure.
     stub.set("/api/releases/app", Answer::Status(404));
@@ -655,10 +662,10 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
         update::UpdateOutcome::UpToDate
     );
 
-    // A Windows installer is not a release for this Mac.
+    // The other system's release is not one for this system.
     stub.set(
         "/api/releases/app",
-        Answer::Bytes(manifest(artefact.len(), &digest, "Modlight-99-setup.exe").into_bytes()),
+        Answer::Bytes(manifest(artefact.len(), &digest, theirs).into_bytes()),
     );
     assert_eq!(
         update::check_host(&stub.origin).await,
@@ -667,7 +674,7 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
 
     stub.set(
         "/api/releases/app",
-        Answer::Bytes(manifest(artefact.len(), &digest, "Modlight-99.dmg").into_bytes()),
+        Answer::Bytes(manifest(artefact.len(), &digest, ours).into_bytes()),
     );
     let update::UpdateOutcome::UpdateAvailable(release) = update::check_host(&stub.origin).await
     else {
@@ -682,7 +689,7 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
     };
     assert_eq!(std::fs::read(&path).unwrap(), artefact);
     // A second time reuses the verified file.
-    stub.set("/r/Modlight-99.dmg", Answer::Status(500));
+    stub.set(&route, Answer::Status(500));
     assert_eq!(
         update::download(&release, folder.path(), &|_| {}, &cancel).await,
         update::DownloadResult::Verified(path.clone())
@@ -691,7 +698,7 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
     // Bytes that do not match the manifest are deleted.
     std::fs::remove_file(&path).unwrap();
     stub.set(
-        "/r/Modlight-99.dmg",
+        &route,
         Answer::Bytes(payload(70_000).iter().map(|b| b ^ 1).collect()),
     );
     assert_eq!(
@@ -702,7 +709,7 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
 
     // A body shorter than the manifest's size is not a download.
     stub.set(
-        "/r/Modlight-99.dmg",
+        &route,
         Answer::Short {
             bytes: artefact[..1000].to_vec(),
             claim: artefact.len(),
