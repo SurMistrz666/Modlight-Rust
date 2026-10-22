@@ -88,12 +88,15 @@ impl FFmpegRun {
         track_progress: bool,
         listener: Arc<dyn FFmpegListener>,
     ) -> std::io::Result<FFmpegRun> {
-        let mut child = Command::new(ffmpeg)
+        let mut command = Command::new(ffmpeg);
+        command
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+        // No console window on Windows (`CreateNoWindow = true`).
+        crate::components::process::no_window(&mut command);
+        let mut child = command.spawn()?;
         log::info!("ffmpeg started: {} {}", ffmpeg.display(), args.join(" "));
         let stderr = child.stderr.take();
         let state = Arc::new(Mutex::new(FFmpegState::default()));
@@ -228,16 +231,22 @@ pub fn run(
     }
 }
 
-/// `GetDirectShowDevices` on a Mac: the cameras and microphones ffmpeg's avfoundation
-/// input lists. ffmpeg exits with an error after listing (there is no input); the list
-/// is read from what it printed. Listing asks macOS for no permission.
+/// `GetDirectShowDevices`: the cameras and microphones ffmpeg lists, DirectShow's on
+/// Windows, AVFoundation's on a Mac. ffmpeg exits with an error after listing (there is
+/// no input); the list is read from what it printed. On Windows whatever it printed is
+/// read, as upstream does (no device is a list of none); on a Mac output without the
+/// AVFoundation sections is a failure. Listing asks macOS for no permission.
 pub fn list_devices(ffmpeg: &Path) -> std::io::Result<super::args::Devices> {
-    let output = std::process::Command::new(ffmpeg)
+    let mut command = std::process::Command::new(ffmpeg);
+    command
         .args(super::args::list_devices_args())
-        .stdin(std::process::Stdio::null())
-        .output()?;
+        .stdin(std::process::Stdio::null());
+    crate::components::process::no_window(&mut command);
+    let output = command.output()?;
     let text = String::from_utf8_lossy(&output.stderr);
-    if !text.contains("AVFoundation video devices") && !text.contains("AVFoundation audio devices")
+    if !cfg!(windows)
+        && !text.contains("AVFoundation video devices")
+        && !text.contains("AVFoundation audio devices")
     {
         return Err(std::io::Error::other(
             text.lines().last().unwrap_or("").to_string(),

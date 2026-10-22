@@ -3,10 +3,12 @@
 //! to a shell, and every path ffmpeg reads or writes is absolute, so no file name can be
 //! mistaken for an option.
 //!
-//! The screen input is the Mac's own (MACOS.md): raw BGRA frames from ScreenCaptureKit
-//! on ffmpeg's standard input, in place of upstream's `gdigrab`/`ddagrab` devices.
-//! Microphones and cameras come through ffmpeg's `avfoundation` device, in place of
-//! `dshow`.
+//! The screen input is the platform's: raw BGRA frames (GDI's on Windows,
+//! ScreenCaptureKit's on a Mac) on ffmpeg's standard input, in place of upstream's
+//! `gdigrab`/`ddagrab` devices. Microphones and cameras are upstream's on Windows,
+//! ffmpeg's `dshow` device with upstream's buffer options (`video=`, `audio=`); on a Mac
+//! they come through ffmpeg's `avfoundation` device. The hardware encoders get
+//! upstream's options on Windows and become VideoToolbox on a Mac.
 
 use std::path::{Path, PathBuf};
 
@@ -156,12 +158,57 @@ impl ScreenRecordingOptions {
         push(args, &["-thread_queue_size", "1024", "-i", "pipe:0"]);
     }
 
+    /// `AppendInputDevice(args, "dshow", audio)`: the queue, a 256 MB real-time buffer
+    /// and, for a microphone, an 80 ms device buffer.
+    #[cfg(windows)]
+    fn device_input(args: &mut Vec<String>, audio: bool) {
+        push(
+            args,
+            &[
+                "-f",
+                "dshow",
+                "-thread_queue_size",
+                "1024",
+                "-rtbufsize",
+                "256M",
+            ],
+        );
+        if audio {
+            push(args, &["-audio_buffer_size", "80"]);
+        }
+    }
+
     /// `AppendInputDevice` for avfoundation.
+    #[cfg(not(windows))]
     fn device_input(args: &mut Vec<String>, audio: bool) {
         push(args, &["-f", "avfoundation", "-thread_queue_size", "1024"]);
         if audio {
             // The counterpart of dshow's -audio_buffer_size: avfoundation has none; the
             // queue size above is what keeps audio from dropping.
+        }
+    }
+
+    /// The input name of a microphone alone: `audio=<name>` (dshow), `:<name>`
+    /// (avfoundation). One argument whatever the name holds.
+    fn audio_device(name: &str) -> String {
+        if cfg!(windows) {
+            format!("audio={name}")
+        } else {
+            format!(":{name}")
+        }
+    }
+
+    /// The input name of a camera, with a microphone or without: `video=<camera>` and
+    /// `:audio=<microphone>` (dshow), `<camera>:<microphone>` or `<camera>:none`
+    /// (avfoundation).
+    fn camera_device(camera: &str, microphone: Option<&str>) -> String {
+        if cfg!(windows) {
+            match microphone {
+                Some(microphone) => format!("video={camera}:audio={microphone}"),
+                None => format!("video={camera}"),
+            }
+        } else {
+            format!("{camera}:{}", microphone.unwrap_or("none"))
         }
     }
 
@@ -245,24 +292,23 @@ impl ScreenRecordingOptions {
                     if ffmpeg.is_audio_source_selected() {
                         Self::device_input(&mut args, true);
                         args.push("-i".into());
-                        args.push(format!(":{}", ffmpeg.AudioSource));
+                        args.push(Self::audio_device(&ffmpeg.AudioSource));
                     }
                 } else {
-                    // A camera: one avfoundation input carrying video and audio.
+                    // A camera: one device input carrying video and audio.
                     Self::device_input(&mut args, ffmpeg.is_audio_source_selected());
                     args.push("-framerate".into());
                     args.push(framerate.clone());
                     args.push("-i".into());
-                    if ffmpeg.is_audio_source_selected() {
-                        args.push(format!("{}:{}", ffmpeg.VideoSource, ffmpeg.AudioSource));
-                    } else {
-                        args.push(format!("{}:none", ffmpeg.VideoSource));
-                    }
+                    let microphone = ffmpeg
+                        .is_audio_source_selected()
+                        .then_some(ffmpeg.AudioSource.as_str());
+                    args.push(Self::camera_device(&ffmpeg.VideoSource, microphone));
                 }
             } else if ffmpeg.is_audio_source_selected() {
                 Self::device_input(&mut args, true);
                 args.push("-i".into());
-                args.push(format!(":{}", ffmpeg.AudioSource));
+                args.push(Self::audio_device(&ffmpeg.AudioSource));
             }
         } else {
             args.push("-i".into());
@@ -335,17 +381,29 @@ impl ScreenRecordingOptions {
                         args.push(ffmpeg.XviD_QScale.to_string());
                     }
                     FFmpegVideoCodec::h264_nvenc | FFmpegVideoCodec::hevc_nvenc => {
-                        // NVENC is Windows hardware; VideoToolbox takes its bitrate.
+                        // NVENC is Windows hardware; on a Mac VideoToolbox takes its
+                        // bitrate and nothing else.
+                        if cfg!(windows) {
+                            push(&mut args, &["-preset", ffmpeg.NVENC_Preset.name()]);
+                            push(&mut args, &["-tune", ffmpeg.NVENC_Tune.name()]);
+                        }
                         args.push("-b:v".into());
                         args.push(format!("{}k", ffmpeg.NVENC_Bitrate));
                         push(&mut args, &["-movflags", "+faststart"]);
                     }
                     FFmpegVideoCodec::h264_amf | FFmpegVideoCodec::hevc_amf => {
+                        if cfg!(windows) {
+                            push(&mut args, &["-usage", ffmpeg.AMF_Usage.name()]);
+                            push(&mut args, &["-quality", ffmpeg.AMF_Quality.name()]);
+                        }
                         args.push("-b:v".into());
                         args.push(format!("{}k", ffmpeg.AMF_Bitrate));
                         push(&mut args, &["-pix_fmt", "yuv420p"]);
                     }
                     FFmpegVideoCodec::h264_qsv | FFmpegVideoCodec::hevc_qsv => {
+                        if cfg!(windows) {
+                            push(&mut args, &["-preset", ffmpeg.QSV_Preset.name()]);
+                        }
                         args.push("-b:v".into());
                         args.push(format!("{}k", ffmpeg.QSV_Bitrate));
                     }
@@ -496,30 +554,88 @@ pub fn concat_args(inputs: &[PathBuf], list_file: &Path, output: &Path) -> (Stri
     (contents, args)
 }
 
-/// The device list command (`GetDirectShowDevices` for avfoundation).
+/// The device list command: upstream's `-list_devices true -f dshow -i dummy` on
+/// Windows (`GetDirectShowDevices`), the avfoundation listing on a Mac.
 pub fn list_devices_args() -> Vec<String> {
-    [
-        "-hide_banner",
-        "-f",
-        "avfoundation",
-        "-list_devices",
-        "true",
-        "-i",
-        "",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
+    let args: &[&str] = if cfg!(windows) {
+        &["-list_devices", "true", "-f", "dshow", "-i", "dummy"]
+    } else {
+        &[
+            "-hide_banner",
+            "-f",
+            "avfoundation",
+            "-list_devices",
+            "true",
+            "-i",
+            "",
+        ]
+    };
+    args.iter().map(|s| s.to_string()).collect()
 }
 
-/// Cameras and microphones, read from the device list's output. The "Capture screen"
-/// entries are left out: the screen is recorded through ScreenCaptureKit.
+/// Cameras and microphones, read from the device list's output. On a Mac the "Capture
+/// screen" entries are left out: the screen is recorded through ScreenCaptureKit.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Devices {
     pub video: Vec<String>,
     pub audio: Vec<String>,
 }
 
+/// `GetDirectShowDevices`' reading of ffmpeg's output: a `[dshow @ ...]` or `[in#0 @
+/// ...]` line with a quoted name is a device; the section headers of older ffmpeg
+/// builds ("DirectShow video devices", "DirectShow audio devices") and the "(video)" or
+/// "(audio)" a newer one prints after the name say which kind. An "Alternative name"
+/// line is not a device.
+#[cfg(windows)]
+pub fn parse_devices(output: &str) -> Devices {
+    let mut devices = Devices::default();
+    let mut audio = false;
+    for line in output.lines() {
+        if line.contains("] DirectShow video devices") {
+            audio = false;
+            continue;
+        }
+        if line.contains("] DirectShow audio devices") {
+            audio = true;
+            continue;
+        }
+        // \[(?:dshow|in#0) @ \w+\] +"(.+)"
+        let Some(start) = line.find("[dshow @ ").or_else(|| line.find("[in#0 @ ")) else {
+            continue;
+        };
+        let rest = &line[start..];
+        let Some(close) = rest.find(']') else {
+            continue;
+        };
+        let address = rest[..close].rsplit(' ').next().unwrap_or("");
+        if address.is_empty() || !address.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            continue;
+        }
+        let after = &rest[close + 1..];
+        let trimmed = after.trim_start_matches(' ');
+        if trimmed.len() == after.len() || !trimmed.starts_with('"') {
+            continue;
+        }
+        // `(.+)"`: greedy, up to the last quote of the line.
+        let Some(end) = trimmed.rfind('"').filter(|end| *end > 1) else {
+            continue;
+        };
+        let name = trimmed[1..end].to_string();
+        if line.ends_with("\" (video)") {
+            audio = false;
+        } else if line.ends_with("\" (audio)") {
+            audio = true;
+        }
+        if audio {
+            devices.audio.push(name);
+        } else {
+            devices.video.push(name);
+        }
+    }
+    devices
+}
+
+#[cfg(not(windows))]
 pub fn parse_devices(output: &str) -> Devices {
     let mut devices = Devices::default();
     let mut audio = false;
@@ -661,6 +777,7 @@ mod tests {
         assert_eq!(split_command_line(&text), args);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn microphone_bitrate_duration_and_hevc_tag() {
         let mut options = recording();
@@ -736,9 +853,17 @@ mod tests {
         assert!(text.contains("-f apng -plays 0"));
         options.ffmpeg.VideoCodec = FFmpegVideoCodec::h264_nvenc;
         let text = options.ffmpeg_args().unwrap().join(" ");
+        #[cfg(not(windows))]
         assert!(text.contains("-c:v h264_videotoolbox -r 30 -b:v 3000k -movflags +faststart"));
+        #[cfg(windows)]
+        assert!(
+            text.contains(
+                "-c:v h264_nvenc -r 30 -preset p4 -tune ll -b:v 3000k -movflags +faststart"
+            )
+        );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn no_source_records_nothing() {
         let mut options = recording();
@@ -804,6 +929,7 @@ mod tests {
         assert_eq!(split_command_line("   "), Vec::<String>::new());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn concat_list_and_devices() {
         let (contents, args) = concat_args(
@@ -828,5 +954,140 @@ mod tests {
         let devices = parse_devices(output);
         assert_eq!(devices.video, ["FaceTime HD Camera"]);
         assert_eq!(devices.audio, ["MacBook Pro Microphone"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn microphone_through_dshow_with_upstreams_buffers() {
+        let mut options = recording();
+        options.ffmpeg.AudioSource = "Microphone (Realtek(R) Audio)".into();
+        options.ffmpeg.VideoCodec = FFmpegVideoCodec::libx265;
+        options.ffmpeg.x264_Use_Bitrate = true;
+        options.ffmpeg.x264_Bitrate = 5000;
+        options.duration = 3.0;
+        let args = options.ffmpeg_args().unwrap();
+        let text = args.join(" ");
+        assert!(text.contains(
+            "-i pipe:0 -f dshow -thread_queue_size 1024 -rtbufsize 256M -audio_buffer_size 80 -i audio=Microphone (Realtek(R) Audio)"
+        ));
+        assert!(text.contains("-c:v libx265"));
+        assert!(text.contains("-b:v 5000k"));
+        assert!(text.contains("-tag:v hvc1"));
+        assert!(text.contains("-c:a aac -ac 2 -b:a 128k"));
+        // The device name is ONE argument, spaces and parentheses included.
+        assert!(
+            args.iter()
+                .any(|a| a == "audio=Microphone (Realtek(R) Audio)")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_camera_and_a_microphone_are_one_dshow_input() {
+        let mut options = recording();
+        options.ffmpeg.VideoSource = "Integrated Camera".into();
+        options.ffmpeg.AudioSource = "Microphone Array".into();
+        let args = options.ffmpeg_args().unwrap();
+        assert_eq!(options.input(), RecordingInput::Devices);
+        assert_eq!(
+            &args[..12],
+            [
+                "-f",
+                "dshow",
+                "-thread_queue_size",
+                "1024",
+                "-rtbufsize",
+                "256M",
+                "-audio_buffer_size",
+                "80",
+                "-framerate",
+                "30",
+                "-i",
+                "video=Integrated Camera:audio=Microphone Array"
+            ]
+        );
+        options.ffmpeg.AudioSource.clear();
+        let args = options.ffmpeg_args().unwrap();
+        assert_eq!(
+            &args[..10],
+            [
+                "-f",
+                "dshow",
+                "-thread_queue_size",
+                "1024",
+                "-rtbufsize",
+                "256M",
+                "-framerate",
+                "30",
+                "-i",
+                "video=Integrated Camera"
+            ]
+        );
+        // A microphone alone.
+        options.ffmpeg.VideoSource.clear();
+        options.ffmpeg.AudioSource = "Mic".into();
+        let args = options.ffmpeg_args().unwrap();
+        assert_eq!(args[8..10], ["-i", "audio=Mic"]);
+        assert!(args.last().unwrap().ends_with("clip.m4a"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hardware_encoders_get_upstreams_options() {
+        let mut options = recording();
+        let line = |options: &ScreenRecordingOptions| {
+            let args = options.ffmpeg_args().unwrap();
+            let start = args.iter().position(|a| a == "-c:v").unwrap();
+            let end = args.iter().position(|a| a == "-y").unwrap();
+            args[start..end].join(" ")
+        };
+        options.ffmpeg.VideoCodec = FFmpegVideoCodec::hevc_nvenc;
+        options.ffmpeg.NVENC_Preset = super::super::options::FFmpegNVENCPreset::p6;
+        options.ffmpeg.NVENC_Tune = super::super::options::FFmpegNVENCTune::hq;
+        assert_eq!(
+            line(&options),
+            "-c:v hevc_nvenc -r 30 -preset p6 -tune hq -b:v 3000k -movflags +faststart -tag:v hvc1"
+        );
+        options.ffmpeg.VideoCodec = FFmpegVideoCodec::h264_amf;
+        assert_eq!(
+            line(&options),
+            "-c:v h264_amf -r 30 -usage lowlatency -quality speed -b:v 3000k -pix_fmt yuv420p"
+        );
+        options.ffmpeg.VideoCodec = FFmpegVideoCodec::hevc_qsv;
+        options.ffmpeg.QSV_Bitrate = 8000;
+        assert_eq!(
+            line(&options),
+            "-c:v hevc_qsv -r 30 -preset fast -b:v 8000k -tag:v hvc1"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directshow_devices_are_read_like_upstream() {
+        assert_eq!(
+            list_devices_args(),
+            ["-list_devices", "true", "-f", "dshow", "-i", "dummy"]
+        );
+        // ffmpeg 5 and later: the kind after the name, an alternative name per device.
+        let newer = "[dshow @ 000001c4c1b0e5c0] \"Integrated Camera\" (video)\r\n\
+            [dshow @ 000001c4c1b0e5c0]   Alternative name \"@device_pnp_\\\\?\\usb#vid_04f2\"\r\n\
+            [dshow @ 000001c4c1b0e5c0] \"OBS Virtual Camera\" (none)\r\n\
+            [dshow @ 000001c4c1b0e5c0] \"Microphone Array (Realtek(R) Audio)\" (audio)\r\n\
+            [dshow @ 000001c4c1b0e5c0]   Alternative name \"@device_cm_{33D9A762}\\wave_{A1B2}\"\r\n\
+            [in#0 @ 000001c4c1b0d2c0] Error opening input: Immediate exit requested\r\n\
+            dummy: Immediate exit requested\r\n";
+        let devices = parse_devices(newer);
+        assert_eq!(devices.video, ["Integrated Camera", "OBS Virtual Camera"]);
+        assert_eq!(devices.audio, ["Microphone Array (Realtek(R) Audio)"]);
+        // Older builds: section headers.
+        let older = "[dshow @ 0000020f] DirectShow video devices (some may be both video and audio devices)\n\
+            [dshow @ 0000020f]  \"HD Webcam\"\n\
+            [dshow @ 0000020f]     Alternative name \"@device_pnp_x\"\n\
+            [dshow @ 0000020f] DirectShow audio devices\n\
+            [dshow @ 0000020f]  \"Line In (USB)\"\n";
+        let devices = parse_devices(older);
+        assert_eq!(devices.video, ["HD Webcam"]);
+        assert_eq!(devices.audio, ["Line In (USB)"]);
+        assert_eq!(parse_devices("ffmpeg version 8.1"), Devices::default());
     }
 }
