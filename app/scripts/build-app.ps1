@@ -41,9 +41,15 @@ if (-not $cargo) {
 }
 
 Write-Host "build-app: cargo build --release ($version)"
-& $cargo build --release -p modlight-app --manifest-path (Join-Path $appRoot 'Cargo.toml')
-if ($LASTEXITCODE -ne 0) {
-    throw "build-app: cargo build failed ($LASTEXITCODE)"
+# cargo reports its progress on standard error, which Windows PowerShell 5.1 turns into
+# error records that 'Stop' would end the script on: judge it by its exit code alone.
+$ErrorActionPreference = 'Continue'
+& $cargo build --release -p modlight-app --manifest-path (Join-Path $appRoot 'Cargo.toml') 2>&1 |
+    ForEach-Object { Write-Host "$_" }
+$cargoExit = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+if ($cargoExit -ne 0) {
+    throw "build-app: cargo build failed ($cargoExit)"
 }
 
 $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $appRoot 'target' }
