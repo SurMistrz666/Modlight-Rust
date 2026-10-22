@@ -305,7 +305,8 @@ impl RecorderControl {
     }
 }
 
-/// Frames of the screen for the pipe (ScreenCaptureKit, or a fake in QA).
+/// Frames of the screen for the pipe (GDI on Windows, ScreenCaptureKit on a Mac, or a
+/// fake in QA).
 pub trait FrameSource: Send {
     /// The frame size in pixels.
     fn size(&self) -> (u32, u32);

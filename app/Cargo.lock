@@ -2891,6 +2891,7 @@ version = "0.7.7"
 dependencies = [
  "anyhow",
  "chrono",
+ "dirs",
  "flate2",
  "hex",
  "image",
@@ -2920,6 +2921,7 @@ dependencies = [
 name = "modlight-editor"
 version = "0.7.7"
 dependencies = [
+ "dify",
  "egui",
  "egui_kittest",
  "fontdb",

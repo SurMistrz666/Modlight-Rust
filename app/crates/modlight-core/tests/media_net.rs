@@ -406,7 +406,119 @@ async fn every_packaging_installs_and_removes() {
     }
 }
 
-/// A GitHub release document whose assets live on the stub.
+/// Windows: the same three packagings with the Windows catalogue's names and layouts
+// (the tools are never run: their bytes are stand-ins).
+#[cfg(windows)]
+#[tokio::test]
+async fn every_packaging_installs_and_removes_on_windows() {
+    let stub = Stub::start().await;
+    let profile = tempfile::tempdir().unwrap();
+    let cancel = CancellationToken::new();
+    let tools = profile.path().join("Tools");
+
+    // A plain file: `yt-dlp.exe`, whichever asset the architecture downloads.
+    let tool = b"MZ yt-dlp".to_vec();
+    let yt = components::find(components::YT_DLP).unwrap();
+    let source = ComponentSource {
+        url: stub.set("/file", Answer::Bytes(tool.clone())),
+        sha256: sha256(&tool),
+        size: tool.len() as i64,
+        version: "2026.08.19".into(),
+    };
+    let result = install::replace(profile.path(), yt, &source, None, &cancel).await;
+    assert_eq!(result.outcome, InstallOutcome::Installed, "{result:?}");
+    assert_eq!(
+        components::installed_path(profile.path(), "yt-dlp"),
+        Some(tools.join("yt-dlp.exe"))
+    );
+
+    // A zip with one `ffmpeg.exe`, wherever it sits.
+    let mut zip_bytes = std::io::Cursor::new(Vec::new());
+    {
+        use std::io::Write;
+        let mut writer = zip::ZipWriter::new(&mut zip_bytes);
+        writer
+            .start_file("bin/ffmpeg.exe", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"MZ ffmpeg").unwrap();
+        writer.finish().unwrap();
+    }
+    let zip_bytes = zip_bytes.into_inner();
+    let ffmpeg = components::find(components::FFMPEG).unwrap();
+    let source = ComponentSource {
+        url: stub.set("/ffmpeg.zip", Answer::Bytes(zip_bytes.clone())),
+        sha256: sha256(&zip_bytes),
+        size: zip_bytes.len() as i64,
+        version: "8.1".into(),
+    };
+    let result = install::replace(profile.path(), ffmpeg, &source, None, &cancel).await;
+    assert_eq!(result.outcome, InstallOutcome::Installed, "{result:?}");
+    assert_eq!(
+        std::fs::read(components::installed_path(profile.path(), "ffmpeg").unwrap()).unwrap(),
+        b"MZ ffmpeg"
+    );
+
+    // ExifTool's Windows zip: a folder of its own, the launcher renamed beside its files.
+    let mut zip_bytes = std::io::Cursor::new(Vec::new());
+    {
+        use std::io::Write;
+        let mut writer = zip::ZipWriter::new(&mut zip_bytes);
+        for (name, body) in [
+            ("exiftool-13.59_64/README.txt", &b"read me"[..]),
+            ("exiftool-13.59_64/exiftool(-k).exe", &b"MZ launcher"[..]),
+            ("exiftool-13.59_64/exiftool_files/perl.exe", &b"MZ perl"[..]),
+            (
+                "exiftool-13.59_64/exiftool_files/lib/Image/ExifTool.pm",
+                &b"1;"[..],
+            ),
+        ] {
+            writer
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(body).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+    let zip_bytes = zip_bytes.into_inner();
+    let exiftool = components::find(components::EXIFTOOL).unwrap();
+    let source = ComponentSource {
+        url: stub.set("/exiftool.zip", Answer::Bytes(zip_bytes.clone())),
+        sha256: sha256(&zip_bytes),
+        size: zip_bytes.len() as i64,
+        version: "13.59".into(),
+    };
+    let result = install::replace(profile.path(), exiftool, &source, None, &cancel).await;
+    assert_eq!(result.outcome, InstallOutcome::Installed, "{result:?}");
+    assert_eq!(
+        components::installed_path(profile.path(), "exiftool"),
+        Some(tools.join("exiftool.exe"))
+    );
+    assert_eq!(
+        std::fs::read(tools.join("exiftool.exe")).unwrap(),
+        b"MZ launcher"
+    );
+    assert!(
+        tools
+            .join("exiftool_files")
+            .join("lib")
+            .join("Image")
+            .join("ExifTool.pm")
+            .is_file()
+    );
+    assert!(!tools.join("README.txt").exists());
+    // Installing again replaces both entries.
+    let result = install::replace(profile.path(), exiftool, &source, None, &cancel).await;
+    assert_eq!(result.outcome, InstallOutcome::Installed, "{result:?}");
+    assert!(tools.join("exiftool_files").join("perl.exe").is_file());
+
+    for component in [yt, ffmpeg, exiftool] {
+        assert!(install::remove(profile.path(), component));
+        assert!(!components::is_installed(profile.path(), component));
+    }
+    assert!(!tools.join("exiftool_files").exists());
+}
+
+// A GitHub release document whose assets live on the stub.
 #[cfg(unix)]
 fn release(origin: &str, tag: &str, artefact: &[u8], api_digest: Option<&str>) -> String {
     let digest = api_digest
@@ -534,7 +646,14 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
             stub.origin
         )
     };
-    stub.set("/r/Modlight-99.dmg", Answer::Bytes(artefact.clone()));
+    // This system's release, and the other system's, which is never offered here.
+    let (ours, theirs) = if cfg!(windows) {
+        ("Modlight-99-setup.exe", "Modlight-99.dmg")
+    } else {
+        ("Modlight-99.dmg", "Modlight-99-setup.exe")
+    };
+    let route = format!("/r/{ours}");
+    stub.set(&route, Answer::Bytes(artefact.clone()));
 
     // Nothing published: up to date, not a failure.
     stub.set("/api/releases/app", Answer::Status(404));
@@ -543,10 +662,10 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
         update::UpdateOutcome::UpToDate
     );
 
-    // A Windows installer is not a release for this Mac.
+    // The other system's release is not one for this system.
     stub.set(
         "/api/releases/app",
-        Answer::Bytes(manifest(artefact.len(), &digest, "Modlight-99-setup.exe").into_bytes()),
+        Answer::Bytes(manifest(artefact.len(), &digest, theirs).into_bytes()),
     );
     assert_eq!(
         update::check_host(&stub.origin).await,
@@ -555,7 +674,7 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
 
     stub.set(
         "/api/releases/app",
-        Answer::Bytes(manifest(artefact.len(), &digest, "Modlight-99.dmg").into_bytes()),
+        Answer::Bytes(manifest(artefact.len(), &digest, ours).into_bytes()),
     );
     let update::UpdateOutcome::UpdateAvailable(release) = update::check_host(&stub.origin).await
     else {
@@ -570,7 +689,7 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
     };
     assert_eq!(std::fs::read(&path).unwrap(), artefact);
     // A second time reuses the verified file.
-    stub.set("/r/Modlight-99.dmg", Answer::Status(500));
+    stub.set(&route, Answer::Status(500));
     assert_eq!(
         update::download(&release, folder.path(), &|_| {}, &cancel).await,
         update::DownloadResult::Verified(path.clone())
@@ -579,7 +698,7 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
     // Bytes that do not match the manifest are deleted.
     std::fs::remove_file(&path).unwrap();
     stub.set(
-        "/r/Modlight-99.dmg",
+        &route,
         Answer::Bytes(payload(70_000).iter().map(|b| b ^ 1).collect()),
     );
     assert_eq!(
@@ -590,7 +709,7 @@ async fn the_app_update_is_offered_downloaded_and_verified() {
 
     // A body shorter than the manifest's size is not a download.
     stub.set(
-        "/r/Modlight-99.dmg",
+        &route,
         Answer::Short {
             bytes: artefact[..1000].to_vec(),
             claim: artefact.len(),

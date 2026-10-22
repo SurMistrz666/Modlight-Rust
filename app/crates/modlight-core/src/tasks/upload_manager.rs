@@ -55,10 +55,11 @@ fn collect_files(folder: &Path, files: &mut Vec<PathBuf>) {
 }
 
 /// Finder's per-folder view settings (`.DS_Store`): a Mac writes one into almost every
-/// folder it opens, where Windows has nothing comparable, so a folder upload leaves it
-/// out rather than sending it as one of the person's files.
+/// folder it opens, so a folder upload on a Mac leaves it out rather than sending it as
+/// one of the person's files. On Windows every file goes, as upstream's
+/// `Directory.GetFiles` gives them (`Thumbs.db` and `desktop.ini` included).
 fn is_finder_metadata(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == ".DS_Store")
+    !cfg!(windows) && path.file_name().is_some_and(|name| name == ".DS_Store")
 }
 
 /// Whether uploading `count` files needs the multi-upload question first.
@@ -333,6 +334,11 @@ mod tests {
         std::fs::write(dir.path().join("a/b/three.txt"), "3").unwrap();
         let files = expand_paths(&[dir.path().to_path_buf()]);
         assert_eq!(files.len(), 3);
+        // Finder's folder settings are left out on a Mac only.
+        std::fs::write(dir.path().join("a/.DS_Store"), "x").unwrap();
+        std::fs::write(dir.path().join("desktop.ini"), "x").unwrap();
+        let files = expand_paths(&[dir.path().to_path_buf()]);
+        assert_eq!(files.len(), if cfg!(windows) { 5 } else { 4 });
         assert!(needs_confirmation(11, true));
         assert!(!needs_confirmation(11, false));
         assert!(!needs_confirmation(10, true));

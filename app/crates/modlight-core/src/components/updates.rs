@@ -131,7 +131,7 @@ pub async fn check(component: &Component) -> FetchResult {
     fetch
 }
 
-/// Which build is actually on this Mac, by asking the binary (`InstalledVersionAsync`).
+/// Which build is actually on this computer, by asking the binary (`InstalledVersionAsync`).
 /// Cached against the file itself; anything that is not a version is no answer.
 pub async fn installed_version(profile: &Path, component: &Component) -> String {
     if component.version_arguments.is_empty() {

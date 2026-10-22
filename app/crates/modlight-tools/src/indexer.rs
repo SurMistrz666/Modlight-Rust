@@ -1,10 +1,11 @@
 //! The directory indexer (`Indexer`, `IndexerText`, `IndexerHtml`, `IndexerXml`,
 //! `IndexerJson`, `FolderInfo`): a folder tree as text, HTML, XML or JSON, with sizes,
-//! counts and a footer, as upstream writes them. Line breaks are the Mac's (`\n`).
+//! counts and a footer, as upstream writes them. Line breaks are the system's
+//! (`Environment.NewLine`: CRLF on Windows, `\n` on a Mac).
 //!
-//! On a Mac a hidden file or folder is one whose name starts with a dot or that carries
-//! the `UF_HIDDEN` flag (what .NET reports as `FileAttributes.Hidden` there). Symbolic
-//! links to folders are listed but not followed.
+//! A hidden file or folder is what .NET reports as `FileAttributes.Hidden`: on Windows
+//! the hidden attribute, on a Mac a name that starts with a dot or the `UF_HIDDEN` flag.
+//! Symbolic links to folders are listed but not followed.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -85,7 +86,16 @@ pub fn culture_compare(a: &str, b: &str) -> Ordering {
     })
 }
 
+/// `FileAttributes.Hidden` on Windows: the entry's own hidden attribute.
+#[cfg(windows)]
+pub fn is_hidden(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
+}
+
 /// Hidden on a Mac: a dot first, or `UF_HIDDEN`.
+#[cfg(not(windows))]
 pub fn is_hidden(path: &Path) -> bool {
     if path
         .file_name()
@@ -172,12 +182,32 @@ fn size_text(size: u64, settings: &IndexerSettings) -> String {
 pub fn index(folder: &Path, settings: &IndexerSettings, now: DateTime<Utc>) -> String {
     let mut info = folder_info(folder, settings, 0);
     info.update();
-    match settings.output {
+    let out = match settings.output {
         IndexerOutput::Txt => text(&info, settings, now),
         IndexerOutput::Html => html(folder, &info, settings, now),
         IndexerOutput::Xml => xml(&info, settings),
         IndexerOutput::Json => json(&info, settings),
+    };
+    system_line_breaks(out)
+}
+
+/// The writers build their lines with `\n`; on Windows every line break is CRLF, as
+/// `AppendLine`, `XmlWriter` and Json.NET write them there (a CRLF already in a custom
+/// style sheet stays one).
+fn system_line_breaks(text: String) -> String {
+    if !cfg!(windows) {
+        return text;
     }
+    let mut out = String::with_capacity(text.len() + text.len() / 16);
+    let mut previous = '\0';
+    for c in text.chars() {
+        if c == '\n' && previous != '\r' {
+            out.push('\r');
+        }
+        out.push(c);
+        previous = c;
+    }
+    out
 }
 
 // ------------------------------------------------------------------ text
@@ -283,9 +313,11 @@ pub fn html(
     line(&css_style(settings));
     line("</head>");
     line("<body>");
+    // `TrimEnd('\\')` and `LastIndexOf(@"\")` upstream: the system's separator.
+    let separator = std::path::MAIN_SEPARATOR;
     let full = folder.to_string_lossy();
-    let full = full.trim_end_matches('/');
-    let pre_trim = full.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let full = full.trim_end_matches(separator);
+    let pre_trim = full.rfind(separator).map(|i| i + 1).unwrap_or(0);
     let mut content = String::new();
     html_folder(&mut content, info, settings, 0, pre_trim);
     line(content.trim());
@@ -593,7 +625,39 @@ mod tests {
     use modlight_core::culture::{Culture, set_thread_culture};
     use modlight_core::l10n::{Language, set_thread_language};
 
+    /// The odd file name: `<>` cannot be in a Windows file name, braces can.
+    const ODD: &str = if cfg!(windows) {
+        "c & {d}.bin"
+    } else {
+        "c & <d>.bin"
+    };
+
+    /// An expectation written for macOS, with this system's odd name.
+    fn here(expected: &str) -> String {
+        expected.replace("c & <d>.bin", ODD).replace(
+            "c &amp; &lt;d&gt;.bin",
+            if cfg!(windows) {
+                "c &amp; {d}.bin"
+            } else {
+                "c &amp; &lt;d&gt;.bin"
+            },
+        )
+    }
+
+    /// The output with `\n` line breaks; on Windows it must have had CRLF only.
+    fn lf(text: String) -> String {
+        if cfg!(windows) {
+            let without = text.replace("\r\n", "");
+            assert!(!without.contains('\n'), "a line break without CR");
+            text.replace("\r\n", "\n")
+        } else {
+            text
+        }
+    }
+
     /// docs/ (a.txt 1500 B, B.md 10 B, .hidden), docs/sub/ (c.bin 2048 B), docs/empty/.
+    /// On Windows `.hidden` and `.git` carry the hidden attribute, which is what makes
+    /// them hidden there.
     fn tree() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("docs");
@@ -603,7 +667,16 @@ mod tests {
         std::fs::write(root.join("a.txt"), vec![b'a'; 1500]).unwrap();
         std::fs::write(root.join("B.md"), vec![b'b'; 10]).unwrap();
         std::fs::write(root.join(".hidden"), b"h").unwrap();
-        std::fs::write(root.join("sub").join("c & <d>.bin"), vec![0u8; 2048]).unwrap();
+        std::fs::write(root.join("sub").join(ODD), vec![0u8; 2048]).unwrap();
+        #[cfg(windows)]
+        for name in [".hidden", ".git"] {
+            let made = std::process::Command::new("attrib.exe")
+                .arg("+h")
+                .arg(root.join(name))
+                .status()
+                .unwrap();
+            assert!(made.success());
+        }
         dir
     }
 
@@ -654,8 +727,10 @@ mod tests {
             output: IndexerOutput::Txt,
             ..IndexerSettings::default()
         };
-        let text = index(&dir.path().join("docs"), &settings, now());
-        let expected = "docs [3.56 KB]\n|___empty\n|___sub [2.05 KB]\n|___|___c & <d>.bin [2.05 KB]\n|___a.txt [1.50 KB]\n|___B.md [10 B]\n";
+        let text = lf(index(&dir.path().join("docs"), &settings, now()));
+        let expected = &here(
+            "docs [3.56 KB]\n|___empty\n|___sub [2.05 KB]\n|___|___c & <d>.bin [2.05 KB]\n|___a.txt [1.50 KB]\n|___B.md [10 B]\n",
+        );
         assert!(text.starts_with(expected), "{text}");
         let footer = "Generated by Modlight Directory Indexer on 2026-10-20 at 14:05:09 UTC. Latest version can be downloaded from: https://github.com/Nimfek/Modlight-App";
         assert!(
@@ -676,10 +751,10 @@ mod tests {
             indentation_text: "  ".into(),
             ..IndexerSettings::default()
         };
-        let text = index(&dir.path().join("docs"), &settings, now());
+        let text = lf(index(&dir.path().join("docs"), &settings, now()));
         assert_eq!(
             text,
-            "docs\n\n  empty\n\n  sub\n\n    c & <d>.bin\n\n  a.txt\n  B.md"
+            here("docs\n\n  empty\n\n  sub\n\n    c & <d>.bin\n\n  a.txt\n  B.md")
         );
     }
 
@@ -687,10 +762,14 @@ mod tests {
     fn html_output() {
         setup();
         let dir = tree();
-        let text = index(&dir.path().join("docs"), &IndexerSettings::default(), now());
+        let text = lf(index(
+            &dir.path().join("docs"),
+            &IndexerSettings::default(),
+            now(),
+        ));
         assert!(text.starts_with("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">\n<title>Index for docs</title>\n<style type=\"text/css\">\nbody {"));
         assert!(text.contains("<h1>docs <span class=\"FolderInfo\">3.56 KB (3 files, 2 folders)</span></h1>\n<div class=\"MainFolderBorder\">\n<ul>\n<li>a.txt <span class=\"FileSize\">1.50 KB</span></li>\n<li>B.md <span class=\"FileSize\">10 B</span></li>\n</ul>\n<h2>empty</h2>\n<div class=\"FolderBorder\">\n</div>\n<h2>sub <span class=\"FolderInfo\">2.05 KB (1 file)</span></h2>"), "{text}");
-        assert!(text.contains("<li>c &amp; &lt;d&gt;.bin"));
+        assert!(text.contains(&here("<li>c &amp; &lt;d&gt;.bin")));
         assert!(text.ends_with("<div>Generated by <a href=\"https://github.com/Nimfek/Modlight-App\">Modlight Directory Indexer</a> on 2026-10-20 at 14:05:09 UTC</div>\n</body>\n</html>"), "{text}");
         let settings = IndexerSettings {
             display_path: true,
@@ -698,8 +777,10 @@ mod tests {
             add_footer: false,
             ..IndexerSettings::default()
         };
-        let text = index(&dir.path().join("docs"), &settings, now());
-        assert!(text.contains("<h2>docs/sub <span"), "{text}");
+        let text = lf(index(&dir.path().join("docs"), &settings, now()));
+        // The path as the system writes it (`docs\\sub` on Windows).
+        let sub = format!("<h2>docs{}sub <span", std::path::MAIN_SEPARATOR);
+        assert!(text.contains(&sub), "{text}");
     }
 
     #[test]
@@ -710,10 +791,12 @@ mod tests {
             output: IndexerOutput::Xml,
             ..IndexerSettings::default()
         };
-        let text = index(&dir.path().join("docs"), &settings, now());
+        let text = lf(index(&dir.path().join("docs"), &settings, now()));
         assert_eq!(
             text,
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Folder Name=\"docs\" Size=\"3.56 KB\">\n  <Files>\n    <File Name=\"a.txt\" Size=\"1.50 KB\" />\n    <File Name=\"B.md\" Size=\"10 B\" />\n  </Files>\n  <Folders>\n    <Folder Name=\"empty\" />\n    <Folder Name=\"sub\" Size=\"2.05 KB\">\n      <Files>\n        <File Name=\"c &amp; &lt;d&gt;.bin\" Size=\"2.05 KB\" />\n      </Files>\n    </Folder>\n  </Folders>\n</Folder>"
+            here(
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Folder Name=\"docs\" Size=\"3.56 KB\">\n  <Files>\n    <File Name=\"a.txt\" Size=\"1.50 KB\" />\n    <File Name=\"B.md\" Size=\"10 B\" />\n  </Files>\n  <Folders>\n    <Folder Name=\"empty\" />\n    <Folder Name=\"sub\" Size=\"2.05 KB\">\n      <Files>\n        <File Name=\"c &amp; &lt;d&gt;.bin\" Size=\"2.05 KB\" />\n      </Files>\n    </Folder>\n  </Folders>\n</Folder>"
+            )
         );
         let settings = IndexerSettings {
             output: IndexerOutput::Xml,
@@ -721,10 +804,16 @@ mod tests {
             show_size_info: false,
             ..IndexerSettings::default()
         };
-        let text = index(&dir.path().join("docs").join("sub"), &settings, now());
+        let text = lf(index(
+            &dir.path().join("docs").join("sub"),
+            &settings,
+            now(),
+        ));
         assert_eq!(
             text,
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Folder>\n  <Name>sub</Name>\n  <Files>\n    <File>\n      <Name>c &amp; &lt;d&gt;.bin</Name>\n    </File>\n  </Files>\n</Folder>"
+            here(
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Folder>\n  <Name>sub</Name>\n  <Files>\n    <File>\n      <Name>c &amp; &lt;d&gt;.bin</Name>\n    </File>\n  </Files>\n</Folder>"
+            )
         );
     }
 
@@ -736,20 +825,28 @@ mod tests {
             output: IndexerOutput::Json,
             ..IndexerSettings::default()
         };
-        let text = index(&dir.path().join("docs").join("sub"), &settings, now());
+        let text = lf(index(
+            &dir.path().join("docs").join("sub"),
+            &settings,
+            now(),
+        ));
         assert_eq!(
             text,
-            "{\n  \"Name\": \"sub\",\n  \"Size\": \"2.05 KB\",\n  \"Files\": [\n    {\n      \"Name\": \"c & <d>.bin\",\n      \"Size\": \"2.05 KB\"\n    }\n  ]\n}"
+            here(
+                "{\n  \"Name\": \"sub\",\n  \"Size\": \"2.05 KB\",\n  \"Files\": [\n    {\n      \"Name\": \"c & <d>.bin\",\n      \"Size\": \"2.05 KB\"\n    }\n  ]\n}"
+            )
         );
         let settings = IndexerSettings {
             output: IndexerOutput::Json,
             create_parseable_json: false,
             ..IndexerSettings::default()
         };
-        let text = index(&dir.path().join("docs"), &settings, now());
+        let text = lf(index(&dir.path().join("docs"), &settings, now()));
         assert_eq!(
             text,
-            "{\n  \"docs\": [\n    {\n      \"empty\": []\n    },\n    {\n      \"sub\": [\n        \"c & <d>.bin\"\n      ]\n    },\n    \"a.txt\",\n    \"B.md\"\n  ]\n}"
+            here(
+                "{\n  \"docs\": [\n    {\n      \"empty\": []\n    },\n    {\n      \"sub\": [\n        \"c & <d>.bin\"\n      ]\n    },\n    \"a.txt\",\n    \"B.md\"\n  ]\n}"
+            )
         );
     }
 
@@ -764,7 +861,7 @@ mod tests {
             add_footer: false,
             ..IndexerSettings::default()
         };
-        let text = index(&dir.path().join("docs"), &settings, now());
+        let text = lf(index(&dir.path().join("docs"), &settings, now()));
         assert!(text.starts_with("docs [3,47 KiB]"), "{text}");
         set_thread_language(None);
         set_thread_culture(None);

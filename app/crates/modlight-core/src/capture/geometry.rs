@@ -159,7 +159,9 @@ impl ResizeHandle {
 /// `System.Drawing.Rectangle`: a rectangle of the desktop.
 ///
 /// On macOS the desktop is the global display space in points (origin at the top left
-/// of the main display, y down), the space `CGWindowList` and ScreenCaptureKit use.
+/// of the main display, y down), the space `CGWindowList` and ScreenCaptureKit use. On
+/// Windows it is upstream's virtual screen (origin at the top left of the primary
+/// display, y down).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct IRect {
     pub x: i32,

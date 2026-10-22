@@ -403,8 +403,9 @@ static MACHINE_NAME: RwLock<Option<String>> = RwLock::new(None);
 
 /// Tell the parsers the computer's name, as `hostname` gives it. Like .NET's
 /// `Environment.MachineName` on macOS only the part before the first dot is kept
-/// ("Marcins-MacBook-Pro.local" is "Marcins-MacBook-Pro"). The app calls this at start
-/// (this crate cannot ask the system); until then `%cn` and `%uln` are "localhost".
+/// ("Marcins-MacBook-Pro.local" is "Marcins-MacBook-Pro"). On macOS the app calls this
+/// at start (this crate cannot ask the system there); until then `%cn` and `%uln` are
+/// "localhost". On Windows the name comes from the system by itself.
 pub fn set_machine_name(host_name: &str) {
     let name = host_name.split('.').next().unwrap_or_default().to_string();
     if let Ok(mut slot) = MACHINE_NAME.write() {
@@ -418,10 +419,30 @@ pub fn machine_name() -> String {
         .read()
         .ok()
         .and_then(|slot| slot.clone())
-        .unwrap_or_else(|| "localhost".to_string())
+        .unwrap_or_else(system_machine_name)
+}
+
+#[cfg(not(windows))]
+fn system_machine_name() -> String {
+    "localhost".to_string()
+}
+
+/// `GetComputerNameW`, the NetBIOS name .NET's `MachineName` answers on Windows.
+#[cfg(windows)]
+fn system_machine_name() -> String {
+    use windows_sys::Win32::System::WindowsProgramming::GetComputerNameW;
+    let mut buffer = [0u16; 64];
+    let mut length = buffer.len() as u32;
+    // SAFETY: the buffer's length is passed with it and updated by the call.
+    if unsafe { GetComputerNameW(buffer.as_mut_ptr(), &mut length) } != 0 {
+        String::from_utf16_lossy(&buffer[..length as usize])
+    } else {
+        std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".to_string())
+    }
 }
 
 /// `Environment.UserName` (`%un`): the login name, from `$USER` (`$LOGNAME` when unset).
+#[cfg(not(windows))]
 pub fn user_name() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
@@ -429,9 +450,56 @@ pub fn user_name() -> String {
 }
 
 /// `Environment.UserDomainName` (`%uln`): .NET on macOS answers the machine name.
+#[cfg(not(windows))]
 pub fn user_domain_name() -> String {
     machine_name()
 }
+
+/// `Environment.UserName` (`%un`) on Windows: the user part of the SAM name
+/// (`GetUserNameExW(NameSamCompatible)`, "DOMAIN\user"), as .NET reads it.
+#[cfg(windows)]
+pub fn user_name() -> String {
+    match sam_compatible_name() {
+        Some(name) => match name.split_once('\\') {
+            Some((_, user)) => user.to_string(),
+            None => name,
+        },
+        None => std::env::var("USERNAME").unwrap_or_default(),
+    }
+}
+
+/// `Environment.UserDomainName` (`%uln`) on Windows: the domain part of the SAM name,
+/// which for a local or Microsoft account is the computer's name.
+#[cfg(windows)]
+pub fn user_domain_name() -> String {
+    sam_compatible_name()
+        .and_then(|name| name.split_once('\\').map(|(domain, _)| domain.to_string()))
+        .or_else(|| std::env::var("USERDOMAIN").ok())
+        .unwrap_or_else(machine_name)
+}
+
+#[cfg(windows)]
+fn sam_compatible_name() -> Option<String> {
+    use windows_sys::Win32::Security::Authentication::Identity::{
+        GetUserNameExW, NameSamCompatible,
+    };
+    let mut buffer = vec![0u16; 64];
+    loop {
+        let mut size = buffer.len() as u32;
+        // SAFETY: the buffer's length is passed with it; on success `size` is the
+        // length without the terminator, on ERROR_MORE_DATA the length needed.
+        if unsafe { GetUserNameExW(NameSamCompatible, buffer.as_mut_ptr(), &mut size) } {
+            return Some(String::from_utf16_lossy(&buffer[..size as usize]));
+        }
+        if size as usize <= buffer.len() || size > 4096 {
+            return None;
+        }
+        buffer.resize(size as usize, 0);
+    }
+}
+
+/// `Environment.NewLine`: what `%n` becomes in free text.
+const NEW_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 
 /// `NameParser.Parse(NameParserType, pattern)`: one parse with the default settings.
 pub fn parse(parser_type: NameParserType, pattern: &str) -> Result<String, NameParserError> {
@@ -564,8 +632,7 @@ impl NameParser {
             .replace("%cn", &machine_name());
 
         if self.parser_type == NameParserType::Text {
-            // Environment.NewLine on macOS.
-            sb = sb.replace("%n", "\n");
+            sb = sb.replace("%n", NEW_LINE);
         }
 
         let mut result = sb;
@@ -1030,10 +1097,17 @@ mod tests {
     #[test]
     fn window_title_and_process_name() {
         let mut p = parser(NameParserType::FileName);
+        // Windows' file names cannot hold `|` or `:`; macOS' can.
+        #[cfg(not(windows))]
         assert_eq!(p.parse("%t|%pn").unwrap(), "%t|%pn");
+        #[cfg(windows)]
+        assert_eq!(p.parse("%t|%pn").unwrap(), "%t%pn");
         p.window_text = Some("  My / Window: x  ".to_string());
         p.process_name = Some(" Fire fox ".to_string());
+        #[cfg(not(windows))]
         assert_eq!(p.parse("%pn_%t").unwrap(), "Fire_fox_My__Window:_x");
+        #[cfg(windows)]
+        assert_eq!(p.parse("%pn_%t").unwrap(), "Fire_fox_My__Window_x");
         p.max_title_length = 4;
         assert_eq!(p.parse("%t").unwrap(), "My__");
         // Codes inside the title expand: it is replaced first.
@@ -1266,7 +1340,8 @@ mod tests {
         );
         let lost = dir
             .path()
-            .join("no/such.txt")
+            .join("no")
+            .join("such.txt")
             .to_string_lossy()
             .into_owned();
         assert_eq!(
@@ -1299,17 +1374,39 @@ mod tests {
         assert_eq!(p("%un"), user_name());
         assert_eq!(p("%uln"), user_domain_name());
         assert_eq!(p("%cn"), machine_name());
-        assert_eq!(user_domain_name(), machine_name());
         // %un must not eat the start of %unix.
         assert_eq!(p("%unix"), "1792418709");
-        set_machine_name("Marcins-MacBook-Pro.local");
-        assert_eq!(machine_name(), "Marcins-MacBook-Pro");
-        assert_eq!(p("%cn|%uln"), "Marcins-MacBook-Pro|Marcins-MacBook-Pro");
+        #[cfg(not(windows))]
+        {
+            assert_eq!(user_domain_name(), machine_name());
+            set_machine_name("Marcins-MacBook-Pro.local");
+            assert_eq!(machine_name(), "Marcins-MacBook-Pro");
+            assert_eq!(p("%cn|%uln"), "Marcins-MacBook-Pro|Marcins-MacBook-Pro");
+        }
+        #[cfg(windows)]
+        {
+            // The system's names, as .NET gives them on Windows.
+            assert_eq!(
+                system_machine_name(),
+                std::env::var("COMPUTERNAME").unwrap()
+            );
+            assert_eq!(
+                user_name().to_lowercase(),
+                std::env::var("USERNAME").unwrap().to_lowercase()
+            );
+            assert_eq!(
+                user_domain_name().to_lowercase(),
+                std::env::var("USERDOMAIN").unwrap().to_lowercase()
+            );
+        }
     }
 
     #[test]
     fn new_lines_only_in_text() {
+        #[cfg(not(windows))]
         assert_eq!(parse_at(NameParserType::Text, "a%nb"), "a\nb");
+        #[cfg(windows)]
+        assert_eq!(parse_at(NameParserType::Text, "a%nb"), "a\r\nb");
         assert_eq!(parse_at(NameParserType::Default, "a%nb"), "a%nb");
         assert_eq!(parse_at(NameParserType::FileName, "a%nb"), "a%nb");
     }

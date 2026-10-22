@@ -48,9 +48,15 @@ described!(FFmpegVideoCodec {
 });
 
 impl FFmpegVideoCodec {
+    /// The codecs offered on Windows: every one, in the enum's order
+    /// (`Helpers.GetEnumDescriptions<FFmpegVideoCodec>()`), the hardware encoders too.
+    #[cfg(windows)]
+    pub const OFFERED: &'static [FFmpegVideoCodec] = FFmpegVideoCodec::ALL;
+
     /// The codecs offered on a Mac. NVENC, AMF and Quick Sync are Windows hardware
     /// encoders; a value synced from Windows that names one is encoded with VideoToolbox
     /// instead (see [`FFmpegVideoCodec::encoder`]), but the list does not offer them.
+    #[cfg(not(windows))]
     pub const OFFERED: &'static [FFmpegVideoCodec] = &[
         FFmpegVideoCodec::libx264,
         FFmpegVideoCodec::libx265,
@@ -62,7 +68,18 @@ impl FFmpegVideoCodec {
         FFmpegVideoCodec::apng,
     ];
 
+    /// The ffmpeg encoder that runs on this Windows for the codec: its own name, VP9's
+    /// spelled `libvpx-vp9`, as upstream writes `-c:v`.
+    #[cfg(windows)]
+    pub fn encoder(self) -> &'static str {
+        match self {
+            FFmpegVideoCodec::libvpx_vp9 => "libvpx-vp9",
+            other => other.name(),
+        }
+    }
+
     /// The ffmpeg encoder that runs on this Mac for the codec.
+    #[cfg(not(windows))]
     pub fn encoder(self) -> &'static str {
         match self {
             FFmpegVideoCodec::libvpx_vp9 => "libvpx-vp9",
@@ -182,20 +199,27 @@ pub enum ScreenRecordOutput {
     Gif,
 }
 
-/// `FFmpegCaptureDevice` as the Mac knows it.
+/// `FFmpegCaptureDevice` as the port knows it.
 ///
-/// Upstream's screen sources are Windows devices (`gdigrab`, `ddagrab`,
-/// `screen-capture-recorder`); on a Mac the screen comes from ScreenCaptureKit and is
-/// piped into ffmpeg. Every one of them means "the screen" here, and choosing the screen
-/// on a Mac stores upstream's default `gdigrab`, so a document synced to Windows records
-/// the screen there too.
+/// Upstream's screen sources are ffmpeg's own Windows devices (`gdigrab`, `ddagrab`,
+/// `screen-capture-recorder`). Here the platform delivers the screen's frames and they
+/// are piped into ffmpeg: on Windows copied with GDI (what `gdigrab` reads), on a Mac
+/// from ScreenCaptureKit. Every one of those values means "the screen", and choosing the
+/// screen stores upstream's default `gdigrab`, so a document synced between systems
+/// records the screen on each. Cameras and microphones are ffmpeg's own devices:
+/// DirectShow (`dshow`) on Windows, AVFoundation on a Mac.
 pub mod capture_device {
     /// "None": no source.
     pub const NONE: &str = "";
-    /// The screen: upstream's `FFmpegCaptureDevice.GDIGrab.Value`, recorded through
-    /// ScreenCaptureKit on a Mac.
+    /// The screen: upstream's `FFmpegCaptureDevice.GDIGrab.Value`, recorded through the
+    /// platform's frames.
     pub const SCREEN: &str = "gdigrab";
+    /// How the screen source is shown in the list: upstream's `GDIGrab.Title` on
+    /// Windows, whose frames are GDI's here too.
+    #[cfg(windows)]
+    pub const SCREEN_TITLE: &str = "gdigrab (Graphics Device Interface)";
     /// How the screen source is shown in the list.
+    #[cfg(not(windows))]
     pub const SCREEN_TITLE: &str = "ScreenCaptureKit (screen)";
     /// Other values that mean "the screen": `DDAGrab`, `ScreenCaptureRecorder`, and the
     /// old "GDI grab" that `FixSources` still reads.
@@ -207,6 +231,16 @@ pub mod capture_device {
             || OTHER_SCREEN_SOURCES
                 .iter()
                 .any(|s| value.eq_ignore_ascii_case(s))
+    }
+
+    /// How a camera or microphone is shown in the lists: `dshow (name)` as upstream on
+    /// Windows, `avfoundation (name)` on a Mac.
+    pub fn device_title(name: &str) -> String {
+        if cfg!(windows) {
+            format!("dshow ({name})")
+        } else {
+            format!("avfoundation ({name})")
+        }
     }
 }
 
@@ -366,11 +400,19 @@ impl FFmpegOptions {
         !self.is_animated_image()
     }
 
-    /// `FixSources`: old spellings of "None"; on a Mac also the Windows screen sources.
+    /// `FixSources`: old spellings of "None" and of GDI grab. On a Mac also every
+    /// Windows screen source becomes the screen; on Windows `ddagrab` and
+    /// `screen-capture-recorder` keep their values (and record the screen), so a
+    /// document goes back to an upstream installation as it came.
     pub fn fix_sources(&mut self) {
+        let screen = if cfg!(windows) {
+            self.VideoSource.eq_ignore_ascii_case("GDI grab")
+        } else {
+            capture_device::is_screen(&self.VideoSource)
+        };
         if self.VideoSource.eq_ignore_ascii_case("None") {
             self.VideoSource = capture_device::NONE.into();
-        } else if capture_device::is_screen(&self.VideoSource) {
+        } else if screen {
             self.VideoSource = capture_device::SCREEN.into();
         }
         if self.AudioSource.eq_ignore_ascii_case("None") {
@@ -408,7 +450,13 @@ mod tests {
                 ..FFmpegOptions::default()
             };
             other.fix_sources();
-            assert_eq!(other.VideoSource, capture_device::SCREEN, "{windows}");
+            assert!(capture_device::is_screen(&other.VideoSource), "{windows}");
+            // On Windows only the old spelling changes, as upstream's FixSources.
+            if cfg!(windows) && windows != "GDI grab" {
+                assert_eq!(other.VideoSource, windows);
+            } else {
+                assert_eq!(other.VideoSource, capture_device::SCREEN, "{windows}");
+            }
         }
         assert_eq!(options.GIFDither, FFmpegPaletteUseDither::bayer);
         assert_eq!(options.AAC_Bitrate, 128);
@@ -430,7 +478,22 @@ mod tests {
         assert!(options.is_audio_source_selected());
         options.AudioCodec = FFmpegAudioCodec::libopus;
         assert_eq!(options.extension(), "opus");
-        assert_eq!(FFmpegVideoCodec::h264_nvenc.encoder(), "h264_videotoolbox");
-        assert_eq!(FFmpegVideoCodec::hevc_qsv.encoder(), "hevc_videotoolbox");
+        #[cfg(not(windows))]
+        {
+            assert_eq!(FFmpegVideoCodec::h264_nvenc.encoder(), "h264_videotoolbox");
+            assert_eq!(FFmpegVideoCodec::hevc_qsv.encoder(), "hevc_videotoolbox");
+        }
+        #[cfg(windows)]
+        {
+            assert_eq!(FFmpegVideoCodec::h264_nvenc.encoder(), "h264_nvenc");
+            assert_eq!(FFmpegVideoCodec::hevc_qsv.encoder(), "hevc_qsv");
+            assert_eq!(FFmpegVideoCodec::libvpx_vp9.encoder(), "libvpx-vp9");
+            assert_eq!(FFmpegVideoCodec::OFFERED.len(), 14);
+            assert_eq!(FFmpegVideoCodec::OFFERED[5], FFmpegVideoCodec::h264_nvenc);
+            assert_eq!(
+                capture_device::device_title("Microphone (Realtek)"),
+                "dshow (Microphone (Realtek))"
+            );
+        }
     }
 }

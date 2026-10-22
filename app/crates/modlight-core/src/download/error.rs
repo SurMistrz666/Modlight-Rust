@@ -27,7 +27,7 @@ pub enum ErrorKind {
     SelfReportedBug,
 }
 
-/// How the yt-dlp on this Mac stands against the newest published build.
+/// How the yt-dlp on this computer stands against the newest published build.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Standing {
     /// Not asked, or the answer did not arrive. Nothing may be claimed either way.

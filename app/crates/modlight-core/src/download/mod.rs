@@ -20,7 +20,7 @@ pub use link::DownloadLink;
 /// Where a finished download ends up (`DownloadDestination`). One setting for the tab.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Destination {
-    /// Keep the file on this Mac and do nothing else. The default.
+    /// Keep the file on this computer and do nothing else. The default.
     #[default]
     Disk,
     /// Upload it and put the link on the clipboard, the way a capture goes.

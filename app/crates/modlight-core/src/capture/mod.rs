@@ -98,8 +98,12 @@ pub enum CaptureStep {
     Nothing(Option<CaptureError>),
 }
 
+/// The process whose window is the desktop, which never names a capture: upstream's
+/// "explorer" on Windows; Finder plays its part on macOS.
+const DESKTOP_PROCESS: &str = if cfg!(windows) { "explorer" } else { "Finder" };
+
 /// `CreateMetadata(insideRect, "explorer")`: the active window names the capture when the
-/// captured area lies inside it. Finder plays explorer's part: the desktop is its window.
+/// captured area lies inside it, unless it is the desktop's.
 fn metadata_for(
     source: &dyn CaptureSource,
     inside: Option<IRect>,
@@ -203,13 +207,13 @@ pub fn capture(
         CaptureKind::Fullscreen => {
             // `CaptureFullscreen`: the whole desktop, named after the working area's owner.
             let bounds = source.screen_bounds();
-            let metadata = metadata_for(source, Some(working_area(source)), Some("Finder"));
+            let metadata = metadata_for(source, Some(working_area(source)), Some(DESKTOP_PROCESS));
             source
                 .capture_rect(bounds, cursor)
                 .map(|image| (metadata, image))
         }
         CaptureKind::Monitor(bounds) => {
-            let metadata = metadata_for(source, Some(*bounds), Some("Finder"));
+            let metadata = metadata_for(source, Some(*bounds), Some(DESKTOP_PROCESS));
             source
                 .capture_rect(*bounds, cursor)
                 .map(|image| (metadata, image))
@@ -218,7 +222,7 @@ pub fn capture(
             let screen = source.active_screen();
             let bounds = screen.as_ref().map(|s| s.bounds).unwrap_or_default();
             let area = screen.map(|s| s.working_area).unwrap_or_default();
-            let metadata = metadata_for(source, Some(area), Some("Finder"));
+            let metadata = metadata_for(source, Some(area), Some(DESKTOP_PROCESS));
             source
                 .capture_rect(bounds, cursor)
                 .map(|image| (metadata, image))
@@ -256,7 +260,7 @@ pub fn capture(
         }
         CaptureKind::CustomRegion => {
             let rect = capture.capture_custom_region;
-            let metadata = metadata_for(source, Some(rect), Some("Finder"));
+            let metadata = metadata_for(source, Some(rect), Some(DESKTOP_PROCESS));
             source
                 .capture_rect(rect, cursor)
                 .map(|image| (metadata, image))
@@ -302,6 +306,12 @@ fn working_area(source: &dyn CaptureSource) -> IRect {
 
 /// `CaptureWindow.Execute`'s picture: alone with its shadow and transparency when the
 /// settings ask for that, else the area it covers.
+///
+/// On Windows the platform always takes the window itself, as upstream's
+/// `Screenshot.CaptureWindow` does: it reads the window's rectangle again (a minimised
+/// window picked from the menu is restored first, and its old rectangle lies off
+/// screen) and honours "capture client area". On macOS a window that is not taken
+/// transparently is the area it covers.
 fn capture_window(
     source: &dyn CaptureSource,
     window: &WindowInfo,
@@ -314,7 +324,7 @@ fn capture_window(
         client_area: capture.capture_client_area,
         cursor: capture.show_cursor,
     };
-    if how.transparent {
+    if cfg!(windows) || how.transparent {
         source.capture_window(window, how)
     } else {
         source.capture_rect(window.rect, capture.show_cursor)
@@ -434,6 +444,30 @@ mod tests {
         assert_eq!(window.metadata.window_title.as_deref(), Some("Notes"));
         assert_eq!(window.metadata.process_name.as_deref(), Some("Notes"));
         assert_eq!(window.metadata.image.unwrap().dimensions(), (640, 420));
+    }
+
+    #[test]
+    fn windows_are_taken_by_themselves_on_windows_only_when_transparent_on_macos() {
+        let source = FakeSource::sample();
+        let mut settings = TaskSettings::default();
+        settings.capture_settings.capture_transparent = false;
+        settings.capture_settings.capture_client_area = true;
+        picture(capture(CaptureKind::ActiveWindow, &settings, &source));
+        let taken = source.windows_taken.lock().unwrap().clone();
+        if cfg!(windows) {
+            // The platform reads the rectangle again and keeps to the client area.
+            assert_eq!(taken.len(), 1);
+            assert_eq!(taken[0].0, "Notes");
+            assert!(taken[0].1.client_area && !taken[0].1.transparent);
+        } else {
+            assert!(taken.is_empty(), "the area it covers: {taken:?}");
+        }
+        settings.capture_settings.capture_client_area = false;
+        settings.capture_settings.capture_transparent = true;
+        picture(capture(CaptureKind::ActiveWindow, &settings, &source));
+        let taken = source.windows_taken.lock().unwrap().clone();
+        let last = taken.last().unwrap();
+        assert!(last.1.transparent && !last.1.client_area);
     }
 
     #[test]

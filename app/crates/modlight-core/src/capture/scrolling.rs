@@ -155,8 +155,9 @@ impl Stitcher {
     }
 }
 
-/// What moves the page (`InputHelpers.SendMouseWheel`, `SendKeyPress`): synthetic input
-/// on a Mac (it needs the Accessibility permission), a fake in tests.
+/// What moves the page (`InputHelpers.SendMouseWheel`, `SendKeyPress`): `SendInput` on
+/// Windows as upstream, synthetic input on a Mac (it needs the Accessibility
+/// permission), a fake in tests.
 pub trait Scroller: Send + Sync {
     /// Bring the window forward (`selectedWindow.Activate()`).
     fn activate(&self, window: Option<&super::source::WindowInfo>);
