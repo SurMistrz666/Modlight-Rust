@@ -1,13 +1,16 @@
 //! `SettingManager.Export`, `Import` and `ResetSettings`: a settings backup is a zip of
 //! `ApplicationConfig.json`, `HotkeysConfig.json` and (when asked) `History.db`.
 //!
-//! On a Mac there is no `UploadersConfig.json` to put in it: the token lives in the
-//! Keychain and never leaves it. Import takes exactly the settings files export writes,
-//! by name, and nothing else: upstream took any `.json` or `.xml` entry, which let a
-//! backup from somebody else replace the account's host (`UploadersConfig.json`, while
-//! the token stays in the Keychain) or the upload queue (`Queue.json`, whose spooled
-//! files the queue deletes). Every other entry, and any name with a folder, `..` or an
-//! absolute path in it, is left out and named in the report.
+//! There is no `UploadersConfig.json` to put in it: the token lives in the system's
+//! credential store (Credential Manager on Windows, the Keychain on a Mac; upstream kept
+//! it DPAPI-encrypted in that file) and never leaves it. Import takes exactly the
+//! settings files export writes, by name, and nothing else: upstream took any `.json` or
+//! `.xml` entry, which let a backup from somebody else replace the account's host
+//! (`UploadersConfig.json`, while the token stays in the credential store) or the upload
+//! queue (`Queue.json`, whose spooled files the queue deletes). Every other entry, and
+//! any name with a folder, `..`, a drive or an absolute path in it, is left out and named
+//! in the report. The names are compared exactly, on Windows too: the archive's names
+//! are not paths of this system.
 //!
 //! What is restored is restored whole, except for what runs by itself or names a program
 //! to start: an external program ("Perform actions"), the after-capture step that runs
@@ -68,6 +71,21 @@ const RESTORED: [&str; 2] = [APPLICATION_CONFIG_FILE, HOTKEYS_CONFIG_FILE];
 /// files, never the history database.
 const PASSED_OVER: [&str; 1] = [HISTORY_FILE_NAME];
 
+/// The report's texts: the port's own, worded for the system (`l10n::windows` names
+/// "this PC", `l10n::mac` "this Mac").
+mod texts {
+    #[cfg(not(windows))]
+    pub use crate::l10n::mac::{
+        BackupImportDefaultTask, BackupImportDisabled, BackupImportFFmpegPath, BackupImportProgram,
+        BackupImportRefused,
+    };
+    #[cfg(windows)]
+    pub use crate::l10n::windows::{
+        BackupImportDefaultTask, BackupImportDisabled, BackupImportFFmpegPath, BackupImportProgram,
+        BackupImportRefused,
+    };
+}
+
 /// What an import did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportReport {
@@ -105,18 +123,18 @@ pub enum DisabledKind {
 impl DisabledStep {
     /// One line of the report: the task, then what was switched off in it.
     pub fn text(&self) -> String {
-        use crate::l10n::{helpers, mac, s, t, tf};
+        use crate::l10n::{helpers, s, t, tf};
         let task = match &self.task {
             Some(name) => name.clone(),
-            None => t(mac::BackupImportDefaultTask).to_string(),
+            None => t(texts::BackupImportDefaultTask).to_string(),
         };
         let what = match &self.kind {
             DisabledKind::Program { name, path } => {
-                tf(mac::BackupImportProgram, &[name.into(), path.into()])
+                tf(texts::BackupImportProgram, &[name.into(), path.into()])
             }
             DisabledKind::PerformActions => t(helpers::AfterCaptureTasks_PerformActions).into(),
             DisabledKind::WatchFolders => t(s::TaskSettingsWindow_WatchFolders).into(),
-            DisabledKind::FfmpegPath { path } => tf(mac::BackupImportFFmpegPath, &[path.into()]),
+            DisabledKind::FfmpegPath { path } => tf(texts::BackupImportFFmpegPath, &[path.into()]),
         };
         format!("{task}: {what}")
     }
@@ -133,14 +151,11 @@ impl ImportReport {
                 .map(|step| format!("- {}", step.text()))
                 .collect::<Vec<_>>()
                 .join("\n");
-            notes.push(crate::l10n::tf(
-                crate::l10n::mac::BackupImportDisabled,
-                &[list.into()],
-            ));
+            notes.push(crate::l10n::tf(texts::BackupImportDisabled, &[list.into()]));
         }
         if !self.refused.is_empty() {
             notes.push(crate::l10n::tf(
-                crate::l10n::mac::BackupImportRefused,
+                texts::BackupImportRefused,
                 &[self.refused.join(", ").into()],
             ));
         }
@@ -455,6 +470,9 @@ mod tests {
             "sub/ApplicationConfig.json",
             "../HotkeysConfig.json",
             "applicationconfig.json",
+            "..\\HotkeysConfig.json",
+            "C:\\ApplicationConfig.json",
+            "C:ApplicationConfig.json",
         ];
         let mut entries: Vec<(&str, &[u8])> = refused.iter().map(|n| (*n, &b"{}"[..])).collect();
         entries.push((HOTKEYS_CONFIG_FILE, b"{\"Hotkeys\":[]}"));
@@ -724,6 +742,11 @@ mod tests {
 
         let notes = report.notes().join("\n");
         assert!(notes.contains("/bin/sh"), "{notes}");
+        // The wording names this system.
+        crate::l10n::set_thread_language(Some(crate::l10n::Language::English));
+        let place = if cfg!(windows) { "this PC" } else { "this Mac" };
+        assert!(report.notes().join("\n").contains(place));
+        crate::l10n::set_thread_language(None);
         assert!(notes.contains("Evil"), "{notes}");
     }
 
