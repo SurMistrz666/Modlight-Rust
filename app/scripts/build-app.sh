@@ -41,7 +41,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/modlight-build-app.XXXXXX")
 trap 'rm -rf "$work"' EXIT INT TERM
 
 # --- The icon -------------------------------------------------------------------
-# Every frame of the upstream ICO is a PNG (16, 24, 32, 48, 64, 128 and 256 px).
+# Every frame of the upstream ICO is a PNG (16, 24, 32, 48, 64, 128 and 256 px);
 # They are cut out of the file as they are, no resampling, and filed under the
 # names iconutil expects; sizes the ICO does not have are left to the system.
 iconset="$work/$name.iconset"
@@ -60,11 +60,16 @@ while [ "$i" -lt "$count" ]; do
     dd if="$icon_source" of="$work/frames/$width.png" bs=1 skip="$offset" count="$size" 2>/dev/null
     i=$((i + 1))
 done
+# The Windows frames fill their whole square, which on a Mac makes the icon look
+# bigger than every other app. Apple's grid puts the artwork in 824 of 1024 px with a
+# transparent margin, so each size is made from the largest frame: scaled to that
+# share of the size, then padded back to the full size.
+largest=$(ls "$work/frames" | sed 's/\.png$//' | sort -n | tail -1)
 put() {
-    # put <frame px> <iconset name>
-    if [ -f "$work/frames/$1.png" ]; then
-        cp "$work/frames/$1.png" "$iconset/$2.png"
-    fi
+    # put <size px> <iconset name>
+    inner=$(( ($1 * 824 + 512) / 1024 ))
+    sips -Z "$inner" "$work/frames/$largest.png" --out "$work/inner.png" >/dev/null
+    sips --padToHeightWidth "$1" "$1" "$work/inner.png" --out "$iconset/$2.png" >/dev/null
 }
 put 16 icon_16x16
 put 32 icon_16x16@2x
