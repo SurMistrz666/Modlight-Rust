@@ -22,8 +22,10 @@ pub fn input_trusted() -> bool {
     false
 }
 
-/// The name the app uses on every system (`platform::input::SystemScroller`).
-pub type SystemScroller = MacScroller;
+/// The name the app uses on every system (`platform::input::SystemScroller`). A
+/// re-export rather than a type alias, so the unit value `SystemScroller` exists too,
+/// as it does for the Windows struct of the same name.
+pub use MacScroller as SystemScroller;
 
 /// The Mac's scroller.
 pub struct MacScroller;

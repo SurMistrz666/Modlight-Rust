@@ -8,11 +8,12 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../assets/upstream/icons/Modlight_Icon.ico");
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
+    // Written as one `if` so that, on a non-Windows host where the call below is
+    // compiled out, clippy does not see a needless `return`.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        #[cfg(windows)]
+        windows::embed();
     }
-    #[cfg(windows)]
-    windows::embed();
 }
 
 #[cfg(windows)]
