@@ -629,15 +629,34 @@ Deliberate, each for a reason:
       `/authorize?port=&name=&state=&challenge=`. `parse_authorize_request_with_challenge`
       validates it (malformed -> `invalid-challenge`, an invalid request),
       `authorize_path` carries it through `/login?next=`. The page loader
-      registers `{state -> challenge}` as pending (the only thing it writes);
+      registers `{state -> challenge, user id}` as pending (the only thing it
+      writes; `register_render`, rate-limited per account and per address);
       `approveDesktopClient` with a challenge stores the token, the new
-      `denyDesktopClient` stores `access_denied` (`actions/authorize.rs`).
+      `denyDesktopClient` stores `access_denied` (`actions/authorize.rs`),
+      both ONLY on a live entry that the same account registered with the same
+      challenge (security review 2026-10-24, P1: the challenge is in the URL,
+      so it proves nothing about who decides). Otherwise nothing is stored and
+      the approval answers `pickup: false`: the page then uses the loopback
+      POST and the manual key, which reach only the approver's own machine.
       The app polls `POST /api/authorize/pickup {state, verifier}` every 2 s.
+    - *Confirmation code* (review 2026-10-24, P2): `confirmation_code(challenge)`
+      = first 6 base32 characters of `SHA-256("modlight-confirm:" || challenge)`,
+      shown as `XXX-XXX` by the app while it waits and by the prompt next to
+      Approve ("Approve only if this code matches the one in your Modlight
+      app"); the page props carry it as `confirmCode`. A phishing link carries
+      somebody else's challenge, so its code is one no app of the victim's
+      shows. The app computes the same (`modlight-api` `signin::confirmation_code`,
+      same test vector `554-LIO`).
     - *Store* (`authorize/pickup.rs`): in memory, `state -> {challenge,
-      outcome, expires}`, 5 minutes, at most 4096 entries (swept every 30 s and
-      when full, then oldest first). The first challenge seen for a state binds
-      it; a different one never replaces a live entry. Handed out once, then
-      deleted. A restart loses pending pickups (loopback and manual key remain).
+      user id, outcome, expires}`, 5 minutes, at most 4096 entries (swept every
+      30 s and when full). The first account and challenge seen for a state
+      bind it; another account or challenge never replaces a live entry. One
+      account holds at most 5 live entries (its own oldest pending one makes
+      room); when the map is full the oldest PENDING entry goes, and a decided
+      entry (a token waiting for its app) is never evicted before it expires
+      (review P3). Renders: 30 per account, 120 per address per 10 minutes.
+      Handed out once, then deleted. A restart loses pending pickups (loopback
+      and manual key remain).
     - *Route* (`routes/api/authorize_pickup.rs`): `read_json_object` (1 KiB),
       constant-time compare of the hashed verifier; `200 {"token"}` or `200
       {"error":"access_denied"}` once, `202 {"status":"pending"}`, `404
@@ -648,15 +667,18 @@ Deliberate, each for a reason:
       verifiers are never logged.
     - *SPA*: `components/authorize/authorize-prompt.tsx` is a port
       (`web/src/overrides/`), calling `web/src/rpc/authorize-pickup.ts`; with a
-      challenge the page says the app picks the key up by itself, still tries
-      the loopback POST, and keeps the key under "App still not signed in?" to
-      copy. Strings: `messages/<locale>/authorizePickup.json`, a 19th client
+      challenge the page shows the confirmation code next to Approve, says the
+      key will be handed to the Modlight app that shows that code (wherever it
+      runs), after approving says the app picks the key up by itself, still
+      tries the loopback POST, and keeps the key under "App still not signed
+      in?" to copy; with `pickup: false` it falls back to upstream's flow. Strings: `messages/<locale>/authorizePickup.json`, a 19th client
       namespace. Without a challenge (older apps) everything is as before.
     - Tests: `authorize::pickup::tests`, `routes::api::authorize_pickup::tests`,
       `actions::authorize::tests` (challenge, deny), `authorize::loopback`
       (challenge parsing and the login round trip), `web/tests/authorize-pickup.test.tsx`,
       app `tests/signin_pickup_fake.rs` and the opt-in real-server
-      `tests/signin_pickup.rs` (`MODLIGHT_PICKUP_E2E`).
+      `tests/signin_pickup.rs` (`MODLIGHT_PICKUP_E2E`); `tests/secreview_pickup.rs`
+      (the review's attacks, asserting that each fails).
 
 ## 10. Verified on 2026-10-18
 
