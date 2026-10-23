@@ -101,12 +101,29 @@ pub async fn approve_with<D: AuthorizeDeps>(
         Ok(token) => {
             // Not upstream: the app collects it from the server too, in case
             // the browser never delivers the loopback POST (SKELETON.md 9).
-            if let Some(challenge) = &request.challenge
-                && !deps.pickups().complete(&request.state, challenge, Outcome::Token(token.clone()), now_ms())
-            {
-                tracing::warn!("[authorize] pickup not stored: the state is bound to another challenge");
+            // Only for a state THIS account's page render registered (review
+            // 2026-10-24, P1): somebody who merely saw the URL gets his own
+            // token back on his own page, for his own loopback, and the app
+            // that wrote the link never sees it. `pickup: false` tells the page
+            // to fall back to the loopback POST and the manual key.
+            let mut pickup = false;
+            if let Some(challenge) = &request.challenge {
+                pickup = deps.pickups().complete(
+                    &request.state,
+                    challenge,
+                    user_id,
+                    Outcome::Token(token.clone()),
+                    now_ms(),
+                );
+                if !pickup {
+                    tracing::warn!("[authorize] pickup not stored: the state was not registered by this account");
+                }
             }
-            (json!({ "ok": true, "token": token, "callback": request.callback, "state": request.state }), true)
+            let mut out = json!({ "ok": true, "token": token, "callback": request.callback, "state": request.state });
+            if request.challenge.is_some() {
+                out["pickup"] = Value::Bool(pickup);
+            }
+            (out, true)
         }
         Err(err) => {
             tracing::error!("[authorize] could not issue a desktop token: {err:#}");
@@ -139,8 +156,10 @@ pub fn deny_with<D: AuthorizeDeps>(deps: &D, user_id: &str, client_ip: &str, inp
     if !check_rate_limit(&key, MAX_DENIALS, APPROVAL_WINDOW_MS).allowed {
         return refusal("rate-limited");
     }
+    // Only the account whose page render registered the state may cancel it
+    // (P1); anyone else's "no" stays on his own page and loopback.
     if let Some(challenge) = &request.challenge {
-        deps.pickups().complete(&request.state, challenge, Outcome::Denied, now_ms());
+        deps.pickups().complete(&request.state, challenge, user_id, Outcome::Denied, now_ms());
     }
     json!({ "ok": true })
 }
@@ -244,12 +263,15 @@ mod tests {
     #[tokio::test]
     async fn an_approval_with_a_challenge_waits_for_the_pickup() {
         let f = Fake::default();
+        // The page render registered the state for this account.
+        f.store.register("s7Kd93jf0aQ2", &challenge_for(VERIFIER), "u1", now_ms());
         let input = json!({ "port": "49732", "state": "s7Kd93jf0aQ2", "name": "Modlight", "challenge": challenge_for(VERIFIER) });
         let (out, issued) = approve_with(&f, "u1", &ip(), Some(&input)).await;
         assert!(issued);
-        // The page still gets everything it got before.
+        // The page still gets everything it got before, and learns the app collects it.
         assert_eq!(out["token"], "AAAAAAAAAAAAAAAAAAAAAAAAAAtoken6");
         assert_eq!(out["callback"], "http://127.0.0.1:49732/");
+        assert_eq!(out["pickup"], true);
         assert_eq!(
             f.store.pick_up("s7Kd93jf0aQ2", VERIFIER, now_ms()),
             Pickup::Ready(Outcome::Token("AAAAAAAAAAAAAAAAAAAAAAAAAAtoken6".into()))
@@ -280,6 +302,7 @@ mod tests {
     #[tokio::test]
     async fn a_denial_with_a_challenge_reaches_the_pickup() {
         let f = Fake::default();
+        f.store.register("s7Kd93jf0aQ2", &challenge_for(VERIFIER), "u1", now_ms());
         let input = json!({ "port": "49732", "state": "s7Kd93jf0aQ2", "challenge": challenge_for(VERIFIER) });
         assert_eq!(deny_with(&f, "u1", &ip(), Some(&input)), json!({ "ok": true }));
         assert_eq!(f.store.pick_up("s7Kd93jf0aQ2", VERIFIER, now_ms()), Pickup::Ready(Outcome::Denied));
@@ -288,6 +311,18 @@ mod tests {
         let plain = json!({ "port": "49732", "state": "s7Kd93jf0aQ2" });
         assert_eq!(deny_with(&f, "u1", &ip(), Some(&plain)), json!({ "ok": true }));
         assert!(f.store.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_approval_for_a_state_this_account_never_rendered_stays_on_its_page() {
+        let f = Fake::default();
+        let input = json!({ "port": "49732", "state": "s7Kd93jf0aQ2", "challenge": challenge_for(VERIFIER) });
+        let (out, issued) = approve_with(&f, "u1", &ip(), Some(&input)).await;
+        // The token is the approver's own, for his own page and loopback only.
+        assert!(issued);
+        assert_eq!(out["pickup"], false);
+        assert!(f.store.is_empty());
+        assert_eq!(f.store.pick_up("s7Kd93jf0aQ2", VERIFIER, now_ms()), Pickup::NotFound);
     }
 
     fn ip() -> String {

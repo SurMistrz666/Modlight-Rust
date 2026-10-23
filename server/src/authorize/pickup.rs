@@ -13,15 +13,19 @@
 //!
 //!   1. the app makes a random `verifier` (32 bytes, base64url) and sends
 //!      `challenge = base64url(SHA-256(verifier))` in the authorize link;
-//!   2. the page carries `challenge` to `approveDesktopClient` (or to
-//!      `denyDesktopClient`), which store the outcome here under `state`;
+//!   2. the signed-in page render REGISTERS `state` with `challenge` and the
+//!      account that sees it; only that account's `approveDesktopClient` (or
+//!      `denyDesktopClient`) with the same challenge stores an outcome here
+//!      (review 2026-10-24, P1: the challenge sits in the URL, so it alone
+//!      proves nothing about who decides);
 //!   3. the app polls `POST /api/authorize/pickup` with `{state, verifier}`;
 //!      the verifier never appeared in any URL or page, so only the process
 //!      that generated the link can collect what the link produced.
 //!
 //! The entry is handed out ONCE and then deleted, lives five minutes, and the
-//! map is bounded and swept. Everything is in memory: a restart loses pending
-//! pickups, and the loopback POST and the manual key still work then.
+//! map is bounded and swept.
+//! Everything is in memory: a restart loses pending pickups, and the
+//! loopback POST and the manual key still work then.
 //! Unknown, expired and mismatched requests all get the same 404, so the
 //! route says nothing about which states exist.
 
@@ -72,8 +76,21 @@ pub enum Pickup {
     NotFound,
 }
 
+/// What [`PickupStore::register`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Registered {
+    /// The state is (now, or still) bound to this account and challenge.
+    Bound,
+    /// A live entry for the state belongs to another account or another
+    /// challenge: nothing changed (the first signed-in browser keeps it).
+    Taken,
+}
+
 struct Entry {
     challenge: String,
+    /// The account whose signed-in browser rendered the prompt (review
+    /// 2026-10-24, P1): only that account may decide for this state.
+    user_id: String,
     outcome: Option<Outcome>,
     expires_at: i64,
 }
@@ -121,50 +138,59 @@ impl PickupStore {
         }
     }
 
-    /// The page was shown for a request with a challenge: the app's polls now
-    /// read "pending" instead of "not found". The first challenge seen for a
-    /// state is the one it is bound to; a second, different one never replaces it.
-    pub fn register(&self, state: &str, challenge: &str, now: i64) {
+    /// The page was shown, to the signed-in `user_id`, for a request with a
+    /// challenge: the app's polls now read "pending" instead of "not found",
+    /// and only this account may decide for the state. A live entry is never
+    /// taken over by another account or another challenge.
+    pub fn register(&self, state: &str, challenge: &str, user_id: &str, now: i64) -> Registered {
         let mut inner = self.lock();
-        Self::make_room(&mut inner, now);
-        match inner.map.get_mut(state) {
-            Some(entry) if entry.expires_at > now => {
-                if entry.challenge == challenge && entry.outcome.is_none() {
-                    entry.expires_at = now + PICKUP_TTL_MS;
-                }
-            }
-            _ => {
-                inner.map.shift_remove(state);
-                inner.map.insert(
-                    state.to_string(),
-                    Entry { challenge: challenge.to_string(), outcome: None, expires_at: now + PICKUP_TTL_MS },
-                );
-            }
-        }
-    }
-
-    /// The person decided. Stored for `state` unless a live entry for it is
-    /// bound to a DIFFERENT challenge (then nothing is stored and `false` comes
-    /// back: the page still has its loopback POST and the manual key).
-    pub fn complete(&self, state: &str, challenge: &str, outcome: Outcome, now: i64) -> bool {
-        let mut inner = self.lock();
-        Self::make_room(&mut inner, now);
         if let Some(entry) = inner.map.get_mut(state)
             && entry.expires_at > now
         {
-            if entry.challenge != challenge {
-                return false;
+            if entry.user_id != user_id || entry.challenge != challenge {
+                return Registered::Taken;
             }
-            entry.outcome = Some(outcome);
-            entry.expires_at = now + PICKUP_TTL_MS;
-            return true;
+            if entry.outcome.is_none() {
+                entry.expires_at = now + PICKUP_TTL_MS;
+            }
+            return Registered::Bound;
         }
         inner.map.shift_remove(state);
+        Self::make_room(&mut inner, now);
         inner.map.insert(
             state.to_string(),
-            Entry { challenge: challenge.to_string(), outcome: Some(outcome), expires_at: now + PICKUP_TTL_MS },
+            Entry {
+                challenge: challenge.to_string(),
+                user_id: user_id.to_string(),
+                outcome: None,
+                expires_at: now + PICKUP_TTL_MS,
+            },
         );
-        true
+        Registered::Bound
+    }
+
+    /// Whether `user_id` may decide for `state` with `challenge`: a live entry
+    /// that this account's own page render registered.
+    pub fn is_bound(&self, state: &str, challenge: &str, user_id: &str, now: i64) -> bool {
+        let inner = self.lock();
+        inner.map.get(state).is_some_and(|e| e.expires_at > now && e.user_id == user_id && e.challenge == challenge)
+    }
+
+    /// The person decided. Stored only on the live entry this account's page
+    /// render registered for `state` with this challenge (P1); anything else
+    /// (never registered, expired, another account, another challenge) stores
+    /// nothing and gives `false`: the page then falls back to its loopback POST
+    /// and the manual key, which reach only the deciding browser's own machine.
+    pub fn complete(&self, state: &str, challenge: &str, user_id: &str, outcome: Outcome, now: i64) -> bool {
+        let mut inner = self.lock();
+        match inner.map.get_mut(state) {
+            Some(entry) if entry.expires_at > now && entry.user_id == user_id && entry.challenge == challenge => {
+                entry.outcome = Some(outcome);
+                entry.expires_at = now + PICKUP_TTL_MS;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The app asks. The verifier is hashed and compared in constant time with
@@ -228,6 +254,7 @@ mod tests {
 
     const STATE: &str = "s7Kd93jf0aQ2xxxxxxxxxxxx";
     const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    const ME: &str = "user-me";
 
     fn challenge() -> String {
         challenge_for(VERIFIER)
@@ -246,7 +273,8 @@ mod tests {
     #[test]
     fn a_token_is_handed_out_once() {
         let s = PickupStore::default();
-        assert!(s.complete(STATE, &challenge(), Outcome::Token("tok".into()), 0));
+        assert_eq!(s.register(STATE, &challenge(), ME, 0), Registered::Bound);
+        assert!(s.complete(STATE, &challenge(), ME, Outcome::Token("tok".into()), 0));
         assert_eq!(s.pick_up(STATE, VERIFIER, 1), Pickup::Ready(Outcome::Token("tok".into())));
         assert_eq!(s.pick_up(STATE, VERIFIER, 2), Pickup::NotFound);
         assert!(s.is_empty());
@@ -255,7 +283,8 @@ mod tests {
     #[test]
     fn a_denial_is_handed_out_too() {
         let s = PickupStore::default();
-        s.complete(STATE, &challenge(), Outcome::Denied, 0);
+        s.register(STATE, &challenge(), ME, 0);
+        assert!(s.complete(STATE, &challenge(), ME, Outcome::Denied, 0));
         assert_eq!(s.pick_up(STATE, VERIFIER, 1), Pickup::Ready(Outcome::Denied));
     }
 
@@ -263,17 +292,42 @@ mod tests {
     fn pending_until_decided() {
         let s = PickupStore::default();
         assert_eq!(s.pick_up(STATE, VERIFIER, 0), Pickup::NotFound);
-        s.register(STATE, &challenge(), 0);
+        s.register(STATE, &challenge(), ME, 0);
         assert_eq!(s.pick_up(STATE, VERIFIER, 1), Pickup::Pending);
         assert_eq!(s.pick_up(STATE, VERIFIER, 2), Pickup::Pending);
-        assert!(s.complete(STATE, &challenge(), Outcome::Token("tok".into()), 3));
+        assert!(s.complete(STATE, &challenge(), ME, Outcome::Token("tok".into()), 3));
         assert_eq!(s.pick_up(STATE, VERIFIER, 4), Pickup::Ready(Outcome::Token("tok".into())));
+    }
+
+    #[test]
+    fn a_state_nobody_registered_takes_no_decision() {
+        let s = PickupStore::default();
+        assert!(!s.complete(STATE, &challenge(), ME, Outcome::Token("tok".into()), 0));
+        assert!(!s.complete(STATE, &challenge(), ME, Outcome::Denied, 0));
+        assert!(s.is_empty());
+        assert_eq!(s.pick_up(STATE, VERIFIER, 1), Pickup::NotFound);
+    }
+
+    #[test]
+    fn only_the_account_that_rendered_the_page_decides() {
+        let s = PickupStore::default();
+        s.register(STATE, &challenge(), ME, 0);
+        assert!(!s.is_bound(STATE, &challenge(), "someone-else", 1));
+        assert!(!s.complete(STATE, &challenge(), "someone-else", Outcome::Token("theirs".into()), 1));
+        assert!(!s.complete(STATE, &challenge(), "someone-else", Outcome::Denied, 1));
+        // Another account rendering the same URL changes nothing either.
+        assert_eq!(s.register(STATE, &challenge(), "someone-else", 2), Registered::Taken);
+        assert_eq!(s.pick_up(STATE, VERIFIER, 3), Pickup::Pending);
+        assert!(s.is_bound(STATE, &challenge(), ME, 3));
+        assert!(s.complete(STATE, &challenge(), ME, Outcome::Token("mine".into()), 4));
+        assert_eq!(s.pick_up(STATE, VERIFIER, 5), Pickup::Ready(Outcome::Token("mine".into())));
     }
 
     #[test]
     fn a_wrong_verifier_learns_nothing_and_takes_nothing() {
         let s = PickupStore::default();
-        s.complete(STATE, &challenge(), Outcome::Token("tok".into()), 0);
+        s.register(STATE, &challenge(), ME, 0);
+        s.complete(STATE, &challenge(), ME, Outcome::Token("tok".into()), 0);
         let wrong = "x".repeat(43);
         assert_eq!(s.pick_up(STATE, &wrong, 1), Pickup::NotFound);
         assert_eq!(s.pick_up("someone-elses-state", VERIFIER, 1), Pickup::NotFound);
@@ -284,40 +338,49 @@ mod tests {
     #[test]
     fn entries_expire() {
         let s = PickupStore::default();
-        s.complete(STATE, &challenge(), Outcome::Token("tok".into()), 0);
+        s.register(STATE, &challenge(), ME, 0);
+        s.complete(STATE, &challenge(), ME, Outcome::Token("tok".into()), 0);
         assert_eq!(s.pick_up(STATE, VERIFIER, PICKUP_TTL_MS), Pickup::NotFound);
         assert!(s.is_empty());
 
-        s.register(STATE, &challenge(), 0);
+        s.register(STATE, &challenge(), ME, 0);
         assert_eq!(s.pick_up(STATE, VERIFIER, PICKUP_TTL_MS + 1), Pickup::NotFound);
+        // An expired binding decides nothing.
+        assert!(!s.complete(STATE, &challenge(), ME, Outcome::Denied, PICKUP_TTL_MS + 1));
     }
 
     #[test]
     fn the_first_challenge_binds_the_state() {
         let s = PickupStore::default();
         let other = challenge_for(&"y".repeat(43));
-        s.register(STATE, &challenge(), 0);
-        s.register(STATE, &other, 1);
-        assert!(!s.complete(STATE, &other, Outcome::Token("stolen".into()), 2));
+        s.register(STATE, &challenge(), ME, 0);
+        assert_eq!(s.register(STATE, &other, ME, 1), Registered::Taken);
+        assert!(!s.complete(STATE, &other, ME, Outcome::Token("stolen".into()), 2));
         assert_eq!(s.pick_up(STATE, &"y".repeat(43), 3), Pickup::NotFound);
         assert_eq!(s.pick_up(STATE, VERIFIER, 3), Pickup::Pending);
-        // Once the old binding expired, a new request may use the state again.
-        assert!(s.complete(STATE, &other, Outcome::Denied, PICKUP_TTL_MS + 10));
+        // Once the old binding expired, a new render may use the state again.
+        assert_eq!(s.register(STATE, &other, ME, PICKUP_TTL_MS + 10), Registered::Bound);
+        assert!(s.complete(STATE, &other, ME, Outcome::Denied, PICKUP_TTL_MS + 11));
     }
 
     #[test]
     fn a_second_approval_replaces_the_first_token() {
         let s = PickupStore::default();
-        s.complete(STATE, &challenge(), Outcome::Token("one".into()), 0);
-        s.complete(STATE, &challenge(), Outcome::Token("two".into()), 1);
+        s.register(STATE, &challenge(), ME, 0);
+        s.complete(STATE, &challenge(), ME, Outcome::Token("one".into()), 0);
+        s.complete(STATE, &challenge(), ME, Outcome::Token("two".into()), 1);
         assert_eq!(s.pick_up(STATE, VERIFIER, 2), Pickup::Ready(Outcome::Token("two".into())));
+    }
+
+    fn state(i: usize) -> String {
+        format!("state-{i:08}")
     }
 
     #[test]
     fn the_map_is_swept_and_bounded() {
         let s = PickupStore::default();
         for i in 0..10 {
-            s.register(&format!("state-{i:08}"), &challenge(), 0);
+            s.register(&state(i), &challenge(), &format!("u{i}"), 0);
         }
         assert_eq!(s.len(), 10);
         s.sweep_now(PICKUP_TTL_MS + 1);
@@ -326,19 +389,19 @@ mod tests {
         // A periodic sweep also runs on the next write.
         let s = PickupStore::default();
         for i in 0..10 {
-            s.register(&format!("state-{i:08}"), &challenge(), 0);
+            s.register(&state(i), &challenge(), &format!("u{i}"), 0);
         }
-        s.register("late-state-1", &challenge(), PICKUP_TTL_MS + SWEEP_EVERY_MS);
+        s.register("late-state-1", &challenge(), ME, PICKUP_TTL_MS + SWEEP_EVERY_MS);
         assert_eq!(s.len(), 1);
 
         // Full: the oldest goes first.
         let s = PickupStore::default();
         for i in 0..MAX_ENTRIES + 5 {
-            s.register(&format!("state-{i:08}"), &challenge(), 1);
+            s.register(&state(i), &challenge(), &format!("u{i}"), 1);
         }
         assert_eq!(s.len(), MAX_ENTRIES);
-        assert_eq!(s.pick_up("state-00000000", VERIFIER, 2), Pickup::NotFound);
-        assert_eq!(s.pick_up(&format!("state-{:08}", MAX_ENTRIES + 4), VERIFIER, 2), Pickup::Pending);
+        assert_eq!(s.pick_up(&state(0), VERIFIER, 2), Pickup::NotFound);
+        assert_eq!(s.pick_up(&state(MAX_ENTRIES + 4), VERIFIER, 2), Pickup::Pending);
     }
 
     #[test]
