@@ -76,13 +76,13 @@ const PASSED_OVER: [&str; 1] = [HISTORY_FILE_NAME];
 mod texts {
     #[cfg(not(windows))]
     pub use crate::l10n::mac::{
-        BackupImportDefaultTask, BackupImportDisabled, BackupImportFFmpegPath, BackupImportProgram,
-        BackupImportRefused,
+        BackupImportAIURL, BackupImportDefaultTask, BackupImportDisabled, BackupImportFFmpegPath,
+        BackupImportProgram, BackupImportRefused,
     };
     #[cfg(windows)]
     pub use crate::l10n::windows::{
-        BackupImportDefaultTask, BackupImportDisabled, BackupImportFFmpegPath, BackupImportProgram,
-        BackupImportRefused,
+        BackupImportAIURL, BackupImportDefaultTask, BackupImportDisabled, BackupImportFFmpegPath,
+        BackupImportProgram, BackupImportRefused,
     };
 }
 
@@ -118,6 +118,10 @@ pub enum DisabledKind {
     /// `FFmpegOptions.OverrideCLIPath` with `CLIPath`: the program recordings start
     /// instead of the FFmpeg from Components.
     FfmpegPath { path: String },
+    /// An AI provider address in `ToolsSettings.AIOptions` (`OpenAICustomURL`, and any
+    /// other `...URL` member): the stored API key would go there with the pictures
+    /// (security review 2026-10-24, A1). Back to the provider's default address.
+    AiUrl { field: String, url: String },
 }
 
 impl DisabledStep {
@@ -135,6 +139,9 @@ impl DisabledStep {
             DisabledKind::PerformActions => t(helpers::AfterCaptureTasks_PerformActions).into(),
             DisabledKind::WatchFolders => t(s::TaskSettingsWindow_WatchFolders).into(),
             DisabledKind::FfmpegPath { path } => tf(texts::BackupImportFFmpegPath, &[path.into()]),
+            DisabledKind::AiUrl { field, url } => {
+                tf(texts::BackupImportAIURL, &[url.into(), field.into()])
+            }
         };
         format!("{task}: {what}")
     }
@@ -358,7 +365,53 @@ fn disable_task(
         options.insert("CLIPath".into(), Value::String(String::new()));
         kinds.push(DisabledKind::FfmpegPath { path });
     }
+
+    // Where the AI key goes (A1, the W3 rule for addresses): an AI provider address stays
+    // only when this task already used that very address; otherwise it is back to the
+    // provider's default, so a backup cannot send the person's key and pictures to a
+    // host of its choosing.
+    let before_ai = before
+        .and_then(|b| b.get("ToolsSettings"))
+        .and_then(|t| t.get("AIOptions"))
+        .and_then(Value::as_object);
+    if let Some(Value::Object(ai)) = task
+        .get_mut("ToolsSettings")
+        .and_then(|t| t.get_mut("AIOptions"))
+    {
+        for (field, value) in ai.iter_mut() {
+            if !is_address_member(field) {
+                continue;
+            }
+            let Some(url) = value
+                .as_str()
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let previous = before_ai
+                .and_then(|b| b.get(field))
+                .and_then(Value::as_str)
+                .map(str::trim);
+            if previous == Some(url.as_str()) {
+                continue;
+            }
+            *value = Value::Null;
+            kinds.push(DisabledKind::AiUrl {
+                field: field.clone(),
+                url,
+            });
+        }
+    }
     kinds
+}
+
+/// A settings member that names an address requests go to (`OpenAICustomURL`, any
+/// `...Url`, `...Endpoint`).
+fn is_address_member(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with("url") || lower.ends_with("endpoint")
 }
 
 /// The FFmpeg a TaskSettings node starts instead of the component (`FFmpegPath`): its
@@ -946,5 +999,119 @@ mod tests {
         let zip = zip::ZipArchive::new(std::fs::File::open(&archive).unwrap()).unwrap();
         let names: Vec<_> = zip.file_names().collect();
         assert_eq!(names, [APPLICATION_CONFIG_FILE]);
+    }
+
+    fn with_ai(url: Option<&str>) -> Value {
+        let mut ai = serde_json::json!({"Provider": "OpenAI", "OpenAIModel": "gpt-5-mini"});
+        if let Some(url) = url {
+            ai["OpenAICustomURL"] = serde_json::json!(url);
+        }
+        serde_json::json!({"ToolsSettings": {"AIOptions": ai}})
+    }
+
+    /// Security review 2026-10-24, A1: a backup's `OpenAICustomURL` would receive the
+    /// person's OpenAI key (from the credential store) and the analysed pictures. An
+    /// address this installation did not already use goes back to the default and is
+    /// named in the report; the one already in use stays.
+    #[test]
+    fn an_ai_address_a_backup_brings_goes_back_to_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        let mine = "https://llm.internal.example/v1";
+        std::fs::write(
+            profile.join(APPLICATION_CONFIG_FILE),
+            serde_json::to_vec(&serde_json::json!({"DefaultTaskSettings": with_ai(Some(mine))}))
+                .unwrap(),
+        )
+        .unwrap();
+
+        let mut hotkey = with_ai(Some("https://evil.example/v1/responses"));
+        hotkey["Job"] = serde_json::json!("AnalyzeImage");
+        hotkey["Description"] = serde_json::json!("Analyze");
+        // A member named like an address in the future gets the same treatment.
+        hotkey["ToolsSettings"]["AIOptions"]["GeminiBaseUrl"] =
+            serde_json::json!("https://evil.example/gemini");
+        let application = serde_json::to_vec(&serde_json::json!({
+            "DefaultTaskSettings": with_ai(Some("https://evil.example/v1/responses"))
+        }))
+        .unwrap();
+        let hotkeys = serde_json::to_vec(&serde_json::json!({"Hotkeys": [
+            {"TaskSettings": hotkey}
+        ]}))
+        .unwrap();
+        let hostile = archive(
+            dir.path(),
+            &[
+                (APPLICATION_CONFIG_FILE, &application),
+                (HOTKEYS_CONFIG_FILE, &hotkeys),
+            ],
+        );
+        let report = import(&hostile, &profile).unwrap();
+        assert_eq!(
+            report.disabled,
+            [
+                DisabledStep {
+                    task: None,
+                    kind: DisabledKind::AiUrl {
+                        field: "OpenAICustomURL".into(),
+                        url: "https://evil.example/v1/responses".into()
+                    }
+                },
+                DisabledStep {
+                    task: Some("Analyze".into()),
+                    kind: DisabledKind::AiUrl {
+                        field: "OpenAICustomURL".into(),
+                        url: "https://evil.example/v1/responses".into()
+                    }
+                },
+                DisabledStep {
+                    task: Some("Analyze".into()),
+                    kind: DisabledKind::AiUrl {
+                        field: "GeminiBaseUrl".into(),
+                        url: "https://evil.example/gemini".into()
+                    }
+                },
+            ]
+        );
+        let app = read(&profile, APPLICATION_CONFIG_FILE);
+        let ai = &app["DefaultTaskSettings"]["ToolsSettings"]["AIOptions"];
+        assert_eq!(ai["OpenAICustomURL"], Value::Null);
+        // The rest of the options came in as they were.
+        assert_eq!(ai["OpenAIModel"], "gpt-5-mini");
+        let keys = read(&profile, HOTKEYS_CONFIG_FILE);
+        let ai = &keys["Hotkeys"][0]["TaskSettings"]["ToolsSettings"]["AIOptions"];
+        assert_eq!(ai["OpenAICustomURL"], Value::Null);
+        assert_eq!(ai["GeminiBaseUrl"], Value::Null);
+        let notes = report.notes().join("\n");
+        assert!(
+            notes.contains("https://evil.example/v1/responses"),
+            "{notes}"
+        );
+
+        // The address this installation already used stays as it is.
+        let same = serde_json::to_vec(&serde_json::json!({
+            "DefaultTaskSettings": with_ai(Some("https://evil.example/v1/responses"))
+        }))
+        .unwrap();
+        let again = archive(dir.path(), &[(APPLICATION_CONFIG_FILE, &same)]);
+        // The profile now holds no custom address: still reset.
+        assert_eq!(import(&again, &profile).unwrap().disabled.len(), 1);
+        std::fs::write(
+            profile.join(APPLICATION_CONFIG_FILE),
+            serde_json::to_vec(&serde_json::json!({"DefaultTaskSettings": with_ai(Some(mine))}))
+                .unwrap(),
+        )
+        .unwrap();
+        let own =
+            serde_json::to_vec(&serde_json::json!({"DefaultTaskSettings": with_ai(Some(mine))}))
+                .unwrap();
+        let own = archive(dir.path(), &[(APPLICATION_CONFIG_FILE, &own)]);
+        assert!(import(&own, &profile).unwrap().disabled.is_empty());
+        let app = read(&profile, APPLICATION_CONFIG_FILE);
+        assert_eq!(
+            app["DefaultTaskSettings"]["ToolsSettings"]["AIOptions"]["OpenAICustomURL"],
+            mine
+        );
     }
 }
