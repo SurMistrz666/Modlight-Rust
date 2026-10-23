@@ -49,6 +49,31 @@ choosing, this time the **AI provider key** (same pattern as W1, through a new s
 
 Dependency advisories are summarised in their own section below.
 
+## Status after the fixes (branch `sec-fix-3`, 2026-10-24)
+
+| # | Status | Commit | What changed | Tests |
+|---|---|---|---|---|
+| P1 | fixed | `9aa981b` | The `/authorize` loader registers the pending entry with the signed-in **user id** (`PickupStore::register(state, challenge, user_id)`). `approveDesktopClient` / `denyDesktopClient` store an outcome only on a live entry that the same account registered with the same challenge; a state never registered, or registered by another account, stores nothing. Another account's render never takes a live entry over. The approval then answers `pickup: false` and the page falls back to upstream's loopback POST and manual key (both reach only the approver's own machine). The pickup route still gives one 404 for unknown, expired and mismatched. | `tests/secreview_pickup.rs` (the review's attacks, now asserting that they fail): `attacker_who_saw_the_url_cannot_plant_his_token_in_the_victims_app`, `attacker_who_saw_the_url_cannot_cancel_the_sign_in`, `an_approval_for_a_state_never_registered_reaches_no_app`, `registering_first_with_another_challenge_gives_the_attacker_nothing`; `pickup::tests::only_the_account_that_rendered_the_page_decides`, `a_state_nobody_registered_takes_no_decision`; `actions::authorize::tests::an_approval_for_a_state_this_account_never_rendered_stays_on_its_page`; `web/tests/authorize-pickup.test.tsx` (fallback on `pickup: false`); e2e `another_account_cannot_decide_for_the_app` |
+| P2 | mitigated | `9835a92` | A confirmation code, the first 6 base32 characters of `SHA-256("modlight-confirm:" \|\| challenge)` shown as `XXX-XXX`, is computed on both sides (server `pickup::confirmation_code`, app `signin::confirmation_code`, shared test vector `554-LIO`). The prompt's pickup variant shows it next to Approve with "Approve only if this code matches the one in your Modlight app" and says the key will be handed to the Modlight app that shows that code, wherever it runs (EN/PL, `messages/*/authorizePickup.json`). The app's sign-in window shows the code while it waits (QA screen `sign-in-waiting`, snapshots light/dark EN/PL). The loopback flow is unchanged. Residual risk: a person who approves without comparing the codes is still phished (as with any device-code flow). Fix 3 of the review (audit the polling IP) not done. | `pickup::tests::the_confirmation_code_is_six_base32_characters_of_the_challenge`, `secreview_pickup::a_phishing_link_shows_a_code_no_app_of_the_victims_shows`, app `signin::tests::the_confirmation_code_matches_the_server`, `web/tests/authorize-pickup.test.tsx` ("shows the app's code next to Approve"), snapshot `sign-in-waiting/*`, e2e (payload `confirmCode` equals the app's code) |
+| A1 | fixed | `2cf083f` | Backup import resets, in every task's `ToolsSettings.AIOptions`, `OpenAICustomURL` and any other `...URL` / `...Endpoint` member that differs from the value before the import (to the default, `null`), and lists it in the import summary (`BackupImportAIURL`). Defence in depth: the OpenAI key is stored as `{base, key}` with the base URL it was entered for (a key from an earlier build counts as the default endpoint); `ai_options` loads it only for the same base, otherwise sends no key and the analyze window asks to enter it again (`AIKeyOtherAddress`). | `backup::tests::an_ai_address_a_backup_brings_goes_back_to_the_default`, `settings::tests::the_openai_key_is_bound_to_its_address`, `tools::analyze::tests::the_openai_key_never_goes_to_another_address` |
+| P3 | fixed | `35d9565` | At most 5 live entries per account (a new render replaces that account's own oldest pending entry, or is refused when all 5 are decided); a full map evicts the oldest **pending** entry; a decided entry is never evicted before it expires. Renders that register are rate-limited: 30 per account and 120 per address per 10 minutes (`register_render`). | `pickup::tests::one_account_can_hold_only_a_few_entries`, `a_decided_entry_is_never_evicted_before_it_expires`, `page_renders_are_rate_limited_per_account`, `the_map_is_swept_and_bounded`; `secreview_pickup::a_register_flood_does_not_evict_other_accounts_entries` |
+| D1 | open (deployment) | - | Needs the check on the production nginx; no code change. | - |
+| W1w, T1 | open / by design | - | Unchanged. | - |
+| Deps | updated | `013f07f` | Server: `rustls-webpki` 0.103.15 -> 0.103.16, `webpki-roots` 1.0.9 -> 1.0.10, `ctutils` 0.4.3 -> 0.4.4. App: `rustls-webpki` 0.103.15 -> 0.103.16, `webpki-root-certs` 1.0.9 -> 1.0.10 (`webpki-roots` was already 1.0.10). Not done: app `tokio` 1.53.3 (the workspace pins `=1.53.2` on purpose; the advisory is a warning, not reachable), `zip` 6 -> 9 (API changes; not reachable today, follow-up), SPA bumps (section below). | full server and app test suites |
+
+Verification (2026-10-24, on `sec-fix-3`): server `cargo fmt --check`, `cargo clippy
+--all-targets -D warnings`, `cargo test` with the dev Postgres (1283 passed, 0 failed, database
+tests included); `server/web` `npm run verify` (76 tests, build, bundle audit, sync check); app
+`cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo test --workspace`
+(715 passed, 0 failed). Real-server e2e (`docs/handoff/signin-pickup.md`, server of this branch on
+127.0.0.1:8462 with its own database, two accounts):
+`MODLIGHT_PICKUP_E2E=... cargo test -p modlight-api --test signin_pickup`: 4 passed
+(`pickup_signs_in_when_the_browser_never_delivers` about 2 s after the approval,
+`loopback_still_signs_in_when_the_browser_delivers`, `a_refusal_arrives_through_the_pickup`, and
+the new `another_account_cannot_decide_for_the_app`); every run also checks that the page
+payload's `confirmCode` equals the app's code and that the owner's approval answers `pickup: true`.
+
+
 ---
 
 ## Findings

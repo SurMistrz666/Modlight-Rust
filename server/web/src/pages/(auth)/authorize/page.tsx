@@ -7,7 +7,8 @@
 // The page has no side effect. generateMetadata:
 // { title: t("authorize.title"), robots: { index: false, follow: false } }.
 // This path has its own CSP (connect-src adds http://127.0.0.1:*).
-// Not upstream: `parsed.request.challenge` (the app's pickup) is passed on.
+// Not upstream: `parsed.request.challenge` (the app's pickup) is passed on, with
+// `confirmCode`, the code the app shows (security review 2026-10-24, P2).
 import Link from "next/link";
 import { Unplug } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -21,6 +22,8 @@ export interface AuthorizePageProps {
   parsed: ParsedAuthorizeRequest;
   /** The signed-in account when `parsed.ok` (otherwise the server redirected), else null */
   session: { user: { email: string } } | null;
+  /** Not upstream: XXX-XXX derived from the pickup challenge, when there is one. */
+  confirmCode?: string;
 }
 
 export default function AuthorizePage({ props }: { props: AuthorizePageProps }) {
@@ -68,6 +71,7 @@ export default function AuthorizePage({ props }: { props: AuthorizePageProps }) 
           callback: parsed.request.callback,
           // Not upstream: the desktop app's pickup challenge (SKELETON.md 9).
           challenge: (parsed.request as { challenge?: string }).challenge,
+          confirmCode: props.confirmCode,
         }}
       />
     </AuthCard>

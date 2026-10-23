@@ -16,6 +16,8 @@ import { expandFixture, FIXTURES } from "../src/fixtures/source";
 const CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
 const calls: { module: string; name: string; args: unknown[] }[] = [];
+/** What the server says about the pickup on approval (`pickup: false`: not kept). */
+let serverKeptIt: boolean | undefined = true;
 const posts: { url: string; body: string }[] = [];
 
 beforeAll(() => {
@@ -30,13 +32,22 @@ beforeAll(() => {
 afterEach(() => {
   calls.length = 0;
   posts.length = 0;
+  serverKeptIt = true;
 });
 
 async function mount(fixture: string) {
   setActionTransport(async (module, name, args) => {
     calls.push({ module, name, args });
     if (name === "approveDesktopClient") {
-      return { ok: { ok: true, token: "tok-123456", callback: "http://127.0.0.1:53682/", state: "abcdefghijklmnop" } };
+      return {
+        ok: {
+          ok: true,
+          token: "tok-123456",
+          callback: "http://127.0.0.1:53682/",
+          state: "abcdefghijklmnop",
+          ...(serverKeptIt === undefined ? {} : { pickup: serverKeptIt }),
+        },
+      };
     }
     return { ok: { ok: true } };
   });
@@ -59,7 +70,7 @@ async function settle() {
 describe("authorize with a pickup challenge", () => {
   it("approves with the challenge and says the app collects the key itself", async () => {
     const view = await mount("auth-authorize-pickup");
-    expect(view.container.textContent).toContain("collects the key from this server itself");
+    expect(view.container.textContent).toContain("handed to the Modlight app that shows the code 554-LIO");
     fireEvent.click(view.getByText("Approve and connect"));
     await settle();
     expect(calls).toHaveLength(1);
@@ -80,6 +91,26 @@ describe("authorize with a pickup challenge", () => {
     expect(calls.map((c) => c.name)).toEqual(["denyDesktopClient"]);
     expect(calls[0].args[0]).toMatchObject({ state: "abcdefghijklmnop", challenge: CHALLENGE });
     expect(view.container.textContent).toContain("Nothing was issued");
+    view.unmount();
+  });
+});
+
+describe("the confirmation code (security review 2026-10-24, P2)", () => {
+  it("shows the app's code next to Approve with the matching rule", async () => {
+    const view = await mount("auth-authorize-pickup");
+    const box = view.getByTestId("confirm-code");
+    expect(box.textContent).toContain("554-LIO");
+    expect(box.textContent).toContain("Approve only if this code matches the one in your Modlight app.");
+    view.unmount();
+  });
+
+  it("falls back to the loopback and the manual key when the server did not keep the pickup", async () => {
+    serverKeptIt = false;
+    const view = await mount("auth-authorize-pickup");
+    fireEvent.click(view.getByText("Approve and connect"));
+    await settle();
+    expect(view.container.textContent).not.toContain("is picking up its key");
+    expect(view.container.textContent).toContain("did not answer");
     view.unmount();
   });
 });

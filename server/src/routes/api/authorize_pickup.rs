@@ -128,11 +128,11 @@ mod tests {
         assert_eq!((status, out.clone()), (StatusCode::NOT_FOUND, json!({ "error": "not_found" })));
         assert_eq!(headers[header::CACHE_CONTROL], "no-store");
 
-        store.register(STATE, &challenge_for(VERIFIER), now_ms());
+        store.register(STATE, &challenge_for(VERIFIER), "u1", now_ms());
         let (status, out, _) = call(&store, &ip, &h, &body(STATE, VERIFIER)).await;
         assert_eq!((status, out), (StatusCode::ACCEPTED, json!({ "status": "pending" })));
 
-        store.complete(STATE, &challenge_for(VERIFIER), Outcome::Token("the-token".into()), now_ms());
+        store.complete(STATE, &challenge_for(VERIFIER), "u1", Outcome::Token("the-token".into()), now_ms());
         let (status, out, _) = call(&store, &ip, &h, &body(STATE, VERIFIER)).await;
         assert_eq!((status, out), (StatusCode::OK, json!({ "token": "the-token" })));
 
@@ -143,7 +143,8 @@ mod tests {
     #[tokio::test]
     async fn a_denial_is_delivered() {
         let store = PickupStore::default();
-        store.complete(STATE, &challenge_for(VERIFIER), Outcome::Denied, now_ms());
+        store.register(STATE, &challenge_for(VERIFIER), "u1", now_ms());
+        store.complete(STATE, &challenge_for(VERIFIER), "u1", Outcome::Denied, now_ms());
         let (status, out, _) = call(&store, &ip(), &json_headers(), &body(STATE, VERIFIER)).await;
         assert_eq!((status, out), (StatusCode::OK, json!({ "error": "access_denied" })));
     }
@@ -153,9 +154,12 @@ mod tests {
         let store = PickupStore::default();
         let ip = ip();
         let h = json_headers();
-        store.complete(STATE, &challenge_for(VERIFIER), Outcome::Token("t".into()), now_ms());
+        store.register(STATE, &challenge_for(VERIFIER), "u1", now_ms());
+        store.complete(STATE, &challenge_for(VERIFIER), "u1", Outcome::Token("t".into()), now_ms());
         let other_state = "Zbcdefgh12345678Abcdefgh12345678";
-        store.complete(other_state, &challenge_for(VERIFIER), Outcome::Token("t".into()), now_ms() - 10 * 60 * 1000);
+        let long_ago = now_ms() - 10 * 60 * 1000;
+        store.register(other_state, &challenge_for(VERIFIER), "u1", long_ago);
+        store.complete(other_state, &challenge_for(VERIFIER), "u1", Outcome::Token("t".into()), long_ago);
 
         let unknown = call(&store, &ip, &h, &body("Qbcdefgh12345678Abcdefgh12345678", VERIFIER)).await;
         let expired = call(&store, &ip, &h, &body(other_state, VERIFIER)).await;

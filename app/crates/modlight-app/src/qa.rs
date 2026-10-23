@@ -36,6 +36,7 @@ pub const SCREENS: &[&str] = &[
     "tab-create",
     "tab-tools",
     "sign-in",
+    "sign-in-waiting",
     "sign-in-signed",
     "prompt",
     "confirm",
@@ -838,6 +839,21 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
             window.initialized = true;
             state.windows.sign_in = Some(window);
         }
+        "sign-in-waiting" => {
+            // The browser sign-in waiting for the person, with the confirmation code
+            // (review 2026-10-24, P2); the code is the one of RFC 7636's challenge.
+            let mut window = crate::signin::SignInWindow::new("https://files.example.com");
+            window.initialized = true;
+            window.busy = true;
+            window.set_status(
+                modlight_core::l10n::t(modlight_core::l10n::s::SignInWindow_Opening),
+                crate::signin::Tone::Neutral,
+            );
+            window.confirm_code = modlight_api::signin::confirmation_code(
+                "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            );
+            state.windows.sign_in = Some(window);
+        }
         "sign-in-signed" => {
             let mut window = crate::signin::SignInWindow::new("https://files.example.com");
             window.initialized = true;
@@ -917,7 +933,7 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
         _ => {}
     }
     match screen {
-        "sign-in" | "sign-in-signed" => vec2(crate::signin::WIDTH, 420.0),
+        "sign-in" | "sign-in-waiting" | "sign-in-signed" => vec2(crate::signin::WIDTH, 420.0),
         "prompt" => vec2(crate::dialogs::prompt::WIDTH, 260.0),
         "confirm" => vec2(crate::dialogs::confirm::WIDTH, 160.0),
         "folder-delete" => vec2(crate::dialogs::folder_delete::WIDTH, 360.0),
@@ -947,6 +963,7 @@ pub fn is_main_window(screen: &str) -> bool {
         && !matches!(
             screen,
             "sign-in"
+                | "sign-in-waiting"
                 | "sign-in-signed"
                 | "prompt"
                 | "confirm"
@@ -1016,7 +1033,7 @@ impl eframe::App for ShotApp {
         }
         let colors = state.colors.clone();
         let wanted = match self.screen.as_str() {
-            "sign-in" | "sign-in-signed" => {
+            "sign-in" | "sign-in-waiting" | "sign-in-signed" => {
                 let _ = crate::signin::ui(ui, state);
                 state.windows.sign_in.as_ref().map(|w| w.content_height)
             }
@@ -1078,7 +1095,7 @@ pub fn render(screen: &str, look: &Look) -> Result<RgbaImage, String> {
     set_thread_utc(true);
     // Random name codes (`%ra{10}`) draw the same characters in every render.
     modlight_core::names::helpers::set_thread_seed(Some(20261020));
-    let signed_in = !matches!(screen, "signed-out" | "sign-in");
+    let signed_in = !matches!(screen, "signed-out" | "sign-in" | "sign-in-waiting");
     let mut size = MAIN_SIZE;
     let mut harness = egui_kittest::Harness::builder()
         .with_size(look.size.unwrap_or(MAIN_SIZE))

@@ -1,5 +1,10 @@
 {
-  "local": "The key goes only to the app that opened this page: it collects the key from this server itself, with a one-time secret that only the app knows.",
+  "local": "The key will be handed to the Modlight app that shows the code {code}, wherever that app runs: it collects the key from this server with a one-time secret that only it knows.",
+  "confirm": {
+    "label": "Confirmation code",
+    "match": "Approve only if this code matches the one in your Modlight app.",
+    "mismatch": "If no Modlight app of yours shows this code, or it shows a different one, choose Not now: someone else may be waiting for this key."
+  },
   "waiting": {
     "title": "{client} is picking up its key",
     "body": "The app collects the key from {appName} by itself. Keep it open; this usually takes a few seconds.",

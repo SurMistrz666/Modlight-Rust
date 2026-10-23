@@ -1,5 +1,10 @@
 {
-  "local": "Klucz trafia tylko do aplikacji, która otworzyła tę stronę: aplikacja sama odbiera go z tego serwera, za pomocą jednorazowego sekretu, który zna tylko ona.",
+  "local": "Klucz zostanie przekazany aplikacji Modlight, która pokazuje kod {code}, gdziekolwiek ta aplikacja działa: odbiera go z tego serwera za pomocą jednorazowego sekretu, który zna tylko ona.",
+  "confirm": {
+    "label": "Kod potwierdzenia",
+    "match": "Zatwierdź tylko wtedy, gdy ten kod zgadza się z kodem w Twojej aplikacji Modlight.",
+    "mismatch": "Jeśli żadna Twoja aplikacja Modlight nie pokazuje tego kodu albo pokazuje inny, wybierz Nie teraz: ktoś inny może czekać na ten klucz."
+  },
   "waiting": {
     "title": "{client} odbiera swój klucz",
     "body": "Aplikacja sama odbierze klucz z {appName}. Nie zamykaj jej; zwykle trwa to kilka sekund.",

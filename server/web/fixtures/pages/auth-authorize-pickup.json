@@ -19,7 +19,8 @@
         "user": {
           "email": "alicja@example.com"
         }
-      }
+      },
+      "confirmCode": "554-LIO"
     },
     "meta": {
       "title": "Connect a desktop app - Modlight",
