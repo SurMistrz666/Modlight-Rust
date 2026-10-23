@@ -20,4 +20,10 @@
   <data name="BackupImportFFmpegPath" xml:space="preserve">
     <value>FFmpeg path {0}, now the FFmpeg from Components</value>
   </data>
+  <data name="SignInConfirmCode" xml:space="preserve">
+    <value>Confirmation code: {0}</value>
+  </data>
+  <data name="SignInConfirmCodeHint" xml:space="preserve">
+    <value>The page in your browser shows a code too. Approve there only if it is this same code; if it is different, choose Not now.</value>
+  </data>
 </root>

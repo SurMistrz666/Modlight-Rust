@@ -20,4 +20,10 @@
   <data name="BackupImportFFmpegPath" xml:space="preserve">
     <value>ścieżka FFmpeg {0}, teraz FFmpeg z Komponentów</value>
   </data>
+  <data name="SignInConfirmCode" xml:space="preserve">
+    <value>Kod potwierdzenia: {0}</value>
+  </data>
+  <data name="SignInConfirmCodeHint" xml:space="preserve">
+    <value>Strona w przeglądarce też pokazuje kod. Zatwierdź tam tylko wtedy, gdy to ten sam kod; jeśli jest inny, wybierz Nie teraz.</value>
+  </data>
 </root>

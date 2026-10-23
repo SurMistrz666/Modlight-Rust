@@ -23,7 +23,9 @@
 //!      that generated the link can collect what the link produced.
 //!
 //! The entry is handed out ONCE and then deleted, lives five minutes, and the
-//! map is bounded and swept.
+//! map is bounded and swept. The prompt and the
+//! app both show [`confirmation_code`] of the challenge, so a person approving
+//! somebody else's link sees that no app of theirs shows that code (P2).
 //! Everything is in memory: a restart loses pending pickups, and the
 //! loopback POST and the manual key still work then.
 //! Unknown, expired and mismatched requests all get the same 404, so the
@@ -110,6 +112,29 @@ pub struct PickupStore {
 /// `base64url(SHA-256(verifier))` without padding: what the app put in the link.
 pub fn challenge_for(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
+/// Domain separation for [`confirmation_code`]: the code is never a prefix of
+/// anything else derived from the challenge.
+const CONFIRM_CONTEXT: &[u8] = b"modlight-confirm:";
+
+/// RFC 4648 base32 alphabet.
+const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+/// The short code the app and the prompt both show (review 2026-10-24, P2):
+/// the first 6 base32 characters of `SHA-256("modlight-confirm:" || challenge)`,
+/// as `XXX-XXX`. A phished person has no app on screen showing it, so a
+/// mismatch is visible before Approve. 30 bits: not a secret, a comparison.
+/// The app computes the same (`modlight_api::signin::confirmation_code`).
+pub fn confirmation_code(challenge: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(CONFIRM_CONTEXT);
+    hasher.update(challenge.as_bytes());
+    let digest = hasher.finalize();
+    // 30 bits from the first four bytes, five at a time.
+    let bits = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]);
+    let chars: String = (0..6).map(|i| BASE32[((bits >> (27 - 5 * i)) & 31) as usize] as char).collect();
+    format!("{}-{}", &chars[..3], &chars[3..])
 }
 
 /// A verifier as RFC 7636 spells one: 43 to 128 unreserved characters.
@@ -268,6 +293,16 @@ mod tests {
         assert!(is_plausible_verifier(VERIFIER));
         assert!(!is_plausible_verifier("short"));
         assert!(!is_plausible_verifier(&format!("{VERIFIER}!")));
+    }
+
+    #[test]
+    fn the_confirmation_code_is_six_base32_characters_of_the_challenge() {
+        // The same vector is pinned in the app (modlight-api signin tests).
+        let code = confirmation_code(&challenge());
+        assert_eq!(code, "554-LIO");
+        assert_eq!(code.len(), 7);
+        assert!(code.chars().enumerate().all(|(i, c)| if i == 3 { c == '-' } else { BASE32.contains(&(c as u8)) }));
+        assert_ne!(confirmation_code(&challenge_for(&"y".repeat(43))), code);
     }
 
     #[test]

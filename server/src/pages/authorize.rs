@@ -17,7 +17,9 @@
 //! `parseAuthorizeRequest({ port, state, name })` of the query, `session` is
 //! `{ user: { email } }` when the request is valid and somebody is signed in,
 //! `null` otherwise (an invalid request never looks the session up; a valid
-//! one without a session is a redirect, not a page).
+//! one without a session is a redirect, not a page). Not upstream:
+//! `confirmCode` (`XXX-XXX`) when the request carries a pickup challenge, the
+//! code the app shows next to its waiting spinner (review 2026-10-24, P2).
 
 use serde_json::{Value, json};
 
@@ -59,13 +61,15 @@ pub async fn load(ctx: PageCtx) -> PageResult {
     // state is bound to this challenge AND this account: only this account's
     // approval or refusal reaches the app (crate::authorize::pickup, review
     // 2026-10-24 P1).
-    let props = json!({ "parsed": parsed, "session": { "user": { "email": session.user.email } } });
+    let mut props = json!({ "parsed": parsed, "session": { "user": { "email": session.user.email } } });
     if let Some(challenge) = &request.challenge {
-        use crate::authorize::pickup::{Registered, now_ms, store};
+        use crate::authorize::pickup::{Registered, confirmation_code, now_ms, store};
         let registered = store().register(&request.state, challenge, &session.user.id, now_ms());
         if registered != Registered::Bound {
             tracing::warn!("[authorize] pickup not registered: {registered:?}");
         }
+        // P2: the code the app shows, so the person can compare before approving.
+        props["confirmCode"] = Value::String(confirmation_code(challenge));
     }
 
     PageData::new(&props, meta)

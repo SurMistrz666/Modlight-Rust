@@ -19,6 +19,15 @@ use crate::widgets::{
 
 pub const WIDTH: f32 = 580.0;
 
+/// The port's own texts (security review 2026-10-24, P2), worded per system like the
+/// backup report's.
+mod texts {
+    #[cfg(not(windows))]
+    pub use modlight_core::l10n::mac::{SignInConfirmCode, SignInConfirmCodeHint};
+    #[cfg(windows)]
+    pub use modlight_core::l10n::windows::{SignInConfirmCode, SignInConfirmCodeHint};
+}
+
 /// The server a distribution may build in (`ModlightDefaultHost`); empty by default,
 /// which also keeps updates off (PORT.md section 5).
 pub const DEFAULT_HOST: &str = match option_env!("MODLIGHT_DEFAULT_HOST") {
@@ -50,6 +59,9 @@ pub struct SignInWindow {
     pub has_quota: bool,
     pub has_quota_bar: bool,
     pub cancel: Option<CancellationToken>,
+    /// While the browser sign-in waits: the code the authorize page must show too
+    /// (`signin::confirmation_code`, review 2026-10-24 P2). Empty otherwise.
+    pub confirm_code: String,
     pub generation: u64,
     pub content_height: f32,
     pub initialized: bool,
@@ -78,6 +90,7 @@ impl SignInWindow {
             has_quota: false,
             has_quota_bar: false,
             cancel: None,
+            confirm_code: String::new(),
             generation: 0,
             content_height: 300.0,
             initialized: false,
@@ -285,6 +298,14 @@ impl AppState {
         let generation = window.generation;
         let host = window.host.clone();
         let token = window.manual_token.clone();
+        // The verifier is made here so the window can show its confirmation code while
+        // the person decides in the browser.
+        let verifier = signin::new_verifier();
+        window.confirm_code = if manual {
+            String::new()
+        } else {
+            signin::confirmation_code(&signin::challenge_for(&verifier))
+        };
         window.set_status(
             if manual {
                 t(s::SignInWindow_Checking)
@@ -299,10 +320,11 @@ impl AppState {
                 signin::use_token(&api, &host, &token, &cancel).await
             } else {
                 let name = signin::client_name(modlight_core::APP_NAME, &machine);
-                signin::sign_in_with_browser(
+                signin::sign_in_with_browser_using(
                     &api,
                     &host,
                     &name,
+                    &verifier,
                     |url| {
                         if qa {
                             log::info!("QA mode: the authorize page is not opened");
@@ -332,6 +354,7 @@ impl AppState {
             }
             window.busy = false;
             window.cancel = None;
+            window.confirm_code.clear();
         }
         match result {
             Ok(signed) => {
@@ -558,6 +581,27 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Option<SignInAction> {
                         Weight::Normal,
                         colors.text_secondary(),
                     );
+                    if window.busy && !window.confirm_code.is_empty() {
+                        ui.add_space(8.0);
+                        crate::widgets::text(
+                            ui,
+                            &format(
+                                t(texts::SignInConfirmCode),
+                                &[Arg::from(window.confirm_code.as_str())],
+                            ),
+                            17.0,
+                            Weight::SemiBold,
+                            colors.accent_start(),
+                        );
+                        ui.add_space(4.0);
+                        crate::widgets::text_wrapped(
+                            ui,
+                            t(texts::SignInConfirmCodeHint),
+                            12.0,
+                            Weight::Normal,
+                            colors.text_secondary(),
+                        );
+                    }
                 });
             });
         });

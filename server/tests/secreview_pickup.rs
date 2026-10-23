@@ -4,7 +4,9 @@
 //! against the fixed code and assert that the attack FAILS.
 use modlight_server::actions::authorize::{AuthorizeDeps, approve_with, deny_with};
 use modlight_server::api_token::TokenScope;
-use modlight_server::authorize::pickup::{Outcome, Pickup, PickupStore, Registered, challenge_for, now_ms};
+use modlight_server::authorize::pickup::{
+    Outcome, Pickup, PickupStore, Registered, challenge_for, confirmation_code, now_ms,
+};
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -95,4 +97,16 @@ fn registering_first_with_another_challenge_gives_the_attacker_nothing() {
     assert!(!s.complete(STATE, &attacker, "victim", Outcome::Token("victim".into()), now_ms()));
     assert_eq!(s.pick_up(STATE, VERIFIER, now_ms()), Pickup::NotFound);
     assert_eq!(s.pick_up(STATE, ATTACKER_VERIFIER, now_ms()), Pickup::Pending);
+}
+
+/// P2: a phishing link carries the attacker's own challenge. The server cannot tell it apart
+/// from a real one (the victim's own render registers it), so the defence is the confirmation
+/// code: the prompt shows the code of the ATTACKER's challenge, which no app of the victim's
+/// shows. Pinned here: the code depends on the challenge, so the two can never agree.
+#[test]
+fn a_phishing_link_shows_a_code_no_app_of_the_victims_shows() {
+    let victims_app = confirmation_code(&challenge_for(VERIFIER));
+    let phishing_page = confirmation_code(&challenge_for(ATTACKER_VERIFIER));
+    assert_ne!(victims_app, phishing_page);
+    assert_eq!(victims_app, "554-LIO");
 }
