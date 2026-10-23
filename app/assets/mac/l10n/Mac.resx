@@ -110,4 +110,10 @@
   <data name="SignInConfirmCodeHint" xml:space="preserve">
     <value>The page in your browser shows a code too. Approve there only if it is this same code; if it is different, choose Not now.</value>
   </data>
+  <data name="BackupImportAIURL" xml:space="preserve">
+    <value>AI address {0} ({1}), now the provider's default address</value>
+  </data>
+  <data name="AIKeyOtherAddress" xml:space="preserve">
+    <value>The OpenAI key was saved for a different address than the one in the options now, so it is not sent there. Open the options and enter the key again if you trust this address.</value>
+  </data>
 </root>

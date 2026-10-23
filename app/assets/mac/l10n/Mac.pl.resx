@@ -110,4 +110,10 @@
   <data name="SignInConfirmCodeHint" xml:space="preserve">
     <value>Strona w przeglądarce też pokazuje kod. Zatwierdź tam tylko wtedy, gdy to ten sam kod; jeśli jest inny, wybierz Nie teraz.</value>
   </data>
+  <data name="BackupImportAIURL" xml:space="preserve">
+    <value>adres AI {0} ({1}), teraz domyślny adres dostawcy</value>
+  </data>
+  <data name="AIKeyOtherAddress" xml:space="preserve">
+    <value>Klucz OpenAI zapisano dla innego adresu niż ten, który jest teraz w opcjach, więc nie zostanie tam wysłany. Otwórz opcje i wpisz klucz ponownie, jeśli ufasz temu adresowi.</value>
+  </data>
 </root>

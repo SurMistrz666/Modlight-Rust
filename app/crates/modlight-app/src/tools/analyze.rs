@@ -20,7 +20,7 @@ use modlight_core::l10n::{Arg, format, t, tools as tl};
 use modlight_core::tasks::host::NotificationSound;
 use modlight_core::tasks::settings::TaskSettings;
 use modlight_tools::analyze::{self, Endpoints, Picture};
-use modlight_tools::settings::{AiOptions, AiProvider};
+use modlight_tools::settings::{AiOptions, AiProvider, bind_openai_key, bound_openai_key};
 
 use super::jobs::{OptionsHome, tool_options};
 use super::kit::{self, Track};
@@ -28,6 +28,14 @@ use super::region::RegionFor;
 use super::{ToolWindow, WindowSpec};
 use crate::state::{AppState, Effect};
 use crate::theme::Weight;
+
+/// The port's own texts, worded per system.
+mod texts {
+    #[cfg(not(windows))]
+    pub use modlight_core::l10n::mac::AIKeyOtherAddress;
+    #[cfg(windows)]
+    pub use modlight_core::l10n::windows::AIKeyOtherAddress;
+}
 
 /// The Keychain items of the three keys (service "Modlight").
 const KEY_ACCOUNTS: [&str; 3] = [
@@ -215,7 +223,15 @@ impl AnalyzeWindow {
     pub fn analyze(&mut self, state: &mut AppState) {
         if !self.can_analyze() {
             if self.has_image() && !self.options.has_api_key() {
-                self.error = t(tl::AnalyzeImageViewModel_Configure_API_key).to_string();
+                self.error = if self.options.openai_key_for_other_address
+                    && matches!(
+                        self.options.provider,
+                        AiProvider::OpenAI | AiProvider::OpenAILegacy
+                    ) {
+                    t(texts::AIKeyOtherAddress).to_string()
+                } else {
+                    t(tl::AnalyzeImageViewModel_Configure_API_key).to_string()
+                };
             }
             return;
         }
@@ -1277,7 +1293,24 @@ impl AppState {
     /// The task's `AIOptions` with the keys from where they are kept.
     pub fn ai_options(&self, settings: &TaskSettings) -> AiOptions {
         let mut options: AiOptions = tool_options(settings, "AIOptions");
-        options.openai_api_key = self.ai_key_store(KEY_ACCOUNTS[0]).load();
+        // The OpenAI key only for the address it was entered for (security review
+        // 2026-10-24, A1): a settings file pointing `OpenAICustomURL` elsewhere gets no key,
+        // and the person is asked to enter it again.
+        let base = options.openai_key_base();
+        if let Some(stored) = self.ai_key_store(KEY_ACCOUNTS[0]).load() {
+            options.openai_api_key = bound_openai_key(&stored, &base);
+            if options.openai_api_key.is_none() {
+                options.openai_key_for_other_address = true;
+                log::warn!(
+                    "Modlight: the OpenAI key was entered for another address than {:?}; it is not sent there",
+                    if base.is_empty() {
+                        "the default endpoint"
+                    } else {
+                        base.as_str()
+                    }
+                );
+            }
+        }
         options.gemini_api_key = self.ai_key_store(KEY_ACCOUNTS[1]).load();
         options.open_router_api_key = self.ai_key_store(KEY_ACCOUNTS[2]).load();
         options
@@ -1299,8 +1332,14 @@ impl AppState {
             let store = self.ai_key_store(account);
             match key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
                 Some(key) => {
-                    if store.load().as_deref() != Some(key) {
-                        store.save(key)?;
+                    // The OpenAI key is kept with the address it is entered for (A1).
+                    let value = if *account == KEY_ACCOUNTS[0] {
+                        bind_openai_key(&options.openai_key_base(), key)
+                    } else {
+                        key.to_string()
+                    };
+                    if store.load().as_deref() != Some(value.as_str()) {
+                        store.save(&value)?;
                     }
                 }
                 None => store.delete()?,
@@ -1383,5 +1422,51 @@ mod tests {
             Some("gemini-1.5-flash-latest")
         );
         assert_eq!(models_with(&analyze::GEMINI_MODELS, " ").len(), 4);
+    }
+
+    /// Security review 2026-10-24, A1: the OpenAI key is stored with the address it was
+    /// entered for, and settings pointing `OpenAICustomURL` elsewhere get no key.
+    #[test]
+    fn the_openai_key_never_goes_to_another_address() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let profile = tempfile::tempdir().unwrap();
+        state.env.profile = profile.path().to_path_buf();
+
+        let options = AiOptions {
+            openai_api_key: Some("sk-mine".into()),
+            ..AiOptions::default()
+        };
+        state.save_ai_keys(&options).unwrap();
+        // Stored bound to the default endpoint, never as the bare key.
+        let stored = state.ai_key_store(KEY_ACCOUNTS[0]).load().unwrap();
+        assert_eq!(bound_openai_key(&stored, ""), Some("sk-mine".into()));
+        assert_ne!(stored, "sk-mine");
+
+        let mut settings = TaskSettings::default();
+        let loaded = state.ai_options(&settings);
+        assert_eq!(loaded.openai_api_key.as_deref(), Some("sk-mine"));
+        assert!(loaded.has_api_key());
+
+        // A restored settings file that points the OpenAI address somewhere else.
+        settings.tools_settings = serde_json::json!({"AIOptions": {
+            "OpenAICustomURL": "https://evil.example/v1/responses"
+        }});
+        let hostile = state.ai_options(&settings);
+        assert_eq!(hostile.openai_api_key, None);
+        assert!(hostile.openai_key_for_other_address);
+        assert!(!hostile.has_api_key());
+
+        // Entered again for that address (the person's own choice), it works there only.
+        let mut again = hostile.clone();
+        again.openai_api_key = Some("sk-mine".into());
+        state.save_ai_keys(&again).unwrap();
+        assert_eq!(
+            state.ai_options(&settings).openai_api_key.as_deref(),
+            Some("sk-mine")
+        );
+        assert_eq!(
+            state.ai_options(&TaskSettings::default()).openai_api_key,
+            None
+        );
     }
 }

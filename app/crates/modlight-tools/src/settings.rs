@@ -474,6 +474,11 @@ pub struct AiOptions {
     pub auto_start_region: bool,
     pub auto_start_analyze: bool,
     pub auto_copy_result: bool,
+    /// The OpenAI key in the credential store was entered for another address than
+    /// [`AiOptions::openai_key_base`], so it was not loaded (security review 2026-10-24,
+    /// A1): the person has to enter it again for this address.
+    #[serde(skip)]
+    pub openai_key_for_other_address: bool,
 }
 
 impl Default for AiOptions {
@@ -496,11 +501,22 @@ impl Default for AiOptions {
             auto_start_region: true,
             auto_start_analyze: true,
             auto_copy_result: false,
+            openai_key_for_other_address: false,
         }
     }
 }
 
 impl AiOptions {
+    /// The address the OpenAI key is bound to: the custom URL as entered (trimmed), or
+    /// empty for the default endpoint.
+    pub fn openai_key_base(&self) -> String {
+        self.openai_custom_url
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string()
+    }
+
     /// `HasAPIKey`.
     pub fn has_api_key(&self) -> bool {
         let has = |k: &Option<String>| k.as_deref().is_some_and(|k| !k.trim().is_empty());
@@ -757,6 +773,29 @@ pub fn write<T: Serialize>(root: &mut Map<String, Value>, path: &[&str], value: 
     }
 }
 
+/// What the credential store keeps for the OpenAI key (security review 2026-10-24, A1):
+/// the key together with the address it was entered for (see
+/// [`AiOptions::openai_key_base`]), so a settings file that points `OpenAICustomURL`
+/// somewhere else can never send it there.
+pub fn bind_openai_key(base: &str, key: &str) -> String {
+    serde_json::json!({ "base": base, "key": key }).to_string()
+}
+
+/// The OpenAI key from what the credential store keeps, when it was entered for `base`.
+/// A plain key, stored before keys were bound, counts as entered for the default endpoint.
+pub fn bound_openai_key(stored: &str, base: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Bound {
+        base: String,
+        key: String,
+    }
+    let (bound_to, key) = match serde_json::from_str::<Bound>(stored) {
+        Ok(bound) => (bound.base, bound.key),
+        Err(_) => (String::new(), stored.to_string()),
+    };
+    (bound_to.trim() == base.trim()).then_some(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,5 +870,31 @@ mod tests {
             serde_json::from_str(r#"{"OpenAIAPIKey":"AQAAANCMnd8B","Provider":"Gemini"}"#).unwrap();
         assert_eq!(read.openai_api_key, None);
         assert_eq!(read.provider, AiProvider::Gemini);
+    }
+
+    /// Security review 2026-10-24, A1: the OpenAI key goes only to the address it was
+    /// entered for.
+    #[test]
+    fn the_openai_key_is_bound_to_its_address() {
+        let stored = bind_openai_key("", "sk-mine");
+        assert_eq!(bound_openai_key(&stored, ""), Some("sk-mine".into()));
+        assert_eq!(bound_openai_key(&stored, "https://evil.example/v1"), None);
+
+        let custom = bind_openai_key("https://llm.internal.example/v1", "sk-mine");
+        assert_eq!(
+            bound_openai_key(&custom, "https://llm.internal.example/v1"),
+            Some("sk-mine".into())
+        );
+        assert_eq!(bound_openai_key(&custom, ""), None);
+        assert_eq!(bound_openai_key(&custom, "https://evil.example/v1"), None);
+
+        // Stored before the binding: the default endpoint only.
+        assert_eq!(bound_openai_key("sk-old", ""), Some("sk-old".into()));
+        assert_eq!(bound_openai_key("sk-old", "https://evil.example/v1"), None);
+
+        let mut options = AiOptions::default();
+        assert_eq!(options.openai_key_base(), "");
+        options.openai_custom_url = Some("  https://llm.internal.example/v1 ".into());
+        assert_eq!(options.openai_key_base(), "https://llm.internal.example/v1");
     }
 }
