@@ -8,6 +8,12 @@
 // picks the key up by itself. The loopback POST is still tried (best effort:
 // some browsers never send it) and the key stays available to copy as the
 // last resort. Without a challenge everything is exactly upstream's.
+// Security review 2026-10-24: P2, the prompt shows the app's confirmation code
+// (`confirmCode`, XXX-XXX, derived from the challenge on the server) next to
+// Approve and says the key goes to the app showing that code, wherever it runs;
+// P1, the server only stores the outcome for a state this account's own page
+// render registered, and answers `pickup: false` otherwise: the page then
+// falls back to upstream's loopback POST and manual key.
 
 import { useState, useTransition } from "react";
 import {
@@ -49,6 +55,8 @@ interface AuthorizePromptProps {
     callback: string;
     /** Not upstream: the app's pickup challenge, when it sent one. */
     challenge?: string;
+    /** Not upstream: the code the app shows (XXX-XXX), with a challenge. */
+    confirmCode?: string;
   };
 }
 
@@ -131,7 +139,9 @@ export function AuthorizePrompt({ appName, account, request }: AuthorizePromptPr
         return;
       }
 
-      if (pickup) {
+      // `pickup: false`: the server did not keep it (the state was not
+      // registered by this account's page render); upstream's flow then.
+      if (pickup && (result as { pickup?: boolean }).pickup !== false) {
         // The app collects the key from the server whatever happens next; the
         // loopback POST is only a head start, and its result changes nothing.
         setPhase({ name: "pickup", token: result.token });
@@ -341,9 +351,23 @@ export function AuthorizePrompt({ appName, account, request }: AuthorizePromptPr
           {t("account", { email: account.email })}
         </p>
         <p className="text-muted-foreground text-xs leading-relaxed">
-          {pickup ? tp("local") : t("local", { host })}
+          {pickup ? tp("local", { code: request.confirmCode ?? "" }) : t("local", { host })}
         </p>
       </div>
+
+      {pickup && request.confirmCode ? (
+        // Review 2026-10-24, P2: a phishing link carries somebody else's
+        // challenge, so its code is one no app of this person shows.
+        <div
+          className="bg-muted/40 space-y-2 rounded-xl p-3.5 text-center ring-1 ring-foreground/10"
+          data-testid="confirm-code"
+        >
+          <p className="text-muted-foreground text-xs font-medium">{tp("confirm.label")}</p>
+          <p className="font-mono text-2xl font-semibold tracking-[0.2em]">{request.confirmCode}</p>
+          <p className="text-sm font-medium leading-relaxed">{tp("confirm.match")}</p>
+          <p className="text-muted-foreground text-xs leading-relaxed">{tp("confirm.mismatch")}</p>
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-2">
         <Button size="lg" className="h-10 w-full" onClick={approve} disabled={busy}>

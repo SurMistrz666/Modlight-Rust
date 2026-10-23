@@ -104,4 +104,10 @@
   <data name="TopMostUnavailable" xml:space="preserve">
     <value>macOS does not let one app keep another app's window on top of the others. To keep a picture of the window in view, use Pin to screen.</value>
   </data>
+  <data name="SignInConfirmCode" xml:space="preserve">
+    <value>Confirmation code: {0}</value>
+  </data>
+  <data name="SignInConfirmCodeHint" xml:space="preserve">
+    <value>The page in your browser shows a code too. Approve there only if it is this same code; if it is different, choose Not now.</value>
+  </data>
 </root>

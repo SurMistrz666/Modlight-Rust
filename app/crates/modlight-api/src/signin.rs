@@ -85,6 +85,24 @@ pub fn challenge_for(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
+/// The short code this app and the authorize page both show (security review 2026-10-24,
+/// P2): the first six RFC 4648 base32 characters of
+/// `SHA-256("modlight-confirm:" || challenge)`, as `XXX-XXX`. Somebody approving a link
+/// another person generated sees a code no Modlight app of theirs shows. The server
+/// computes the same (`server/src/authorize/pickup.rs`, `confirmation_code`).
+pub fn confirmation_code(challenge: &str) -> String {
+    const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut hasher = Sha256::new();
+    hasher.update(b"modlight-confirm:");
+    hasher.update(challenge.as_bytes());
+    let digest = hasher.finalize();
+    let bits = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]);
+    let chars: String = (0..6)
+        .map(|i| BASE32[((bits >> (27 - 5 * i)) & 31) as usize] as char)
+        .collect();
+    format!("{}-{}", &chars[..3], &chars[3..])
+}
+
 /// What the authorize page posted: a token or a refusal, carrying back our nonce.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
@@ -460,13 +478,34 @@ pub async fn sign_in_with_browser(
     open_url: impl FnOnce(&str),
     cancel: &CancellationToken,
 ) -> Result<SignedIn, SignInFailure> {
+    sign_in_with_browser_using(
+        api,
+        host_input,
+        client_name,
+        &new_verifier(),
+        open_url,
+        cancel,
+    )
+    .await
+}
+
+/// [`sign_in_with_browser`] with a verifier the caller made (see [`new_verifier`]), so it
+/// can show [`confirmation_code`] of its challenge while the person decides.
+pub async fn sign_in_with_browser_using(
+    api: &Api,
+    host_input: &str,
+    client_name: &str,
+    verifier: &str,
+    open_url: impl FnOnce(&str),
+    cancel: &CancellationToken,
+) -> Result<SignedIn, SignInFailure> {
     let origin = try_normalize_host(host_input).ok_or(SignInFailure::InvalidHost)?;
 
     let listener = LoopbackListener::bind(&origin)
         .await
         .map_err(|e| SignInFailure::ListenerFailed(e.to_string()))?;
     let state = new_state();
-    let verifier = new_verifier();
+    let verifier = verifier.to_string();
 
     open_url(&authorize_url(
         &origin,
@@ -608,6 +647,17 @@ mod tests {
             "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
         );
         assert_eq!(challenge_for(&v).len(), 43);
+    }
+
+    #[test]
+    fn the_confirmation_code_matches_the_server() {
+        // Same vector as the server's `pickup::tests` (RFC 7636 appendix B challenge).
+        let code = confirmation_code("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+        assert_eq!(code, "554-LIO");
+        let v = new_verifier();
+        let other = confirmation_code(&challenge_for(&v));
+        assert_eq!(other.len(), 7);
+        assert_eq!(other.as_bytes()[3], b'-');
     }
 
     #[test]
