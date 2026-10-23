@@ -86,6 +86,11 @@ pub struct LoopbackRequest {
     /// in a lone high surrogate, shown here as the final U+FFFD.
     #[serde(skip)]
     pub cut_surrogate: bool,
+    /// Not upstream: the app's PKCE-style challenge for the server-side pickup
+    /// ([`crate::authorize::pickup`]). Absent for older apps, and then left out
+    /// of the JSON so their requests look exactly as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub challenge: Option<String>,
 }
 
 impl LoopbackRequest {
@@ -105,6 +110,8 @@ impl LoopbackRequest {
 pub enum AuthorizeRequestIssue {
     InvalidPort,
     InvalidState,
+    /// Not upstream: a `challenge` was sent and is not 43 base64url characters.
+    InvalidChallenge,
 }
 
 /// `{ ok: true, request } | { ok: false, reason }`
@@ -276,17 +283,53 @@ pub fn loopback_callback(port: f64) -> Result<String, NotALoopbackPort> {
     Ok(format!("http://127.0.0.1:{}/", port as u16))
 }
 
-/// Validate a whole `/authorize` query. Both the page and the action use this.
+/// Length of a pickup challenge: base64url of a SHA-256 digest, no padding.
+pub const CHALLENGE_LEN: usize = 43;
+
+/// The pickup challenge: `Ok(None)` when none was sent (an older app),
+/// `Err(())` when one was sent and is not exactly 43 base64url characters.
+///
+/// Malformed is a refusal rather than "no challenge": an app that sent one is
+/// counting on the pickup, and quietly dropping it would turn a broken link
+/// into a sign-in that waits ten minutes for a key that never comes.
+#[allow(clippy::result_unit_err)]
+pub fn parse_challenge(raw: QueryValue<'_>) -> Result<Option<String>, ()> {
+    match raw {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) if s.is_empty() => Ok(None),
+        Some(Value::String(s)) => {
+            let ok = s.len() == CHALLENGE_LEN && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+            if ok { Ok(Some(s.clone())) } else { Err(()) }
+        }
+        Some(_) => Err(()),
+    }
+}
+
+/// Validate a whole `/authorize` query without a pickup challenge (upstream's
+/// signature).
 pub fn parse_authorize_request(
     port: QueryValue<'_>,
     state: QueryValue<'_>,
     name: QueryValue<'_>,
+) -> ParsedAuthorizeRequest {
+    parse_authorize_request_with_challenge(port, state, name, None)
+}
+
+/// Validate a whole `/authorize` query. Both the page and the action use this.
+pub fn parse_authorize_request_with_challenge(
+    port: QueryValue<'_>,
+    state: QueryValue<'_>,
+    name: QueryValue<'_>,
+    challenge: QueryValue<'_>,
 ) -> ParsedAuthorizeRequest {
     let Some(port) = parse_loopback_port(port) else {
         return ParsedAuthorizeRequest::Invalid(AuthorizeRequestIssue::InvalidPort);
     };
     let Some(state) = parse_state(state) else {
         return ParsedAuthorizeRequest::Invalid(AuthorizeRequestIssue::InvalidState);
+    };
+    let Ok(challenge) = parse_challenge(challenge) else {
+        return ParsedAuthorizeRequest::Invalid(AuthorizeRequestIssue::InvalidChallenge);
     };
     let (client_name, cut_surrogate) = match single(name) {
         None | Some("") => (String::new(), false),
@@ -298,6 +341,7 @@ pub fn parse_authorize_request(
         client_name,
         callback: loopback_callback(f64::from(port)).expect("a parsed port is a loopback port"),
         cut_surrogate,
+        challenge,
     })
 }
 
@@ -314,6 +358,11 @@ pub fn authorize_path(request: &LoopbackRequest) -> String {
     query.append_pair("state", &request.state);
     if !request.client_name.is_empty() {
         query.append_pair("name", &request.client_name);
+    }
+    // Carried through the sign-in round trip like the rest: losing it there
+    // would leave the app polling for a pickup that can never happen.
+    if let Some(challenge) = &request.challenge {
+        query.append_pair("challenge", challenge);
     }
     format!("/authorize?{}", query.finish())
 }
@@ -373,6 +422,35 @@ mod tests {
 
     fn name(v: &str) -> String {
         sanitize_client_name(Some(&s(v)))
+    }
+
+    // Not upstream: the pickup challenge.
+    #[test]
+    fn a_challenge_is_optional_exact_and_survives_the_sign_in_round_trip() {
+        let c = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+        let ok = parse_authorize_request_with_challenge(Some(&s("49732")), Some(&s("s7Kd93jf0aQ2")), None, Some(&s(c)));
+        let request = ok.request().unwrap();
+        assert_eq!(request.challenge.as_deref(), Some(c));
+        assert_eq!(serde_json::to_value(request).unwrap()["challenge"], c);
+        assert_eq!(authorize_path(request), format!("/authorize?port=49732&state=s7Kd93jf0aQ2&challenge={c}"));
+
+        // None, or empty: exactly the old request, without the key in the JSON.
+        for none in [None, Some(s(""))] {
+            let old = parse_authorize_request_with_challenge(
+                Some(&s("49732")),
+                Some(&s("s7Kd93jf0aQ2")),
+                None,
+                none.as_ref(),
+            );
+            assert_eq!(old, parse_authorize_request(Some(&s("49732")), Some(&s("s7Kd93jf0aQ2")), None));
+            assert!(serde_json::to_value(old.request().unwrap()).unwrap().get("challenge").is_none());
+        }
+        for bad in [s("short"), s(&"!".repeat(43)), s(&"a".repeat(44)), json!(["x"])] {
+            assert_eq!(
+                parse_authorize_request_with_challenge(Some(&s("49732")), Some(&s("s7Kd93jf0aQ2")), None, Some(&bad)),
+                ParsedAuthorizeRequest::Invalid(AuthorizeRequestIssue::InvalidChallenge)
+            );
+        }
     }
 
     // describe("loopback port")

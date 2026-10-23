@@ -8,8 +8,10 @@
 //! nobody remembers. Here the redirect is built by hand and carries the whole
 //! request back through the sign-in (and 2FA) round trip.
 //!
-//! The page has NO side effect. Rendering it mints nothing; see
-//! [`crate::actions::authorize`].
+//! The page has NO side effect beyond one in-memory note: rendering it mints
+//! nothing (see [`crate::actions::authorize`]); a request carrying the app's
+//! pickup `challenge` (not upstream) is registered as pending, so the app's
+//! polls can tell "waiting for the person" from "unknown".
 //!
 //! Props (`AuthorizePageProps` in the SPA): `parsed` is
 //! `parseAuthorizeRequest({ port, state, name })` of the query, `session` is
@@ -19,7 +21,7 @@
 
 use serde_json::{Value, json};
 
-use crate::authorize::loopback::{authorize_path, parse_authorize_request};
+use crate::authorize::loopback::{authorize_path, parse_authorize_request_with_challenge};
 use crate::http::cookies::encode_uri_component;
 use crate::pages::meta::PageMeta;
 use crate::pages::{PageCtx, PageData, PageError, PageResult};
@@ -37,7 +39,13 @@ pub async fn load(ctx: PageCtx) -> PageResult {
     // Validated BEFORE the session check on purpose: a broken link should say
     // so rather than march an anonymous visitor through a sign-in to reach a
     // dead end. Nothing here is account-specific, so it reveals nothing either.
-    let parsed = parse_authorize_request(query.get("port"), query.get("state"), query.get("name"));
+    // `challenge` is not upstream: the app's pickup (SKELETON.md 9).
+    let parsed = parse_authorize_request_with_challenge(
+        query.get("port"),
+        query.get("state"),
+        query.get("name"),
+        query.get("challenge"),
+    );
     let Some(request) = parsed.request() else {
         return PageData::new(&json!({ "parsed": parsed, "session": Value::Null }), meta);
     };
@@ -45,6 +53,13 @@ pub async fn load(ctx: PageCtx) -> PageResult {
     let Some(session) = ctx.get_session().await? else {
         return Err(PageError::redirect(format!("/login?next={}", encode_uri_component(&authorize_path(request)))));
     };
+
+    // The only thing this page writes, and it hands out nothing: from here on
+    // the app's pickup polls read "pending" instead of "not found", and the
+    // state is bound to this challenge (crate::authorize::pickup).
+    if let Some(challenge) = &request.challenge {
+        crate::authorize::pickup::store().register(&request.state, challenge, crate::authorize::pickup::now_ms());
+    }
 
     PageData::new(&json!({ "parsed": parsed, "session": { "user": { "email": session.user.email } } }), meta)
 }
