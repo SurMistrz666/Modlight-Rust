@@ -158,8 +158,12 @@ Everything not listed behaves as upstream does. The per-screen state is in
   have switched on for the same task (the default task settings; a hotkey by its place
   in the list; a program only when the very same one was on). A custom FFmpeg path
   (`OverrideCLIPath` with `CLIPath`) that this task did not already start comes back to
-  the FFmpeg from Components. It is the only path to a program the settings hold: yt-dlp
-  and ExifTool are found in Tools and the usual places, never read from the settings, and
+  the FFmpeg from Components. An AI provider address in a task's
+  `ToolsSettings.AIOptions` (`OpenAICustomURL`, and any other `...URL` / `...Endpoint`
+  member) that this task did not already use comes back to the provider's default
+  (security review 2026-10-24, A1): otherwise the next "Analyze image" would send the
+  OpenAI key from the Keychain and the picture to the backup's host. The FFmpeg path
+  is the only path to a program the settings hold: yt-dlp and ExifTool are found in Tools and the usual places, never read from the settings, and
   `BrowserPath` is stored but never started (links go through `/usr/bin/open`). A
   message after the import names each one, and they are set again in the task
   settings. Upstream restores the file whole, so a backup from somebody else could start
@@ -191,8 +195,17 @@ Everything not listed behaves as upstream does. The per-screen state is in
   `x-api-key`, without redirects, on the sign-in origin only. The first answer wins; a
   refusal there ends the sign-in like a loopback refusal; `/api/me` checks the token as
   before. Against a server without the route the polls get 404 and the loopback works as
-  it always did. `modlight-api/src/signin.rs`, tests `signin_pickup_fake.rs` and
-  `signin_pickup.rs`.
+  it always did. While it waits, the sign-in window shows a confirmation code
+  (`XXX-XXX`, from the challenge); the authorize page shows the same code next to Approve
+  and asks the person to approve only if the two match (security review 2026-10-24,
+  P2: a link somebody else generated shows a code no app of the person's shows).
+  `modlight-api/src/signin.rs`, tests `signin_pickup_fake.rs` and `signin_pickup.rs`,
+  snapshot screen `sign-in-waiting`.
+- **AI keys** live in the Keychain (service `Modlight`, `ai-*-api-key`). The OpenAI key
+  is stored together with the base URL it was entered for (the custom URL, or the
+  default endpoint); it is sent only to that base. Settings that point `OpenAICustomURL`
+  elsewhere get no key, and the analyze window asks for it again (review A1). A key
+  saved by an earlier build counts as entered for the default endpoint.
 - **Redirects** are never followed by any request that carries the token (upstream
   followed them in the library client). A stored tus session URL is moved onto the
   account's current origin before every request, so the token can never follow a
