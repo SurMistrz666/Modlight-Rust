@@ -7,6 +7,7 @@
 // The page has no side effect. generateMetadata:
 // { title: t("authorize.title"), robots: { index: false, follow: false } }.
 // This path has its own CSP (connect-src adds http://127.0.0.1:*).
+// Not upstream: `parsed.request.challenge` (the app's pickup) is passed on.
 import Link from "next/link";
 import { Unplug } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -65,6 +66,8 @@ export default function AuthorizePage({ props }: { props: AuthorizePageProps }) 
           state: parsed.request.state,
           clientName: parsed.request.clientName,
           callback: parsed.request.callback,
+          // Not upstream: the desktop app's pickup challenge (SKELETON.md 9).
+          challenge: (parsed.request as { challenge?: string }).challenge,
         }}
       />
     </AuthCard>

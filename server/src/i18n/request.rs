@@ -61,6 +61,9 @@ pub const NAMESPACES: &[&str] = &[
     // Not upstream: the optional Cloudflare Turnstile widget and its admin card
     // (src/turnstile.rs). A file of its own, so upstream's stay verbatim.
     "turnstile",
+    // Not upstream: the desktop sign-in pickup's wording on /authorize
+    // (src/authorize/pickup.rs), kept apart for the same reason.
+    "authorizePickup",
 ];
 
 /// The resolution rule itself, on plain values.

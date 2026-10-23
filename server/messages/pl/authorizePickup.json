@@ -1,0 +1,12 @@
+{
+  "local": "Klucz trafia tylko do aplikacji, która otworzyła tę stronę: aplikacja sama odbiera go z tego serwera, za pomocą jednorazowego sekretu, który zna tylko ona.",
+  "waiting": {
+    "title": "{client} odbiera swój klucz",
+    "body": "Aplikacja sama odbierze klucz z {appName}. Nie zamykaj jej; zwykle trwa to kilka sekund.",
+    "close": "Możesz zamknąć to okno, gdy aplikacja pokaże, że jest zalogowana."
+  },
+  "fallback": {
+    "summary": "Aplikacja nadal niezalogowana po minucie?",
+    "body": "Skopiuj ten klucz i wklej go w oknie logowania aplikacji."
+  }
+}
