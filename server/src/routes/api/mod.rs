@@ -1,6 +1,7 @@
 //! `app/api/**/route.ts`
 
 pub mod admin_disk;
+pub mod authorize_pickup;
 pub mod avatar;
 pub mod background;
 pub mod client_settings;

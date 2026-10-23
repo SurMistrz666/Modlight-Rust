@@ -15,12 +15,25 @@
 //!   Cloudflare, say) Chrome's Private Network Access sends a preflight before the page
 //!   may reach 127.0.0.1, and without the grant the handoff never arrives;
 //! * one shot: the first body carrying our state ends the wait and the listener closes.
+//!
+//! The loopback POST is made by the PAGE, and browsers may refuse to make it: Safari will
+//! not send an https page's request to `http://127.0.0.1`, and Chrome's Local Network
+//! Access drops it when its permission was dismissed once. So the sign-in also collects
+//! the outcome from the SERVER (PKCE-style, RFC 7636 cut down): a random `verifier` stays
+//! in this process, its SHA-256 `challenge` goes into the authorize link, and while the
+//! listener waits the app polls `POST <host>/api/authorize/pickup` with `{state, verifier}`
+//! every two seconds. Whichever path answers first wins; `/api/me` then checks the token
+//! exactly as before. A server without the route just keeps answering 404 and the
+//! loopback path works as it always did.
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::Rng;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, mpsc};
@@ -50,6 +63,27 @@ pub const DENIED_ERROR: &str = "access_denied";
 
 /// Length of the nonce sent out with the authorize link.
 pub const STATE_LENGTH: usize = 32;
+
+/// How often the server-side pickup is asked while the person decides.
+pub const PICKUP_INTERVAL: Duration = Duration::from_secs(2);
+
+/// One pickup request may take this long before it counts as "no answer yet".
+pub const PICKUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Where the app collects the outcome when the browser never delivered it.
+pub const PICKUP_PATH: &str = "/api/authorize/pickup";
+
+/// A fresh pickup verifier: 32 random bytes, base64url without padding (43 characters).
+pub fn new_verifier() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rng().fill(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// `base64url(SHA-256(verifier))` without padding: what the authorize link carries.
+pub fn challenge_for(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
 
 /// What the authorize page posted: a token or a refusal, carrying back our nonce.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -93,12 +127,96 @@ pub fn client_name(app_name: &str, machine: &str) -> String {
     name.chars().take(64).collect()
 }
 
-/// The page the browser is sent to.
-pub fn authorize_url(origin: &str, port: u16, client_name: &str, state: &str) -> String {
+/// The page the browser is sent to. `challenge` is the pickup's (see [`challenge_for`]).
+pub fn authorize_url(
+    origin: &str,
+    port: u16,
+    client_name: &str,
+    state: &str,
+    challenge: &str,
+) -> String {
     format!(
-        "{origin}/authorize?port={port}&name={}&state={state}",
+        "{origin}/authorize?port={port}&name={}&state={state}&challenge={challenge}",
         escape_data_string(client_name)
     )
+}
+
+/// What one pickup request learned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickupPoll {
+    /// The person decided: a token or a refusal, as the loopback would have carried it.
+    Ready(Handoff),
+    /// Not yet (pending, unknown, rate-limited, unreachable): ask again later.
+    Wait,
+    /// The server refused the request itself (a malformed body, an unsupported route
+    /// shape): asking again will not help, so the pickup stops and the loopback carries on.
+    Stop,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct PickupAnswer {
+    token: Option<String>,
+    error: Option<String>,
+}
+
+/// Ask the server once. No `x-api-key`, no redirects (the client follows none), and
+/// only ever the origin the sign-in started with.
+pub async fn poll_pickup(api: &Api, origin: &str, state: &str, verifier: &str) -> PickupPoll {
+    let url = format!("{}{PICKUP_PATH}", origin.trim_end_matches('/'));
+    let body = serde_json::json!({ "state": state, "verifier": verifier });
+    let sent = api
+        .http()
+        .post(&url)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body.to_string())
+        .timeout(PICKUP_REQUEST_TIMEOUT)
+        .send()
+        .await;
+    let Ok(response) = sent else {
+        return PickupPoll::Wait;
+    };
+    let status = response.status().as_u16();
+    match status {
+        200 => {
+            let Ok(Some(bytes)) = Api::read_limited(response, 16 * 1024).await else {
+                return PickupPoll::Wait;
+            };
+            let answer: PickupAnswer = serde_json::from_slice(&bytes).unwrap_or_default();
+            if answer.token.is_none() && answer.error.is_none() {
+                // A 200 that is not ours (a proxy's page): not an answer.
+                return PickupPoll::Wait;
+            }
+            PickupPoll::Ready(Handoff {
+                state: Some(state.to_string()),
+                token: answer.token,
+                error: answer.error,
+            })
+        }
+        400 | 405 | 413 | 415 => PickupPoll::Stop,
+        _ => PickupPoll::Wait,
+    }
+}
+
+/// Poll until the server has the outcome. Never returns when the server refuses the
+/// request outright: the loopback listener (and the deadline) still decide then.
+async fn pick_up(api: &Api, origin: &str, state: &str, verifier: &str) -> Handoff {
+    loop {
+        tokio::time::sleep(PICKUP_INTERVAL).await;
+        match poll_pickup(api, origin, state, verifier).await {
+            PickupPoll::Ready(handoff) => {
+                log::info!("Modlight sign-in: the outcome arrived through the server pickup.");
+                return handoff;
+            }
+            PickupPoll::Wait => {}
+            PickupPoll::Stop => {
+                log::info!(
+                    "Modlight sign-in: the server refused the pickup; waiting on the loopback only."
+                );
+                return std::future::pending().await;
+            }
+        }
+    }
 }
 
 /// The desktop half of the loopback redirect.
@@ -348,22 +466,31 @@ pub async fn sign_in_with_browser(
         .await
         .map_err(|e| SignInFailure::ListenerFailed(e.to_string()))?;
     let state = new_state();
+    let verifier = new_verifier();
 
     open_url(&authorize_url(
         &origin,
         listener.port(),
         client_name,
         &state,
+        &challenge_for(&verifier),
     ));
-    log::info!("Modlight sign-in: waiting on 127.0.0.1:{}", listener.port());
+    log::info!(
+        "Modlight sign-in: waiting on 127.0.0.1:{} and on the server pickup",
+        listener.port()
+    );
 
+    // Both paths at once; the first answer wins and the other is dropped with the select.
     let deadline = CancellationToken::new();
     let waiting = listener.wait_for(&state, &deadline);
+    let picked = pick_up(api, &origin, &state, &verifier);
     let handoff = tokio::select! {
         handoff = waiting => handoff,
+        handoff = picked => Some(handoff),
         _ = cancel.cancelled() => { deadline.cancel(); return Err(SignInFailure::Canceled); }
         _ = tokio::time::sleep(APPROVAL_TIMEOUT) => { deadline.cancel(); return Err(SignInFailure::TimedOut); }
     };
+    deadline.cancel();
     drop(listener);
 
     let Some(handoff) = handoff else {
@@ -461,9 +588,26 @@ mod tests {
             64
         );
         assert_eq!(
-            authorize_url("http://127.0.0.1:8420", 50123, &name, "S7ate"),
-            "http://127.0.0.1:8420/authorize?port=50123&name=Modlight%20on%20Marcin%27s%20Mac%20mini&state=S7ate"
+            authorize_url("http://127.0.0.1:8420", 50123, &name, "S7ate", "Ch4llenge"),
+            "http://127.0.0.1:8420/authorize?port=50123&name=Modlight%20on%20Marcin%27s%20Mac%20mini&state=S7ate&challenge=Ch4llenge"
         );
+    }
+
+    #[test]
+    fn verifiers_and_challenges_are_rfc_7636() {
+        let v = new_verifier();
+        assert_eq!(v.len(), 43);
+        assert!(
+            v.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        );
+        assert_ne!(v, new_verifier());
+        // RFC 7636 appendix B.
+        assert_eq!(
+            challenge_for("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
+        assert_eq!(challenge_for(&v).len(), 43);
     }
 
     #[test]
