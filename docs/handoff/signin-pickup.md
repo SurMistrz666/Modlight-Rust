@@ -22,7 +22,9 @@ from the server (PKCE-style). Design and contract: `server/docs/SKELETON.md` 9.4
 
 ## Verified
 
-- server: `cargo fmt`, `cargo clippy --all-targets -D warnings`, `cargo test`.
+- server: `cargo fmt`, `cargo clippy --all-targets -D warnings`, `cargo test`
+  (1269 passed; `media::ffmpeg::tests::finds_the_real_ffprobe` failed once under the
+  full parallel run and passes alone: unrelated to this branch).
 - SPA: `npm run verify` (74 tests, bundle audit, sync:check).
 - app: `cargo fmt`, `cargo clippy --workspace --all-targets -D warnings`,
   `cargo test --workspace`: all green except `tests/reference_server.rs`, which needs
