@@ -23,7 +23,8 @@
 //!      that generated the link can collect what the link produced.
 //!
 //! The entry is handed out ONCE and then deleted, lives five minutes, and the
-//! map is bounded and swept. The prompt and the
+//! map is bounded and swept; one account holds at most [`MAX_PER_USER`]
+//! entries, and eviction never drops a decided entry (P3). The prompt and the
 //! app both show [`confirmation_code`] of the challenge, so a person approving
 //! somebody else's link sees that no app of theirs shows that code (P2).
 //! Everything is in memory: a restart loses pending pickups, and the
@@ -47,6 +48,11 @@ pub const PICKUP_TTL_MS: i64 = 5 * 60 * 1000;
 /// Entries kept at once. Each needs a signed-in session to create, so this is
 /// a ceiling against a runaway script, not a working limit.
 pub const MAX_ENTRIES: usize = 4096;
+
+/// Live entries one account may hold at once (review 2026-10-24, P3). A person
+/// signs in a handful of apps at a time; a script rendering `/authorize` in a
+/// loop only ever replaces its OWN oldest pending entries.
+pub const MAX_PER_USER: usize = 5;
 
 /// A full sweep at most this often (and whenever the map is full).
 const SWEEP_EVERY_MS: i64 = 30 * 1000;
@@ -86,6 +92,44 @@ pub enum Registered {
     /// A live entry for the state belongs to another account or another
     /// challenge: nothing changed (the first signed-in browser keeps it).
     Taken,
+    /// No room: the map is full of decided entries, or this account already
+    /// holds [`MAX_PER_USER`] decided ones. Nothing was evicted.
+    Full,
+    /// Too many renders from this account or address ([`register_render`]).
+    RateLimited,
+}
+
+/// Page renders that may register a pickup, per account and per address,
+/// within [`REGISTER_WINDOW_MS`] (P3). Reloading the prompt counts too; a
+/// person never comes near this.
+pub const REGISTERS_PER_USER: u32 = 30;
+pub const REGISTERS_PER_IP: u32 = 120;
+pub const REGISTER_WINDOW_MS: i64 = 10 * 60 * 1000;
+
+/// What the `/authorize` loader calls: [`PickupStore::register`] behind a
+/// per-account and per-address rate limit.
+pub fn register_render(
+    store: &PickupStore,
+    state: &str,
+    challenge: &str,
+    user_id: &str,
+    client_ip: &str,
+    now: i64,
+) -> Registered {
+    use crate::password::check_rate_limit_at;
+    if !check_rate_limit_at(&format!("authorize-register:{user_id}"), REGISTERS_PER_USER, REGISTER_WINDOW_MS, now)
+        .allowed
+        || !check_rate_limit_at(
+            &format!("authorize-register-ip:{client_ip}"),
+            REGISTERS_PER_IP,
+            REGISTER_WINDOW_MS,
+            now,
+        )
+        .allowed
+    {
+        return Registered::RateLimited;
+    }
+    store.register(state, challenge, user_id, now)
 }
 
 struct Entry {
@@ -153,14 +197,28 @@ impl PickupStore {
         inner.last_sweep = now;
     }
 
-    /// Room for one more entry: sweep, and if that is not enough, drop the oldest.
-    fn make_room(inner: &mut Inner, now: i64) {
+    /// Room for one more entry of `user_id`, or `false`. Eviction only ever
+    /// takes a PENDING entry: this account's own oldest when it is at its cap,
+    /// anybody's oldest when the whole map is full. A decided entry (a token
+    /// waiting for its app) is never dropped before it expires (P3).
+    fn make_room(inner: &mut Inner, user_id: &str, now: i64) -> bool {
         if now - inner.last_sweep >= SWEEP_EVERY_MS || inner.map.len() >= MAX_ENTRIES {
             Self::sweep(inner, now);
         }
-        while inner.map.len() >= MAX_ENTRIES {
-            inner.map.shift_remove_index(0);
+        let mine = inner.map.values().filter(|e| e.user_id == user_id).count();
+        if mine >= MAX_PER_USER {
+            let Some(index) = inner.map.values().position(|e| e.user_id == user_id && e.outcome.is_none()) else {
+                return false;
+            };
+            inner.map.shift_remove_index(index);
         }
+        if inner.map.len() >= MAX_ENTRIES {
+            let Some(index) = inner.map.values().position(|e| e.outcome.is_none()) else {
+                return false;
+            };
+            inner.map.shift_remove_index(index);
+        }
+        true
     }
 
     /// The page was shown, to the signed-in `user_id`, for a request with a
@@ -181,7 +239,9 @@ impl PickupStore {
             return Registered::Bound;
         }
         inner.map.shift_remove(state);
-        Self::make_room(&mut inner, now);
+        if !Self::make_room(&mut inner, user_id, now) {
+            return Registered::Full;
+        }
         inner.map.insert(
             state.to_string(),
             Entry {
@@ -429,7 +489,7 @@ mod tests {
         s.register("late-state-1", &challenge(), ME, PICKUP_TTL_MS + SWEEP_EVERY_MS);
         assert_eq!(s.len(), 1);
 
-        // Full: the oldest goes first.
+        // Full of pending entries: the oldest pending goes first.
         let s = PickupStore::default();
         for i in 0..MAX_ENTRIES + 5 {
             s.register(&state(i), &challenge(), &format!("u{i}"), 1);
@@ -437,6 +497,69 @@ mod tests {
         assert_eq!(s.len(), MAX_ENTRIES);
         assert_eq!(s.pick_up(&state(0), VERIFIER, 2), Pickup::NotFound);
         assert_eq!(s.pick_up(&state(MAX_ENTRIES + 4), VERIFIER, 2), Pickup::Pending);
+    }
+
+    /// Review 2026-10-24, P3: one account rendering `/authorize` in a loop.
+    #[test]
+    fn one_account_can_hold_only_a_few_entries() {
+        let s = PickupStore::default();
+        s.register("victim-state", &challenge(), "victim", 0);
+        for i in 0..1000 {
+            assert_eq!(s.register(&state(i), &challenge(), "flooder", 1), Registered::Bound);
+        }
+        assert_eq!(s.len(), 1 + MAX_PER_USER);
+        // The flooder only ever replaced his own oldest entries.
+        assert_eq!(s.pick_up("victim-state", VERIFIER, 2), Pickup::Pending);
+        assert_eq!(s.pick_up(&state(0), VERIFIER, 2), Pickup::NotFound);
+        assert_eq!(s.pick_up(&state(999), VERIFIER, 2), Pickup::Pending);
+    }
+
+    #[test]
+    fn a_decided_entry_is_never_evicted_before_it_expires() {
+        // One account: five tokens waiting, a sixth render is refused, not evicting.
+        let s = PickupStore::default();
+        for i in 0..MAX_PER_USER {
+            s.register(&state(i), &challenge(), ME, 0);
+            assert!(s.complete(&state(i), &challenge(), ME, Outcome::Token(format!("t{i}")), 0));
+        }
+        assert_eq!(s.register("one-more", &challenge(), ME, 1), Registered::Full);
+        for i in 0..MAX_PER_USER {
+            assert_eq!(s.pick_up(&state(i), VERIFIER, 2), Pickup::Ready(Outcome::Token(format!("t{i}"))));
+        }
+
+        // The whole map: a full map of decided entries refuses new renders,
+        // and a full map with a pending one evicts that one, not a decided one.
+        let s = PickupStore::default();
+        s.register("approved-first", &challenge(), "victim", 0);
+        s.complete("approved-first", &challenge(), "victim", Outcome::Token("victims".into()), 0);
+        for i in 1..MAX_ENTRIES {
+            let user = format!("u{i}");
+            s.register(&state(i), &challenge(), &user, 0);
+            s.complete(&state(i), &challenge(), &user, Outcome::Denied, 0);
+        }
+        assert_eq!(s.len(), MAX_ENTRIES);
+        assert_eq!(s.register("newcomer", &challenge(), "attacker", 1), Registered::Full);
+        assert_eq!(s.pick_up("approved-first", VERIFIER, 2), Pickup::Ready(Outcome::Token("victims".into())));
+        // One slot free now; a pending entry fills it and is the one evicted next.
+        s.register("pending", &challenge(), "p", 3);
+        assert_eq!(s.register("next", &challenge(), "q", 4), Registered::Bound);
+        assert_eq!(s.pick_up("pending", VERIFIER, 5), Pickup::NotFound);
+        assert_eq!(s.pick_up(&state(1), VERIFIER, 5), Pickup::Ready(Outcome::Denied));
+    }
+
+    #[test]
+    fn page_renders_are_rate_limited_per_account() {
+        let s = PickupStore::default();
+        let user = format!("rl-{}", rand::random::<u64>());
+        let ip = format!("rl-ip-{}", rand::random::<u64>());
+        for i in 0..REGISTERS_PER_USER as usize {
+            assert_eq!(register_render(&s, &state(i), &challenge(), &user, &ip, 1), Registered::Bound);
+        }
+        assert_eq!(register_render(&s, "one-more", &challenge(), &user, &ip, 2), Registered::RateLimited);
+        // Another account behind the same address still can.
+        assert_eq!(register_render(&s, "theirs", &challenge(), "other-account", &ip, 2), Registered::Bound);
+        // And the window passes.
+        assert_eq!(register_render(&s, "later", &challenge(), &user, &ip, 2 + REGISTER_WINDOW_MS), Registered::Bound);
     }
 
     #[test]

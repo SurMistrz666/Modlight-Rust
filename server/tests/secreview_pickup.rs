@@ -5,7 +5,7 @@
 use modlight_server::actions::authorize::{AuthorizeDeps, approve_with, deny_with};
 use modlight_server::api_token::TokenScope;
 use modlight_server::authorize::pickup::{
-    Outcome, Pickup, PickupStore, Registered, challenge_for, confirmation_code, now_ms,
+    MAX_PER_USER, Outcome, Pickup, PickupStore, Registered, challenge_for, confirmation_code, now_ms,
 };
 use serde_json::{Value, json};
 
@@ -109,4 +109,23 @@ fn a_phishing_link_shows_a_code_no_app_of_the_victims_shows() {
     let phishing_page = confirmation_code(&challenge_for(ATTACKER_VERIFIER));
     assert_ne!(victims_app, phishing_page);
     assert_eq!(victims_app, "554-LIO");
+}
+
+/// P3: one account rendering `/authorize` in a loop can no longer flush everybody's pickups.
+#[tokio::test]
+async fn a_register_flood_does_not_evict_other_accounts_entries() {
+    let f = Fake::default();
+    let challenge = challenge_for(VERIFIER);
+    // The victim approved; the token waits for the app's next poll.
+    f.store.register(STATE, &challenge, "victim", now_ms());
+    let input = json!({ "port": "49732", "state": STATE, "challenge": challenge });
+    assert_eq!(approve_with(&f, "victim", &ip(), Some(&input)).await.0["pickup"], true);
+    for i in 0..10_000 {
+        f.store.register(&format!("flood-{i:026}"), &challenge, "flooder", now_ms());
+    }
+    assert_eq!(f.store.len(), 1 + MAX_PER_USER);
+    assert_eq!(
+        f.store.pick_up(STATE, VERIFIER, now_ms()),
+        Pickup::Ready(Outcome::Token("TOKEN-OF-victim-AAAAAAAAAAAAAAAAAAAAAAAA".into()))
+    );
 }

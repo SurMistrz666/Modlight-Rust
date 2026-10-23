@@ -60,11 +60,12 @@ pub async fn load(ctx: PageCtx) -> PageResult {
     // the app's pickup polls read "pending" instead of "not found", and the
     // state is bound to this challenge AND this account: only this account's
     // approval or refusal reaches the app (crate::authorize::pickup, review
-    // 2026-10-24 P1).
+    // 2026-10-24 P1). Rate-limited and capped per account (P3).
     let mut props = json!({ "parsed": parsed, "session": { "user": { "email": session.user.email } } });
     if let Some(challenge) = &request.challenge {
-        use crate::authorize::pickup::{Registered, confirmation_code, now_ms, store};
-        let registered = store().register(&request.state, challenge, &session.user.id, now_ms());
+        use crate::authorize::pickup::{Registered, confirmation_code, now_ms, register_render, store};
+        let registered =
+            register_render(store(), &request.state, challenge, &session.user.id, &ctx.client_ip(), now_ms());
         if registered != Registered::Bound {
             tracing::warn!("[authorize] pickup not registered: {registered:?}");
         }
