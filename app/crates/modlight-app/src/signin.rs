@@ -307,7 +307,7 @@ impl AppState {
                         if qa {
                             log::info!("QA mode: the authorize page is not opened");
                         } else {
-                            modlight_macos::system::open_url(url);
+                            crate::platform::system::open_url(url);
                         }
                     },
                     &cancel,

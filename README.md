@@ -2,7 +2,7 @@
 
 A Rust rewrite of [Modlight](https://github.com/Nimfek/Modlight), a self-hosted file and
 screenshot host, and of [Modlight App](https://github.com/Nimfek/Modlight-App), its desktop
-client (a ShareX fork for Windows), rebuilt here as a native macOS app.
+client (a ShareX fork for Windows), rebuilt here as one Rust app for macOS and Windows.
 
 The server is a 1:1 replacement for the original Next.js server: same URLs, same API, same
 responses, same PostgreSQL schema. An install can switch between the two implementations in
@@ -14,7 +14,7 @@ both directions. The only intended differences are security and bug fixes, liste
 | Path | What it is |
 |---|---|
 | [`server/`](server/) | The server: Rust (axum, sqlx, PostgreSQL), ~90k lines. The web panel keeps the original React components, served as a single-page app without Next.js. Ships as one Docker image. |
-| [`app/`](app/) | The macOS app: Rust (egui), ~180k lines in seven crates. |
+| [`app/`](app/) | The desktop app for macOS and Windows: Rust (egui), ~190k lines in eight crates. Everything but the system glue (`modlight-macos`, `modlight-windows`) is shared. |
 | [`docs/audit/`](docs/audit/) | Security audits of the original code and of this rewrite. |
 | [`docs/handoff/`](docs/handoff/) | Notes from each stage of the port. |
 
@@ -59,6 +59,16 @@ both directions. The only intended differences are security and bug fixes, liste
 - Settings and theme synchronised with the server, in the same format as the Windows app.
 - Tray menu, notifications, Finder service "Upload with Modlight", start at login.
 
+### Windows app
+
+The same app, with upstream's Windows mechanisms back in place of the macOS ones
+([`app/docs/WINDOWS.md`](app/docs/WINDOWS.md)): the token in Credential Manager; capture
+through GDI with the region overlay above the taskbar; recording with DirectShow devices
+and the NVENC, AMF and Quick Sync encoders; Windows OCR; GDI printing; the YouTube
+sign-in in WebView2; background removal on DirectML; "Start with Windows", "Upload with
+Modlight" in Explorer's context menu and "Send to"; one running copy that takes the files
+a later start is given; the tray, taskbar progress and Print Screen hotkeys.
+
 ## Running it
 
 ### Server (local Docker stack)
@@ -87,12 +97,24 @@ Open the app, choose **Sign in**, enter your server's address and approve the ap
 browser. The first clean build downloads ONNX Runtime (pinned SHA-256) for the background
 remover.
 
+### Windows app
+
+Requires the Rust toolchain (MSVC target) and the Visual Studio Build Tools with a Windows
+SDK, on Windows 10 2004 or newer (x64; arm64 builds the same way).
+
+```powershell
+app\scripts\build-app.ps1               # app\dist\Modlight\ and Modlight-<version>-windows-<arch>.zip
+```
+
+The folder runs where it is (no installer); settings live in `Documents\Modlight`. Sign in
+as on the Mac.
+
 ## Development
 
 ```sh
 cd server && cargo test                          # ~1250 tests; DB tests need a Postgres URL
 cd server/web && npm run verify                  # SPA: typecheck, tests, build, bundle audit
-cd app && cargo test --workspace                 # ~690 tests, including headless snapshots
+cd app && cargo test --workspace                 # macOS or Windows; headless snapshots included
 ```
 
 Behaviour is checked against the original server running side by side: parity suites in
@@ -100,7 +122,8 @@ Behaviour is checked against the original server running side by side: parity su
 (several thousand cases), and the original end-to-end suite runs against both servers.
 Coverage of every upstream file: [`server/docs/COVERAGE.md`](server/docs/COVERAGE.md).
 Porting rules: [`server/docs/PORT.md`](server/docs/PORT.md), [`app/docs/PORT.md`](app/docs/PORT.md).
-macOS substitutions for Windows features: [`app/docs/MACOS.md`](app/docs/MACOS.md).
+macOS substitutions for Windows features: [`app/docs/MACOS.md`](app/docs/MACOS.md); what the
+Windows build uses: [`app/docs/WINDOWS.md`](app/docs/WINDOWS.md).
 
 ## Security
 

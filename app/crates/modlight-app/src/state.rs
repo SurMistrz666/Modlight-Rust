@@ -271,8 +271,23 @@ impl AppState {
 
     pub fn set_language_setting(&mut self, setting: l10n::LanguageSetting) {
         self.config.set_language(setting);
-        self.language = setting.resolve(&self.env.system_language);
+        let language = setting.resolve(&self.env.system_language);
+        let changed = language != self.language;
+        self.language = language;
         l10n::set_language(self.language);
+        // Windows: the Explorer menu entry is registered in the interface language; a
+        // new language registers it again.
+        #[cfg(windows)]
+        if changed
+            && self.mode == crate::app::Mode::Normal
+            && !self.env.qa
+            && crate::platform::integration::context_menu_enabled()
+            && let Err(error) = crate::platform::integration::set_context_menu(true)
+        {
+            log::warn!("Explorer integration: {error}");
+        }
+        #[cfg(not(windows))]
+        let _ = changed;
         self.space.pager.refresh_texts();
         self.space.update_count();
         self.save_config();

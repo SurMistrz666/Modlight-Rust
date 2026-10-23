@@ -22,6 +22,9 @@ pub fn input_trusted() -> bool {
     false
 }
 
+/// The name the app uses on every system (`platform::input::SystemScroller`).
+pub type SystemScroller = MacScroller;
+
 /// The Mac's scroller.
 pub struct MacScroller;
 

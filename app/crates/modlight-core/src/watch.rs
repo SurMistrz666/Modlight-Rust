@@ -32,16 +32,23 @@
 //!   which macOS has no equivalent of. The closest honest check is that the file can be
 //!   opened for reading. What really waits for a writer to finish, upstream and here, is
 //!   the size test: bigger than zero and unchanged since the previous check, four times.
+//!
+//! On Windows `notify` reads `ReadDirectoryChangesW`, the source of upstream's
+//! FileSystemWatcher; the same rules run on its events (it neither repeats flags nor
+//! splits renames the FSEvents way, so they simply never trigger), the "locked" test is
+//! upstream's own open with no sharing, and a file is known by its volume serial number
+//! and file index.
 
 use std::collections::HashMap;
 use std::fmt;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime};
 
 use notify::event::ModifyKind;
 use notify::{EventKind, RecursiveMode, Watcher};
@@ -348,12 +355,84 @@ struct FileId {
     born: Option<SystemTime>,
 }
 
-fn file_id(metadata: &std::fs::Metadata) -> FileId {
+#[cfg(unix)]
+fn file_id(_path: &Path, metadata: &std::fs::Metadata) -> FileId {
     FileId {
         device: metadata.dev(),
         inode: metadata.ino(),
         born: metadata.created().ok(),
     }
+}
+
+/// Windows: the volume's serial number and the file's index on it
+/// (`GetFileInformationByHandle`), read without following a reparse point. NTFS carries
+/// a deleted file's creation time over to a new file of the same name made within
+/// seconds ("tunnelling"), so the birth time alone would mistake a replaced file for the
+/// old one; the file index does not.
+#[cfg(windows)]
+fn file_id(path: &Path, metadata: &std::fs::Metadata) -> FileId {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        GetFileInformationByHandle, OPEN_EXISTING,
+    };
+    let born = metadata.created().ok();
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: a NUL-terminated wide path opened for no access (attributes only), every
+    // kind of sharing allowed so a writer is never disturbed; the handle is closed below.
+    unsafe {
+        let handle = CreateFileW(
+            wide.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        );
+        if handle == INVALID_HANDLE_VALUE {
+            return FileId {
+                device: 0,
+                inode: 0,
+                born,
+            };
+        }
+        let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
+        let ok = GetFileInformationByHandle(handle, &mut info);
+        CloseHandle(handle);
+        if ok == 0 {
+            return FileId {
+                device: 0,
+                inode: 0,
+                born,
+            };
+        }
+        FileId {
+            device: info.dwVolumeSerialNumber as u64,
+            inode: ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+            born,
+        }
+    }
+}
+
+/// When the file last changed: its status change time on Unix, its last write on
+/// Windows (which has no status change time).
+#[cfg(unix)]
+fn changed_at(metadata: &std::fs::Metadata) -> Option<SystemTime> {
+    u64::try_from(metadata.ctime())
+        .ok()
+        .map(|seconds| std::time::UNIX_EPOCH + Duration::new(seconds, metadata.ctime_nsec() as u32))
+}
+
+#[cfg(windows)]
+fn changed_at(metadata: &std::fs::Metadata) -> Option<SystemTime> {
+    metadata.modified().ok()
 }
 
 /// What is at a path, without following a symbolic link.
@@ -380,14 +459,28 @@ struct Disk;
 impl Probe for Disk {
     fn entry(&self, path: &Path) -> Entry {
         match std::fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.is_file() => Entry::File(file_id(&metadata)),
+            Ok(metadata) if metadata.is_file() => Entry::File(file_id(path, &metadata)),
             Ok(_) => Entry::Other,
             Err(_) => Entry::Missing,
         }
     }
 
+    /// On Windows this is upstream's own test: the file opens for reading with no
+    /// sharing (`FileShare.None`), which fails while a writer still holds it.
     fn can_read(&self, path: &Path) -> bool {
-        std::fs::File::open(path).is_ok()
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(path)
+                .is_ok()
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::File::open(path).is_ok()
+        }
     }
 
     fn size(&self, path: &Path) -> i64 {
@@ -692,14 +785,13 @@ impl Tracker {
                 if !metadata.is_file() || !self.matches(&path) {
                     continue;
                 }
-                let changed = u64::try_from(metadata.ctime()).ok().map(|seconds| {
-                    UNIX_EPOCH + Duration::new(seconds, metadata.ctime_nsec() as u32)
-                });
+                let changed = changed_at(&metadata);
                 let recent = changed
                     .and_then(|changed| started.duration_since(changed).ok())
                     .is_some_and(|age| age < REMEMBER_FOR);
                 if recent {
-                    self.remember(path, file_id(&metadata), now);
+                    let id = file_id(&path, &metadata);
+                    self.remember(path, id, now);
                 }
             }
         }
@@ -875,7 +967,15 @@ mod tests {
                 }
                 change(due_ms, &mut self.disk);
                 for path in self.tracker.poll(due, &self.disk) {
-                    self.reports.push((due_ms, path.display().to_string()));
+                    // The tracker joins with the system's separator (`\` on Windows);
+                    // the expectations are written with `/`.
+                    let shown = path.display().to_string();
+                    let shown = if cfg!(windows) {
+                        shown.replace('\\', "/")
+                    } else {
+                        shown
+                    };
+                    self.reports.push((due_ms, shown));
                 }
             }
         }

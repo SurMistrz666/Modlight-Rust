@@ -110,7 +110,7 @@ impl Uploads {
             QueueStore::new(profile),
             account.clone(),
             transport,
-            Arc::new(modlight_macos::network::network_available),
+            Arc::new(crate::platform::network::network_available),
         );
         queue.set_waker(waker.clone());
         let (channel, receiver) = TaskChannel::new(waker);
@@ -1022,7 +1022,7 @@ impl AppState {
         }
         // The picture's bytes, decoded here under the app's limits (arboard's own
         // decoding has none).
-        if let Some(bytes) = modlight_macos::pasteboard::image_bytes() {
+        if let Some(bytes) = crate::platform::pasteboard::image_bytes() {
             match modlight_core::image_decode::from_bytes(&bytes) {
                 Ok(picture) => return Some(ClipboardContent::Image(picture.into_rgba8())),
                 Err(error) => log::warn!("Modlight: the clipboard's picture was not read: {error}"),
@@ -1278,7 +1278,7 @@ impl AppState {
     pub fn play_sound(sound: NotificationSound, custom: Option<String>) {
         // A custom sound is played and nothing else, even when it cannot be.
         if let Some(path) = custom.filter(|p| !p.is_empty()) {
-            if !modlight_macos::sound::play_file(Path::new(&path)) {
+            if !crate::platform::sound::play_file(Path::new(&path)) {
                 log::warn!("Modlight: the custom sound could not be played: {path}");
             }
             return;
@@ -1297,7 +1297,7 @@ impl AppState {
                 include_bytes!("../../../assets/upstream/sounds/ErrorSound.wav")
             }
         };
-        modlight_macos::sound::play_bytes(bytes);
+        crate::platform::sound::play_bytes(bytes);
     }
 
     // ------------------------------------------------------------------ watch folders

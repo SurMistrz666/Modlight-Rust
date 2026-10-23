@@ -5,9 +5,10 @@
 //! model returns logits, then stretched to 0..1), the mask scaled back and laid over the
 //! picture's alpha (`DstIn`).
 //!
-//! Devices: upstream's GPU is DirectML on the adapter with the most video memory; here it
-//! is Core ML (the Neural Engine and the GPU as macOS chooses). "Auto" tries Core ML and
-//! falls back to the CPU, as upstream falls back from DirectML.
+//! Devices: upstream's GPU is DirectML on the adapter with the most video memory, and so
+//! it is on Windows here; on macOS it is Core ML (the Neural Engine and the GPU as macOS
+//! chooses). "Auto" tries the GPU provider and falls back to the CPU, as upstream falls
+//! back from DirectML.
 //!
 //! One session is kept (the model, its size and time, the device) so a second picture does
 //! not load the model again; [`release`] drops it when the tool closes.
@@ -106,8 +107,33 @@ fn failed(error: impl std::fmt::Display) -> anyhow::Error {
     anyhow!("{error}")
 }
 
-/// `CreateSession`: Core ML for "GPU", the CPU for "CPU", Core ML or else the CPU for
-/// "Auto"; returns the session and the name of what runs it.
+/// The name of the GPU provider, in the session's description.
+#[cfg(target_os = "macos")]
+const GPU_PROVIDER: &str = "Core ML";
+#[cfg(windows)]
+const GPU_PROVIDER: &str = "DirectML";
+#[cfg(not(any(target_os = "macos", windows)))]
+const GPU_PROVIDER: &str = "GPU";
+
+/// Core ML: the Neural Engine and the GPU, as macOS chooses.
+#[cfg(target_os = "macos")]
+fn gpu_provider() -> anyhow::Result<ort::ep::ExecutionProviderDispatch> {
+    Ok(ort::ep::CoreML::default().build().error_on_failure())
+}
+
+/// DirectML on the default adapter (upstream's provider).
+#[cfg(windows)]
+fn gpu_provider() -> anyhow::Result<ort::ep::ExecutionProviderDispatch> {
+    Ok(ort::ep::DirectML::default().build().error_on_failure())
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn gpu_provider() -> anyhow::Result<ort::ep::ExecutionProviderDispatch> {
+    bail!("no GPU provider is built for this system")
+}
+
+/// `CreateSession`: the GPU provider for "GPU", the CPU for "CPU", the GPU provider or
+/// else the CPU for "Auto"; returns the session and the name of what runs it.
 fn create_session(
     model: &Path,
     device: RemovalDevice,
@@ -121,7 +147,7 @@ fn create_session(
             .commit_from_file(model)
             .map_err(failed)
     };
-    let core_ml = || -> anyhow::Result<Session> {
+    let gpu = || -> anyhow::Result<Session> {
         Session::builder(env)
             .map_err(failed)?
             .with_memory_pattern(false)
@@ -130,18 +156,18 @@ fn create_session(
             .map_err(failed)?
             .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(failed)?
-            .with_execution_providers([ort::ep::CoreML::default().build().error_on_failure()])
+            .with_execution_providers([gpu_provider()?])
             .map_err(failed)?
             .commit_from_file(model)
             .map_err(failed)
     };
     match device {
         RemovalDevice::Cpu => Ok((cpu()?, "CPU".into())),
-        RemovalDevice::Gpu => Ok((core_ml()?, "Core ML".into())),
-        RemovalDevice::Auto => match core_ml() {
-            Ok(session) => Ok((session, "Core ML".into())),
+        RemovalDevice::Gpu => Ok((gpu()?, GPU_PROVIDER.into())),
+        RemovalDevice::Auto => match gpu() {
+            Ok(session) => Ok((session, GPU_PROVIDER.into())),
             Err(error) => {
-                log::info!("Core ML is unavailable for the background model: {error}");
+                log::info!("{GPU_PROVIDER} is unavailable for the background model: {error}");
                 Ok((cpu()?, "CPU (GPU unavailable)".into()))
             }
         },
@@ -674,11 +700,12 @@ mod tests {
         release();
         let third = remove(&picture, &model, RemovalDevice::Cpu).unwrap();
         assert!(!third.session_cached);
-        // Core ML (or the CPU when it cannot take the model) gives the same cut.
+        // The system's GPU provider (Core ML on macOS, DirectML on Windows), or the CPU
+        // when it cannot take the model, gives the same cut.
         let auto = remove(&picture, &model, RemovalDevice::Auto).unwrap();
         eprintln!("Auto ran on: {}", auto.execution_device);
         assert!(
-            ["Core ML", "CPU (GPU unavailable)"].contains(&auto.execution_device.as_str()),
+            [GPU_PROVIDER, "CPU (GPU unavailable)"].contains(&auto.execution_device.as_str()),
             "{}",
             auto.execution_device
         );

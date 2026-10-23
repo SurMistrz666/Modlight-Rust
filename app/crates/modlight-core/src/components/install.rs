@@ -1,4 +1,4 @@
-//! Getting a component onto this Mac: download, verify, unpack, put it where the rest
+//! Getting a component onto this computer: download, verify, unpack, put it where the rest
 //! of the app looks for it; removing it again; tidying up after crashes
 //! (`ModlightComponents` installing and plumbing).
 
@@ -329,6 +329,27 @@ pub fn place(profile: &Path, component: &Component, part: &Path) -> InstallResul
                 )?;
                 move_folder_into_place(&built, &folder.join(owned))?;
             }
+            Packaging::ZipFolder { keep } => {
+                // Room for the unpacked copy and the one it replaces, as `ZipTree`.
+                if let Some(space) =
+                    check_space(&folder, zip_size(part).saturating_mul(2) + SPACE_HEADROOM)
+                {
+                    return Ok(Some(space));
+                }
+                reset(&unpack)?;
+                archive::extract_zip_folder(part, keep, &unpack, component.max_uncompressed_size)?;
+                std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+                // In the order listed: the file that means "installed" comes last.
+                for (_, name) in keep {
+                    let built = unpack.join(name);
+                    let destination = folder.join(name);
+                    if built.is_dir() {
+                        move_folder_into_place(&built, &destination)?;
+                    } else {
+                        move_into_place(&built, &destination)?;
+                    }
+                }
+            }
         }
         Ok(None)
     })();
@@ -423,7 +444,8 @@ pub fn move_into_place(source: &Path, destination: &Path) -> Result<(), String> 
     Ok(())
 }
 
-/// The same for a folder (ExifTool's script and library).
+/// The same for a folder (ExifTool's library: `lib` on macOS, `exiftool_files` on
+/// Windows).
 fn move_folder_into_place(source: &Path, destination: &Path) -> Result<(), String> {
     if !destination.exists() {
         return std::fs::rename(source, destination).map_err(|e| e.to_string());
@@ -545,6 +567,11 @@ pub fn free_space(folder: &Path) -> Option<u64> {
             return None;
         }
     }
+    volume_free_bytes(&probe)
+}
+
+#[cfg(unix)]
+fn volume_free_bytes(probe: &Path) -> Option<u64> {
     let path = std::ffi::CString::new(probe.as_os_str().as_encoded_bytes()).ok()?;
     let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
     // SAFETY: `path` is a valid NUL-terminated string and `stat` a writable struct.
@@ -553,6 +580,29 @@ pub fn free_space(folder: &Path) -> Option<u64> {
         return None;
     }
     Some(stat.f_bavail as u64 * stat.f_frsize as u64)
+}
+
+/// The bytes this user may still write there (`GetDiskFreeSpaceEx`, quotas included).
+#[cfg(windows)]
+fn volume_free_bytes(probe: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = probe
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut available = 0u64;
+    // SAFETY: a NUL-terminated wide path and one writable counter; the other two
+    // counters are not asked for.
+    let ok = unsafe {
+        windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
 }
 
 /// A drive that cannot be measured is not a drive that is full.
@@ -590,13 +640,17 @@ mod tests {
         let profile = tempfile::tempdir().unwrap();
         let tools = profile.path().join("Tools");
         std::fs::create_dir_all(&tools).unwrap();
-        std::fs::write(tools.join("yt-dlp"), b"live").unwrap();
-        std::fs::write(tools.join("yt-dlp.old-20260101120000123"), b"old").unwrap();
-        std::fs::write(tools.join("yt-dlp.old-notes"), b"mine").unwrap();
+        // "yt-dlp" on macOS, "yt-dlp.exe" on Windows.
+        let live = find("yt-dlp").unwrap().file_name;
+        let retired = format!("{live}.old-20260101120000123");
+        let notes = format!("{live}.old-notes");
+        std::fs::write(tools.join(live), b"live").unwrap();
+        std::fs::write(tools.join(&retired), b"old").unwrap();
+        std::fs::write(tools.join(&notes), b"mine").unwrap();
         sweep_retired(profile.path(), find("yt-dlp").unwrap());
-        assert!(!tools.join("yt-dlp.old-20260101120000123").exists());
-        assert!(tools.join("yt-dlp.old-notes").exists());
-        assert!(tools.join("yt-dlp").exists());
+        assert!(!tools.join(&retired).exists());
+        assert!(tools.join(&notes).exists());
+        assert!(tools.join(live).exists());
     }
 
     #[test]
@@ -604,9 +658,11 @@ mod tests {
         let profile = tempfile::tempdir().unwrap();
         let tools = profile.path().join("Tools");
         std::fs::create_dir_all(&tools).unwrap();
-        std::fs::write(tools.join("yt-dlp.old-20260101120000123"), b"old").unwrap();
+        let live = find("yt-dlp").unwrap().file_name;
+        let retired = format!("{live}.old-20260101120000123");
+        std::fs::write(tools.join(&retired), b"old").unwrap();
         sweep_retired(profile.path(), find("yt-dlp").unwrap());
-        assert!(tools.join("yt-dlp.old-20260101120000123").exists());
+        assert!(tools.join(&retired).exists());
     }
 
     #[test]
@@ -620,6 +676,7 @@ mod tests {
         assert!(staging.join("ffmpeg-abc.part").exists());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn removal_takes_every_owned_entry() {
         let profile = tempfile::tempdir().unwrap();
@@ -630,6 +687,23 @@ mod tests {
         assert!(crate::components::is_installed(profile.path(), exiftool));
         assert!(remove(profile.path(), exiftool));
         assert!(!folder.exists());
+        assert!(!remove(profile.path(), exiftool));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn removal_takes_every_owned_entry_on_windows() {
+        let profile = tempfile::tempdir().unwrap();
+        let exiftool = find("exiftool").unwrap();
+        let tools = profile.path().join("Tools");
+        std::fs::create_dir_all(tools.join("exiftool_files").join("lib")).unwrap();
+        std::fs::write(tools.join("exiftool.exe"), b"MZ").unwrap();
+        std::fs::write(tools.join("mine.txt"), b"keep").unwrap();
+        assert!(crate::components::is_installed(profile.path(), exiftool));
+        assert!(remove(profile.path(), exiftool));
+        assert!(!tools.join("exiftool.exe").exists());
+        assert!(!tools.join("exiftool_files").exists());
+        assert!(tools.join("mine.txt").exists());
         assert!(!remove(profile.path(), exiftool));
     }
 

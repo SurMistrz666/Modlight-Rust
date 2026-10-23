@@ -1,11 +1,13 @@
 //! Emoji: the catalog (`Assets/emoji-catalog.json`, `EmojiCatalogService`) and the sticker
 //! bitmaps (`WindowsEmojiBitmapRenderer`).
 //!
-//! Upstream draws the glyph with Direct2D and "Segoe UI Emoji", which a Mac lacks (its
-//! fallback, Skia with the default typeface, draws nothing). The port draws Apple Color
-//! Emoji's own bitmaps (the `sbix` strikes CoreText uses), shaped with the font's
-//! ligatures so sequences (ZWJ, flags, skin tones) become one glyph, then trims and fits
-//! them into the square exactly as upstream's renderer does.
+//! Upstream draws the glyph with Direct2D and "Segoe UI Emoji". On Windows the port
+//! draws the same font, a `COLR` colour font, with [`crate::colr`]; a Mac lacks it (its
+//! fallback, Skia with the default typeface, draws nothing), so there the port draws
+//! Apple Color Emoji's own bitmaps (the `sbix` strikes CoreText uses). Either way the
+//! text is shaped with the font's ligatures so sequences (ZWJ, flags, skin tones) become
+//! one glyph, then trimmed and fitted into the square exactly as upstream's renderer
+//! does.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -17,7 +19,12 @@ use serde::Deserialize;
 use crate::raster::{self, Filter};
 
 const CATALOG_JSON: &str = include_str!("../../../assets/upstream/editor/emoji-catalog.json");
-pub const EMOJI_FAMILY: &str = "Apple Color Emoji";
+/// The emoji font: upstream's on Windows, the system's own on a Mac.
+pub const EMOJI_FAMILY: &str = if cfg!(windows) {
+    "Segoe UI Emoji"
+} else {
+    "Apple Color Emoji"
+};
 const PREVIEW_PADDING: u32 = 6;
 const STICKER_PADDING: u32 = 14;
 const RAW_FONT_SCALE: f32 = 1.32;
@@ -176,7 +183,8 @@ fn render_cached(sequence: &str, size: u32, padding: u32) -> Option<Arc<RgbaImag
     rendered
 }
 
-/// The glyph image(s) of the text in Apple Color Emoji, side by side at `ppem`.
+/// The glyph image(s) of the text in the emoji font ([`EMOJI_FAMILY`]), side by side at
+/// `ppem`.
 pub fn raw_glyph_image(text: &str, ppem: f32) -> Option<RgbaImage> {
     let face = crate::text::find_face(EMOJI_FAMILY)?;
     face.with_face(|f| {
@@ -187,6 +195,9 @@ pub fn raw_glyph_image(text: &str, ppem: f32) -> Option<RgbaImage> {
         let shaped = rustybuzz::shape(&hb, &[], buffer);
         let upem = f.units_per_em() as f32;
         let scale = ppem / upem;
+        if f.tables().colr.is_some() {
+            return colour_glyphs(f, &shaped, scale, ppem);
+        }
         let mut pieces = Vec::new();
         let mut pen = 0.0f32;
         for (info, pos) in shaped.glyph_infos().iter().zip(shaped.glyph_positions()) {
@@ -224,6 +235,60 @@ pub fn raw_glyph_image(text: &str, ppem: f32) -> Option<RgbaImage> {
         Some(canvas)
     })
     .flatten()
+}
+
+/// A `COLR` font's glyphs side by side on the baseline (glyphs without colour in the
+/// foreground colour, black, as Direct2D draws them), with a margin a quarter of the
+/// size wide around them for parts that reach past the advance; the caller trims it.
+fn colour_glyphs(
+    face: &ttf_parser::Face<'_>,
+    shaped: &rustybuzz::GlyphBuffer,
+    scale: f32,
+    ppem: f32,
+) -> Option<RgbaImage> {
+    let margin = (ppem * 0.25).ceil();
+    let advance: f32 = shaped
+        .glyph_positions()
+        .iter()
+        .map(|pos| pos.x_advance as f32 * scale)
+        .sum();
+    let ascender = face.ascender() as f32 * scale;
+    let descender = face.descender() as f32 * scale;
+    let width = (advance + margin * 2.0).ceil().max(1.0) as u32;
+    let height = (ascender - descender + margin * 2.0).ceil().max(1.0) as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
+    let mut pen = margin;
+    let mut drawn = false;
+    for (info, pos) in shaped.glyph_infos().iter().zip(shaped.glyph_positions()) {
+        let glyph = ttf_parser::GlyphId(info.glyph_id as u16);
+        // Font units (y up) to pixels (y down), on this glyph's place on the baseline.
+        let base = tiny_skia::Transform::from_row(
+            scale,
+            0.0,
+            0.0,
+            -scale,
+            pen + pos.x_offset as f32 * scale,
+            margin + ascender - pos.y_offset as f32 * scale,
+        );
+        if crate::colr::paint_glyph(face, glyph, base, &mut pixmap).is_some() {
+            drawn = true;
+        } else if let Some(path) = crate::colr::outline(face, glyph) {
+            let mut paint = tiny_skia::Paint::default();
+            paint.set_color_rgba8(0, 0, 0, 255);
+            pixmap.fill_path(&path, &paint, tiny_skia::FillRule::Winding, base, None);
+            drawn = true;
+        }
+        pen += pos.x_advance as f32 * scale;
+    }
+    if !drawn {
+        return None;
+    }
+    let mut image = RgbaImage::new(width, height);
+    for (pixel, out) in pixmap.pixels().iter().zip(image.pixels_mut()) {
+        let color = pixel.demultiply();
+        *out = image::Rgba([color.red(), color.green(), color.blue(), color.alpha()]);
+    }
+    Some(image)
 }
 
 /// `RenderSquareBitmap`: draw big, trim the transparent border, fit into the square.

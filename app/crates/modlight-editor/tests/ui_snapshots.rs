@@ -4,7 +4,11 @@
 //!
 //! `UPDATE_SNAPSHOTS=1 cargo test -p modlight-editor --test ui_snapshots` writes the
 //! pictures that differ. `EDITOR_SCENE=<name>` draws one scene. Nothing here opens a
-//! window. The renders use this Mac's fonts (the font picker, Apple Color Emoji).
+//! window. The renders use the system's fonts (the font picker, the emoji font), so on
+//! Windows a scene that draws them differently has a `windows-` picture of its own (see
+//! `common`).
+
+mod common;
 
 use modlight_core::l10n::{Language, set_thread_language};
 use modlight_editor::qa;
@@ -55,11 +59,8 @@ fn render(scene: &str, dark: bool, language: Language) -> Result<image::RgbaImag
     harness.render()
 }
 
-fn options() -> egui_kittest::SnapshotOptions {
-    egui_kittest::SnapshotOptions::new()
-        .threshold(0.6)
-        .max_failed_pixels(200)
-}
+const THRESHOLD: f32 = 0.6;
+const MAX_FAILED_PIXELS: usize = 200;
 
 #[test]
 fn every_scene_in_every_look() {
@@ -94,10 +95,11 @@ fn every_scene_in_every_look() {
                     let path = std::path::Path::new(dir).join(format!("{scene}-{name}.png"));
                     let _ = image.save(path);
                 }
-                if let Err(error) = egui_kittest::try_image_snapshot_options(
+                if let Err(error) = common::check(
                     &image,
-                    format!("{scene}/{name}"),
-                    &options(),
+                    &format!("{scene}/{name}"),
+                    THRESHOLD,
+                    MAX_FAILED_PIXELS,
                 ) {
                     failures.push(format!("{scene}/{name}: {error}"));
                 }

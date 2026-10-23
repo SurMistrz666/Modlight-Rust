@@ -217,6 +217,47 @@ impl Default for Look {
     }
 }
 
+/// A path of the fixtures as this system writes it, so every machine draws the same
+/// screens: the Mac's own on a Mac; on Windows the same place in `C:\Users\alex` (the
+/// personal folder in `Documents\Modlight`, `Movies` as `Videos`, the program in
+/// `C:\Program Files\Modlight`, temporary files in `AppData\Local\Temp`).
+pub fn fixture_path(mac: &str) -> String {
+    #[cfg(windows)]
+    {
+        const MAP: [(&str, &str); 7] = [
+            (
+                "/Users/alex/Library/Application Support/Modlight",
+                r"C:\Users\alex\Documents\Modlight",
+            ),
+            (
+                "/Applications/Modlight.app/Contents/MacOS",
+                r"C:\Program Files\Modlight",
+            ),
+            ("/Users/alex/Movies", r"C:\Users\alex\Videos"),
+            ("/Users/alex", r"C:\Users\alex"),
+            ("/tmp", r"C:\Users\alex\AppData\Local\Temp"),
+            ("/opt/homebrew/bin", r"C:\Tools"),
+            ("~", r"C:\Users\alex"),
+        ];
+        for (from, to) in MAP {
+            if let Some(rest) = mac.strip_prefix(from)
+                && (rest.is_empty() || rest.starts_with('/'))
+            {
+                // A program has its extension on Windows.
+                let program = from == "/opt/homebrew/bin" && !rest.is_empty();
+                return format!(
+                    "{to}{}{}",
+                    rest.replace('/', "\\"),
+                    if program { ".exe" } else { "" }
+                );
+            }
+        }
+        mac.replace('/', "\\")
+    }
+    #[cfg(not(windows))]
+    mac.to_string()
+}
+
 /// The clock every fixture is frozen at.
 pub fn frozen_now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, 18, 12, 0, 0).unwrap()
@@ -234,11 +275,19 @@ pub fn state(look: &Look, signed_in: bool) -> AppState {
     set_thread_language(Some(look.language));
     set_thread_culture(Some(culture_for(look.language)));
     set_thread_utc(true);
+    // A temporary personal folder on a Mac; on Windows the fixture's, so the screens show
+    // the same folder on every machine. Nothing is written into it while drawing.
+    #[cfg(windows)]
+    let profile = PathBuf::from(fixture_path(
+        "/Users/alex/Library/Application Support/Modlight",
+    ));
+    #[cfg(not(windows))]
+    let profile = std::env::temp_dir().join("modlight-qa-shot");
     let env = Env {
-        profile: std::env::temp_dir().join("modlight-qa-shot"),
+        profile,
         qa: true,
         frozen_now: Some(frozen_now()),
-        machine: "QA Mac".into(),
+        machine: if cfg!(windows) { "QA PC" } else { "QA Mac" }.into(),
         system_language: match look.language {
             Language::English => "en".into(),
             Language::Polish => "pl".into(),

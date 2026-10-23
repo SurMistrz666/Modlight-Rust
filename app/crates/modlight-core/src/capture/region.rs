@@ -81,7 +81,7 @@ pub enum Key {
     Down,
     Delete,
     Escape,
-    /// Cmd+H (Ctrl+H upstream): hide or show the toolbar.
+    /// Ctrl+H (Cmd+H on a Mac): hide or show the toolbar.
     ToggleToolbar,
 }
 

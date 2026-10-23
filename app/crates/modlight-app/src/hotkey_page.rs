@@ -3,10 +3,16 @@
 //! with its task menu, its key capture button and its registration state, and the reset
 //! question.
 //!
-//! On a Mac a key is captured from the window's own key events. While one is being
-//! captured every hotkey is unregistered (upstream only ignores them): a combination the
-//! system holds for this app is otherwise delivered as a hotkey, never as a key press, so
-//! a shortcut could not be typed again.
+//! A key is captured from the window's own key events. While one is being captured
+//! every hotkey is unregistered (upstream only ignores them): a combination the system
+//! holds for this app (`RegisterHotKey`, Carbon's hotkeys) is otherwise delivered as a
+//! hotkey, never as a key press, so a shortcut could not be typed again.
+//!
+//! On Windows Ctrl is `Keys.Control`, as upstream. egui reports neither Print Screen,
+//! Scroll Lock and Pause nor the Win key, so those cannot be typed here yet (a binding
+//! that has them, upstream's defaults among them, still shows and registers). On a Mac
+//! Command is `Keys.Control`, Control is Win, and F13 to F15 stand for Print Screen,
+//! Scroll Lock and Pause.
 
 use egui::{
     Align, Color32, Layout, Order, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
@@ -143,18 +149,76 @@ pub fn key_name(key: egui::Key) -> Option<&'static str> {
     })
 }
 
-/// The binding while only modifiers are down (`LeftCtrl` and friends): "Cmd + ...".
+/// The modifiers egui reports, as `Keys.Control`, `Keys.Shift`, `Keys.Alt` and Win: on
+/// Windows Ctrl, Shift and Alt (egui has no Win key); on a Mac Command, Shift, Option
+/// and Control.
+fn modifier_bits(m: egui::Modifiers) -> (bool, bool, bool, bool) {
+    if cfg!(windows) {
+        (m.ctrl, m.shift, m.alt, false)
+    } else {
+        (m.mac_cmd, m.shift, m.alt, m.ctrl)
+    }
+}
+
+/// Windows: whether a Win key is held (egui has no Win modifier). The keyboard hook that
+/// knows is installed in normal mode only, so QA and tests never read the real keyboard.
+#[cfg(windows)]
+fn win_held() -> bool {
+    crate::platform::keys::monitoring() && crate::platform::keys::win_down()
+}
+
+#[cfg(not(windows))]
+fn win_held() -> bool {
+    false
+}
+
+/// Windows: the binding of a key egui never reports (Print Screen, Scroll Lock, Pause,
+/// the media and browser keys), pressed while the row captures; the keyboard hook saw
+/// it with the modifiers held at that moment.
+#[cfg(windows)]
+fn special_binding() -> Option<HotkeyInfo> {
+    use modlight_core::hotkeys::Keys;
+    let key = crate::platform::keys::take_special_key()?;
+    let mut bits = key.key;
+    if key.ctrl {
+        bits |= Keys::CONTROL;
+    }
+    if key.shift {
+        bits |= Keys::SHIFT;
+    }
+    if key.alt {
+        bits |= Keys::ALT;
+    }
+    Some(HotkeyInfo {
+        hotkey: Keys(bits),
+        win: key.win,
+    })
+}
+
+#[cfg(not(windows))]
+fn special_binding() -> Option<HotkeyInfo> {
+    None
+}
+
+/// The binding while only modifiers are down (`LeftCtrl` and friends): "Ctrl + ..." on
+/// Windows, "Cmd + ..." on a Mac.
 fn modifiers_only(m: egui::Modifiers) -> HotkeyInfo {
-    let key = if m.mac_cmd || m.command && !m.ctrl {
+    let (control, shift, alt, win) = modifier_bits(m);
+    let control_key = if cfg!(windows) {
+        control
+    } else {
+        m.mac_cmd || m.command && !m.ctrl
+    };
+    let key = if control_key {
         Some("ControlKey")
-    } else if m.shift {
+    } else if shift {
         Some("ShiftKey")
-    } else if m.alt {
+    } else if alt {
         Some("Menu")
     } else {
         None
     };
-    gesture(key, m.mac_cmd, m.shift, m.alt, m.ctrl)
+    gesture(key, control, shift, alt, win)
 }
 
 /// The task menu (`OnTaskClick`): None, then a submenu per category, radio marks.
@@ -845,7 +909,15 @@ fn capture_keys(ui: &mut Ui, state: &mut AppState, page: &mut HotkeyPageState) {
     let modifiers = ui.input(|i| i.modifiers);
     let mut done = false;
     let mut seen_key = false;
+    if let Some(info) = special_binding() {
+        seen_key = true;
+        state.set_hotkey_binding(index, info);
+        done = info.is_valid();
+    }
     for event in events {
+        if done {
+            break;
+        }
         if let egui::Event::Key {
             key,
             pressed: true,
@@ -862,13 +934,8 @@ fn capture_keys(ui: &mut Ui, state: &mut AppState, page: &mut HotkeyPageState) {
             let Some(name) = key_name(key) else {
                 continue;
             };
-            let info = gesture(
-                Some(name),
-                modifiers.mac_cmd,
-                modifiers.shift,
-                modifiers.alt,
-                modifiers.ctrl,
-            );
+            let (control, shift, alt, win) = modifier_bits(modifiers);
+            let info = gesture(Some(name), control, shift, alt, win || win_held());
             state.set_hotkey_binding(index, info);
             if info.is_valid() {
                 done = true;
@@ -1084,7 +1151,10 @@ impl AppState {
                 } else {
                     self.stop_hotkey_capture(&mut page);
                     page.capturing = Some(index);
-                    // `SetCaptureMode(true)`; on a Mac also nothing registered (above).
+                    // A key egui misses that was pressed before this is not the binding.
+                    #[cfg(windows)]
+                    let _ = crate::platform::keys::take_special_key();
+                    // `SetCaptureMode(true)`, and nothing registered (above).
                     self.captures.hotkeys.ignore = true;
                     self.captures.hotkeys.unregister_all(false);
                     self.set_hotkey_binding(index, HotkeyInfo::default());
@@ -1135,16 +1205,50 @@ mod tests {
 
     #[test]
     fn modifiers_alone_show_as_an_unfinished_binding() {
-        let m = egui::Modifiers {
-            mac_cmd: true,
-            command: true,
-            shift: true,
-            ..Default::default()
+        // What egui reports for Ctrl+Shift on Windows and Cmd+Shift on a Mac.
+        let m = if cfg!(windows) {
+            egui::Modifiers {
+                ctrl: true,
+                command: true,
+                shift: true,
+                ..Default::default()
+            }
+        } else {
+            egui::Modifiers {
+                mac_cmd: true,
+                command: true,
+                shift: true,
+                ..Default::default()
+            }
         };
         let info = modifiers_only(m);
         assert!(info.is_only_modifiers());
         assert!(!info.is_valid());
         assert!(info.text().ends_with("..."));
+        assert!(info.control() && info.shift() && !info.win);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ctrl_is_control_on_windows() {
+        modlight_core::l10n::set_thread_language(Some(modlight_core::l10n::Language::English));
+        let ctrl_shift = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            shift: true,
+            ..Default::default()
+        };
+        let (control, shift, alt, win) = modifier_bits(ctrl_shift);
+        let info = gesture(key_name(egui::Key::Num2), control, shift, alt, win);
+        assert_eq!(info.text(), "Ctrl + Shift + 2");
+        assert_eq!(
+            info.hotkey.to_value(),
+            serde_json::json!("D2, Shift, Control")
+        );
+        // F13 is F13 on Windows.
+        let f13 = gesture(key_name(egui::Key::F13), false, false, false, false);
+        assert_eq!(f13.text(), "F13");
+        modlight_core::l10n::set_thread_language(None);
     }
 
     #[test]

@@ -3,9 +3,10 @@
 //! (`BuildGeometry`) that the renderer fills and strokes.
 //!
 //! Fonts come from the system (`FontManager.Current.SystemFonts`) through `fontdb`; the
-//! default family is Inter, which is what upstream's Avalonia uses on a Mac
-//! (`.WithInterFont()`), and what a family that is not installed (upstream's default
-//! "Segoe UI") falls back to. Shaping is `rustybuzz`, line breaking UAX #14.
+//! default family is Inter, which is what upstream's Avalonia uses everywhere
+//! (`.WithInterFont()`), and what a family that is not installed falls back to (on a Mac
+//! upstream's default "Segoe UI" among them; on Windows it is there and draws as
+//! upstream). Shaping is `rustybuzz`, line breaking UAX #14.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -244,7 +245,8 @@ pub fn system_families() -> Arc<Vec<String>> {
     system().lock().unwrap().families()
 }
 
-/// A face by family name (for the emoji renderer: "Apple Color Emoji").
+/// A face by family name (for the emoji renderer: "Segoe UI Emoji" on Windows, "Apple
+/// Color Emoji" on a Mac).
 pub fn find_face(family: &str) -> Option<FaceRef> {
     if !system_fonts_enabled() {
         return None;

@@ -41,6 +41,10 @@ use objc2_screen_capture_kit::{
 /// How long a ScreenCaptureKit call may take before the capture gives up.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The names the app uses on every system (`platform::capture::ScreenSource`).
+pub type ScreenSource = MacSource;
+pub type ScreenFrames = MacFrames;
+
 /// The Mac's screen, as the capture code sees it.
 #[derive(Default)]
 pub struct MacSource {

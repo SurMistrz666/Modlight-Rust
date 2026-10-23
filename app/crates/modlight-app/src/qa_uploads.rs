@@ -112,7 +112,9 @@ pub fn prepare(screen: &str, state: &mut AppState, picture: Option<RgbaImage>) -
             let mut failed = row(state, "huge-video.mov", 40);
             failed.failed = true;
             failed.reason = t(uploaders::Modlight_File_too_large).to_string();
-            failed.retry_path = Some(PathBuf::from("/Users/alex/Movies/huge-video.mov"));
+            failed.retry_path = Some(PathBuf::from(crate::qa::fixture_path(
+                "/Users/alex/Movies/huge-video.mov",
+            )));
             let mut canceled = row(state, "notes.txt", 180);
             canceled.canceled = true;
             for row in [canceled, failed, done] {
@@ -223,8 +225,12 @@ pub fn prepare(screen: &str, state: &mut AppState, picture: Option<RgbaImage>) -
         }
         "file-exists" => {
             windows.file_exists = Some(file_exists::FileExists::new(
-                PathBuf::from("/Users/alex/Pictures/Screenshots/2026-10/mountain-sunset.png"),
-                PathBuf::from("/Users/alex/Pictures/Screenshots/2026-10/mountain-sunset (2).png"),
+                PathBuf::from(crate::qa::fixture_path(
+                    "/Users/alex/Pictures/Screenshots/2026-10/mountain-sunset.png",
+                )),
+                PathBuf::from(crate::qa::fixture_path(
+                    "/Users/alex/Pictures/Screenshots/2026-10/mountain-sunset (2).png",
+                )),
             ));
             vec2(file_exists::WIDTH, 360.0)
         }

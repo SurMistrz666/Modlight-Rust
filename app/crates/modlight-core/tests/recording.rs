@@ -1,7 +1,8 @@
 //! Screen recording end to end with a real ffmpeg and a fake screen: frames of a still
 //! picture go through the pipe, ffmpeg writes an MP4, and a GIF through the lossless
-//! first pass and the palette pass. Skipped when no ffmpeg is installed on this Mac
-//! (the app itself uses the one from the Components window).
+//! first pass and the palette pass. Skipped when no ffmpeg is installed on this computer
+//! (the app itself uses the one from the Components window): on a Mac Homebrew's, on
+//! Windows the one `MODLIGHT_TEST_FFMPEG` names or an `ffmpeg.exe` on the PATH.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,11 +16,24 @@ use modlight_core::recording::session::{
     run_session,
 };
 
+#[cfg(not(windows))]
 fn ffmpeg() -> Option<PathBuf> {
     ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
         .iter()
         .map(PathBuf::from)
         .find(|p| p.is_file())
+}
+
+#[cfg(windows)]
+fn ffmpeg() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("MODLIGHT_TEST_FFMPEG").map(PathBuf::from) {
+        return path.is_file().then_some(path);
+    }
+    std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("ffmpeg.exe"))
+            .find(|p| p.is_file())
+    })
 }
 
 fn frames() -> FrameSourceFactory {
@@ -59,7 +73,7 @@ fn params(dir: &std::path::Path, codec: FFmpegVideoCodec, two_pass: bool) -> Ses
 #[test]
 fn a_fixed_length_recording_becomes_an_mp4() {
     if ffmpeg().is_none() {
-        eprintln!("no ffmpeg on this Mac: skipped");
+        eprintln!("no ffmpeg on this computer: skipped");
         return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -80,7 +94,7 @@ fn a_fixed_length_recording_becomes_an_mp4() {
 #[test]
 fn a_gif_goes_through_the_lossless_first_pass() {
     if ffmpeg().is_none() {
-        eprintln!("no ffmpeg on this Mac: skipped");
+        eprintln!("no ffmpeg on this computer: skipped");
         return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -99,7 +113,7 @@ fn a_gif_goes_through_the_lossless_first_pass() {
 #[test]
 fn stopping_and_aborting_from_the_window() {
     if ffmpeg().is_none() {
-        eprintln!("no ffmpeg on this Mac: skipped");
+        eprintln!("no ffmpeg on this computer: skipped");
         return;
     }
     // Stop: an open-ended recording ends with a file when Stop is pressed.
@@ -138,7 +152,7 @@ fn stopping_and_aborting_from_the_window() {
 #[test]
 fn a_paused_recording_is_joined_into_one_file() {
     if ffmpeg().is_none() {
-        eprintln!("no ffmpeg on this Mac: skipped");
+        eprintln!("no ffmpeg on this computer: skipped");
         return;
     }
     let dir = tempfile::tempdir().unwrap();

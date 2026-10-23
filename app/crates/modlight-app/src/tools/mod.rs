@@ -216,7 +216,7 @@ fn builder(spec: &WindowSpec, size: Vec2) -> ViewportBuilder {
     if let Some(position) = spec.position {
         return builder.with_position(position);
     }
-    if let Some((x, y, w, h)) = modlight_macos::system::visible_frame() {
+    if let Some((x, y, w, h)) = crate::platform::system::visible_frame() {
         let area = Rect::from_min_size(pos2(x, y), vec2(w, h));
         builder = builder.with_position(pos2(
             area.center().x - size.x / 2.0,
@@ -271,7 +271,7 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
                     if !ui
                         .ctx()
                         .data(|d| d.get_temp::<bool>(raised).unwrap_or(false))
-                        && modlight_macos::windows::raise_overlay(&spec.title)
+                        && crate::platform::windows::raise_overlay(&spec.title)
                     {
                         ui.ctx().data_mut(|d| d.insert_temp(raised, true));
                         ui.ctx().send_viewport_cmd(ViewportCommand::Focus);

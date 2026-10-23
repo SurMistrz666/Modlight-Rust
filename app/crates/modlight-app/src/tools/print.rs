@@ -1,6 +1,6 @@
 //! `PrintWindow` and `TaskHelpers.PrintImage`: the picture's print settings (margin,
 //! turn, scale, enlarge, centre), "Preview" and "Print" through the macOS print system
-//! (`modlight_macos::print`): the print panel when the settings ask for it, the page as a
+//! (`crate::platform::print`): the print panel when the settings ask for it, the page as a
 //! PDF in Preview for the preview. Without the settings window (`DontShowPrintSettingsDialog`)
 //! the picture prints straight away. QA and headless runs never reach the print system.
 
@@ -47,7 +47,7 @@ impl PrintWindow {
 
 /// Where the picture goes on the current paper, in points, and the picture as drawn.
 fn page_layout(image: &RgbaImage, settings: &PrintSettings) -> (RgbaImage, (f64, f64, f64, f64)) {
-    let (w, h) = modlight_macos::print::page_size();
+    let (w, h) = crate::platform::print::page_size();
     let placement = layout::place(
         (w * UNITS_PER_POINT, h * UNITS_PER_POINT),
         image.dimensions(),
@@ -79,8 +79,8 @@ impl AppState {
         let (picture, rect) = page_layout(image, settings);
         let printer =
             Some(settings.default_printer_override.as_str()).filter(|p| !p.trim().is_empty());
-        match modlight_macos::print::print(&picture, rect, settings.show_print_dialog, printer) {
-            Ok(modlight_macos::print::Printed::UnknownPrinter) => {
+        match crate::platform::print::print(&picture, rect, settings.show_print_dialog, printer) {
+            Ok(crate::platform::print::Printed::UnknownPrinter) => {
                 self.uploads
                     .windows
                     .messages
@@ -105,7 +105,7 @@ impl AppState {
         }
         let (picture, rect) = page_layout(image, settings);
         let path = std::env::temp_dir().join("Modlight print preview.pdf");
-        match modlight_macos::print::page_pdf(&picture, rect, &path) {
+        match crate::platform::print::page_pdf(&picture, rect, &path) {
             Ok(()) => self.effects.push(crate::state::Effect::OpenFile(path)),
             Err(error) => log::warn!("The print preview failed: {error}"),
         }

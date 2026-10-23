@@ -16,6 +16,10 @@ fn main() {
         "cargo:rerun-if-changed={}",
         manifest.join("../../assets/mac").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("../../assets/windows").display()
+    );
 
     std::fs::write(out.join("strings.rs"), strings(&assets.join("l10n"))).unwrap();
     std::fs::write(out.join("skins.rs"), skins(&assets.join("theming"))).unwrap();
@@ -40,6 +44,9 @@ const PROJECTS: &[(&str, &str)] = &[
     ("ShareX.HistoryLib", "history"),
     // The macOS port's own texts, where upstream's name Windows (assets/mac/l10n).
     ("Mac", "mac"),
+    // The port's own texts on Windows, where upstream has none and the Mac's name macOS
+    // (assets/windows/l10n).
+    ("Windows", "windows"),
 ];
 
 fn read_resx(path: &Path) -> BTreeMap<String, String> {
@@ -77,11 +84,12 @@ fn strings(dir: &Path) -> String {
     let mut modules = String::new();
 
     let mac_dir = dir.join("../../mac/l10n");
+    let windows_dir = dir.join("../../windows/l10n");
     for (project, module) in PROJECTS {
-        let dir = if *project == "Mac" {
-            mac_dir.as_path()
-        } else {
-            dir
+        let dir = match *project {
+            "Mac" => mac_dir.as_path(),
+            "Windows" => windows_dir.as_path(),
+            _ => dir,
         };
         let en = read_resx(&dir.join(format!("{project}.resx")));
         let pl = read_resx(&dir.join(format!("{project}.pl.resx")));

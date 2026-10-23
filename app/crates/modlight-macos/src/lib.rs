@@ -4,6 +4,14 @@
 //! Everything here goes through the system's own command-line tools, so no build of the
 //! app becomes the owner of a Keychain item (an item created by the app binary is tied
 //! to that exact build, and every rebuild would stop at a password prompt).
+//!
+//! Off macOS the crate still builds (its functions answer "not here"), so the workspace
+//! and its tests build everywhere; what only macOS uses is then unused.
+
+#![cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, unused_imports, clippy::needless_return)
+)]
 
 pub mod ax;
 pub mod capture;
@@ -25,3 +33,5 @@ pub mod webview;
 pub mod ocr;
 
 pub use keychain::KeychainStore;
+/// The name the app uses on every system (`platform::SecretStore`).
+pub use keychain::KeychainStore as SecretStore;

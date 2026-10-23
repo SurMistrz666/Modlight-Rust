@@ -2,7 +2,9 @@
 
 Legend: **done** = ported 1:1 and covered by tests or snapshots; **partial** = there,
 with the gaps named; **phase N** = not started, belongs to that phase of `PORT.md`.
-Substitutions for Windows-only mechanisms are in `MACOS.md`.
+Substitutions for Windows-only mechanisms are in `MACOS.md`. The same screens build for
+Windows; what that build uses, and what it has not yet been checked with in a real
+session, is in `WINDOWS.md`.
 
 Snapshots of every screen below that is drawn live in
 `crates/modlight-app/tests/snapshots/<screen>/{dark,light}-{en,pl}.png`

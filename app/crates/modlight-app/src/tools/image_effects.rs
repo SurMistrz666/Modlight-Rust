@@ -2014,7 +2014,7 @@ impl PackagerWindow {
         match package::package(Path::new(&output), &self.json, assets.as_deref()) {
             Ok(path) => {
                 if path.is_file() && state.mode == crate::app::Mode::Normal && !state.env.qa {
-                    modlight_macos::system::reveal_in_finder(&path);
+                    crate::platform::system::reveal_in_finder(&path);
                 }
                 self.status = t(fx::ImageEffectPackagerWindow_Created_successfully).to_string();
             }
@@ -2150,7 +2150,7 @@ impl ToolWindow for PackagerWindow {
         if kit::button_at(ui, &colors, left[0], None, Some(open), true).clicked() {
             let _ = std::fs::create_dir_all(&self.effects_folder);
             if state.mode == crate::app::Mode::Normal && !state.env.qa {
-                modlight_macos::system::open_path(&self.effects_folder);
+                crate::platform::system::open_path(&self.effects_folder);
             }
         }
         let right = kit::right_aligned(
@@ -2658,7 +2658,9 @@ pub fn qa_prepare(screen: &str, state: &mut AppState) -> Option<egui::Vec2> {
                 source,
                 presets,
                 selected,
-                Some("/Users/alex/Pictures/mountain-sunset.png".into()),
+                Some(crate::qa::fixture_path(
+                    "/Users/alex/Pictures/mountain-sunset.png",
+                )),
                 settings,
                 &colors,
             );
@@ -2712,8 +2714,10 @@ pub fn qa_prepare(screen: &str, state: &mut AppState) -> Option<egui::Vec2> {
             });
         }
         "image-effects-packager" => {
-            let folder = PathBuf::from("/Users/alex/Library/Application Support/Modlight")
-                .join(EFFECTS_FOLDER);
+            let folder = PathBuf::from(crate::qa::fixture_path(
+                "/Users/alex/Library/Application Support/Modlight",
+            ))
+            .join(EFFECTS_FOLDER);
             let preset = qa_presets().remove(0);
             state.tools.open_keyed(|key| {
                 Box::new(PackagerWindow::new(
@@ -2811,7 +2815,12 @@ mod tests {
         let mut draw = ClassicEffect::new(Kind::DrawImage);
         draw.set("ImageLocation", Value::Text("/etc/passwd".into()));
         let mut inside = ClassicEffect::new(Kind::DrawBackgroundImage);
-        let kept = folder.join("Preset/bg.png").to_string_lossy().into_owned();
+        // Built a part at a time: one separator throughout, the system's.
+        let kept = folder
+            .join("Preset")
+            .join("bg.png")
+            .to_string_lossy()
+            .into_owned();
         inside.set("ImageFilePath", Value::Text(kept.clone()));
         let preset = Preset {
             name: "P".into(),

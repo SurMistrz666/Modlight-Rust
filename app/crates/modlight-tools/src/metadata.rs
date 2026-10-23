@@ -1,8 +1,10 @@
 //! The metadata viewer and strip metadata (`MetadataService`, `MetadataViewModel`) on
 //! ExifTool, as upstream.
 //!
-//! On a Mac ExifTool is the Perl distribution the Components window installs (the
-//! `exiftool` script and its `lib` folder in `Tools/ExifTool`, SHA-256 pinned), run by
+//! On Windows ExifTool is `exiftool.exe`, run directly as upstream does (beside the app
+//! or in `Tools`, with its `exiftool_files` beside it), without a console window. On a
+//! Mac it is the Perl distribution the Components window installs (the `exiftool`
+//! script and its `lib` folder in `Tools/ExifTool`, SHA-256 pinned), run by
 //! `/usr/bin/perl`. The arguments are upstream's: `-G -t -m -q` to read, `-all=
 //! -overwrite_original -q` to strip. Nothing passes through a shell.
 
@@ -12,6 +14,7 @@ use std::process::{Command, Stdio};
 use modlight_core::l10n::{Arg, format, t, tools as tl};
 
 /// The Perl that runs ExifTool (macOS ships it).
+#[cfg(not(windows))]
 pub const PERL: &str = "/usr/bin/perl";
 
 /// One tag: `MetadataEntry`.
@@ -38,13 +41,21 @@ pub struct ExifTool {
 }
 
 impl ExifTool {
-    /// The installed component (`installed_path(profile, "exiftool")` is the script).
+    /// The installed component (`installed_path(profile, "exiftool")` is the script on
+    /// macOS, `exiftool.exe` on Windows: `ExternalTools.Locate("exiftool.exe")`).
     pub fn installed(profile: &Path) -> Option<ExifTool> {
-        let script = modlight_core::components::installed_path(profile, "exiftool")?;
-        Some(ExifTool {
-            program: PathBuf::from(PERL),
-            script: Some(script),
-        })
+        let installed = modlight_core::components::installed_path(profile, "exiftool")?;
+        #[cfg(windows)]
+        {
+            Some(ExifTool::direct(installed))
+        }
+        #[cfg(not(windows))]
+        {
+            Some(ExifTool {
+                program: PathBuf::from(PERL),
+                script: Some(installed),
+            })
+        }
     }
 
     /// A program run directly (tests use a stand-in).
@@ -74,9 +85,13 @@ impl ExifTool {
         if !file.is_file() {
             return Err(t(tl::MetadataService_Selected_file_not_found).to_string());
         }
-        let output = Command::new(&self.program)
+        let mut command = Command::new(&self.program);
+        command
             .args(self.arguments(file, options))
-            .stdin(Stdio::null())
+            .stdin(Stdio::null());
+        // `CreateNoWindow = true`.
+        modlight_core::components::process::no_window(&mut command);
+        let output = command
             .output()
             .map_err(|_| t(tl::MetadataService_Failed_start_ExifTool).to_string())?;
         if !output.status.success() {
@@ -224,6 +239,7 @@ mod tests {
         assert!(text.ends_with("    Image Size: 1600x900"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn arguments() {
         let tool = ExifTool {
@@ -266,6 +282,65 @@ mod tests {
             std::fs::read_to_string(&log).unwrap(),
             format!("{}\n-G\n-t\n-m\n-q\n", file.display())
         );
+        tool.strip(&file).unwrap();
+        assert!(
+            std::fs::read_to_string(&log)
+                .unwrap()
+                .contains("-overwrite_original")
+        );
+        let bad = dir.path().join("bad.jpg");
+        std::fs::write(&bad, b"x").unwrap();
+        assert_eq!(tool.read(&bad).unwrap_err(), "Error: File format error");
+        assert!(tool.read(&dir.path().join("missing.jpg")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn arguments_on_windows() {
+        let tool = ExifTool::direct("C:\\T\\exiftool.exe".into());
+        assert_eq!(
+            tool.arguments(Path::new("C:\\p\\a b.jpg"), READ_OPTIONS),
+            ["C:\\p\\a b.jpg", "-G", "-t", "-m", "-q"]
+        );
+        assert_eq!(
+            tool.arguments(Path::new("C:\\p\\-x.jpg"), STRIP_OPTIONS),
+            ["C:\\p\\-x.jpg", "-all=", "-overwrite_original", "-q"]
+        );
+        // The installed component is the executable itself, no interpreter.
+        let profile = tempfile::tempdir().unwrap();
+        let tools = profile.path().join("Tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(tools.join("exiftool.exe"), b"MZ").unwrap();
+        assert_eq!(
+            ExifTool::installed(profile.path()),
+            Some(ExifTool::direct(tools.join("exiftool.exe")))
+        );
+    }
+
+    /// A batch file stands in for ExifTool: Rust starts it through cmd.exe, which is
+    /// how it would run any program path it is given.
+    #[cfg(windows)]
+    #[test]
+    fn a_stand_in_exiftool_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("args.txt");
+        let script = dir.path().join("exiftool.cmd");
+        std::fs::write(
+            &script,
+            format!(
+                "@echo off\r\necho %*>\"{}\"\r\nif \"%~2\"==\"-all=\" exit /b 0\r\nif /i \"%~nx1\"==\"bad.jpg\" (echo Error: File format error 1>&2\r\nexit /b 1)\r\necho File\tFile Name\tok.jpg\r\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        let tool = ExifTool::direct(script);
+        let file = dir.path().join("ok.jpg");
+        std::fs::write(&file, b"x").unwrap();
+        let entries = tool.read(&file).unwrap();
+        assert_eq!(entries[0].value, "ok.jpg");
+        let logged = std::fs::read_to_string(&log).unwrap();
+        assert!(logged.contains(&file.display().to_string()), "{logged}");
+        assert!(logged.trim_end().ends_with("-G -t -m -q"), "{logged}");
         tool.strip(&file).unwrap();
         assert!(
             std::fs::read_to_string(&log)

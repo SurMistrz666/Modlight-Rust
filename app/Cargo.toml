@@ -3,6 +3,7 @@ members = [
     "crates/modlight-api",
     "crates/modlight-core",
     "crates/modlight-macos",
+    "crates/modlight-windows",
     "crates/modlight-app",
     "crates/modlight-editor",
     "crates/modlight-effects",
@@ -21,6 +22,7 @@ publish = false
 modlight-api = { path = "crates/modlight-api" }
 modlight-core = { path = "crates/modlight-core" }
 modlight-macos = { path = "crates/modlight-macos" }
+modlight-windows = { path = "crates/modlight-windows" }
 modlight-editor = { path = "crates/modlight-editor" }
 modlight-effects = { path = "crates/modlight-effects" }
 modlight-tools = { path = "crates/modlight-tools" }
@@ -51,9 +53,11 @@ tempfile = "3"
 roxmltree = "0.20"
 log = "0.4"
 base64 = "0.22"
-# ONNX Runtime for the background remover: the official build (1.31, with Core ML) linked
-# statically; ort-sys fetches it while building and checks its pinned SHA-256.
-ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "coreml"] }
+# ONNX Runtime for the background remover: the official build (1.31) linked statically;
+# ort-sys fetches it while building and checks its pinned SHA-256. The execution
+# provider is chosen per system in modlight-core (Core ML on macOS, DirectML on Windows),
+# because the prebuilt libraries exist only with the provider of their own system.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 notify = { version = "8.2", default-features = false, features = ["macos_fsevent"] }
 
@@ -69,3 +73,8 @@ opt-level = 2
 # Effects run per preview change on the UI thread; keep them fast in debug builds too.
 [profile.dev.package.modlight-effects]
 opt-level = 2
+# tiny-skia's u16x16 arithmetic wraps by design: its NEON path (Apple Silicon) uses
+# wrapping vector instructions, but the portable path that x86_64 builds take is plain
+# `-` and `+`, which panic on overflow in debug builds. Release builds wrap anyway.
+[profile.dev.package.tiny-skia]
+overflow-checks = false

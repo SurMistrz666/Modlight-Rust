@@ -1,9 +1,11 @@
 //! `FirstTimeConfigWindow` and `ImageEditorSelectorWindow`.
 //!
-//! First run: upstream's installer opened it; a Mac has no installer, so it opens on the
-//! first launch of the app bundle (no `ApplicationConfig.json` yet). Its Windows choices
-//! become the login item and a note on the Finder service, which macOS lists under
-//! Services by itself.
+//! First run: upstream's installer opened it; the port has no installer, so it opens on
+//! the first launch of the app bundle or of the installed copy (no
+//! `ApplicationConfig.json` yet). On Windows it offers upstream's choices: Start with
+//! Windows, "Upload with Modlight" in Explorer's context menu, Modlight in "Send to". On a
+//! Mac they become the login item and a note on the Finder service, which macOS lists
+//! under Services by itself.
 //!
 //! The image editor selector opens the first time the image editor is asked for
 //! (`ShowImageEditorSelector`); the choice is stored and the editor opens (the legacy
@@ -12,9 +14,11 @@
 use egui::{Align, Layout, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use serde_json::json;
 
+use crate::platform::integration::StartupState;
 use modlight_core::icons;
-use modlight_core::l10n::{mac, s, t};
-use modlight_macos::integration::StartupState;
+#[cfg(not(windows))]
+use modlight_core::l10n::mac;
+use modlight_core::l10n::{Key, s, t};
 
 use crate::state::AppState;
 use crate::theme::{Colors, Weight};
@@ -25,8 +29,20 @@ pub const SELECTOR_WIDTH: f32 = 580.0;
 
 pub struct FirstRunWindow {
     pub startup: StartupState,
+    /// Windows: Modlight's entries in Explorer's menus.
+    pub explorer: crate::app_pages::ExplorerMenus,
     pub status: String,
 }
+
+/// The subtitle and the footer note: upstream's on Windows, the Mac's own elsewhere.
+#[cfg(windows)]
+const SUBTITLE: Key = s::FirstTimeConfigWindow_Subtitle;
+#[cfg(not(windows))]
+const SUBTITLE: Key = mac::FirstRunSubtitle;
+#[cfg(windows)]
+const OPTIONS_LATER: Key = s::FirstTimeConfigWindow_OptionsLater;
+#[cfg(not(windows))]
+const OPTIONS_LATER: Key = mac::FirstRunOptionsLater;
 
 #[derive(Default)]
 pub struct EditorSelector {
@@ -36,13 +52,26 @@ pub struct EditorSelector {
 impl AppState {
     /// `FirstTimeConfigWindowIntegration.Show`.
     pub fn show_first_run(&mut self) {
-        let startup = if self.env.qa || self.mode != crate::app::Mode::Normal {
-            StartupState::NotAvailable
+        let real = !self.env.qa && self.mode == crate::app::Mode::Normal;
+        let startup = if real {
+            crate::platform::integration::startup_state()
         } else {
-            modlight_macos::integration::startup_state()
+            StartupState::NotAvailable
         };
+        #[cfg(windows)]
+        let explorer = if real {
+            crate::app_pages::ExplorerMenus {
+                context_menu: crate::platform::integration::context_menu_enabled(),
+                send_to: crate::platform::integration::send_to_enabled(),
+            }
+        } else {
+            Default::default()
+        };
+        #[cfg(not(windows))]
+        let explorer = Default::default();
         self.windows.first_run = Some(FirstRunWindow {
             startup,
+            explorer,
             status: String::new(),
         });
     }
@@ -89,6 +118,12 @@ impl AppState {
 /// What the first-run window asked for.
 pub enum FirstRunAsk {
     StartAtLogin(bool),
+    /// Windows: "Upload with Modlight" in Explorer's context menu.
+    #[cfg(windows)]
+    ContextMenu(bool),
+    /// Windows: Modlight in Explorer's "Send to" menu.
+    #[cfg(windows)]
+    SendTo(bool),
     Ok,
 }
 
@@ -113,7 +148,7 @@ pub fn first_run_ui(ui: &mut Ui, window: &FirstRunWindow, colors: &Colors) -> Ve
     let subtitle = layout(
         ui,
         wrapped(
-            t(mac::FirstRunSubtitle),
+            t(SUBTITLE),
             12.0,
             Weight::Normal,
             colors.text_secondary(),
@@ -160,35 +195,7 @@ pub fn first_run_ui(ui: &mut Ui, window: &FirstRunWindow, colors: &Colors) -> Ve
         .show(&mut child, |ui| {
             ui.set_width(width - 30.0);
             ui.spacing_mut().item_spacing.y = 7.0;
-            let (label, enabled) = match window.startup {
-                StartupState::DisabledByUser => (t(mac::StartAtLoginDisabledByUser), false),
-                StartupState::RequiresApproval => (t(mac::StartAtLoginRequiresApproval), true),
-                StartupState::NotAvailable => (t(mac::StartAtLoginNotAvailable), false),
-                StartupState::Enabled | StartupState::Disabled => (t(mac::StartAtLogin), true),
-            };
-            let mut on = matches!(
-                window.startup,
-                StartupState::Enabled | StartupState::RequiresApproval
-            );
-            if crate::widgets::checkbox_weighted(
-                ui,
-                colors,
-                &mut on,
-                Some(label),
-                enabled,
-                Weight::Normal,
-            )
-            .changed()
-            {
-                asks.push(FirstRunAsk::StartAtLogin(on));
-            }
-            crate::widgets::text_wrapped(
-                ui,
-                t(mac::FinderServiceHint),
-                12.0,
-                Weight::Normal,
-                colors.text_secondary(),
-            );
+            options(ui, window, colors, &mut asks);
         });
     if !window.status.is_empty() {
         egui::Frame::new()
@@ -215,7 +222,7 @@ pub fn first_run_ui(ui: &mut Ui, window: &FirstRunWindow, colors: &Colors) -> Ve
     let note = layout(
         ui,
         wrapped(
-            t(mac::FirstRunOptionsLater),
+            t(OPTIONS_LATER),
             12.0,
             Weight::Normal,
             colors.text_secondary(),
@@ -244,6 +251,70 @@ pub fn first_run_ui(ui: &mut Ui, window: &FirstRunWindow, colors: &Colors) -> Ve
         asks.push(FirstRunAsk::Ok);
     }
     asks
+}
+
+/// A Mac's options: the login item and the note on the Finder service.
+#[cfg(not(windows))]
+fn options(ui: &mut Ui, window: &FirstRunWindow, colors: &Colors, asks: &mut Vec<FirstRunAsk>) {
+    let (label, enabled) = match window.startup {
+        StartupState::DisabledByUser => (t(mac::StartAtLoginDisabledByUser), false),
+        StartupState::RequiresApproval => (t(mac::StartAtLoginRequiresApproval), true),
+        StartupState::NotAvailable => (t(mac::StartAtLoginNotAvailable), false),
+        StartupState::Enabled | StartupState::Disabled => (t(mac::StartAtLogin), true),
+    };
+    let mut on = matches!(
+        window.startup,
+        StartupState::Enabled | StartupState::RequiresApproval
+    );
+    if crate::widgets::checkbox_weighted(ui, colors, &mut on, Some(label), enabled, Weight::Normal)
+        .changed()
+    {
+        asks.push(FirstRunAsk::StartAtLogin(on));
+    }
+    crate::widgets::text_wrapped(
+        ui,
+        t(mac::FinderServiceHint),
+        12.0,
+        Weight::Normal,
+        colors.text_secondary(),
+    );
+}
+
+/// Windows: upstream's three options (`FirstTimeConfigViewModel`).
+#[cfg(windows)]
+fn options(ui: &mut Ui, window: &FirstRunWindow, colors: &Colors, asks: &mut Vec<FirstRunAsk>) {
+    let (label, enabled, mut on) = crate::app_pages::start_with_windows(window.startup, true, None);
+    if crate::widgets::checkbox_weighted(ui, colors, &mut on, Some(&label), enabled, Weight::Normal)
+        .changed()
+    {
+        asks.push(FirstRunAsk::StartAtLogin(on));
+    }
+    let mut context_menu = window.explorer.context_menu;
+    if crate::widgets::checkbox_weighted(
+        ui,
+        colors,
+        &mut context_menu,
+        Some(t(s::FirstTimeConfigWindow_ShellContextMenu)),
+        true,
+        Weight::Normal,
+    )
+    .changed()
+    {
+        asks.push(FirstRunAsk::ContextMenu(context_menu));
+    }
+    let mut send_to = window.explorer.send_to;
+    if crate::widgets::checkbox_weighted(
+        ui,
+        colors,
+        &mut send_to,
+        Some(t(s::FirstTimeConfigWindow_SendToMenu)),
+        true,
+        Weight::Normal,
+    )
+    .changed()
+    {
+        asks.push(FirstRunAsk::SendTo(send_to));
+    }
 }
 
 /// The selector; `Some(legacy)` when a choice was made.
