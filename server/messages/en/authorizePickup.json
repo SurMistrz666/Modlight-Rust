@@ -1,0 +1,12 @@
+{
+  "local": "The key goes only to the app that opened this page: it collects the key from this server itself, with a one-time secret that only the app knows.",
+  "waiting": {
+    "title": "{client} is picking up its key",
+    "body": "The app collects the key from {appName} by itself. Keep it open; this usually takes a few seconds.",
+    "close": "You can close this window once the app says it is signed in."
+  },
+  "fallback": {
+    "summary": "App still not signed in after a minute?",
+    "body": "Copy this key and paste it into the app's sign-in window instead."
+  }
+}

@@ -14,13 +14,19 @@
 use serde_json::{Map, Value, json};
 
 use crate::api_token::{TokenScope, create_api_token};
-use crate::authorize::loopback::{LoopbackRequest, parse_authorize_request, token_name_for};
+use crate::authorize::loopback::{LoopbackRequest, parse_authorize_request_with_challenge, token_name_for};
+use crate::authorize::pickup::{Outcome, PickupStore, now_ms};
 use crate::password::check_rate_limit;
 use crate::rpc::{ActionCtx, ActionResult, RpcRegistry};
 
 pub fn register(reg: &mut RpcRegistry) {
     reg.register("authorize", "approveDesktopClient", approve_desktop_client);
+    // Not upstream: the refusal reaches the app through the pickup too.
+    reg.register("authorize", "denyDesktopClient", deny_desktop_client);
 }
+
+/// Declining is not minting, but it still writes to the pickup map.
+pub const MAX_DENIALS: u32 = 30;
 
 /// Minting credentials is rare; a flood of it is somebody else's script.
 pub const MAX_APPROVALS: u32 = 10;
@@ -35,6 +41,10 @@ pub trait AuthorizeDeps {
         scope: TokenScope,
     ) -> impl Future<Output = anyhow::Result<String>> + Send;
     fn audit(&self, user_id: &str, action: &str, detail: Value) -> impl Future<Output = ()> + Send;
+    /// Where outcomes wait for the app's pickup (the process-wide map in production).
+    fn pickups(&self) -> &PickupStore {
+        crate::authorize::pickup::store()
+    }
 }
 
 struct LiveDeps<'a>(&'a ActionCtx);
@@ -76,9 +86,7 @@ pub async fn approve_with<D: AuthorizeDeps>(
     // them earlier says nothing about what arrives now, and `callback` is
     // built from the port this function parsed, never from a URL the caller
     // supplied.
-    let parsed =
-        parse_authorize_request(input_field(input, "port"), input_field(input, "state"), input_field(input, "name"));
-    let Some(request) = parsed.request() else {
+    let Some(request) = parse_input(input) else {
         return (refusal("invalid-request"), false);
     };
 
@@ -89,8 +97,15 @@ pub async fn approve_with<D: AuthorizeDeps>(
         return (refusal("rate-limited"), false);
     }
 
-    match issue(deps, user_id, request).await {
+    match issue(deps, user_id, &request).await {
         Ok(token) => {
+            // Not upstream: the app collects it from the server too, in case
+            // the browser never delivers the loopback POST (SKELETON.md 9).
+            if let Some(challenge) = &request.challenge
+                && !deps.pickups().complete(&request.state, challenge, Outcome::Token(token.clone()), now_ms())
+            {
+                tracing::warn!("[authorize] pickup not stored: the state is bound to another challenge");
+            }
             (json!({ "ok": true, "token": token, "callback": request.callback, "state": request.state }), true)
         }
         Err(err) => {
@@ -98,6 +113,36 @@ pub async fn approve_with<D: AuthorizeDeps>(
             (refusal("error"), false)
         }
     }
+}
+
+/// `{ port, state, name, challenge? }` re-validated from scratch.
+fn parse_input(input: Option<&Value>) -> Option<LoopbackRequest> {
+    parse_authorize_request_with_challenge(
+        input_field(input, "port"),
+        input_field(input, "state"),
+        input_field(input, "name"),
+        input_field(input, "challenge"),
+    )
+    .request()
+    .cloned()
+}
+
+/// Not upstream: `denyDesktopClient` after the session lookup. A request
+/// without a challenge has nothing to record (the page's loopback POST is the
+/// only way to tell such an app); one with a challenge leaves the refusal for
+/// the app's pickup.
+pub fn deny_with<D: AuthorizeDeps>(deps: &D, user_id: &str, client_ip: &str, input: Option<&Value>) -> Value {
+    let Some(request) = parse_input(input) else {
+        return refusal("invalid-request");
+    };
+    let key = format!("{client_ip}|authorize-deny:{user_id}");
+    if !check_rate_limit(&key, MAX_DENIALS, APPROVAL_WINDOW_MS).allowed {
+        return refusal("rate-limited");
+    }
+    if let Some(challenge) = &request.challenge {
+        deps.pickups().complete(&request.state, challenge, Outcome::Denied, now_ms());
+    }
+    json!({ "ok": true })
 }
 
 async fn issue<D: AuthorizeDeps>(deps: &D, user_id: &str, request: &LoopbackRequest) -> anyhow::Result<String> {
@@ -154,6 +199,14 @@ async fn approve_desktop_client(ctx: ActionCtx) -> ActionResult {
     Ok(out)
 }
 
+/// `denyDesktopClient(input)` (not upstream): record a refusal for the pickup.
+async fn deny_desktop_client(ctx: ActionCtx) -> ActionResult {
+    let Some(session) = ctx.get_session().await? else {
+        return Ok(refusal("signed-out"));
+    };
+    Ok(deny_with(&LiveDeps(&ctx), &session.user.id, &ctx.client_ip(), ctx.args.raw(0)))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -165,6 +218,7 @@ mod tests {
         created: Mutex<Vec<(String, String, TokenScope)>>,
         audits: Mutex<Vec<(String, String, Value)>>,
         fail: bool,
+        store: PickupStore,
     }
 
     impl AuthorizeDeps for Fake {
@@ -178,6 +232,62 @@ mod tests {
         async fn audit(&self, user_id: &str, action: &str, detail: Value) {
             self.audits.lock().unwrap().push((user_id.into(), action.into(), detail));
         }
+        fn pickups(&self) -> &PickupStore {
+            &self.store
+        }
+    }
+
+    use crate::authorize::pickup::{Pickup, challenge_for};
+
+    const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+
+    #[tokio::test]
+    async fn an_approval_with_a_challenge_waits_for_the_pickup() {
+        let f = Fake::default();
+        let input = json!({ "port": "49732", "state": "s7Kd93jf0aQ2", "name": "Modlight", "challenge": challenge_for(VERIFIER) });
+        let (out, issued) = approve_with(&f, "u1", &ip(), Some(&input)).await;
+        assert!(issued);
+        // The page still gets everything it got before.
+        assert_eq!(out["token"], "AAAAAAAAAAAAAAAAAAAAAAAAAAtoken6");
+        assert_eq!(out["callback"], "http://127.0.0.1:49732/");
+        assert_eq!(
+            f.store.pick_up("s7Kd93jf0aQ2", VERIFIER, now_ms()),
+            Pickup::Ready(Outcome::Token("AAAAAAAAAAAAAAAAAAAAAAAAAAtoken6".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_approval_without_a_challenge_stores_nothing() {
+        let f = Fake::default();
+        let input = json!({ "port": "49732", "state": "s7Kd93jf0aQ2" });
+        assert!(approve_with(&f, "u1", &ip(), Some(&input)).await.1);
+        assert!(f.store.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_challenge_is_an_invalid_request() {
+        let f = Fake::default();
+        for challenge in [json!("short"), json!("!".repeat(43)), json!(["x"]), json!(43)] {
+            let input = json!({ "port": "49732", "state": "s7Kd93jf0aQ2", "challenge": challenge });
+            let (out, issued) = approve_with(&f, "u1", &ip(), Some(&input)).await;
+            assert_eq!(out["reason"], "invalid-request", "{input}");
+            assert!(!issued);
+            assert_eq!(deny_with(&f, "u1", &ip(), Some(&input))["reason"], "invalid-request");
+        }
+        assert!(f.created.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_denial_with_a_challenge_reaches_the_pickup() {
+        let f = Fake::default();
+        let input = json!({ "port": "49732", "state": "s7Kd93jf0aQ2", "challenge": challenge_for(VERIFIER) });
+        assert_eq!(deny_with(&f, "u1", &ip(), Some(&input)), json!({ "ok": true }));
+        assert_eq!(f.store.pick_up("s7Kd93jf0aQ2", VERIFIER, now_ms()), Pickup::Ready(Outcome::Denied));
+        assert!(f.created.lock().unwrap().is_empty());
+        // Without a challenge there is nothing to record.
+        let plain = json!({ "port": "49732", "state": "s7Kd93jf0aQ2" });
+        assert_eq!(deny_with(&f, "u1", &ip(), Some(&plain)), json!({ "ok": true }));
+        assert!(f.store.is_empty());
     }
 
     fn ip() -> String {

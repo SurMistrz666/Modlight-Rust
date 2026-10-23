@@ -24,7 +24,6 @@
     "components/auth/reset-form.tsx": "bfa04fae9b1ea94c6eb097a269270d405226468ae87cd3ad40c17c1dd001c245",
     "components/auth/submit-button.tsx": "98ca0ed7bfb05376bccfc25138d898b27053e78aaf964cb418ebc379669b6614",
     "components/auth/two-factor-form.tsx": "8b4a58997720fb675f394df52af3d1b1bc961d345f56092a20986ea773e01517",
-    "components/authorize/authorize-prompt.tsx": "08fbfe07f1152cbfbb8c8acf80846371d88cdde12bd242fd893136aabc95ab3c",
     "components/brand/ModlightMark.tsx": "cd6dca335c64581fdb369a1a35957f37399e1ec03a26c9151ecb8ee1351697a1",
     "components/dashboard/BulkBar.tsx": "a28020d20df0193a0d4df67b8e4115ca3e43ae2663c6679182a80d43c67adbf5",
     "components/dashboard/ConvertDialog.tsx": "3570644dee20bed28aed6f146ed4b0ef01632b14b36c5afcf3e6348171021d01",
@@ -498,6 +497,12 @@
       "sha256": "77e6b47e2a12de70d5530de94646edeb301b0d56dbd3a8687898c5eb34f6221f",
       "ports": [
         "src/overrides/components/auth/register-form.tsx"
+      ]
+    },
+    "components/authorize/authorize-prompt.tsx": {
+      "sha256": "08fbfe07f1152cbfbb8c8acf80846371d88cdde12bd242fd893136aabc95ab3c",
+      "ports": [
+        "src/overrides/components/authorize/authorize-prompt.tsx"
       ]
     },
     "components/dashboard/EmptyState.tsx": {
