@@ -131,7 +131,7 @@ pub async fn check(component: &Component) -> FetchResult {
     fetch
 }
 
-/// Which build is actually on this Mac, by asking the binary (`InstalledVersionAsync`).
+/// Which build is actually on this computer, by asking the binary (`InstalledVersionAsync`).
 /// Cached against the file itself; anything that is not a version is no answer.
 pub async fn installed_version(profile: &Path, component: &Component) -> String {
     if component.version_arguments.is_empty() {
@@ -410,6 +410,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_version_is_read_from_the_binary_with_an_argument_vector() {
         let dir = tempfile::tempdir().unwrap();

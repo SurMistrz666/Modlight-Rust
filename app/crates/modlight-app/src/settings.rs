@@ -56,6 +56,39 @@ macro_rules! section {
     };
 }
 
+/// Texts upstream words for a PC that the Mac port words for a Mac
+/// (`modlight_core::l10n::mac`, `MACOS.md` "Texts"): upstream's own on Windows.
+#[cfg(windows)]
+mod texts {
+    use modlight_core::l10n::{Key, s};
+    pub const HINT_FILE_NAMES: Key = s::SettingsWindow_HintFileNames;
+    pub const HINT_WATCH_FOLDERS: Key = s::SettingsWindow_HintWatchFolders;
+    pub const PAGE_INTEGRATION: Key = s::SettingsWindow_PageWindowsIntegration;
+    pub const HINT_INTEGRATION: Key = s::SettingsWindow_HintWindowsIntegration;
+    pub const PAGE_LOCAL_FOLDERS: Key = s::SettingsWindow_PageLocalFolders;
+    pub const HINT_LOCAL_FOLDERS: Key = s::SettingsWindow_HintLocalFolders;
+    pub const ACCOUNT_SIGNED_OUT_SYNC: Key = s::SettingsWindow_AccountSignedOutSync;
+}
+#[cfg(not(windows))]
+mod texts {
+    use modlight_core::l10n::{Key, mac};
+    pub const HINT_FILE_NAMES: Key = mac::HintFileNames;
+    pub const HINT_WATCH_FOLDERS: Key = mac::HintWatchFolders;
+    pub const PAGE_INTEGRATION: Key = mac::PageMacIntegration;
+    pub const HINT_INTEGRATION: Key = mac::HintMacIntegration;
+    pub const PAGE_LOCAL_FOLDERS: Key = mac::PageLocalFolders;
+    pub const HINT_LOCAL_FOLDERS: Key = mac::HintLocalFolders;
+    pub const ACCOUNT_SIGNED_OUT_SYNC: Key = mac::AccountSignedOutSync;
+}
+
+/// The integration page's search words (`SearchAliases`): upstream's on Windows, the
+/// Mac's elsewhere.
+#[cfg(windows)]
+const INTEGRATION_ALIASES: &str =
+    "integration windows startup context menu send to steam chrome extension firefox addon";
+#[cfg(not(windows))]
+const INTEGRATION_ALIASES: &str = "integration login startup open at login finder services";
+
 /// `SettingsSections.All()`, with upstream's search aliases.
 pub static GROUPS: [Group; 11] = [
     Group {
@@ -128,7 +161,7 @@ pub static GROUPS: [Group; 11] = [
                 "task.upload-file-naming",
                 s::SettingsWindow_PageFileNames,
                 icons::FILE_PEN,
-                modlight_core::l10n::mac::HintFileNames,
+                texts::HINT_FILE_NAMES,
                 "file naming name pattern name format filename"
             ),
         ],
@@ -233,7 +266,7 @@ pub static GROUPS: [Group; 11] = [
                 "task.watch-folders",
                 s::TaskSettingsWindow_WatchFolders,
                 icons::FOLDER_SEARCH,
-                modlight_core::l10n::mac::HintWatchFolders,
+                texts::HINT_WATCH_FOLDERS,
                 "watch folders watch folder"
             ),
         ],
@@ -269,13 +302,13 @@ pub static GROUPS: [Group; 11] = [
                 s::SettingsWindow_HintLanguageTray,
                 "general language tray tray icon"
             ),
-            section!(
-                "application.integration",
-                modlight_core::l10n::mac::PageMacIntegration,
-                icons::PLUG,
-                modlight_core::l10n::mac::HintMacIntegration,
-                "integration login startup open at login finder services"
-            ),
+            Section {
+                id: "application.integration",
+                title: texts::PAGE_INTEGRATION,
+                icon: icons::PLUG,
+                hint: texts::HINT_INTEGRATION,
+                aliases: INTEGRATION_ALIASES,
+            },
             section!(
                 "application.components",
                 s::SettingsWindow_PageComponents,
@@ -285,9 +318,9 @@ pub static GROUPS: [Group; 11] = [
             ),
             section!(
                 "application.paths",
-                modlight_core::l10n::mac::PageLocalFolders,
+                texts::PAGE_LOCAL_FOLDERS,
                 icons::FOLDER,
-                modlight_core::l10n::mac::HintLocalFolders,
+                texts::HINT_LOCAL_FOLDERS,
                 "paths personal folder screenshots folder sub folder pattern"
             ),
             section!(
@@ -416,7 +449,7 @@ pub static OVERRIDE_GROUPS: [Group; 8] = [
                 "task.upload-file-naming",
                 s::SettingsWindow_PageFileNames,
                 icons::FILE_PEN,
-                modlight_core::l10n::mac::HintFileNames,
+                texts::HINT_FILE_NAMES,
                 "file naming name pattern name format filename"
             ),
         ],
@@ -487,7 +520,7 @@ pub static OVERRIDE_GROUPS: [Group; 8] = [
                 "task.watch-folders",
                 s::TaskSettingsWindow_WatchFolders,
                 icons::FOLDER_SEARCH,
-                modlight_core::l10n::mac::HintWatchFolders,
+                texts::HINT_WATCH_FOLDERS,
                 "watch folders watch folder"
             ),
         ],
@@ -534,7 +567,11 @@ pub struct SettingsWindow {
     /// The application pages' selections, editor and backup status.
     pub app_pages: crate::app_pages::AppPagesState,
     /// `StartupManager.State`, read when the integration page opens.
-    pub startup: Option<modlight_macos::integration::StartupState>,
+    pub startup: Option<crate::platform::integration::StartupState>,
+    /// Windows: Modlight's entries in Explorer's menus, read when the page opens.
+    pub explorer: Option<crate::app_pages::ExplorerMenus>,
+    /// Windows: the folder of another copy Windows starts, read with `startup`.
+    pub startup_other_copy: Option<String>,
     /// Where the page is drawn (the editors' veil covers it).
     pub page_area: Rect,
     /// The keyboard shortcuts page.
@@ -558,6 +595,8 @@ impl SettingsWindow {
             task_pages: Default::default(),
             app_pages: Default::default(),
             startup: None,
+            explorer: None,
+            startup_other_copy: None,
             page_area: Rect::NOTHING,
             hotkeys: Default::default(),
             groups: &GROUPS,
@@ -671,6 +710,8 @@ impl AppState {
         let Some(window) = self.windows.settings.take() else {
             return;
         };
+        #[cfg(windows)]
+        self.flush_personal_path(&window.app_pages);
         self.save_config();
         if !window.opened_skin.eq_ignore_ascii_case(&self.options.skin) {
             self.push_skin();
@@ -1227,20 +1268,59 @@ fn app_page(
     let qa = state.env.qa || state.mode != crate::app::Mode::Normal;
     let screenshots_preview = state.screenshots_folder_preview();
     let personal_folder = state.env.profile.display().to_string();
+    // Windows: an empty box means `Documents\Modlight`; QA shows its own folder there.
+    #[cfg(windows)]
+    let personal_default = if qa {
+        personal_folder.clone()
+    } else {
+        crate::personal_folder::default_folder()
+            .display()
+            .to_string()
+    };
+    #[cfg(not(windows))]
+    let personal_default = personal_folder.clone();
     let language = state.config.language();
     let Some(window) = state.windows.settings.as_mut() else {
         return;
     };
     if section == "application.integration" && window.startup.is_none() {
         window.startup = Some(if qa {
-            modlight_macos::integration::StartupState::NotAvailable
+            crate::platform::integration::StartupState::NotAvailable
         } else {
-            modlight_macos::integration::startup_state()
+            crate::platform::integration::startup_state()
+        });
+        // `StartupManager.OtherCopyStartupTargetPath`: the folder, which tells the copies
+        // apart and fits on the check box.
+        #[cfg(windows)]
+        if !qa {
+            window.startup_other_copy = crate::platform::integration::startup_other_copy()
+                .and_then(|exe| exe.parent().map(|f| f.display().to_string()));
+        }
+    }
+    #[cfg(windows)]
+    if section == "application.integration" && window.explorer.is_none() {
+        window.explorer = Some(if qa {
+            crate::app_pages::ExplorerMenus::default()
+        } else {
+            crate::app_pages::ExplorerMenus {
+                context_menu: crate::platform::integration::context_menu_enabled(),
+                send_to: crate::platform::integration::send_to_enabled(),
+            }
         });
     }
+    // Windows: `ReadPersonalPathConfig` when the page first shows (QA reads no file).
+    #[cfg(windows)]
+    if section == "application.paths" && window.app_pages.personal_path.is_none() {
+        window.app_pages.personal_path = Some(if qa {
+            String::new()
+        } else {
+            crate::personal_folder::read_config()
+        });
+    }
+    let explorer = window.explorer.unwrap_or_default();
     let startup = window
         .startup
-        .unwrap_or(modlight_macos::integration::StartupState::NotAvailable);
+        .unwrap_or(crate::platform::integration::StartupState::NotAvailable);
     let mut pages = std::mem::take(&mut window.app_pages);
     let area = window.page_area;
     let mut ctx = AppPagesCtx {
@@ -1249,8 +1329,11 @@ fn app_page(
         asks: Vec::new(),
         language,
         personal_folder,
+        personal_default,
         screenshots_preview,
         startup,
+        startup_other_copy: window.startup_other_copy.clone(),
+        explorer,
         updates_visible: modlight_core::update::has_release_channel(),
         dialogs: !qa,
     };
@@ -1368,10 +1451,7 @@ fn signed_out_card(ui: &mut Ui, colors: &Colors, asks: &mut Vec<SettingsAsk>, ta
                 for (glyph, key) in [
                     (icons::UPLOAD, s::SettingsWindow_AccountSignedOutUploads),
                     (icons::IMAGES, s::SettingsWindow_AccountSignedOutLibrary),
-                    (
-                        icons::PALETTE,
-                        modlight_core::l10n::mac::AccountSignedOutSync,
-                    ),
+                    (icons::PALETTE, texts::ACCOUNT_SIGNED_OUT_SYNC),
                 ] {
                     let text = layout(
                         ui,

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- Texts of the port on Windows where upstream has none and the Mac's text names macOS (see app/docs/MACOS.md). -->
+  <data name="PersonalFolderFixed" xml:space="preserve">
+    <value>In this version the personal folder is always this folder; it cannot be moved.</value>
+  </data>
+  <data name="BackupImportRefused" xml:space="preserve">
+    <value>Not imported, because a Modlight backup never holds them: {0}</value>
+  </data>
+  <data name="BackupImportDisabled" xml:space="preserve">
+    <value>These would run on their own or start programs on this PC, so they came in turned off or back to their defaults. Set them again in the task settings only if you trust where the backup came from:
+{0}</value>
+  </data>
+  <data name="BackupImportDefaultTask" xml:space="preserve">
+    <value>Task settings</value>
+  </data>
+  <data name="BackupImportProgram" xml:space="preserve">
+    <value>action {0} ({1})</value>
+  </data>
+  <data name="BackupImportFFmpegPath" xml:space="preserve">
+    <value>FFmpeg path {0}, now the FFmpeg from Components</value>
+  </data>
+</root>

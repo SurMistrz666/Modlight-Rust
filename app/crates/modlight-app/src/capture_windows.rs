@@ -237,16 +237,39 @@ impl ModlightApp {
                         if !state.env.qa
                             && let Some(window) = state.windows.first_run.as_mut()
                         {
-                            match modlight_macos::integration::set_startup(on) {
+                            match crate::platform::integration::set_startup(on) {
                                 Ok(startup) => {
                                     window.startup = startup;
                                     window.status.clear();
                                 }
                                 Err(error) => {
                                     window.status = error;
-                                    window.startup = modlight_macos::integration::startup_state();
+                                    window.startup = crate::platform::integration::startup_state();
                                 }
                             }
+                        }
+                    }
+                    // `CreateShellContextMenuButton` / `CreateSendToMenuButton`, then the
+                    // boxes show what Explorer has now.
+                    #[cfg(windows)]
+                    f::FirstRunAsk::ContextMenu(on) | f::FirstRunAsk::SendTo(on) => {
+                        use crate::platform::integration as i;
+                        if !state.env.qa
+                            && let Some(window) = state.windows.first_run.as_mut()
+                        {
+                            let result = if matches!(ask, f::FirstRunAsk::SendTo(_)) {
+                                i::set_send_to(on)
+                            } else {
+                                i::set_context_menu(on)
+                            };
+                            match result {
+                                Ok(()) => window.status.clear(),
+                                Err(error) => window.status = error,
+                            }
+                            window.explorer = crate::app_pages::ExplorerMenus {
+                                context_menu: i::context_menu_enabled(),
+                                send_to: i::send_to_enabled(),
+                            };
                         }
                     }
                 }
@@ -415,7 +438,7 @@ impl ModlightApp {
                 if !ui
                     .ctx()
                     .data(|d| d.get_temp::<bool>(raised_key).unwrap_or(false))
-                    && modlight_macos::windows::raise_overlay(&title)
+                    && crate::platform::windows::raise_overlay(&title)
                 {
                     ui.ctx().data_mut(|d| d.insert_temp(raised_key, true));
                     ui.ctx().send_viewport_cmd(ViewportCommand::Focus);

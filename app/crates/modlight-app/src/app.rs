@@ -40,6 +40,12 @@ pub struct ModlightApp {
     tray_checked_at: f64,
     /// The window title last given to the system.
     window_title: String,
+    /// Windows, `-silent` or "Minimize to tray on start": hide the window after its first
+    /// frame (eframe shows the window once it has drawn it).
+    pub start_hidden: bool,
+    /// Windows: the taskbar button's progress (`TaskbarManager`).
+    #[cfg(windows)]
+    taskbar: Option<crate::win32::TaskbarProgress>,
 }
 
 /// The app icon (`ShareX/Modlight_Icon.ico`), decoded at its largest.
@@ -82,22 +88,36 @@ impl ModlightApp {
             copied: Vec::new(),
             tray_checked_at: f64::NEG_INFINITY,
             window_title: modlight_core::title(),
+            start_hidden: false,
+            #[cfg(windows)]
+            taskbar: None,
         };
         if mode != Mode::Shot {
             app.start(ctx);
         }
         if matches!(mode, Mode::Normal | Mode::Qa) {
-            modlight_macos::keys::install();
+            crate::platform::keys::install();
             modlight_core::tasks::manager::set_fullscreen_probe(
-                modlight_macos::system::active_window_fullscreen,
+                crate::platform::system::active_window_fullscreen,
             );
         }
         if mode == Mode::Normal {
-            modlight_macos::integration::install_services_provider();
+            crate::platform::integration::install_services_provider();
+            // Windows: files and requests from later starts wake the window.
+            #[cfg(windows)]
+            {
+                let wake = ctx.clone();
+                crate::platform::integration::set_waker(move || wake.request_repaint());
+            }
             crate::editor_window::install_system_services();
         }
         if mode == Mode::Normal && app.state.config.show_tray() {
             app.tray = crate::tray::Tray::new(ctx, &app.state);
+        }
+        #[cfg(windows)]
+        if mode == Mode::Normal {
+            app.taskbar = crate::win32::window_handle(cc).map(crate::win32::TaskbarProgress::new);
+            crate::win32::wake_for_hotkeys(ctx.clone());
         }
         app
     }
@@ -113,11 +133,11 @@ impl ModlightApp {
         state.start_uploads();
         state.start_hotkeys();
         crate::media_windows::on_start(state);
-        // A Mac has no installer to open the first-time configuration; the first
-        // launch of the app bundle does.
+        // There is no installer to open the first-time configuration: the first launch
+        // of the app bundle (on Windows, of an installed copy) does.
         if state.first_launch
             && state.mode == Mode::Normal
-            && modlight_macos::integration::in_app_bundle()
+            && crate::platform::integration::in_app_bundle()
         {
             state.show_first_run();
         }
@@ -172,8 +192,8 @@ impl ModlightApp {
         // Cmd+V outside a text field uploads the clipboard (`ClipboardUploadMainWindow`);
         // upstream's window keys answer on My space only. The flag is read every frame
         // so a press on another tab does not fire later.
-        let pasted = if modlight_macos::keys::monitoring() {
-            modlight_macos::keys::take_command_v()
+        let pasted = if crate::platform::keys::monitoring() {
+            crate::platform::keys::take_command_v()
         } else {
             ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
         };
@@ -209,9 +229,81 @@ impl ModlightApp {
                 _ => -1,
             };
             tray.show_progress(progress);
-            for command in tray.commands() {
+            for command in tray.commands(&self.state) {
                 self.state.push(command);
             }
+        }
+        // Windows: "Show tray icon" takes the icon away and brings it back at once.
+        #[cfg(windows)]
+        if self.mode == Mode::Normal {
+            let wanted = self.state.config.show_tray();
+            match &mut self.tray {
+                Some(tray) => tray.set_visible(wanted),
+                None if wanted => self.tray = crate::tray::Tray::new(ctx, &self.state),
+                None => {}
+            }
+        }
+        // `TaskbarManager`: the same average on the taskbar button, when asked for.
+        #[cfg(windows)]
+        if let Some(taskbar) = &mut self.taskbar {
+            let enabled = self
+                .state
+                .config
+                .get("TaskbarProgressEnabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let progress = self
+                .state
+                .uploads
+                .tasks
+                .average_progress()
+                .filter(|_| enabled)
+                .map(|progress| progress as i32);
+            taskbar.show(progress);
+        }
+    }
+
+    /// Windows, before every frame, and alone while the window is minimised (eframe then
+    /// draws nothing and runs no frame): the tray's commands (Exit closes the app; an
+    /// entry that opens a window shows the main one too); a later start asked for the
+    /// window (`ForceActivate`); and what the tray icon, the hotkeys and Explorer asked for
+    /// while the window was minimised brings it back so it runs now, as upstream's
+    /// `ForceActivate` does for the command line, instead of at the next restore.
+    #[cfg(windows)]
+    fn windows_logic(&mut self, ctx: &egui::Context) {
+        if self.mode != Mode::Normal {
+            return;
+        }
+        let mut show = crate::platform::integration::take_activation_request();
+        let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        if let Some(tray) = &mut self.tray {
+            let commands = tray.commands(&self.state);
+            if tray.take_exit() {
+                self.state.save_config();
+                self.allow_close = true;
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+                return;
+            }
+            // The menu's handler showed the windows through Win32 (`show_app_windows`):
+            // winit hears it here too, or it would ignore the next hide (a capture's).
+            show |= tray.take_showed() || (minimized && !commands.is_empty());
+            for command in commands {
+                self.state.push(command);
+            }
+        }
+        if minimized {
+            show |= self.state.pump_hotkeys();
+            let files = crate::platform::integration::take_service_files();
+            if !files.is_empty() {
+                let settings = self.state.default_task_settings();
+                self.state.upload_files_with(files, settings);
+                show = true;
+            }
+        }
+        if show {
+            ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
         }
     }
 
@@ -264,7 +356,7 @@ impl ModlightApp {
         match effect {
             Effect::OpenUrl(url) => {
                 if real {
-                    modlight_macos::system::open_url(&url);
+                    crate::platform::system::open_url(&url);
                 } else {
                     log::info!("QA mode: not opening {url}");
                 }
@@ -309,14 +401,14 @@ impl ModlightApp {
             }
             Effect::Reveal(path) => {
                 if real {
-                    modlight_macos::system::reveal_in_finder(&path);
+                    crate::platform::system::reveal_in_finder(&path);
                 } else {
                     log::info!("QA mode: not revealing {}", path.display());
                 }
             }
             Effect::OpenFile(path) => {
                 if real {
-                    modlight_macos::system::open_path(&path);
+                    crate::platform::system::open_path(&path);
                 } else {
                     log::info!("QA mode: not opening {}", path.display());
                 }
@@ -722,7 +814,7 @@ impl ModlightApp {
         let Some(window) = state.uploads.windows.drop_window.as_mut() else {
             return;
         };
-        let area = modlight_macos::system::visible_frame()
+        let area = crate::platform::system::visible_frame()
             .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h)))
             .unwrap_or_else(|| Rect::from_min_size(pos2(0.0, 25.0), vec2(1440.0, 850.0)));
         let builder = ViewportBuilder::default()
@@ -773,7 +865,7 @@ impl ModlightApp {
             return;
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
-        let area = modlight_macos::system::visible_frame()
+        let area = crate::platform::system::visible_frame()
             .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h)))
             .unwrap_or_else(|| Rect::from_min_size(pos2(0.0, 25.0), vec2(1440.0, 850.0)));
         let size = notice.window_size();
@@ -825,6 +917,9 @@ impl ModlightApp {
     /// One frame of the whole app, drawn into `ui` (the main window).
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        if std::mem::take(&mut self.start_hidden) && self.tray.is_some() {
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        }
         self.before(&ctx);
         self.handle_close(&ctx);
         crate::shell::ui(ui, &mut self.state, self.logo.as_ref());
@@ -847,6 +942,11 @@ impl ModlightApp {
 }
 
 impl eframe::App for ModlightApp {
+    #[cfg(windows)]
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.windows_logic(ctx);
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.frame(ui);
     }
@@ -893,7 +993,7 @@ impl Placement {
 
     pub(crate) fn screen(topmost: bool) -> Placement {
         Placement {
-            area: modlight_macos::system::visible_frame()
+            area: crate::platform::system::visible_frame()
                 .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h))),
             topmost,
         }

@@ -110,17 +110,20 @@ fn sample_lists(state: &mut AppState) {
         Some(serde_json::Value::Object(map)) => map.clone(),
         _ => serde_json::Map::new(),
     };
+    let oxipng = crate::qa::fixture_path("/opt/homebrew/bin/oxipng");
+    let cwebp = crate::qa::fixture_path("/opt/homebrew/bin/cwebp");
+    let exports = crate::qa::fixture_path("~/Desktop/Exports");
     defaults.insert(
         "ExternalPrograms".into(),
         json!([
-            {"IsActive": true, "Name": "Optimize PNG", "Path": "/opt/homebrew/bin/oxipng", "Args": "-o 4 \"$input\"", "OutputExtension": "", "Extensions": "png", "HiddenWindow": true, "DeleteInputFile": false},
-            {"IsActive": false, "Name": "Convert to WebP", "Path": "/opt/homebrew/bin/cwebp", "Args": "\"$input\" -o \"$output\"", "OutputExtension": "webp", "Extensions": "png jpg", "HiddenWindow": true, "DeleteInputFile": false}
+            {"IsActive": true, "Name": "Optimize PNG", "Path": oxipng, "Args": "-o 4 \"$input\"", "OutputExtension": "", "Extensions": "png", "HiddenWindow": true, "DeleteInputFile": false},
+            {"IsActive": false, "Name": "Convert to WebP", "Path": cwebp, "Args": "\"$input\" -o \"$output\"", "OutputExtension": "webp", "Extensions": "png jpg", "HiddenWindow": true, "DeleteInputFile": false}
         ]),
     );
     defaults.insert(
         "WatchFolderList".into(),
         json!([
-            {"FolderPath": "~/Desktop/Exports", "Filter": "*.png", "IncludeSubdirectories": false, "MoveFilesToScreenshotsFolder": false}
+            {"FolderPath": exports, "Filter": "*.png", "IncludeSubdirectories": false, "MoveFilesToScreenshotsFolder": false}
         ]),
     );
     state
@@ -209,7 +212,7 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         state.show_first_run();
         if let Some(window) = state.windows.first_run.as_mut() {
             // As a copy in /Applications would see it.
-            window.startup = modlight_macos::integration::StartupState::Disabled;
+            window.startup = crate::platform::integration::StartupState::Disabled;
         }
         return Some(vec2(
             crate::first_run::FIRST_RUN_SIZE.0,
@@ -229,9 +232,13 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
     }
     if screen.starts_with("debug-log") {
         state.windows.debug_log = Some(crate::about_window::DebugLogWindow {
-            startup_path: "/Applications/Modlight.app/Contents/MacOS".into(),
+            startup_path: crate::qa::fixture_path("/Applications/Modlight.app/Contents/MacOS"),
             text: [
-                "2026-10-20 09:41:05.120 - Modlight 0.7.7 Dev started (macos, aarch64)",
+                if cfg!(windows) {
+                    "2026-10-20 09:41:05.120 - Modlight 0.7.7 Dev started (windows, x86_64)"
+                } else {
+                    "2026-10-20 09:41:05.120 - Modlight 0.7.7 Dev started (macos, aarch64)"
+                },
                 "2026-10-20 09:41:05.348 - Settings read from ApplicationConfig.json",
                 "2026-10-20 09:41:06.002 - 5 hotkeys registered",
                 "2026-10-20 09:42:13.517 - Upload finished: https://files.example.com/q8",

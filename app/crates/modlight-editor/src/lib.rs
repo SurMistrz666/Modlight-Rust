@@ -1,4 +1,4 @@
-//! The image editor of Modlight App for macOS: a port of upstream's
+//! The image editor of Modlight App for Windows and macOS: a port of upstream's
 //! `ShareX.ImageEditor` (Avalonia + SkiaSharp) to Rust, egui and tiny-skia.
 //!
 //! - `model`, `geom`, `color`: the annotations of `Core/Annotations`.
@@ -10,6 +10,7 @@
 
 pub mod annot_effects;
 pub mod color;
+pub mod colr;
 pub mod core;
 pub mod cursor;
 pub mod editor;

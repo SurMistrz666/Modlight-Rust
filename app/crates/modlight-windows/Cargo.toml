@@ -1,0 +1,83 @@
+[package]
+name = "modlight-windows"
+description = "Windows glue for Modlight App: Credential Manager, the screen through GDI, global hotkeys, Explorer integration, sounds, printing, OCR and the other system services the app asks for."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+modlight-core.workspace = true
+hex.workspace = true
+log.workspace = true
+
+[dependencies.image]
+workspace = true
+
+[target.'cfg(windows)'.dependencies]
+global-hotkey = "0.9"
+# Win32 through windows-sys. The `windows` crate (WinRT: OCR, WIC) is renamed `winrt`
+# because this crate has a module called `windows` of its own.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Printing",
+    "Win32_Media",
+    "Win32_Media_Audio",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Credentials",
+    "Win32_Storage_FileSystem",
+    "Win32_Storage_Xps",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Pipes",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Devices_Display",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+winrt = { package = "windows", version = "0.62", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Graphics_Imaging",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_WinRT",
+    "Win32_UI_Shell",
+] }
+# The print preview's PDF: the picture as a Flate-compressed image (already in the tree
+# through modlight-core).
+flate2 = "1"
+# WebView2 (the YouTube sign-in window): the COM bindings and the static loader, built on
+# the same `windows` 0.62 as `winrt`.
+webview2-com = "=0.39.1"
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -16,7 +16,9 @@ use egui::{
 };
 use image::RgbaImage;
 use modlight_core::icons;
-use modlight_core::l10n::{mac, s, t, tools as tl};
+#[cfg(not(windows))]
+use modlight_core::l10n::mac;
+use modlight_core::l10n::{Key, s, t, tools as tl};
 use modlight_core::tasks::host::{MessageIcon, NotificationSound};
 use modlight_core::tasks::settings::TaskSettings;
 use modlight_tools::color::Color;
@@ -28,6 +30,13 @@ use super::kit::{self, Track};
 use super::region::RegionFor;
 use super::{ToolWindow, WindowSpec};
 use crate::state::{AppState, Effect};
+
+/// The options window's wheel note: upstream's (Ctrl + wheel) on Windows, Cmd on a Mac.
+#[cfg(windows)]
+const WHEEL_HINT: Key =
+    tl::PinToScreenOptionsWindow_Mouse_wheel_changes_scale_Ctrl_mouse_wheel_changes_opacity;
+#[cfg(not(windows))]
+const WHEEL_HINT: Key = mac::PinWheelHint;
 use crate::theme::Weight;
 
 /// `PinToScreenSource`: the picture, where it came from (desktop points) and how many
@@ -1133,7 +1142,7 @@ impl ToolWindow for PinOptionsWindow {
             ui,
             hint,
             Align2::LEFT_CENTER,
-            t(mac::PinWheelHint),
+            t(WHEEL_HINT),
             13.0,
             Weight::Normal,
             colors.text_secondary(),

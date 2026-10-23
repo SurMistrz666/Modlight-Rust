@@ -138,7 +138,7 @@ impl DownloadFormat {
     }
 
     /// Everything yt-dlp needs to be told about WHAT to fetch. `ffmpeg` is the merger, or
-    /// `None` when this Mac has none: without it nothing can be joined or converted.
+    /// `None` when this computer has none: without it nothing can be joined or converted.
     pub fn arguments(&self, is_youtube: bool, ffmpeg: Option<&str>) -> Vec<String> {
         let can_process = ffmpeg.is_some();
         let mut out = vec!["-f".to_string(), self.selector(can_process).to_string()];

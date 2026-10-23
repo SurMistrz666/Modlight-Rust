@@ -24,3 +24,7 @@ i_overlay = "9"
 [dev-dependencies]
 tempfile.workspace = true
 egui_kittest.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+# The snapshot tests' read-only comparison with the shared pictures (egui_kittest's own).
+dify = { version = "0.8", default-features = false }

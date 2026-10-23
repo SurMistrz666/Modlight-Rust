@@ -7,12 +7,15 @@
 //! constant and never the server somebody signed in to: the sign-in host answers "where
 //! do my files live", this one "who may hand me an executable".
 //!
-//! macOS substitution: upstream downloads an Inno Setup `.exe` and runs it elevated. A
-//! Mac build is a `.dmg` or `.zip` of `Modlight.app`; this downloads it, refuses it unless
-//! its size and SHA-256 match the manifest, and reveals the verified file in Finder.
-//! Nothing is opened, mounted, installed or run. A manifest whose file is not a `.dmg`
-//! or `.zip` (the server publishes one release, today the Windows installer) is not a
-//! release for this Mac and is answered "up to date".
+//! Upstream downloads its Inno Setup `.exe` and runs it elevated. The port downloads the
+//! release, refuses it unless its size and SHA-256 match the manifest, and reveals the
+//! verified file (in Explorer on Windows, in Finder on a Mac); nothing is opened,
+//! mounted, installed or run, the person starts it. On Windows a release is the
+//! installer `.exe` (upstream's) or a `.zip`; on a Mac a `.dmg` or a `.zip` of
+//! `Modlight.app`. A manifest whose file is not one of those is not a release for this
+//! system and is answered "up to date". The server publishes one release
+//! (`/api/releases/app`), so a `.zip` there reaches both systems: a per-platform
+//! manifest is a server change.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -70,7 +73,18 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MAX_NOTES_LENGTH: usize = 1200;
 const MAX_FILE_NAME_LENGTH: usize = 100;
-const FALLBACK_FILE_NAME: &str = "Modlight.dmg";
+/// The extensions a release for this system may have.
+const RELEASE_EXTENSIONS: [&str; 2] = if cfg!(windows) {
+    [".exe", ".zip"]
+} else {
+    [".dmg", ".zip"]
+};
+/// The name used when the manifest's is unusable.
+const FALLBACK_FILE_NAME: &str = if cfg!(windows) {
+    "Modlight-setup.exe"
+} else {
+    "Modlight.dmg"
+};
 
 /// The page a person is sent to when they would rather fetch it themselves.
 pub fn download_page_url() -> String {
@@ -153,8 +167,9 @@ pub fn parse_version(text: &str) -> Option<Vec<u64>> {
 }
 
 /// A file name for the downloaded artefact: letters, digits, dot, dash, underscore; no
-/// leading dot; at most 100 characters; and a `.dmg` or `.zip` - anything else is not a
-/// Mac release (see the module notes).
+/// leading dot; at most 100 characters; and one of this system's release extensions
+/// (`.exe` or `.zip` on Windows, `.dmg` or `.zip` on a Mac) - anything else is not a
+/// release for this system (see the module notes).
 pub fn safe_file_name(from_manifest: &str, url: &str) -> Option<String> {
     let mut candidate = from_manifest.trim().to_string();
     if candidate.is_empty()
@@ -175,11 +190,10 @@ pub fn safe_file_name(from_manifest: &str, url: &str) -> Option<String> {
         name = FALLBACK_FILE_NAME.to_string();
     }
     let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".dmg") || lower.ends_with(".zip") {
-        Some(name)
-    } else {
-        None
-    }
+    RELEASE_EXTENSIONS
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+        .then_some(name)
 }
 
 fn percent_decode(text: &str) -> String {
@@ -557,6 +571,37 @@ mod tests {
         assert!(!valid_host("https://"));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_manifest_parses_and_a_mac_one_is_not_for_us() {
+        let manifest =
+            parse_manifest(&manifest_json("Modlight-0.8.0-setup.exe", 80_000_000)).unwrap();
+        assert_eq!(manifest.version, [0, 8, 0, 0]);
+        assert_eq!(manifest.file_name, "Modlight-0.8.0-setup.exe");
+        assert!(parse_manifest(&manifest_json("Modlight-0.8.0.zip", 10)).is_ok());
+        assert_eq!(
+            parse_manifest(&manifest_json("Modlight-0.8.0.dmg", 41_000_000)),
+            Err(ManifestProblem::NotForThisPlatform)
+        );
+        assert_eq!(
+            parse_manifest(&manifest_json("Modlight-setup.exe", 0)),
+            Err(ManifestProblem::MissingSize)
+        );
+        assert_eq!(
+            safe_file_name("", "https://h/r/"),
+            Some("Modlight-setup.exe".into())
+        );
+        assert_eq!(safe_file_name("Modlight.msi", ""), None);
+    }
+
+    /// A release file this system takes.
+    const OURS: &str = if cfg!(windows) {
+        "Modlight-setup.exe"
+    } else {
+        "Modlight.dmg"
+    };
+
+    #[cfg(not(windows))]
     #[test]
     fn a_mac_manifest_parses_and_a_windows_one_is_not_for_us() {
         let manifest = parse_manifest(&manifest_json("Modlight-0.8.0.dmg", 41_000_000)).unwrap();
@@ -585,7 +630,7 @@ mod tests {
         assert_eq!(parse_manifest(""), Err(ManifestProblem::Empty));
         assert_eq!(parse_manifest("<html>"), Err(ManifestProblem::NotJson));
         assert_eq!(parse_manifest("[]"), Err(ManifestProblem::NotJson));
-        let good = manifest_json("Modlight.dmg", 10);
+        let good = manifest_json(OURS, 10);
         assert_eq!(
             parse_manifest(&good.replace("\"version\":\"0.8.0\"", "\"version\":\"\"")),
             Err(ManifestProblem::MissingVersion)
@@ -614,9 +659,7 @@ mod tests {
     #[test]
     fn versions_compare_as_numbers_and_never_downgrade() {
         let fetch = |v: &str| {
-            FetchStatus::Ok(
-                parse_manifest(&manifest_json("Modlight.dmg", 10).replace("0.8.0", v)).unwrap(),
-            )
+            FetchStatus::Ok(parse_manifest(&manifest_json(OURS, 10).replace("0.8.0", v)).unwrap())
         };
         assert!(matches!(
             evaluate(Some(&[0, 7, 9]), &fetch("0.7.10")),
@@ -642,6 +685,7 @@ mod tests {
         assert_eq!(parse_version("1.2.3.4.5"), None);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn the_file_name_cannot_walk_out_of_the_folder() {
         assert_eq!(
@@ -670,5 +714,28 @@ mod tests {
         assert!(is_acceptable_url("http://localhost:8420/x.dmg"));
         assert!(!is_acceptable_url("http://files.example.com/x.dmg"));
         assert!(!is_acceptable_url("file:///x.dmg"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_file_name_cannot_walk_out_of_the_folder_on_windows() {
+        assert_eq!(
+            safe_file_name("..\\..\\AppData\\Roaming\\x.exe", ""),
+            Some(
+                "....AppDataRoamingx.exe"
+                    .trim_start_matches('.')
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            safe_file_name("C:\\Windows\\setup.exe", ""),
+            Some("CWindowssetup.exe".into())
+        );
+        assert_eq!(
+            safe_file_name("", "https://h/r/Modlight%200.8.zip"),
+            Some("Modlight0.8.zip".into())
+        );
+        assert_eq!(safe_file_name("x.dmg", ""), None);
+        assert_eq!(safe_file_name("x.exe.lnk", ""), None);
     }
 }

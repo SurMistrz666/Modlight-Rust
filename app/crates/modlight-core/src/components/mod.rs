@@ -9,9 +9,12 @@
 //! A version bump is a code change - except for yt-dlp, which goes stale in weeks and
 //! follows its publisher under a rule of its own (`updates`).
 //!
-//! macOS: the builds are the publishers' macOS arm64 artefacts (provenance in
-//! `docs/handoff/app-3-media.md`), the folders are `<profile>/Tools` and
-//! `<profile>/Models` (the personal folder is `~/Library/Application Support/Modlight`).
+//! Windows: upstream's pins (`ModlightComponent.cs`) for x64 and arm64 by the build's
+//! architecture, except ExifTool, whose upstream artefact is no longer published (the
+//! official Windows build of the current release instead). macOS: the publishers' macOS
+//! arm64 artefacts. Provenance of both in `docs/handoff/`. The folders are
+//! `<profile>/Tools` and `<profile>/Models` of the personal folder
+//! (`crate::personal_folder`).
 
 pub mod archive;
 pub mod download;
@@ -52,6 +55,13 @@ pub enum Packaging {
     TarGzFolder {
         keep: &'static [&'static str],
         executables: &'static [&'static str],
+    },
+    /// A zip with one top-level folder; each `(name inside it, name in the component's
+    /// folder)` pair, a file or a whole folder, is taken out and put into the
+    /// component's folder under its new name. Upstream's `ZipTree` for an archive that
+    /// keeps its files in a folder of their own (ExifTool's Windows build).
+    ZipFolder {
+        keep: &'static [(&'static str, &'static str)],
     },
 }
 
@@ -155,6 +165,7 @@ pub fn catalog() -> &'static [Component] {
     &CATALOG
 }
 
+#[cfg(not(windows))]
 static CATALOG: [Component; 4] = [
     // Martin Riedl's macOS arm64 build of the version the Windows app pins (8.1): a
     // versioned URL that keeps serving the same bytes, a .sha256 published beside it, a
@@ -251,6 +262,130 @@ static CATALOG: [Component; 4] = [
     },
 ];
 
+/// Upstream's own catalogue (`ModlightComponentCatalog`), for the architecture this
+/// build is for (`RuntimeInformation.ProcessArchitecture == Arm64` upstream).
+#[cfg(windows)]
+const ARM64: bool = cfg!(target_arch = "aarch64");
+
+#[cfg(windows)]
+static CATALOG: [Component; 4] = [
+    // ShareX's own FFmpeg build, upstream's pin: one `ffmpeg.exe` in the zip (193 MiB
+    // unpacked on x64, 128 MiB on arm64).
+    Component {
+        id: FFMPEG,
+        name: s::Components_FFmpeg,
+        purpose: s::Components_FFmpegPurpose,
+        version: "8.1",
+        url: if ARM64 {
+            "https://github.com/ShareX/FFmpeg/releases/download/v8.1/ffmpeg-8.1-win-arm64.zip"
+        } else {
+            "https://github.com/ShareX/FFmpeg/releases/download/v8.1/ffmpeg-8.1-win-x64.zip"
+        },
+        sha256: if ARM64 {
+            "7ac6c5dbbe61037bcce97482549294238d87400d8b7b1cb559949293c3b06dd5"
+        } else {
+            "1838932e32f01e0e7b65fde5ca0ebb2ab131cb6a9ff1a84025ee5b784075576c"
+        },
+        download_size: if ARM64 { 50_657_497 } else { 68_599_421 },
+        file_name: "ffmpeg.exe",
+        folder: ComponentFolder::Tools,
+        packaging: Packaging::ZipSingleFile,
+        max_uncompressed_size: 512 * 1024 * 1024,
+        source: "github.com/ShareX/FFmpeg",
+        owned_entries: &["ffmpeg.exe"],
+        update_repository: None,
+        update_asset: None,
+        update_checksums: None,
+        version_arguments: &[],
+    },
+    // The pin is the FLOOR (see `updates`); installed as `yt-dlp.exe` on both
+    // architectures, as upstream.
+    Component {
+        id: YT_DLP,
+        name: s::Components_YtDlp,
+        purpose: s::Components_YtDlpPurpose,
+        version: "2026.08.19",
+        url: if ARM64 {
+            "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_arm64.exe"
+        } else {
+            "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe"
+        },
+        sha256: if ARM64 {
+            "05b438997bafc3affdfda9d041353c9d73e04dc842207254b655b0887c4445b0"
+        } else {
+            "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
+        },
+        download_size: if ARM64 { 21_159_286 } else { 17_840_399 },
+        file_name: "yt-dlp.exe",
+        folder: ComponentFolder::Tools,
+        packaging: Packaging::File { executable: true },
+        max_uncompressed_size: 0,
+        source: "github.com/yt-dlp/yt-dlp",
+        owned_entries: &["yt-dlp.exe"],
+        update_repository: Some("yt-dlp/yt-dlp"),
+        update_asset: Some(if ARM64 {
+            "yt-dlp_arm64.exe"
+        } else {
+            "yt-dlp.exe"
+        }),
+        update_checksums: Some("SHA2-256SUMS"),
+        // --ignore-config first: a yt-dlp.conf on this machine is read before anything
+        // else and one line of it would turn the answer into something else.
+        version_arguments: &["--ignore-config", "--version"],
+    },
+    // Upstream's pin, unchanged.
+    Component {
+        id: BACKGROUND_MODEL,
+        name: s::Components_BackgroundModel,
+        purpose: s::Components_BackgroundModelPurpose,
+        version: "bria-rmbg-2.0",
+        url: "https://github.com/danielgatis/rembg/releases/download/v0.0.0/bria-rmbg-2.0.onnx",
+        sha256: "5b486f08200f513f460da46dd701db5fbb47d79b4be4b708a19444bcd4e79958",
+        download_size: 1_024_331_469,
+        file_name: "bria-rmbg-2.0.onnx",
+        folder: ComponentFolder::Models,
+        packaging: Packaging::File { executable: false },
+        max_uncompressed_size: 0,
+        source: "github.com/danielgatis/rembg",
+        owned_entries: &["bria-rmbg-2.0.onnx"],
+        update_repository: None,
+        update_asset: None,
+        update_checksums: None,
+        version_arguments: &[],
+    },
+    // Upstream pins 13.29 from github.com/ShareX/ExifTool, which is gone (the repository
+    // answers 404). This is Phil Harvey's own Windows 64-bit build of the current
+    // production release, whose SHA-256 exiftool.org publishes in checksums.txt
+    // (exiftool.org hands its downloads to SourceForge). Installed as upstream lays it
+    // out: `exiftool.exe` (the zip's `exiftool(-k).exe` launcher, renamed so it does not
+    // wait for a key) beside its `exiftool_files` folder (Perl and the library). The
+    // same x64 build serves arm64, as upstream's win64 pin did.
+    Component {
+        id: EXIFTOOL,
+        name: s::Components_ExifTool,
+        purpose: s::Components_ExifToolPurpose,
+        version: "13.59",
+        url: "https://downloads.sourceforge.net/project/exiftool/exiftool-13.59_64.zip",
+        sha256: "44b512b25af500724ba579d0a53c8fc5851628b692dd5e5d94ae4a15c2cba9ec",
+        download_size: 11_183_675,
+        file_name: "exiftool.exe",
+        folder: ComponentFolder::Tools,
+        packaging: Packaging::ZipFolder {
+            keep: &[
+                ("exiftool_files", "exiftool_files"),
+                ("exiftool(-k).exe", "exiftool.exe"),
+            ],
+        },
+        max_uncompressed_size: 256 * 1024 * 1024,
+        source: "exiftool.org",
+        owned_entries: &["exiftool.exe", "exiftool_files"],
+        update_repository: None,
+        update_asset: None,
+        update_checksums: None,
+        version_arguments: &[],
+    },
+];
+
 pub fn find(id: &str) -> Option<&'static Component> {
     catalog().iter().find(|c| c.id.eq_ignore_ascii_case(id))
 }
@@ -270,13 +405,13 @@ pub fn target_path(profile: &Path, component: &Component) -> PathBuf {
     folder_for(profile, component).join(component.file_name)
 }
 
-/// The folder the running executable is in (`Contents/MacOS` in the bundle).
+/// The folder the running executable is in (`Contents/MacOS` in a macOS bundle).
 fn beside_executable(file_name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     Some(exe.parent()?.join(file_name))
 }
 
-/// The component's file, or `None` when it is not on this Mac (`InstalledPath`).
+/// The component's file, or `None` when it is not on this computer (`InstalledPath`).
 ///
 /// A tool beside the executable counts as installed (`ExternalTools.Locate`), a copy we
 /// fetched into the profile too.
@@ -475,7 +610,12 @@ mod tests {
         let ffmpeg = find(FFMPEG).unwrap();
         assert_eq!(installed_path(profile.path(), FFMPEG), None);
         let target = target_path(profile.path(), ffmpeg);
-        assert_eq!(target, profile.path().join("Tools").join("ffmpeg"));
+        let name = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+        assert_eq!(target, profile.path().join("Tools").join(name));
         std::fs::create_dir_all(target.parent().unwrap()).unwrap();
         std::fs::write(&target, b"x").unwrap();
         assert_eq!(installed_path(profile.path(), "ffmpeg"), Some(target));
@@ -523,5 +663,31 @@ mod tests {
         assert_eq!(options["CLIPath"], json!(""));
         assert_eq!(options["x"], json!(1));
         assert!(!migrate(&mut config), "only once");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_has_upstreams_pins_for_its_architecture() {
+        let ffmpeg = find(FFMPEG).unwrap();
+        let yt = find(YT_DLP).unwrap();
+        let exiftool = find(EXIFTOOL).unwrap();
+        assert_eq!(ffmpeg.file_name, "ffmpeg.exe");
+        assert_eq!(yt.file_name, "yt-dlp.exe");
+        assert_eq!(exiftool.file_name, "exiftool.exe");
+        assert_eq!(exiftool.owned_entries, ["exiftool.exe", "exiftool_files"]);
+        if cfg!(target_arch = "aarch64") {
+            assert!(ffmpeg.url.ends_with("ffmpeg-8.1-win-arm64.zip"));
+            assert_eq!(yt.update_asset, Some("yt-dlp_arm64.exe"));
+        } else {
+            assert!(ffmpeg.url.ends_with("ffmpeg-8.1-win-x64.zip"));
+            assert_eq!(ffmpeg.download_size, 68_599_421);
+            assert_eq!(yt.update_asset, Some("yt-dlp.exe"));
+            assert_eq!(
+                yt.sha256,
+                "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
+            );
+        }
+        assert!(net::is_artefact_url(ffmpeg.url));
+        assert!(net::is_artefact_url(yt.url));
     }
 }

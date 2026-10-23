@@ -19,6 +19,13 @@ C#/.NET 10 with an Avalonia UI, GPL-3.0). The upstream checkout is the
   (+ optional DMG) with components downloaded from the Components window,
   WebView2 -> WKWebView, Windows OCR -> Vision, GDI/DXGI capture ->
   ScreenCaptureKit, ShareX import -> not applicable (no ShareX on macOS).
+- The same app also builds for Windows (added after the five phases): there,
+  upstream's own Windows mechanisms come back in place of the macOS
+  substitutes, through `crates/modlight-windows`, a crate with the module and
+  function names of `modlight-macos` (the app reaches whichever one its build
+  uses as `crate::platform`). What it uses is in `docs/WINDOWS.md`. Shared
+  crates choose with `cfg(windows)`; nothing Windows-only may change what
+  macOS does.
 - Settings synchronised through `GET/PUT /api/client-settings?client=desktop`
   and `/api/theme` use the same document format as the Windows app
   (`ShareX/Modlight/ModlightSettingsDocument.cs` allow-list), so a Windows
@@ -59,9 +66,14 @@ C#/.NET 10 with an Avalonia UI, GPL-3.0). The upstream checkout is the
 - Credentials in the login Keychain written and read through
   `/usr/bin/security` (an item created by the app binary itself is tied to that
   build and every rebuild would prompt).
+- Windows: `windows-sys` (Win32) and `windows` (WinRT, COM, renamed `winrt` in
+  `modlight-windows`), `webview2-com`, `tray-icon`, `global-hotkey`, `arboard`,
+  `rfd`, `notify`, `winresource` (icon and manifest, `build.rs`). Rust with the
+  MSVC target; credentials in Credential Manager.
 - Workspace crates: `modlight-api` (server protocol, no GUI), `modlight-core`
-  (settings, queue store, tasks, components, no GUI), `modlight-macos`
-  (platform glue), `modlight-app` (the GUI binary), more as phases need.
+  (settings, queue store, tasks, components, no GUI), `modlight-macos` and
+  `modlight-windows` (platform glue), `modlight-app` (the GUI binary), more as
+  phases need.
 
 ## 4. QA mode and the owner's screen
 

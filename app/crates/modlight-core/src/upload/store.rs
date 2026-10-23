@@ -197,15 +197,21 @@ impl QueueStore {
             return false;
         };
         let path = Path::new(&item.source_path);
+        // A Windows path starts with its drive or share (a prefix); the parent must still
+        // be exactly the spool folder, prefix included.
         let plain = path.is_absolute()
-            && path
-                .components()
-                .all(|c| matches!(c, Component::RootDir | Component::Normal(_)));
+            && path.components().all(|c| {
+                matches!(
+                    c,
+                    Component::Prefix(_) | Component::RootDir | Component::Normal(_)
+                )
+            });
         if !plain || path.parent() != Some(folder.as_path()) {
             return false;
         }
         let id = item.id.as_str();
-        if id.is_empty() || id.contains(['/', '\\', '.']) {
+        // On Windows a colon would name a stream of another file.
+        if id.is_empty() || id.contains(['/', '\\', '.']) || (cfg!(windows) && id.contains(':')) {
             return false;
         }
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {

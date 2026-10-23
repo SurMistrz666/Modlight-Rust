@@ -4,8 +4,9 @@
 //! built here as plain data (tests check them field by field), sent by [`send`] only when
 //! the user runs the analysis or presses "Test connection" / "Load models".
 //!
-//! The keys are not part of these settings on disk: the app keeps them in the Keychain
-//! (upstream encrypted them with DPAPI inside the settings file).
+//! The keys are not part of these settings on disk: the app keeps them in the system's
+//! credential store (Credential Manager on Windows, the Keychain on macOS; upstream
+//! encrypted them with DPAPI inside the settings file).
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -60,7 +60,7 @@ pub struct PendingImage {
 /// Everything captures need, held by the app state.
 pub struct Captures {
     pub source: SharedSource,
-    pub mac: Option<Arc<modlight_macos::capture::MacSource>>,
+    pub mac: Option<Arc<crate::platform::capture::ScreenSource>>,
     pub overlay: Option<RegionOverlay>,
     pub scheduled: Vec<Scheduled>,
     /// A picture is being taken on the background pool.
@@ -93,7 +93,7 @@ impl Captures {
         let (source, mac): (SharedSource, _) = if qa {
             (Captures::fake_source(profile), None)
         } else {
-            let mac = modlight_macos::capture::MacSource::new();
+            let mac = crate::platform::capture::ScreenSource::new();
             (mac.clone() as SharedSource, Some(mac))
         };
         Captures {
@@ -134,7 +134,7 @@ impl AppState {
             .unwrap_or(false);
         let backend: Box<dyn modlight_core::hotkeys::HotkeyBackend> =
             if self.mode == Mode::Normal && !self.env.qa {
-                Box::new(modlight_macos::hotkeys::MacHotkeys::new())
+                Box::new(crate::platform::hotkeys::SystemHotkeys::new())
             } else {
                 Box::new(FakeBackend::default())
             };
@@ -154,18 +154,18 @@ impl AppState {
         self.save_config();
     }
 
-    /// Hotkeys pressed since the last frame, and those QA pressed.
-    pub fn pump_hotkeys(&mut self) {
+    /// Hotkeys pressed since the last frame, and those QA pressed. Whether any ran.
+    pub fn pump_hotkeys(&mut self) -> bool {
         let mut pressed: Vec<HotkeySettings> = Vec::new();
         if self.mode == Mode::Normal && !self.env.qa {
-            for id in modlight_macos::hotkeys::MacHotkeys::pressed() {
+            for id in crate::platform::hotkeys::SystemHotkeys::pressed() {
                 // `DisableHotkeysOnFullscreen`.
                 let fullscreen_block = self
                     .config
                     .get("DisableHotkeysOnFullscreen")
                     .and_then(|v| v.as_bool())
                     == Some(true)
-                    && modlight_macos::system::active_window_fullscreen();
+                    && crate::platform::system::active_window_fullscreen();
                 if fullscreen_block {
                     continue;
                 }
@@ -181,6 +181,7 @@ impl AppState {
                 pressed.push(hotkey.clone());
             }
         }
+        let any = !pressed.is_empty();
         for hotkey in pressed {
             let defaults = self
                 .config
@@ -190,6 +191,7 @@ impl AppState {
             let settings = hotkey.task_settings(&defaults);
             self.execute_job(hotkey.job(), settings);
         }
+        any
     }
 
     /// `TaskHelpers.ToggleHotkeys`.
@@ -383,7 +385,7 @@ impl AppState {
         self.tick_auto_capture(ctx);
         self.tick_recording(ctx);
         // Files Finder handed to "Upload with Modlight".
-        let files = modlight_macos::integration::take_service_files();
+        let files = crate::platform::integration::take_service_files();
         if !files.is_empty() {
             let settings = self.default_task_settings();
             self.upload_files_with(files, settings);
@@ -1294,7 +1296,9 @@ pub fn tools_menu() -> Vec<crate::menus::Entry> {
     ]
 }
 
-/// `HotkeyProblemViewModel.Describe`: the keys macOS would not give, or nothing.
+/// `HotkeyProblemViewModel.Describe`: the keys the system would not give, or nothing. On
+/// Windows upstream's words, which blame a running ShareX when its mutex exists and the
+/// Snipping Tool otherwise; on a Mac the port's own.
 pub fn hotkey_problem(state: &AppState) -> Option<String> {
     let failed = state.captures.hotkeys.failed();
     if failed.is_empty() {
@@ -1305,8 +1309,13 @@ pub fn hotkey_problem(state: &AppState) -> Option<String> {
         .map(|h| h.info.text())
         .collect::<Vec<_>>()
         .join(", ");
-    Some(format(
-        t(modlight_core::l10n::mac::HotkeyProblem),
-        &[Arg::from(keys)],
-    ))
+    #[cfg(windows)]
+    let text = if state.mode == Mode::Normal && !state.env.qa && crate::win32::sharex_running() {
+        s::MainWindow_HotkeyProblemShareX
+    } else {
+        s::MainWindow_HotkeyProblem
+    };
+    #[cfg(not(windows))]
+    let text = modlight_core::l10n::mac::HotkeyProblem;
+    Some(format(t(text), &[Arg::from(keys)]))
 }

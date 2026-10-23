@@ -2,9 +2,11 @@
 //! `ShareXUpdateManager`'s Modlight checker), the "update is available" question
 //! (`UpdateMessageWindow`) and the downloader (`DownloaderWindow`).
 //!
-//! Off unless the build has a release host (`modlight_core::update`). macOS: the
-//! downloader fetches the `.dmg`/`.zip`, refuses it unless its size and SHA-256 match the
-//! manifest, and reveals the verified file in Finder. Nothing is installed or run.
+//! Off unless the build has a release host (`modlight_core::update`). The downloader
+//! fetches the release and refuses it unless its size and SHA-256 match the manifest.
+//! Windows, as upstream: the verified installer starts with `/UPDATE` (`AutoStartInstall`),
+//! and Install starts it again. macOS: the `.dmg`/`.zip` is revealed in Finder; nothing is
+//! installed or run.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -148,10 +150,14 @@ pub fn checked(state: &mut AppState, outcome: UpdateOutcome) {
 
 /// The question's text (`BuildMessage`): what will happen, both versions, the size.
 pub fn message_text(manifest: &ReleaseManifest) -> String {
-    // The Mac downloads and verifies the file and shows it in Finder: "download it",
-    // not "download and install it".
+    // Windows installs it; the Mac downloads and verifies the file and shows it in
+    // Finder: "download it", not "download and install it".
     let mut text = String::new();
-    text.push_str(t(helpers::UpdateMessageBox_UpdateMessageBox_Portable));
+    text.push_str(t(if cfg!(windows) {
+        helpers::UpdateMessageBox_UpdateMessageBox_
+    } else {
+        helpers::UpdateMessageBox_UpdateMessageBox_Portable
+    }));
     text.push_str("\n\n");
     text.push_str(t(helpers::UpdateMessageBox_UpdateMessageBox_CurrentVersion));
     text.push_str(": ");
@@ -356,7 +362,11 @@ fn download_done(state: &mut AppState, result: update::DownloadResult) {
                 t(helpers::DownloaderForm_fileDownloader_DownloadCompleted_Download_completed_)
                     .to_string();
             downloader.file = Some(path.clone());
-            // `AutoStartInstall`, on a Mac: show the verified file in Finder.
+            // `AutoStartInstall`: on Windows the installer; on a Mac the verified file
+            // in Finder.
+            #[cfg(windows)]
+            install(state);
+            #[cfg(not(windows))]
             state.effects.push(crate::state::Effect::Reveal(path));
         }
         update::DownloadResult::Cancelled => {
@@ -372,6 +382,41 @@ fn download_done(state: &mut AppState, result: update::DownloadResult) {
             downloader.status = DownloaderStatus::Failed;
             downloader.status_text = t(helpers::DownloaderWindow_VerificationFailed).to_string();
             downloader.progress = None;
+        }
+    }
+}
+
+/// Windows, `InstallAsync`: start the verified installer and close the window, or say why
+/// it did not start and keep Install (`KeepInstallable`). Only the real app starts it.
+#[cfg(windows)]
+fn install(state: &mut AppState) {
+    let real = state.mode == crate::app::Mode::Normal && !state.env.qa;
+    let Some(downloader) = state.updates.downloader.as_mut() else {
+        return;
+    };
+    let Some(file) = downloader.file.clone() else {
+        return;
+    };
+    if !real {
+        log::info!("QA mode: not starting {}", file.display());
+        return;
+    }
+    downloader.status_text = t(helpers::DownloaderWindow_StartingInstaller).to_string();
+    match crate::win32::start_installer(&file) {
+        crate::win32::InstallerStart::Started => {
+            log::info!("Update: installer started - \"{}\" /UPDATE", file.display());
+            state.updates.downloader = None;
+        }
+        crate::win32::InstallerStart::Cancelled => {
+            log::info!("Update: the elevation prompt for the installer was declined");
+            downloader.status_text = t(helpers::DownloaderWindow_InstallCancelled).to_string();
+        }
+        crate::win32::InstallerStart::Failed(error) => {
+            log::warn!("Update: the installer could not be started: {error}");
+            downloader.status_text = format(
+                t(helpers::DownloaderWindow_InstallFailed),
+                &[Arg::from(error)],
+            );
         }
     }
 }
@@ -444,6 +489,9 @@ pub fn downloader_ui(ui: &mut Ui, state: &mut AppState) -> bool {
     let label = match downloader.status {
         DownloaderStatus::Waiting => t(helpers::DownloaderWindow_Download),
         DownloaderStatus::DownloadStarted => t(helpers::DownloaderForm_StartDownload_Cancel),
+        DownloaderStatus::DownloadCompleted if cfg!(windows) => {
+            t(helpers::DownloaderForm_fileDownloader_DownloadCompleted_Install)
+        }
         DownloaderStatus::DownloadCompleted => t(s::Download_ShowInFolder),
         DownloaderStatus::Failed => t(helpers::DownloaderWindow_Close),
     };
@@ -558,6 +606,9 @@ pub fn downloader_ui(ui: &mut Ui, state: &mut AppState) -> bool {
                 }
                 close = true;
             }
+            #[cfg(windows)]
+            DownloaderStatus::DownloadCompleted => install(state),
+            #[cfg(not(windows))]
             DownloaderStatus::DownloadCompleted => {
                 if let Some(path) = downloader.file.clone() {
                     state.effects.push(crate::state::Effect::Reveal(path));
@@ -595,7 +646,10 @@ pub fn qa_downloader(manifest: ReleaseManifest, done: bool) -> Downloader {
         downloader.status_text =
             t(helpers::DownloaderForm_fileDownloader_DownloadCompleted_Download_completed_)
                 .to_string();
-        downloader.file = Some(PathBuf::from("/tmp/Modlight/Modlight-0.8.0.dmg"));
+        downloader.file = Some(PathBuf::from(crate::qa::fixture_path(&format!(
+            "/tmp/Modlight/{}",
+            downloader.manifest.file_name
+        ))));
     } else {
         downloader.status = DownloaderStatus::DownloadStarted;
         downloader.status_text = t(helpers::DownloaderForm_StartDownload_Downloading_).to_string();
