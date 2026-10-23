@@ -34,7 +34,14 @@ from the server (PKCE-style). Design and contract: `server/docs/SKELETON.md` 9.4
   POST), refusal through the pickup, cancel stops polling, an older server (404)
   still signs in through the loopback.
 
-## Not done: the real-server e2e run
+## Real-server e2e: run on 2026-10-24 (branch `sec-fix-3`)
+
+After the security review fixes (docs/audit/rust-delta-2026-10-24.md, P1-P3) the
+run below passed, 4 of 4, with `EMAIL2`/`PASSWORD2` for the second-account test.
+On a fresh database only the first sign-up works; enable registration
+(`settings.register_enabled = 'on'`) in YOUR test database to add the second.
+
+## Originally not done: the real-server e2e run
 
 `app/crates/modlight-api/tests/signin_pickup.rs` is written and compiles, but was
 not run: Docker (colima profile `modlight`) was stopped, so there was no Postgres
