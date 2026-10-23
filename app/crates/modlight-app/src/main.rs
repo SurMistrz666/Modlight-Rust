@@ -325,6 +325,10 @@ fn main() -> ExitCode {
     if bounds.maximized {
         viewport = viewport.with_maximized(true);
     }
+    // On macOS a window icon replaces the Dock icon of the running app with this
+    // full-bleed picture, larger than every other app; the bundle's .icns (built on
+    // Apple's grid by scripts/build-app.sh) is the right one there.
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = modlight_app::app::app_icon() {
         viewport = viewport.with_icon(egui::IconData {
             width: icon.width(),
