@@ -182,6 +182,17 @@ Everything not listed behaves as upstream does. The per-screen state is in
   of ending the sign-in. `Access-Control-Allow-Private-Network: true` is granted, but only
   to the server's origin: without it Chrome's Private Network Access stops a public
   server's page (e.g. behind Cloudflare) from handing the token to 127.0.0.1.
+- **Sign-in pickup** (not in the Windows client): the browser may still never deliver
+  the loopback POST (Safari refuses an https page's request to `http://127.0.0.1`;
+  Chrome drops it when its local-network permission was dismissed). Each sign-in
+  therefore also sends a PKCE-style `challenge` (SHA-256 of a 32-byte random verifier
+  that never leaves the app) in the authorize link and polls
+  `POST <host>/api/authorize/pickup` with `{state, verifier}` every 2 s, without
+  `x-api-key`, without redirects, on the sign-in origin only. The first answer wins; a
+  refusal there ends the sign-in like a loopback refusal; `/api/me` checks the token as
+  before. Against a server without the route the polls get 404 and the loopback works as
+  it always did. `modlight-api/src/signin.rs`, tests `signin_pickup_fake.rs` and
+  `signin_pickup.rs`.
 - **Redirects** are never followed by any request that carries the token (upstream
   followed them in the library client). A stored tus session URL is moved onto the
   account's current origin before every request, so the token can never follow a

@@ -617,6 +617,47 @@ Deliberate, each for a reason:
       `tests/turnstile_db.rs` (the card, the secret box, the audit, block
       precedence, real sign-ups and sign-ins), `web/tests/turnstile.test.tsx`.
 
+44. **Intended addition: desktop sign-in pickup** (2026-10-24). The loopback
+    handoff of RFC 8252 depends on the BROWSER posting the token from an https
+    page to `http://127.0.0.1:<port>/`, and browsers refuse: Safari blocks it
+    (mixed content / loopback), Chrome's Local Network Access drops it once its
+    permission was dismissed. The app's listener is fine; the bytes never come.
+    So the app also collects the outcome from the server (PKCE, RFC 7636, cut
+    down), and whichever answer arrives first wins.
+    - *Flow*: the app makes `verifier` (32 random bytes, base64url) and sends
+      `challenge = base64url(SHA-256(verifier))` (43 characters) in
+      `/authorize?port=&name=&state=&challenge=`. `parse_authorize_request_with_challenge`
+      validates it (malformed -> `invalid-challenge`, an invalid request),
+      `authorize_path` carries it through `/login?next=`. The page loader
+      registers `{state -> challenge}` as pending (the only thing it writes);
+      `approveDesktopClient` with a challenge stores the token, the new
+      `denyDesktopClient` stores `access_denied` (`actions/authorize.rs`).
+      The app polls `POST /api/authorize/pickup {state, verifier}` every 2 s.
+    - *Store* (`authorize/pickup.rs`): in memory, `state -> {challenge,
+      outcome, expires}`, 5 minutes, at most 4096 entries (swept every 30 s and
+      when full, then oldest first). The first challenge seen for a state binds
+      it; a different one never replaces a live entry. Handed out once, then
+      deleted. A restart loses pending pickups (loopback and manual key remain).
+    - *Route* (`routes/api/authorize_pickup.rs`): `read_json_object` (1 KiB),
+      constant-time compare of the hashed verifier; `200 {"token"}` or `200
+      {"error":"access_denied"}` once, `202 {"status":"pending"}`, `404
+      {"error":"not_found"}` for unknown, expired and mismatched alike, `400
+      {"error":"invalid_request"}`, `429 {"error":"rate_limited"}` +
+      `Retry-After` (120 per minute per client IP). `Cache-Control: no-store`.
+      No session or API key: the verifier is the credential. Tokens and
+      verifiers are never logged.
+    - *SPA*: `components/authorize/authorize-prompt.tsx` is a port
+      (`web/src/overrides/`), calling `web/src/rpc/authorize-pickup.ts`; with a
+      challenge the page says the app picks the key up by itself, still tries
+      the loopback POST, and keeps the key under "App still not signed in?" to
+      copy. Strings: `messages/<locale>/authorizePickup.json`, a 19th client
+      namespace. Without a challenge (older apps) everything is as before.
+    - Tests: `authorize::pickup::tests`, `routes::api::authorize_pickup::tests`,
+      `actions::authorize::tests` (challenge, deny), `authorize::loopback`
+      (challenge parsing and the login round trip), `web/tests/authorize-pickup.test.tsx`,
+      app `tests/signin_pickup_fake.rs` and the opt-in real-server
+      `tests/signin_pickup.rs` (`MODLIGHT_PICKUP_E2E`).
+
 ## 10. Verified on 2026-10-18
 
 - Fresh dev database -> `modlight-server migrate` -> `pg_dump --schema-only`

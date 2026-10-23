@@ -193,6 +193,13 @@ beyond the minor items listed below. Checked and correct (noted because they wer
 - `callback` is built solely from the **parsed port number** (`loopback_callback`, 1024-65535),
   never from a client string; `name` is sanitized; the token is minted in an action requiring a session, with scope
   `write` (the desktop will not publish a release). Consistent with RFC 8252, like the original. Unchanged.
+- 2026-10-24: a server-side pickup was added next to it (SKELETON.md 9.44), because browsers
+  (Safari, Chrome's Local Network Access) may never deliver the loopback POST. It IS PKCE-shaped:
+  the token is stored for `state` under `challenge = SHA-256(verifier)` and handed out once, within
+  5 minutes, only to a caller presenting the verifier (constant-time compare); unknown, expired and
+  mismatched requests get one identical 404; polling is rate-limited per IP; nothing secret is
+  logged. A state stays bound to the first challenge seen for it. Without a challenge the flow is
+  unchanged.
 
 ---
 

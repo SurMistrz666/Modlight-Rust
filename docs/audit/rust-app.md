@@ -268,6 +268,11 @@ I list it for completeness, because a grep for "ShareX/ShareX" hits here.
    `rand::rng()` (CSPRNG) `:62-67`; constant-time `nonce_equals` `:71-84`; a wrong state ->
    log and the loop continues `:142-147`; CORS only for `allowed_origin`, without private-network
    `:196-213,250-256`; a single shot (`wait_for` returns on the first matching state).
+   Addition 2026-10-24 (line numbers above predate it): the sign-in also polls the server
+   pickup (`POST /api/authorize/pickup`, SKELETON.md 9.44) with a 32-byte CSPRNG verifier
+   whose SHA-256 challenge went out in the authorize link; the verifier never appears in a
+   URL, the request carries no `x-api-key`, follows no redirects and goes only to the
+   sign-in origin. The first of loopback and pickup wins; the `/api/me` check is unchanged.
 6. **Child processes: an argument vector, `--` before the user's URL/path, no shell**:
    **PRESERVED**. yt-dlp: `download/run.rs:99-154` a vector, `--` before the URL (`:152`), no
    `--exec`; `download/link.rs:27-50` a URL whitelist (http/https, no userinfo). ffmpeg:
