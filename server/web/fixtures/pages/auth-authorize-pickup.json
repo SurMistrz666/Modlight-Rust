@@ -1,0 +1,31 @@
+{
+  "url": "/authorize?port=53682&state=abcdefghijklmnop&name=Modlight%20App&challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+  "payload": {
+    "route": "/authorize",
+    "params": {},
+    "layouts": "$auth",
+    "props": {
+      "parsed": {
+        "ok": true,
+        "request": {
+          "port": 53682,
+          "state": "abcdefghijklmnop",
+          "clientName": "Modlight App",
+          "callback": "http://127.0.0.1:53682/",
+          "challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        }
+      },
+      "session": {
+        "user": {
+          "email": "alicja@example.com"
+        }
+      }
+    },
+    "meta": {
+      "title": "Connect a desktop app - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight",
+      "robots": "noindex, nofollow"
+    }
+  }
+}

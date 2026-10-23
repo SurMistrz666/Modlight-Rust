@@ -1,4 +1,13 @@
 "use client";
+// Client port of upstream components/authorize/authorize-prompt.tsx.
+// @upstream components/authorize/authorize-prompt.tsx
+// Deviations (not upstream; server/docs/SKELETON.md section 9, "Desktop sign-in
+// pickup"): the request may carry the app's pickup `challenge`. Then approve
+// and deny go through src/rpc/authorize-pickup.ts with it, the server keeps the
+// outcome for the app to collect, and after approving the page says the app
+// picks the key up by itself. The loopback POST is still tried (best effort:
+// some browsers never send it) and the key stays available to copy as the
+// last resort. Without a challenge everything is exactly upstream's.
 
 import { useState, useTransition } from "react";
 import {
@@ -17,7 +26,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
-import { approveDesktopClient, type AuthorizeRefusal } from "@/app/actions/authorize";
+import type { AuthorizeRefusal } from "@/app/actions/authorize";
+import { approveDesktopClient, denyDesktopClient } from "../../../rpc/authorize-pickup";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -37,6 +47,8 @@ interface AuthorizePromptProps {
     clientName: string;
     /** Server-built `http://127.0.0.1:<port>/`. Never assembled here. */
     callback: string;
+    /** Not upstream: the app's pickup challenge, when it sent one. */
+    challenge?: string;
   };
 }
 
@@ -49,6 +61,8 @@ type Phase =
   | { name: "delivered" }
   /** The token exists but the local app never received it. */
   | { name: "manual"; token: string }
+  /** Not upstream: the server holds the token for the app's pickup. */
+  | { name: "pickup"; token: string }
   | { name: "denied" }
   | { name: "refused"; reason: AuthorizeRefusal };
 
@@ -90,6 +104,8 @@ async function postToLoopback(callback: string, payload: unknown): Promise<boole
 
 export function AuthorizePrompt({ appName, account, request }: AuthorizePromptProps) {
   const t = useTranslations("authorize");
+  const tp = useTranslations("authorizePickup");
+  const pickup = Boolean(request.challenge);
   const tc = useTranslations("common");
   const [phase, setPhase] = useState<Phase>({ name: "idle" });
   const [pending, startTransition] = useTransition();
@@ -107,10 +123,19 @@ export function AuthorizePrompt({ appName, account, request }: AuthorizePromptPr
         port: request.port,
         state: request.state,
         name: request.clientName,
+        ...(request.challenge ? { challenge: request.challenge } : {}),
       });
 
       if (!result.ok) {
         setPhase({ name: "refused", reason: result.reason });
+        return;
+      }
+
+      if (pickup) {
+        // The app collects the key from the server whatever happens next; the
+        // loopback POST is only a head start, and its result changes nothing.
+        setPhase({ name: "pickup", token: result.token });
+        void postToLoopback(result.callback, { state: result.state, token: result.token });
         return;
       }
 
@@ -127,6 +152,15 @@ export function AuthorizePrompt({ appName, account, request }: AuthorizePromptPr
       setPhase({ name: "working" });
       // Best effort, and no token in it: telling the app "no" is the difference
       // between it closing its listener now and hanging until its own timeout.
+      // With a challenge the server keeps the refusal for the app's pickup too.
+      if (pickup) {
+        await denyDesktopClient({
+          port: request.port,
+          state: request.state,
+          name: request.clientName,
+          challenge: request.challenge,
+        }).catch(() => undefined);
+      }
       await postToLoopback(request.callback, { state: request.state, error: "access_denied" });
       setPhase({ name: "denied" });
     });
@@ -162,6 +196,38 @@ export function AuthorizePrompt({ appName, account, request }: AuthorizePromptPr
         body={t("done.body", { appName })}
         note={t("done.close")}
       />
+    );
+  }
+
+  if (phase.name === "pickup") {
+    return (
+      <div className="space-y-5">
+        <Outcome
+          tone="ok"
+          icon={<ShieldCheck className="size-6" />}
+          title={tp("waiting.title", { client: clientLabel })}
+          body={tp("waiting.body", { appName })}
+          note={tp("waiting.close")}
+        />
+        <details className="text-left">
+          <summary className="text-muted-foreground cursor-pointer text-xs">{tp("fallback.summary")}</summary>
+          <div className="mt-3 space-y-2">
+            <p className="text-muted-foreground text-xs leading-relaxed">{tp("fallback.body")}</p>
+            <div className="bg-muted/50 flex items-center gap-2 rounded-lg p-2 ring-1 ring-foreground/10">
+              <code className="min-w-0 flex-1 truncate px-1 font-mono text-xs">{phase.token}</code>
+              <Button
+                size="icon-sm"
+                variant="outline"
+                onClick={() => copyToken(phase.token)}
+                aria-label={tc("copy")}
+              >
+                {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+              </Button>
+            </div>
+            <p className="text-muted-foreground text-xs leading-relaxed">{t("manual.hint")}</p>
+          </div>
+        </details>
+      </div>
     );
   }
 
@@ -274,7 +340,9 @@ export function AuthorizePrompt({ appName, account, request }: AuthorizePromptPr
         <p className="text-muted-foreground text-xs leading-relaxed">
           {t("account", { email: account.email })}
         </p>
-        <p className="text-muted-foreground text-xs leading-relaxed">{t("local", { host })}</p>
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          {pickup ? tp("local") : t("local", { host })}
+        </p>
       </div>
 
       <div className="flex flex-col gap-2">
