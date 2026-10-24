@@ -417,3 +417,94 @@ fn an_abort_during_the_second_pass_leaves_nothing() {
     assert_eq!(outcome.path, None);
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
+
+/// A frame source that counts how often it was started and stopped.
+#[cfg(unix)]
+struct Counted {
+    inner: StillFrames,
+    started: Arc<std::sync::atomic::AtomicUsize>,
+    stopped: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(unix)]
+impl FrameSource for Counted {
+    fn size(&self) -> (u32, u32) {
+        self.inner.size()
+    }
+    fn start(&mut self) -> Result<(), String> {
+        self.started
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.start()
+    }
+    fn latest(&mut self) -> Option<Arc<Vec<u8>>> {
+        self.inner.latest()
+    }
+    fn stop(&mut self) {
+        self.stopped
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.stop()
+    }
+}
+
+/// An ffmpeg that cannot be started (a custom path to a file that is not a program):
+/// the screen capture that was started for it is stopped again (ScreenCaptureKit's
+/// stream is not stopped by dropping it), and the reason is reported.
+#[cfg(unix)]
+#[test]
+fn the_screen_is_let_go_when_ffmpeg_cannot_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let not_a_program = tools.path().join("ffmpeg");
+    std::fs::write(&not_a_program, b"not a program").unwrap();
+    let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let stopped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (s, t) = (started.clone(), stopped.clone());
+    let mut p = params_with(dir.path(), not_a_program, FFmpegVideoCodec::libx264, false);
+    p.frames = Arc::new(move |rect: IRect, _cursor: bool| {
+        let picture = RgbaImage::new(rect.width as u32, rect.height as u32);
+        Ok(Box::new(Counted {
+            inner: StillFrames::new(&picture),
+            started: s.clone(),
+            stopped: t.clone(),
+        }) as Box<dyn FrameSource>)
+    });
+    let control = RecorderControl::new(IRect::new(0, 0, 16, 16), 1.0);
+    let outcome = run_session(p, control);
+    assert!(outcome.error.is_some(), "{outcome:?}");
+    assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(stopped.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// The screen delivered no frame at all: that is a failure, not an empty video to
+/// upload.
+#[test]
+fn a_recording_without_a_single_frame_is_a_failure() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    struct Silent(StillFrames);
+    impl FrameSource for Silent {
+        fn size(&self) -> (u32, u32) {
+            self.0.size()
+        }
+        fn start(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn latest(&mut self) -> Option<Arc<Vec<u8>>> {
+            None
+        }
+        fn stop(&mut self) {}
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::libx264, false);
+    p.frames = Arc::new(|rect: IRect, _cursor: bool| {
+        let picture = RgbaImage::new(rect.width as u32, rect.height as u32);
+        Ok(Box::new(Silent(StillFrames::new(&picture))) as Box<dyn FrameSource>)
+    });
+    let control = RecorderControl::new(IRect::new(0, 0, 16, 16), 1.0);
+    let outcome = run_session(p, control);
+    assert_eq!(outcome.path, None, "{outcome:?}");
+    assert!(outcome.error.is_some());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}

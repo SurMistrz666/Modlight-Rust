@@ -431,9 +431,19 @@ fn record_once(
     } else {
         None
     };
-    let mut ffmpeg = FFmpegRun::start(&params.ffmpeg_path, &args, pipe, false, listener)
-        .map_err(|e| e.to_string())?;
+    let mut ffmpeg = match FFmpegRun::start(&params.ffmpeg_path, &args, pipe, false, listener) {
+        Ok(ffmpeg) => ffmpeg,
+        Err(error) => {
+            // The capture started for it must not go on (a ScreenCaptureKit stream is
+            // not stopped by letting go of it).
+            if let Some(source) = source.as_mut() {
+                source.stop();
+            }
+            return Err(error.to_string());
+        }
+    };
 
+    let mut written = 0u64;
     if let Some(source) = source.as_mut() {
         let interval = Duration::from_secs_f64(1.0 / options.fps.max(1) as f64);
         let frame_limit = if options.duration > 0.0 {
@@ -443,12 +453,11 @@ fn record_once(
         };
         let expected = (source.size().0 as usize) * (source.size().1 as usize) * 4;
         let waited_from = Instant::now();
-        let mut written = 0u64;
         let mut next = Instant::now();
         let mut stdin = ffmpeg.take_stdin();
         while !control.stop_requested() && (frame_limit == 0 || written < frame_limit) {
             let Some(frame) = source.latest() else {
-                if waited_from.elapsed() > Duration::from_secs(5) {
+                if waited_from.elapsed() > FIRST_FRAME_TIMEOUT {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(5));
@@ -497,8 +506,18 @@ fn record_once(
         }
     }
     let (ok, output) = ffmpeg.wait();
-    if ok { Ok(()) } else { Err(output) }
+    if !ok {
+        return Err(output);
+    }
+    if pipe && written == 0 && !control.stop_requested() {
+        // Not one frame arrived: an empty video is a failure, not a recording.
+        return Err(output);
+    }
+    Ok(())
 }
+
+/// How long the screen is given to deliver the recording's first frame.
+const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `ScreenRecordManager.StartRecording`'s task. Blocks until the recording is done.
 pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> SessionOutcome {
