@@ -17,6 +17,7 @@
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -59,6 +60,20 @@ fn usage() -> String {
 }
 
 fn parse() -> Result<Args, String> {
+    parse_from(std::env::args_os().skip(1))
+}
+
+/// The value after one of the port's own options: plain text.
+fn option_value(it: &mut impl Iterator<Item = OsString>) -> Result<String, String> {
+    it.next()
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(usage)
+}
+
+/// The words after the program's name. Each is taken as the system gives it, not as
+/// Unicode (`env::args` would panic on a file name with a lone surrogate, which Windows
+/// allows and Explorer passes on).
+fn parse_from(mut it: impl Iterator<Item = OsString>) -> Result<Args, String> {
     let mut args = Args {
         qa_profile: None,
         shot: None,
@@ -72,12 +87,32 @@ fn parse() -> Result<Args, String> {
         #[cfg(windows)]
         ignored: Vec::new(),
     };
-    let mut it = std::env::args().skip(1);
-    while let Some(arg) = it.next() {
+    // Windows: upstream's words, read once the port's own options are out of the way.
+    #[cfg(windows)]
+    let mut upstream: Vec<OsString> = Vec::new();
+    while let Some(word) = it.next() {
+        // The port's own options are plain text; a word that is not Unicode can only be
+        // a file of upstream's command line.
+        let arg = match word.into_string() {
+            Ok(arg) => arg,
+            #[cfg(windows)]
+            Err(word) => {
+                upstream.push(word);
+                continue;
+            }
+            #[cfg(not(windows))]
+            Err(word) => {
+                return Err(format!(
+                    "unknown argument '{}'\n{}",
+                    word.to_string_lossy(),
+                    usage()
+                ));
+            }
+        };
         match arg.as_str() {
             "--qa-profile" => args.qa_profile = Some(it.next().ok_or_else(usage)?.into()),
             "--qa-shot" => {
-                let screen = it.next().ok_or_else(usage)?;
+                let screen = option_value(&mut it)?;
                 let out = it
                     .next()
                     .map(PathBuf::from)
@@ -85,52 +120,93 @@ fn parse() -> Result<Args, String> {
                 args.shot = Some((screen, out));
             }
             "--qa-lang" => {
-                args.look.language = match it.next().ok_or_else(usage)?.as_str() {
+                args.look.language = match option_value(&mut it)?.as_str() {
                     "pl" => Language::Polish,
                     "en" => Language::English,
                     other => return Err(format!("unknown language '{other}'\n{}", usage())),
                 }
             }
-            "--qa-skin" => args.look.skin = it.next().ok_or_else(usage)?,
+            "--qa-skin" => args.look.skin = option_value(&mut it)?,
             "--qa-light" => args.look.dark = false,
             "--qa-dark" => args.look.dark = true,
             "--qa-size" => {
-                let text = it.next().ok_or_else(usage)?;
+                let text = option_value(&mut it)?;
                 let (w, h) = text.split_once('x').ok_or_else(usage)?;
                 let w: f32 = w.parse().map_err(|_| usage())?;
                 let h: f32 = h.parse().map_err(|_| usage())?;
                 args.look.size = Some(vec2(w, h));
             }
             "--qa-scale" => {
-                args.look.scale = it.next().ok_or_else(usage)?.parse().map_err(|_| usage())?
+                args.look.scale = option_value(&mut it)?.parse().map_err(|_| usage())?
             }
             "-h" | "--help" => return Err(usage()),
             // macOS passes a process serial number to apps opened from Finder.
             other if other.starts_with("-psn_") => {}
-            // Upstream's command line (`CLIManager`, `Program.cs`): a word with one dash is
-            // a command, anything else a file or folder. `-silent` (`-s`) and `-multi`
-            // (`-m`) are taken; `-portable` (`-p`), `-sandbox`, `-NoHotkeys` and the task
-            // commands are accepted and left aside (logged): the personal folder is always
-            // the installed one's, and the hotkey warning is a notice in the window.
+            // Upstream's command line (`CLIManager`, `Program.cs`), read below.
             #[cfg(windows)]
-            other if other.len() > 1 && other.starts_with('-') && !other.starts_with("--") => {
-                let name = &other[1..];
-                let is =
-                    |a: &str, b: &str| name.eq_ignore_ascii_case(a) || name.eq_ignore_ascii_case(b);
-                if is("silent", "s") {
-                    args.silent = true;
-                } else if is("multi", "m") {
-                    args.multi = true;
-                } else {
-                    args.ignored.push(other.to_string());
-                }
+            other if !other.starts_with('-') || (other.len() > 1 && !other.starts_with("--")) => {
+                upstream.push(other.into())
             }
-            #[cfg(windows)]
-            other if !other.starts_with('-') => args.files.push(PathBuf::from(other)),
             other => return Err(format!("unknown argument '{other}'\n{}", usage())),
         }
     }
+    // `-silent` (`-s`) and `-multi` (`-m`) are taken; `-portable` (`-p`), `-sandbox`,
+    // `-NoHotkeys` and the task commands (with their parameters) are accepted and left
+    // aside (logged): the personal folder is always the installed one's, and the hotkey
+    // warning is a notice in the window.
+    #[cfg(windows)]
+    {
+        let line = upstream_command_line(&upstream);
+        for (name, parameter) in line.commands {
+            let is =
+                |a: &str, b: &str| name.eq_ignore_ascii_case(a) || name.eq_ignore_ascii_case(b);
+            if is("silent", "s") {
+                args.silent = true;
+            } else if is("multi", "m") {
+                args.multi = true;
+            } else {
+                args.ignored.push(match parameter {
+                    Some(parameter) => format!("-{name} \"{parameter}\""),
+                    None => format!("-{name}"),
+                });
+            }
+        }
+        args.files = line.files;
+    }
     Ok(args)
+}
+
+/// What upstream makes of its command line (`CLIManager.ParseCommands` and
+/// `UseCommandLineArgs`): a word with one dash is a command, and the word right after a
+/// command is that command's parameter (`-ImageEffect <file.sxie>`, which upstream's own
+/// `.sxie` association passes, `-task <name>`, `-workflow <name>`); every other word is
+/// a file or folder to upload.
+#[cfg(any(windows, test))]
+#[derive(Debug, Default, PartialEq)]
+struct CommandLine {
+    /// Each command without its dash, with its parameter.
+    commands: Vec<(String, Option<String>)>,
+    files: Vec<PathBuf>,
+}
+
+#[cfg(any(windows, test))]
+fn upstream_command_line(words: &[OsString]) -> CommandLine {
+    let mut line = CommandLine::default();
+    // `lastCommand`: the command still waiting for its parameter.
+    let mut waiting: Option<usize> = None;
+    for word in words {
+        let text = word.to_string_lossy();
+        if let Some(name) = text.strip_prefix('-') {
+            line.commands.push((name.to_string(), None));
+            waiting = Some(line.commands.len() - 1);
+        } else if let Some(command) = waiting.take() {
+            line.commands[command].1 = Some(text.into_owned());
+        } else {
+            // A file keeps its name exactly as the system gave it.
+            line.files.push(PathBuf::from(word));
+        }
+    }
+    line
 }
 
 /// The personal folder (`Program.PersonalFolder`).
@@ -367,5 +443,108 @@ fn main() -> ExitCode {
             fail(&format!("Modlight could not start: {error}"), qa_mode);
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(words: &[&str]) -> CommandLine {
+        let words: Vec<OsString> = words.iter().map(OsString::from).collect();
+        upstream_command_line(&words)
+    }
+
+    fn command(name: &str, parameter: Option<&str>) -> (String, Option<String>) {
+        (name.to_string(), parameter.map(str::to_string))
+    }
+
+    /// A file name the system allows but Unicode does not: Windows takes a lone
+    /// surrogate in a name, and Explorer hands such a file over as it is.
+    fn not_unicode() -> OsString {
+        #[cfg(windows)]
+        let name = {
+            use std::os::windows::ffi::OsStringExt;
+            OsString::from_wide(&['C' as u16, ':' as u16, '\\' as u16, 0xD800, 'x' as u16])
+        };
+        #[cfg(unix)]
+        let name = {
+            use std::os::unix::ffi::OsStringExt;
+            OsString::from_vec(b"/tmp/\xffx".to_vec())
+        };
+        assert!(name.to_str().is_none());
+        name
+    }
+
+    #[test]
+    fn a_word_that_is_not_unicode_does_not_stop_the_start() {
+        // `env::args` panicked on such a word, before any window or message.
+        let result = parse_from(vec![not_unicode()].into_iter());
+        #[cfg(windows)]
+        assert_eq!(result.unwrap().files, vec![PathBuf::from(not_unicode())]);
+        #[cfg(not(windows))]
+        assert!(result.is_err());
+        // Upstream's reading keeps the name as it is.
+        let line = upstream_command_line(&[not_unicode()]);
+        assert_eq!(line.files, vec![PathBuf::from(not_unicode())]);
+        // The port's own options still read their values.
+        let args = parse_from(
+            ["--qa-lang", "pl", "--qa-size", "800x600"]
+                .into_iter()
+                .map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(args.look.language, Language::Polish);
+        assert_eq!(args.look.size, Some(vec2(800.0, 600.0)));
+        assert!(parse_from([OsString::from("--qa-lang")].into_iter()).is_err());
+    }
+
+    #[test]
+    fn the_word_after_a_command_is_its_parameter_not_a_file() {
+        // Upstream's `.sxie` association (`"<exe>" -ImageEffect "%1"`): the package is
+        // the command's parameter, never a file to upload.
+        let effect = line(&["-ImageEffect", r"C:\Effects\glow.sxie"]);
+        assert!(effect.files.is_empty(), "{effect:?}");
+        assert_eq!(
+            effect.commands,
+            vec![command("ImageEffect", Some(r"C:\Effects\glow.sxie"))]
+        );
+        // `-task <name> <file>`: the name goes with the command, the file is uploaded.
+        let task = line(&["-task", "Upload", r"C:\a.png"]);
+        assert_eq!(task.commands, vec![command("task", Some("Upload"))]);
+        assert_eq!(task.files, vec![PathBuf::from(r"C:\a.png")]);
+        // `-silent <word>`: upstream reads the word as silent's parameter, not a file.
+        let silent = line(&["-silent", r"C:\a.png"]);
+        assert_eq!(silent.commands, vec![command("silent", Some(r"C:\a.png"))]);
+        assert!(silent.files.is_empty());
+        // Two commands in a row: the first has no parameter.
+        let flags = line(&["-silent", "-multi"]);
+        assert_eq!(
+            flags.commands,
+            vec![command("silent", None), command("multi", None)]
+        );
+    }
+
+    #[test]
+    fn free_standing_words_are_files() {
+        // Explorer's "Upload with Modlight" (`"<exe>" "%1"`) and Send to (every file).
+        let send_to = line(&[r"C:\a.png", r"D:\b c\d.txt", r"\\server\share\e.jpg"]);
+        assert!(send_to.commands.is_empty());
+        assert_eq!(
+            send_to.files,
+            vec![
+                PathBuf::from(r"C:\a.png"),
+                PathBuf::from(r"D:\b c\d.txt"),
+                PathBuf::from(r"\\server\share\e.jpg"),
+            ]
+        );
+        // A file before a command, and one after the command's parameter.
+        let mixed = line(&["a.png", "-workflow", "Capture", "b.png"]);
+        assert_eq!(mixed.commands, vec![command("workflow", Some("Capture"))]);
+        assert_eq!(
+            mixed.files,
+            vec![PathBuf::from("a.png"), PathBuf::from("b.png")]
+        );
+        assert_eq!(line(&[]), CommandLine::default());
     }
 }
