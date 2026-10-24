@@ -380,7 +380,30 @@ pub fn search_window(source: &dyn CaptureSource, title: &str) -> Option<WindowIn
         .cloned()
 }
 
-/// The overlay closed: the picture, and what later captures remember.
+/// The picture of the area an overlay was closed on, and nothing else: an area chosen
+/// for a tool is not remembered (`RegionCaptureTasks` leaves `LastRegionRectangle`
+/// alone).
+pub fn region_picture(
+    request: &RegionRequest,
+    outcome: &RegionOutcome,
+    source: &dyn CaptureSource,
+) -> Option<image::RgbaImage> {
+    let RegionOutcome::Completed {
+        image_rect,
+        screen_rect,
+        ..
+    } = outcome
+    else {
+        return None;
+    };
+    match &request.image {
+        Some(frozen) => Some(region::crop(frozen, *image_rect)),
+        // The transparent capture takes the area after the overlay has gone.
+        None => source.capture_rect(*screen_rect, request.show_cursor).ok(),
+    }
+}
+
+/// The overlay of a capture closed: the picture, and what later captures remember.
 pub fn finish_region(
     request: &RegionRequest,
     outcome: &RegionOutcome,
@@ -388,20 +411,14 @@ pub fn finish_region(
     modified: bool,
 ) -> Option<Captured> {
     let RegionOutcome::Completed {
-        image_rect,
         screen_rect,
         window,
+        ..
     } = outcome
     else {
         return None;
     };
-    let image = match &request.image {
-        Some(frozen) => region::crop(frozen, *image_rect),
-        // The transparent capture takes the area after the overlay has gone.
-        None => source
-            .capture_rect(*screen_rect, request.show_cursor)
-            .ok()?,
-    };
+    let image = region_picture(request, outcome, source)?;
     let mut last = last_region();
     match request.kind {
         RegionKind::Default => last.rect = *screen_rect,
