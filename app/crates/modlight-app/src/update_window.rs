@@ -4,9 +4,11 @@
 //!
 //! Off unless the build has a release host (`modlight_core::update`). The downloader
 //! fetches the release and refuses it unless its size and SHA-256 match the manifest.
-//! Windows, as upstream: the verified installer starts with `/UPDATE` (`AutoStartInstall`),
-//! and Install starts it again. macOS: the `.dmg`/`.zip` is revealed in Finder; nothing is
-//! installed or run.
+//! Windows, as upstream: the verified installer (`.exe`) starts with `/UPDATE`
+//! (`AutoStartInstall`), Install starts it again, and once it runs the app quits to make
+//! way for it. A `.zip` (the folder build `build-app.ps1` makes) has nothing to run: it is
+//! revealed in Explorer, as on macOS the `.dmg`/`.zip` is revealed in Finder; nothing else
+//! is installed or run.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -148,12 +150,25 @@ pub fn checked(state: &mut AppState, outcome: UpdateOutcome) {
     state.updates.first_check = false;
 }
 
+/// Whether a release file is an installer (`.exe`), which Windows starts, rather than a
+/// file that is only shown in the file manager (the `.zip` folder build, the Mac's
+/// `.dmg`).
+fn is_installer(file_name: &str) -> bool {
+    file_name.to_ascii_lowercase().ends_with(".exe")
+}
+
+/// Whether this system installs the release itself: Windows, when it is an installer.
+fn installs(file_name: &str) -> bool {
+    cfg!(windows) && is_installer(file_name)
+}
+
 /// The question's text (`BuildMessage`): what will happen, both versions, the size.
 pub fn message_text(manifest: &ReleaseManifest) -> String {
-    // Windows installs it; the Mac downloads and verifies the file and shows it in
-    // Finder: "download it", not "download and install it".
+    // Windows installs an installer; a `.zip`, and anything on a Mac, is downloaded,
+    // verified and shown in the file manager: "download it", not "download and install
+    // it" (upstream's portable question).
     let mut text = String::new();
-    text.push_str(t(if cfg!(windows) {
+    text.push_str(t(if installs(&manifest.file_name) {
         helpers::UpdateMessageBox_UpdateMessageBox_
     } else {
         helpers::UpdateMessageBox_UpdateMessageBox_Portable
@@ -362,12 +377,8 @@ fn download_done(state: &mut AppState, result: update::DownloadResult) {
                 t(helpers::DownloaderForm_fileDownloader_DownloadCompleted_Download_completed_)
                     .to_string();
             downloader.file = Some(path.clone());
-            // `AutoStartInstall`: on Windows the installer; on a Mac the verified file
-            // in Finder.
-            #[cfg(windows)]
-            install(state);
-            #[cfg(not(windows))]
-            state.effects.push(crate::state::Effect::Reveal(path));
+            // `AutoStartInstall`.
+            use_release(state, path);
         }
         update::DownloadResult::Cancelled => {
             state.updates.downloader = None;
@@ -386,8 +397,25 @@ fn download_done(state: &mut AppState, result: update::DownloadResult) {
     }
 }
 
+/// What a verified release is for (`AutoStartInstall`, and the button after it): on
+/// Windows an installer starts; a `.zip` there, and the file on a Mac, is shown in the
+/// file manager.
+fn use_release(state: &mut AppState, path: PathBuf) {
+    #[cfg(windows)]
+    if path
+        .file_name()
+        .is_some_and(|name| installs(&name.to_string_lossy()))
+    {
+        install(state);
+        return;
+    }
+    state.effects.push(crate::state::Effect::Reveal(path));
+}
+
 /// Windows, `InstallAsync`: start the verified installer and close the window, or say why
 /// it did not start and keep Install (`KeepInstallable`). Only the real app starts it.
+/// Once it runs the app quits (`DownloadUpdateAsync`'s `ApplicationExit.Request`), so the
+/// installer can replace the program.
 #[cfg(windows)]
 fn install(state: &mut AppState) {
     let real = state.mode == crate::app::Mode::Normal && !state.env.qa;
@@ -406,6 +434,8 @@ fn install(state: &mut AppState) {
         crate::win32::InstallerStart::Started => {
             log::info!("Update: installer started - \"{}\" /UPDATE", file.display());
             state.updates.downloader = None;
+            // Making way for it: a running Modlight.exe cannot be replaced.
+            state.quit_requested = true;
         }
         crate::win32::InstallerStart::Cancelled => {
             log::info!("Update: the elevation prompt for the installer was declined");
@@ -489,7 +519,7 @@ pub fn downloader_ui(ui: &mut Ui, state: &mut AppState) -> bool {
     let label = match downloader.status {
         DownloaderStatus::Waiting => t(helpers::DownloaderWindow_Download),
         DownloaderStatus::DownloadStarted => t(helpers::DownloaderForm_StartDownload_Cancel),
-        DownloaderStatus::DownloadCompleted if cfg!(windows) => {
+        DownloaderStatus::DownloadCompleted if installs(&downloader.manifest.file_name) => {
             t(helpers::DownloaderForm_fileDownloader_DownloadCompleted_Install)
         }
         DownloaderStatus::DownloadCompleted => t(s::Download_ShowInFolder),
@@ -606,12 +636,9 @@ pub fn downloader_ui(ui: &mut Ui, state: &mut AppState) -> bool {
                 }
                 close = true;
             }
-            #[cfg(windows)]
-            DownloaderStatus::DownloadCompleted => install(state),
-            #[cfg(not(windows))]
             DownloaderStatus::DownloadCompleted => {
                 if let Some(path) = downloader.file.clone() {
-                    state.effects.push(crate::state::Effect::Reveal(path));
+                    use_release(state, path);
                 }
             }
             DownloaderStatus::Failed => close = true,
@@ -673,4 +700,22 @@ fn button_here(
 ) -> egui::Response {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
     button_at(&mut child, colors, look, content, enabled, rect)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_installer_is_started() {
+        // Windows' release may be the installer or the folder build (`build-app.ps1`
+        // makes only a `.zip`): only the installer has anything to run with /UPDATE.
+        assert!(is_installer("Modlight-setup.exe"));
+        assert!(is_installer("Modlight-0.7.8-setup.EXE"));
+        assert!(!is_installer("Modlight-0.7.8-windows-x64.zip"));
+        assert!(!is_installer("Modlight-0.7.8.dmg"));
+        // A Mac never installs anything; Windows installs only the installer.
+        assert_eq!(installs("Modlight-setup.exe"), cfg!(windows));
+        assert!(!installs("Modlight-0.7.8-windows-x64.zip"));
+    }
 }
