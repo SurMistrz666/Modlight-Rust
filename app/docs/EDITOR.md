@@ -136,8 +136,8 @@ platform without the service):
   lacks (HEIC).
 
 Options: `ImageEditorOptions::from_value` / `to_value` on
-`DefaultTaskSettings.ToolsSettings.ImageEditorOptions`; the app writes them back when a
-window closes.
+`DefaultTaskSettings.ToolsSettings.ImageEditorOptions`; the app writes back the members
+a window changed when it closes (each window works on a copy; upstream's share one).
 
 ## Testing
 
