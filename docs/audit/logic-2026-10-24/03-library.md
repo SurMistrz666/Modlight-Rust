@@ -103,7 +103,7 @@ Commits on the branch that are not fixes: `058ca5e` (rustfmt of the fixes), `14a
 - `app/crates/modlight-app/src/commands.rs` (`ShowMainWindow` refreshes like
   `ShowAndActivate`: L03-15).
 - `app/crates/modlight-api/src/error.rs` (`ApiError::Status` message: L03-18).
-- `app/docs/MACOS.md` (five bullets in "Behaviour that differs on purpose", inserted after
+- `app/docs/MACOS.md` (four bullets in "Behaviour that differs on purpose", inserted after
   "Deleting the folder you stand in").
 
 ## Note on test runs
