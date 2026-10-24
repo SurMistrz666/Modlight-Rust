@@ -35,6 +35,52 @@ const EXIT: &str = "exit";
 /// the rest ("q") act quietly, without showing hidden windows.
 const SHOWS: &str = "w";
 const QUIET: &str = "q";
+/// How many rebuilt menus are still answered: the one open when a click comes may have
+/// been replaced a few times since it opened.
+const KEPT_MENUS: usize = 32;
+
+/// The commands behind the menus' ids. An id names the menu it belongs to and its
+/// place there ("w12.40"), so a click on a menu replaced since it opened (the window
+/// list or the recent items changed) still runs the entry the person saw.
+#[derive(Default)]
+struct MenuCommands {
+    generation: u64,
+    menus: std::collections::VecDeque<(u64, Vec<Command>)>,
+}
+
+impl MenuCommands {
+    /// A new menu is being built.
+    fn begin(&mut self) {
+        self.generation += 1;
+        self.menus.push_back((self.generation, Vec::new()));
+        while self.menus.len() > KEPT_MENUS {
+            self.menus.pop_front();
+        }
+    }
+
+    /// The id of an entry of the menu being built.
+    fn id_for(&mut self, command: &Command) -> String {
+        if self.menus.is_empty() {
+            self.begin();
+        }
+        let (generation, list) = self.menus.back_mut().expect("a menu being built");
+        list.push(command.clone());
+        let kind = if shows_windows(command) { SHOWS } else { QUIET };
+        format!("{kind}{generation}.{}", list.len() - 1)
+    }
+
+    /// The command an id stands for, if its menu is still known.
+    fn command(&self, id: &str) -> Option<Command> {
+        let (generation, index) = id.get(1..)?.split_once('.')?;
+        let generation: u64 = generation.parse().ok()?;
+        let index: usize = index.parse().ok()?;
+        self.menus
+            .iter()
+            .find(|(g, _)| *g == generation)
+            .and_then(|(_, list)| list.get(index))
+            .cloned()
+    }
+}
 
 pub struct Tray {
     icon: TrayIcon,
@@ -44,8 +90,8 @@ pub struct Tray {
     shown_progress: i32,
     /// What the menu was built from; a change rebuilds it.
     built_for: Vec<Entry>,
-    /// The command behind each id, by index.
-    commands: Vec<Command>,
+    /// The command behind each id of this menu and the ones it replaced.
+    commands: MenuCommands,
     events: Receiver<String>,
     /// Windows: the icon's own clicks.
     #[cfg(windows)]
@@ -344,7 +390,7 @@ fn shows_windows(command: &Command) -> bool {
 fn append(
     target: &dyn Fn(&dyn IsMenuItem) -> Result<(), tray_icon::menu::Error>,
     entries: &[Entry],
-    commands: &mut Vec<Command>,
+    commands: &mut MenuCommands,
 ) -> Result<(), tray_icon::menu::Error> {
     for entry in entries {
         match entry {
@@ -358,11 +404,7 @@ fn append(
             } => {
                 let id = match command {
                     Some(Command::Quit) => EXIT.to_string(),
-                    Some(command) => {
-                        commands.push(command.clone());
-                        let kind = if shows_windows(command) { SHOWS } else { QUIET };
-                        format!("{kind}{}", commands.len() - 1)
-                    }
+                    Some(command) => commands.id_for(command),
                     None => String::new(),
                 };
                 match toggle {
@@ -387,13 +429,13 @@ fn append(
     Ok(())
 }
 
-fn build_menu(entries: &[Entry]) -> (Menu, Vec<Command>) {
+fn build_menu(entries: &[Entry], commands: &mut MenuCommands) -> Menu {
     let menu = Menu::new();
-    let mut commands = Vec::new();
-    if let Err(error) = append(&|item| menu.append(item), entries, &mut commands) {
+    commands.begin();
+    if let Err(error) = append(&|item| menu.append(item), entries, commands) {
         log::warn!("Modlight: the tray menu could not be built: {error}");
     }
-    (menu, commands)
+    menu
 }
 
 impl Tray {
@@ -418,7 +460,8 @@ impl Tray {
             wake.request_repaint();
         }));
         let entries = tray_entries(state);
-        let (menu, commands) = build_menu(&entries);
+        let mut commands = MenuCommands::default();
+        let menu = build_menu(&entries, &mut commands);
         let builder = TrayIconBuilder::new()
             .with_icon(icon.clone())
             .with_tooltip(modlight_core::APP_NAME)
@@ -452,9 +495,8 @@ impl Tray {
     pub fn update(&mut self, state: &AppState) {
         let entries = tray_entries(state);
         if entries != self.built_for {
-            let (menu, commands) = build_menu(&entries);
+            let menu = build_menu(&entries, &mut self.commands);
             self.icon.set_menu(Some(Box::new(menu)));
-            self.commands = commands;
             self.built_for = entries;
         }
     }
@@ -489,10 +531,7 @@ impl Tray {
         #[cfg_attr(not(windows), allow(unused_mut))]
         let mut commands: Vec<Command> = ids
             .iter()
-            .filter_map(|id| {
-                let index: usize = id.get(1..)?.parse().ok()?;
-                self.commands.get(index).cloned()
-            })
+            .filter_map(|id| self.commands.command(id))
             .collect();
         #[cfg(windows)]
         commands.extend(self.clicks.jobs(state));
@@ -624,6 +663,47 @@ fn progress_icon(percentage: i32) -> Option<Icon> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// The menu is rebuilt whenever what it shows changes (a window opened, a title
+    /// changed, an upload finished); a click on the menu the person had open must run
+    /// the entry they saw, not whatever stands at that position in the new menu.
+    #[test]
+    fn a_click_on_a_replaced_menu_runs_what_it_showed() {
+        let mut table = MenuCommands::default();
+        table.begin();
+        let first = table.id_for(&Command::Capture(
+            modlight_core::capture::CaptureKind::Fullscreen,
+            false,
+        ));
+        let settings = table.id_for(&Command::ShowSettings(None));
+        let folder = table.id_for(&Command::OpenScreenshotsFolder);
+        assert!(settings.starts_with(SHOWS) && folder.starts_with(QUIET));
+        // Rebuilt with one more window listed before them.
+        table.begin();
+        table.id_for(&Command::Capture(
+            modlight_core::capture::CaptureKind::Fullscreen,
+            false,
+        ));
+        table.id_for(&Command::ToggleHotkeys);
+        let new_settings = table.id_for(&Command::ShowSettings(None));
+        table.id_for(&Command::OpenScreenshotsFolder);
+        assert_eq!(table.command(&settings), Some(Command::ShowSettings(None)));
+        assert_eq!(table.command(&folder), Some(Command::OpenScreenshotsFolder));
+        assert_eq!(
+            table.command(&new_settings),
+            Some(Command::ShowSettings(None))
+        );
+        assert!(table.command(&first).is_some());
+        assert_eq!(table.command("q999.0"), None);
+        assert_eq!(table.command(""), None);
+        // Old menus are forgotten after a while.
+        for _ in 0..KEPT_MENUS {
+            table.begin();
+        }
+        assert_eq!(table.command(&settings), None);
+    }
+
     #[test]
     fn the_progress_icon_fills_from_the_bottom() {
         let size = super::ICON_SIZE;
