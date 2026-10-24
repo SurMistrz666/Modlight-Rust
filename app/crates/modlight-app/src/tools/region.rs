@@ -49,15 +49,12 @@ impl AppState {
         self.captures.busy = true;
         let source = self.captures.source.clone();
         self.rt.spawn_blocking(move || {
-            let step = capture::capture(
-                CaptureKind::Region(RegionKind::Default),
-                &settings,
-                source.as_ref(),
-            );
+            // The bare screen, as upstream's `new Screenshot()` takes it: no pointer.
+            let request = capture::region_request(RegionKind::Default, &settings, source.as_ref());
             move |state: &mut AppState, _ctx: &egui::Context| {
                 state.captures.busy = false;
-                match step {
-                    CaptureStep::Region(request) => {
+                match request {
+                    Ok(request) => {
                         let mut session = RegionSession::new(request);
                         session.render_scale = session.request.scale;
                         state.captures.overlay = Some(RegionOverlay::new(
@@ -67,16 +64,8 @@ impl AppState {
                             state.time,
                         ));
                     }
-                    CaptureStep::Done(captured) => {
-                        let picture = captured.metadata.image.map(|i| {
-                            let rect = IRect::new(0, 0, i.width() as i32, i.height() as i32);
-                            (i, rect)
-                        });
-                        state.tool_picture(target, picture);
-                    }
-                    CaptureStep::Message(_) => state.tool_picture(target, None),
-                    CaptureStep::Nothing(error) => {
-                        state.tool_capture_refused(error);
+                    Err(error) => {
+                        state.tool_capture_refused(Some(error));
                         state.tool_picture(target, None);
                     }
                 }

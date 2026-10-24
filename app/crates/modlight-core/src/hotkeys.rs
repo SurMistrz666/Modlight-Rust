@@ -658,24 +658,7 @@ impl HotkeySettings {
 
     /// `TaskSettings.IsUsingDefaultSettings`, read from the JSON.
     pub fn is_using_default_settings(&self) -> bool {
-        let flag = |name: &str, default: bool| {
-            self.task
-                .get(name)
-                .and_then(Value::as_bool)
-                .unwrap_or(default)
-        };
-        flag("UseDefaultAfterCaptureJob", true)
-            && flag("UseDefaultAfterUploadJob", true)
-            && flag("UseDefaultDestinations", true)
-            && !flag("OverrideScreenshotsFolder", false)
-            && flag("UseDefaultGeneralSettings", true)
-            && flag("UseDefaultImageSettings", true)
-            && flag("UseDefaultCaptureSettings", true)
-            && flag("UseDefaultUploadSettings", true)
-            && flag("UseDefaultActions", true)
-            && flag("UseDefaultToolsSettings", true)
-            && flag("UseDefaultAdvancedSettings", true)
-            && !flag("WatchFolderEnabled", false)
+        using_default_settings(&self.task)
     }
 
     /// `GetSafeTaskSettings`: the defaults, with whatever this hotkey overrides.
@@ -714,8 +697,26 @@ impl HotkeySettings {
     }
 }
 
-/// `TaskSettings.SetDefaultSettings` on JSON: every group the hotkey does not override
-/// comes from the defaults.
+/// `TaskSettings.IsUsingDefaultSettings` of a task settings object.
+fn using_default_settings(task: &Value) -> bool {
+    let flag =
+        |name: &str, default: bool| task.get(name).and_then(Value::as_bool).unwrap_or(default);
+    flag("UseDefaultAfterCaptureJob", true)
+        && flag("UseDefaultAfterUploadJob", true)
+        && flag("UseDefaultDestinations", true)
+        && !flag("OverrideScreenshotsFolder", false)
+        && flag("UseDefaultGeneralSettings", true)
+        && flag("UseDefaultImageSettings", true)
+        && flag("UseDefaultCaptureSettings", true)
+        && flag("UseDefaultUploadSettings", true)
+        && flag("UseDefaultActions", true)
+        && flag("UseDefaultToolsSettings", true)
+        && flag("UseDefaultAdvancedSettings", true)
+        && !flag("WatchFolderEnabled", false)
+}
+
+/// `GetSafeTaskSettings` + `TaskSettings.SetDefaultSettings` on JSON: every group the
+/// hotkey does not override comes from the defaults.
 pub fn resolve_task_settings(task: &Value, defaults: &Value) -> crate::tasks::TaskSettings {
     let flag = |name: &str| task.get(name).and_then(Value::as_bool).unwrap_or(true);
     let mut merged = match defaults {
@@ -752,7 +753,14 @@ pub fn resolve_task_settings(task: &Value, defaults: &Value) -> crate::tasks::Ta
         ("UseDefaultToolsSettings", &["ToolsSettings"]),
         ("UseDefaultAdvancedSettings", &["AdvancedSettings"]),
     ];
+    // A hotkey with its own settings is copied (`taskSettings.Copy()`), so its own
+    // `UseDefault...` flags come along: the `...SettingsReference` getters read them to
+    // send a window's changes back to the hotkey instead of the defaults.
+    let own_settings = !using_default_settings(task);
     for (use_default, members) in groups {
+        if own_settings {
+            merged.insert((*use_default).into(), json!(flag(use_default)));
+        }
         if !flag(use_default) {
             for member in *members {
                 if let Some(value) = own(member).filter(|v| !v.is_null()) {
@@ -1335,6 +1343,40 @@ mod tests {
             crate::tasks::settings::ImageFormat::JPEG,
             "image settings are not overridden"
         );
+    }
+
+    /// `GetSafeTaskSettings` copies a hotkey that does not run on the defaults, so its
+    /// own `UseDefault...` flags travel with it: they are what `CaptureSettingsReference`,
+    /// `ImageSettingsReference` and `ToolsSettingsReference` read to write a window's
+    /// changes back to the hotkey rather than to the default task settings.
+    #[test]
+    fn a_hotkeys_own_flags_survive_resolving() {
+        let defaults = json!({
+            "CaptureSettings": { "ShowCursor": false },
+            "ToolsSettings": { "ScreenColorPickerInfoText": "defaults" }
+        });
+        let hotkey = HotkeySettings {
+            info: HotkeyInfo::default(),
+            task: json!({
+                "Job": "ScreenColorPicker",
+                "UseDefaultCaptureSettings": false,
+                "CaptureSettings": { "ShowCursor": true },
+                "UseDefaultToolsSettings": false,
+                "ToolsSettings": { "ScreenColorPickerInfoText": "mine" }
+            }),
+            status: HotkeyStatus::NotConfigured,
+        };
+        let settings = hotkey.task_settings(&defaults);
+        assert!(settings.capture_settings.show_cursor);
+        assert!(!settings.use_default_capture_settings);
+        assert!(!settings.use_default_tools_settings);
+        assert!(settings.use_default_image_settings);
+        assert!(settings.use_default_after_capture_job);
+        // A hotkey on the defaults keeps theirs.
+        let plain = HotkeySettings::new(HotkeyType::PrintScreen, 0);
+        let settings = plain.task_settings(&defaults);
+        assert!(settings.use_default_capture_settings);
+        assert!(!settings.capture_settings.show_cursor);
     }
 
     #[test]
