@@ -497,6 +497,21 @@ impl MySpace {
         true
     }
 
+    /// The page to list again when removals emptied the one on screen while the listing
+    /// still has files elsewhere: the same page, or the last one that still exists.
+    ///
+    /// Upstream leaves the empty grid under a bar that has already clamped itself to the
+    /// new last page, so that page's button is a no-op until somebody presses Refresh.
+    pub fn refill_page(&self) -> Option<i64> {
+        if !self.loaded_once || !self.files.is_empty() || self.total <= 0 {
+            return None;
+        }
+        Some(pager::clamp_page(
+            self.page,
+            pager::page_count(self.total, self.page_size),
+        ))
+    }
+
     /// Adjust a folder's direct tally and roll the tree up again.
     pub fn adjust_folder_tally(&mut self, folder_id: Option<&str>, files: i64, bytes: i64) {
         let Some(id) = folder_id else { return };

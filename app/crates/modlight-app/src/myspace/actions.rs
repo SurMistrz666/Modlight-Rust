@@ -489,6 +489,7 @@ impl AppState {
                     &[Arg::from(count), Arg::from(place)],
                 );
                 self.notice(icons::FOLDER_INPUT, &text, "", false);
+                self.refill_emptied_page();
             }
             EditDone::Published { published, count } => {
                 self.space.apply_rows(rows);
@@ -663,28 +664,43 @@ impl AppState {
                             true,
                         );
                     }
-                    Ok(result) => {
-                        for id in &ids {
-                            if mode == "restore" {
-                                state.space.note_file_restored(id);
-                            } else {
-                                state.space.note_file_removed(id);
-                            }
-                            state.media.forget(id);
-                        }
-                        state.refresh_account_strip();
-                        let (icon, key) = match mode {
-                            "restore" => (icons::UNDO_2, s::MySpace_RestoredToast),
-                            "permanent" => (icons::TRASH_2, s::MySpace_DeletedForeverToast),
-                            _ => (icons::TRASH_2, s::MySpace_TrashedToast),
-                        };
-                        let text = format(t(key), &[Arg::Int(result.affected)]);
-                        state.notice(icon, &text, "", false);
-                    }
+                    Ok(result) => state.files_removed(&ids, mode, result.affected),
                     Err(error) => state.report_failure(&error, &credential.host),
                 },
             )
         });
+    }
+
+    /// The server trashed, restored or deleted `ids` for good: off the grid, the folder
+    /// tallies corrected, said in the corner.
+    pub(crate) fn files_removed(&mut self, ids: &[String], mode: &str, affected: i64) {
+        for id in ids {
+            if mode == "restore" {
+                self.space.note_file_restored(id);
+            } else {
+                self.space.note_file_removed(id);
+            }
+            self.media.forget(id);
+        }
+        self.refresh_account_strip();
+        let (icon, key) = match mode {
+            "restore" => (icons::UNDO_2, s::MySpace_RestoredToast),
+            "permanent" => (icons::TRASH_2, s::MySpace_DeletedForeverToast),
+            _ => (icons::TRASH_2, s::MySpace_TrashedToast),
+        };
+        let text = format(t(key), &[Arg::Int(affected)]);
+        self.notice(icon, &text, "", false);
+        self.refill_emptied_page();
+    }
+
+    /// Files left the page on screen and took all of it with them while the listing
+    /// still has others: list the page that holds them now (`MySpace::refill_page`).
+    fn refill_emptied_page(&mut self) {
+        if let Some(page) = self.space.refill_page()
+            && let Some(credential) = self.credential()
+        {
+            self.start_listing(credential, false, page);
+        }
     }
 
     pub fn restore_files(&mut self, ids: &[String]) {
@@ -1424,10 +1440,110 @@ fn sanitize_file_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use modlight_api::{Upload, UploadPage};
+    use modlight_core::account::{AccountStore, StoredAccount};
 
     #[test]
     fn saved_names_cannot_climb_out_of_the_folder() {
         assert_eq!(sanitize_file_name("../a/b:c.png"), ".._a_b_c.png");
         assert_eq!(sanitize_file_name("  "), "download");
+    }
+
+    /// A signed-in state whose server refuses connections at once (nothing listens on
+    /// port 1), so a listing the test starts never reaches anything.
+    pub(crate) fn offline_state() -> AppState {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        state.account = AccountStore::in_memory(
+            StoredAccount {
+                host: "http://127.0.0.1:1".into(),
+                tag: "alex".into(),
+                ..StoredAccount::default()
+            },
+            "qa-token-not-a-secret",
+        );
+        state.space.has_account = true;
+        state
+    }
+
+    pub(crate) fn row(id: &str, folder: Option<&str>) -> Upload {
+        Upload {
+            id: Some(id.into()),
+            code: Some(format!("c{id}")),
+            filename: Some(format!("{id}.png")),
+            ext: Some("png".into()),
+            kind: Some("image".into()),
+            size: 100,
+            folder_id: folder.map(str::to_string),
+            url: Some(format!("http://127.0.0.1:1/alex/c{id}.png")),
+            raw_url: Some(format!("http://127.0.0.1:1/alex/c{id}/raw.png")),
+            ..Upload::default()
+        }
+    }
+
+    /// Page `page` of a listing of `total` files, `per_page` a page, holding `ids`.
+    pub(crate) fn listing(state: &mut AppState, page: i64, per_page: i64, total: i64, ids: &[&str]) {
+        state.space.page_size = per_page;
+        state.space.generation += 1;
+        let items = ids.iter().map(|id| row(id, None)).collect();
+        let page_rows = UploadPage {
+            page,
+            per_page,
+            total,
+            items: Some(items),
+            ..UploadPage::default()
+        };
+        state.space.apply_page(page_rows, page);
+    }
+
+    /// Trashing the last file of the last page used to leave an empty grid under a bar
+    /// saying "31-60 of 60", whose page 2 button did nothing (the bar had clamped itself
+    /// to page 2 already): the emptied page is listed again, at the page that now exists.
+    #[test]
+    fn emptying_a_page_lists_the_page_that_now_holds_the_files() {
+        let mut state = offline_state();
+        listing(&mut state, 3, 30, 61, &["last"]);
+        state.files_removed(&["last".into()], "trash", 1);
+        assert!(state.space.is_busy, "the page is asked for again");
+        assert_eq!(state.space.page, 2);
+        assert_eq!(state.space.total, 0, "the new listing starts from nothing");
+
+        // Selecting every file on page 1 of 2 and trashing them: page 1 again, which now
+        // holds what was page 2.
+        let mut state = offline_state();
+        let ids: Vec<String> = (0..30).map(|i| format!("f{i}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        listing(&mut state, 1, 30, 40, &refs);
+        state.files_removed(&ids, "trash", 30);
+        assert!(state.space.is_busy);
+        assert_eq!(state.space.page, 1);
+
+        // A page that still shows files is left as it is (upstream does not refill it).
+        let mut state = offline_state();
+        listing(&mut state, 1, 30, 40, &["a", "b"]);
+        state.files_removed(&["a".into()], "trash", 1);
+        assert!(!state.space.is_busy);
+        assert_eq!(state.space.files.len(), 1);
+
+        // The last file of the whole listing: nothing to list again.
+        let mut state = offline_state();
+        listing(&mut state, 1, 30, 1, &["only"]);
+        state.files_removed(&["only".into()], "permanent", 1);
+        assert!(!state.space.is_busy);
+        assert!(state.space.show_empty_panel());
+
+        // Moving every file of the open folder's last page elsewhere empties it too.
+        let mut state = offline_state();
+        listing(&mut state, 2, 30, 31, &["moved"]);
+        state.space.current_folder = Some("f1".into());
+        state.space.files[0].file.folder_id = Some("f1".into());
+        state.edit_done(
+            EditDone::Moved {
+                ids: vec!["moved".into()],
+                target: None,
+            },
+            &[row("moved", None)],
+        );
+        assert!(state.space.is_busy, "the folder's page is asked for again");
+        assert_eq!(state.space.page, 1);
     }
 }
