@@ -163,15 +163,15 @@ pub fn start_installer(path: &Path) -> InstallerStart {
 }
 
 /// Wake the window whenever a global hotkey is waiting: the app takes the hotkeys once a
-/// frame, and an idle window has no frames until something asks for one. Normal mode
-/// only; the thread lives as long as the app.
+/// frame, and an idle window has no frames until something asks for one. Both kinds
+/// count, those of `global-hotkey` and the keys registered by their virtual-key code
+/// (`SystemHotkeys::waiting`). Normal mode only; the thread lives as long as the app.
 pub fn wake_for_hotkeys(ctx: egui::Context) {
     let spawned = std::thread::Builder::new()
         .name("modlight-hotkey-wake".into())
         .spawn(move || {
-            let waiting = global_hotkey::GlobalHotKeyEvent::receiver();
             loop {
-                if !waiting.is_empty() {
+                if crate::platform::hotkeys::SystemHotkeys::waiting() {
                     ctx.request_repaint();
                 }
                 std::thread::sleep(Duration::from_millis(25));
