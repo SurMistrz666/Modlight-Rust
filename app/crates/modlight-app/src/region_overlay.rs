@@ -50,7 +50,6 @@ pub struct RegionOverlay {
     /// UI seconds when it opened: keys count after `InputDelay`.
     pub opened_at: f64,
     texture: Option<TextureHandle>,
-    cursor_texture: Option<TextureHandle>,
     magnifier: Option<(TextureHandle, (i64, i64, i64))>,
     /// The press that opened a double click (UI seconds and image point).
     last_click: Option<(f64, Point)>,
@@ -80,7 +79,6 @@ impl RegionOverlay {
             settings,
             opened_at: now,
             texture: None,
-            cursor_texture: None,
             magnifier: None,
             last_click: None,
             workspace: None,
@@ -362,27 +360,8 @@ impl RegionOverlay {
             return;
         }
 
-        // The pointer, when the capture shows it (inserted as a picture upstream).
-        if let Some((cursor, at)) = session.request.cursor.clone() {
-            let min = self.to_local(screen, full.min, at);
-            let texture = self.cursor_texture.get_or_insert_with(|| {
-                let color = ColorImage::from_rgba_unmultiplied(
-                    [cursor.width() as usize, cursor.height() as usize],
-                    cursor.as_raw(),
-                );
-                ctx.load_texture("region-cursor", color, egui::TextureOptions::LINEAR)
-            });
-            let size = vec2(
-                cursor.width() as f32 / scale,
-                cursor.height() as f32 / scale,
-            );
-            painter.image(
-                texture.id(),
-                Rect::from_min_size(min, size),
-                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
-        }
+        // The pointer, when the capture shows it, is in the frozen desktop itself
+        // (`capture::region_request`), as upstream inserts its picture into the workspace.
         // The editor workspace's annotations (under the region's dim, as upstream's
         // `EditorWorkspace` lies under `RegionTransform`).
         let origin = self.to_local(screen, full.min, Point::new(0.0, 0.0));
@@ -912,7 +891,7 @@ mod tests {
             enable_annotations: true,
             windows: source.windows(),
             screens: source.screens(),
-            cursor: None,
+            show_cursor: false,
             last_region: IRect::default(),
             pointer: (10, 10),
         };

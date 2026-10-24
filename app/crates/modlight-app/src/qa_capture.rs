@@ -123,7 +123,7 @@ fn session(kind: RegionKind) -> RegionSession {
         enable_annotations: true,
         windows: source.windows(),
         screens: source.screens(),
-        cursor: None,
+        show_cursor: false,
         last_region: IRect::default(),
         pointer: (300, 160),
     };
