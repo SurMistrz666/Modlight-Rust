@@ -104,6 +104,27 @@ pub struct RecorderControl {
     stop: AtomicU32,
 }
 
+/// Seconds from a settings file as a `Duration`: one too large for a timer is the
+/// longest there is, and anything that is not a positive number is none.
+fn seconds(value: f64) -> Duration {
+    if value > 0.0 {
+        Duration::try_from_secs_f64(value).unwrap_or(Duration::MAX)
+    } else {
+        Duration::ZERO
+    }
+}
+
+/// The start delay as upstream waits it: `(int)(ScreenRecordStartDelay * 1000)`
+/// milliseconds, and none when that is not a positive `int`.
+fn start_delay(value: f64) -> Duration {
+    let milliseconds = value * 1000.0;
+    if milliseconds >= 1.0 && milliseconds <= i32::MAX as f64 {
+        Duration::from_millis(milliseconds as u64)
+    } else {
+        Duration::ZERO
+    }
+}
+
 impl RecorderControl {
     pub fn new(region: IRect, duration: f64) -> Arc<RecorderControl> {
         Arc::new(RecorderControl {
@@ -308,7 +329,7 @@ impl RecorderControl {
                 }
                 if state.duration > 0.0 {
                     state.is_countdown = true;
-                    state.countdown = Duration::from_secs_f64(state.duration);
+                    state.countdown = seconds(state.duration);
                 }
                 state.timer.start();
             }
@@ -540,7 +561,7 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
         if control.status() == RecordingStatus::Paused || !params.auto_start {
             control.wait_event(None);
         } else {
-            let delay = Duration::from_secs_f64(params.start_delay.max(0.0));
+            let delay = start_delay(params.start_delay);
             if !delay.is_zero() {
                 control.start_countdown(delay);
                 control.wait_event(Some(delay));
@@ -785,6 +806,20 @@ mod tests {
         assert!(text.starts_with("00:02:") || text == "00:03:00", "{text}");
         control.abort();
         assert_eq!(control.status(), RecordingStatus::Aborted);
+    }
+
+    #[test]
+    fn a_fixed_length_too_long_for_a_timer_does_not_panic() {
+        // A settings file can hold any number; the countdown saturates instead.
+        let control = RecorderControl::new(IRect::new(0, 0, 8, 8), 1e300);
+        control.change_state(RecordState::AfterRecordingStart);
+        assert_eq!(control.status(), RecordingStatus::Recording);
+        let text = RecorderControl::timer_text(&control.snapshot());
+        assert_eq!(text.len(), 8, "{text}");
+        control.change_state(RecordState::RecordingEnd);
+        assert_eq!(start_delay(1e300), Duration::ZERO);
+        assert_eq!(start_delay(-3.0), Duration::ZERO);
+        assert_eq!(start_delay(2.5), Duration::from_millis(2500));
     }
 
     #[test]

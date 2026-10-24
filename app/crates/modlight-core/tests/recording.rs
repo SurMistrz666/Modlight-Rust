@@ -475,6 +475,26 @@ fn the_screen_is_let_go_when_ffmpeg_cannot_start() {
     assert_eq!(stopped.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
+/// A start delay or a fixed length too large for a timer (a settings file can hold any
+/// number) is no reason to panic: upstream counts the delay in milliseconds as an `int`
+/// and starts at once when it does not fit.
+#[test]
+fn an_impossible_start_delay_starts_at_once() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::libx264, false);
+    p.start_delay = 1e300;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 1.0);
+    let outcome = std::thread::spawn(move || run_session(p, control))
+        .join()
+        .expect("no panic");
+    assert_eq!(outcome.error, None);
+    assert!(outcome.path.is_some());
+}
+
 /// The screen delivered no frame at all: that is a failure, not an empty video to
 /// upload.
 #[test]
