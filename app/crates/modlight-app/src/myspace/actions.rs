@@ -1743,6 +1743,60 @@ pub(crate) mod tests {
         assert!(state.media.motion_bytes.is_refused("ca"));
     }
 
+    /// `ShowAndActivate`: bringing the window back (the menu bar's "Show Modlight") asks
+    /// for the folder list again, because folders are made and deleted in the web panel
+    /// while the window sits hidden.
+    #[test]
+    fn showing_the_window_reads_the_folders_again() {
+        use std::io::{Read, Write};
+        use std::sync::{Arc, Mutex};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut head = Vec::new();
+                let mut buffer = [0u8; 4096];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&buffer[..n]),
+                    }
+                }
+                let line = String::from_utf8_lossy(&head)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                log.lock().unwrap().push(line);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                );
+            }
+        });
+        let mut state = state_on(&host);
+        listing(&mut state, 1, 30, 1, &["a"]);
+        state.space.identity = format!("{host}\nqa-token-not-a-secret");
+        let ctx = egui::Context::default();
+        state.run(crate::commands::Command::ShowMainWindow, &ctx);
+        let asked = || {
+            seen.lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.starts_with("GET /api/folders "))
+        };
+        let started = std::time::Instant::now();
+        while !asked() && started.elapsed().as_secs() < 3 {
+            for completion in state.rt.drain() {
+                completion(&mut state, &ctx);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(asked(), "requests: {:?}", seen.lock().unwrap());
+    }
+
     /// Cards that leave the grid without a new listing (pushed off the bottom of page 1
     /// by new uploads, moved out of the open folder) give their pictures back to the
     /// budget, as upstream's `Remove` and `Merge` do (`pictures.Forget`).
