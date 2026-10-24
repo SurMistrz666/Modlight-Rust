@@ -134,8 +134,8 @@ impl CloudFolder {
 
     /// An upload landed here or a file left: adjust the direct tally.
     pub fn adjust_direct(&mut self, files: i64, bytes: i64) {
-        self.direct_count = (self.direct_count + files).max(0);
-        self.direct_size = (self.direct_size + bytes).max(0);
+        self.direct_count = self.direct_count.saturating_add(files).max(0);
+        self.direct_size = self.direct_size.saturating_add(bytes).max(0);
         if self.kind == FolderKind::Unfiled {
             self.file_count = self.direct_count;
             self.size = self.direct_size;
@@ -159,9 +159,17 @@ pub fn roll_up(folders: &mut [CloudFolder]) {
     let mut descendants: HashMap<String, i64> = HashMap::new();
     let mut depths = vec![0usize; folders.len()];
 
+    // The counts are the server's numbers: summed saturating, never overflowing.
+    let add = |total: &mut i64, more: i64| *total = total.saturating_add(more);
     for (i, folder) in folders.iter().enumerate() {
-        *files.entry(folder.id.clone()).or_default() += folder.direct_count;
-        *bytes.entry(folder.id.clone()).or_default() += folder.direct_size;
+        add(
+            files.entry(folder.id.clone()).or_default(),
+            folder.direct_count,
+        );
+        add(
+            bytes.entry(folder.id.clone()).or_default(),
+            folder.direct_size,
+        );
 
         let mut seen = HashSet::new();
         seen.insert(folder.id.clone());
@@ -176,8 +184,14 @@ pub fn roll_up(folders: &mut [CloudFolder]) {
                 break;
             }
             depth += 1;
-            *files.entry(parent_id.clone()).or_default() += folder.direct_count;
-            *bytes.entry(parent_id.clone()).or_default() += folder.direct_size;
+            add(
+                files.entry(parent_id.clone()).or_default(),
+                folder.direct_count,
+            );
+            add(
+                bytes.entry(parent_id.clone()).or_default(),
+                folder.direct_size,
+            );
             *descendants.entry(parent_id.clone()).or_default() += 1;
             if direct {
                 *subfolders.entry(parent_id.clone()).or_default() += 1;
@@ -382,5 +396,26 @@ mod tests {
         assert!(trail[2].is_current && !trail[1].is_current && !trail[0].show_separator);
         assert_eq!(crumbs(&folders, None, None).len(), 1);
         set_thread_language(None);
+    }
+
+    /// The counts are the server's numbers: absurd ones saturate instead of overflowing
+    /// the roll-up (a panic in a debug build).
+    #[test]
+    fn absurd_counts_do_not_overflow_the_roll_up() {
+        let mut folders = vec![
+            folder("top", None, i64::MAX, i64::MAX),
+            folder("a", Some("top"), i64::MAX, i64::MAX),
+            folder("b", Some("top"), 1, 1),
+        ];
+        roll_up(&mut folders);
+        assert_eq!(
+            (folders[0].file_count, folders[0].size),
+            (i64::MAX, i64::MAX)
+        );
+        folders[1].adjust_direct(1, 1);
+        assert_eq!(folders[1].direct_count, i64::MAX);
+        let mut unfiled = CloudFolder::unfiled("root", i64::MAX, i64::MAX);
+        unfiled.adjust_direct(i64::MAX, i64::MAX);
+        assert_eq!(unfiled.file_count, i64::MAX);
     }
 }
