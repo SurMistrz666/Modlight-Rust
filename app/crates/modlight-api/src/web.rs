@@ -16,10 +16,20 @@ use crate::error::{ApiError, ApiResult};
 /// The longest a preview picture may be.
 const MAX_PREVIEW_BYTES: usize = 50 * 1024 * 1024;
 
+/// How long a download may go without receiving anything: HttpClient's default
+/// timeout, which bounds upstream's `DownloadFileAsync`. Measured from the last bytes
+/// rather than over the whole file, so a large file on a slow line still arrives.
+const STALL_TIMEOUT: Duration = Duration::from_secs(100);
+
 fn web_client() -> ApiResult<reqwest::Client> {
+    web_client_stalling_after(STALL_TIMEOUT)
+}
+
+fn web_client_stalling_after(stall: Duration) -> ApiResult<reqwest::Client> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
         .connect_timeout(Duration::from_secs(15))
+        .read_timeout(stall)
         .build()
         .map_err(ApiError::from_reqwest)
 }
@@ -65,37 +75,10 @@ impl Api {
     }
 
     /// `DownloadFileAsync`: the body of `url` into `path`, streamed. A status that is
-    /// not a success is an error here (upstream wrote nothing and went on).
+    /// not a success is an error here (upstream wrote nothing and went on), and so is a
+    /// server that stops sending for [`STALL_TIMEOUT`].
     pub async fn download_url_to_file(&self, url: &str, path: &Path) -> Result<(), String> {
-        check(url).map_err(|e| e.to_string())?;
-        let client = web_client().map_err(|e| e.to_string())?;
-        let response = client
-            .get(url)
-            .header(USER_AGENT, user_agent())
-            .send()
-            .await
-            .map_err(|e| ApiError::from_reqwest(e).to_string())?;
-        if !response.status().is_success() {
-            return Err(format!(
-                "Response status code does not indicate success: {} ({}).",
-                response.status().as_u16(),
-                response.status().canonical_reason().unwrap_or("")
-            ));
-        }
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-        let mut file = tokio::fs::File::create(path)
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| ApiError::from_reqwest(e).to_string())?;
-            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-        }
-        file.flush().await.map_err(|e| e.to_string())
+        download_to_file(url, path, STALL_TIMEOUT).await
     }
 
     /// `DownloadImageAsync`: the picture at `url` when the server says it is one.
@@ -129,6 +112,39 @@ impl Api {
             .ok()??;
         image_bytes::decode(&bytes)
     }
+}
+
+/// [`Api::download_url_to_file`], ending when nothing arrives for `stall`.
+async fn download_to_file(url: &str, path: &Path, stall: Duration) -> Result<(), String> {
+    check(url).map_err(|e| e.to_string())?;
+    let client = web_client_stalling_after(stall).map_err(|e| e.to_string())?;
+    let response = client
+        .get(url)
+        .header(USER_AGENT, user_agent())
+        .send()
+        .await
+        .map_err(|e| ApiError::from_reqwest(e).to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Response status code does not indicate success: {} ({}).",
+            response.status().as_u16(),
+            response.status().canonical_reason().unwrap_or("")
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let mut file = tokio::fs::File::create(path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| ApiError::from_reqwest(e).to_string())?;
+        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+    }
+    file.flush().await.map_err(|e| e.to_string())
 }
 
 /// Decoding stays out of this crate's dependencies: the bytes are handed back and the
@@ -173,5 +189,40 @@ mod tests {
         assert!(check("https://example.com/a").is_ok());
         assert!(check("file:///etc/passwd").is_err());
         assert!(check("ftp://example.com/a").is_err());
+    }
+
+    /// A server that stops sending in the middle of the body: the download must end
+    /// (upstream's `DownloadFileAsync` runs inside HttpClient's 100 s timeout), not leave
+    /// the Upload from URL task downloading for ever.
+    #[tokio::test]
+    async fn a_download_that_stalls_ends() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/file.bin", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf).await;
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n0123456789")
+                        .await;
+                    // Then nothing more, with the connection held open.
+                    tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                });
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let ended = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            download_to_file(
+                &url,
+                &dir.path().join("file.bin"),
+                std::time::Duration::from_millis(500),
+            ),
+        )
+        .await;
+        let result = ended.expect("the download ends when the server stops sending");
+        assert!(result.is_err());
     }
 }

@@ -234,10 +234,17 @@ impl AppState {
         window.set_status(t(s::SignInWindow_Checking), Tone::Neutral);
         window.generation += 1;
         let generation = window.generation;
+        // Cancel (and closing the window) stops this wait too, as every operation of
+        // the window (`RunAsync`).
+        let cancel = CancellationToken::new();
+        window.cancel = Some(cancel.clone());
         self.windows.sign_in = Some(window);
         let api = self.api.clone();
         self.rt.spawn(async move {
-            let answer = api.get_account(&credential).await;
+            let answer = tokio::select! {
+                answer = api.get_account(&credential) => Some(answer),
+                _ = cancel.cancelled() => None,
+            };
             Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
                 let Some(window) = state.windows.sign_in.as_mut() else {
                     return;
@@ -246,16 +253,21 @@ impl AppState {
                     return;
                 }
                 window.busy = false;
+                window.cancel = None;
+                let Some(answer) = answer else {
+                    window.set_status(t(s::ModlightSignIn_Canceled), Tone::Neutral);
+                    return;
+                };
                 match answer {
                     Ok(Some(info)) => {
                         window.show_account(&info, &credential.host);
                         let name = signin::display_name(&info);
                         window.set_status(&messages::signed_in_as(&name), Tone::Success);
-                        state.note_account(&credential.host, &info);
+                        state.note_account(&credential, &info);
                     }
                     Ok(None) => {
                         window.set_status(t(s::ModlightSignIn_TokenRejected), Tone::Error);
-                        state.note_token_refused();
+                        state.note_token_refused(&credential);
                     }
                     Err(error) => window.set_status(&error.to_string(), Tone::Error),
                 }
@@ -364,7 +376,10 @@ impl AppState {
                     }
                     return;
                 }
-                self.note_account(&signed.origin, &signed.account);
+                self.note_account(
+                    &Credential::new(signed.origin.clone(), signed.token.clone()),
+                    &signed.account,
+                );
                 let name = signin::display_name(&signed.account);
                 if let Some(window) = self.windows.sign_in.as_mut() {
                     window.set_status(&messages::signed_in_as(&name), Tone::Success);
@@ -406,9 +421,12 @@ impl AppState {
             log::warn!("Modlight: the token could not be removed from the keychain: {error}");
         }
         self.admin.forget();
-        self.server_tab_forget();
+        // The report goes, and the window leaves the Server tab whose button just went.
+        self.apply_admin_role();
         self.media.avatar.clear();
         self.strip.clear_storage();
+        // A reading still out is about the account just signed out of (`Clear` cancels).
+        self.strip.in_flight = None;
         self.space_refresh_account();
         if let Some(window) = self.windows.sign_in.as_mut() {
             window.clear_account();
@@ -944,6 +962,134 @@ pub fn paint_avatar(
             circle.center() - galley.size() / 2.0,
             galley,
             colors.accent_start(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use modlight_core::account::{AccountStore, StoredAccount};
+
+    use super::*;
+    use crate::qa::{Look, state};
+
+    fn admin_info(tag: &str) -> AccountInfo {
+        AccountInfo {
+            tag: Some(tag.into()),
+            name: Some("Alex Rivera".into()),
+            email: Some("alex@example.com".into()),
+            role: Some("admin".into()),
+            ..Default::default()
+        }
+    }
+
+    /// An `/api/me` answer that set out before somebody else signed in (the storage chip
+    /// refreshes when the window gets the focus back, which is what one does after
+    /// approving in the browser) must not rename the new account after the old one: its
+    /// tag decides which queued uploads go out with the new token, and whose settings
+    /// marker counts.
+    #[test]
+    fn an_answer_about_a_credential_that_went_away_is_not_kept() {
+        let mut app = state(&Look::default(), true);
+        let old = app.credential().unwrap();
+        app.account = AccountStore::in_memory(
+            StoredAccount {
+                host: old.host.clone(),
+                tag: "sam".into(),
+                name: "Sam".into(),
+                ..StoredAccount::default()
+            },
+            "another-token",
+        );
+
+        app.note_account(&old, &admin_info("alex"));
+        assert_eq!(app.account.account().tag, "sam");
+        assert_eq!(app.account.display_name(), "Sam");
+        assert!(!app.is_admin());
+
+        // The one signed in now is kept, role included; its refusal forgets the role,
+        // the old one's does not.
+        let current = app.credential().unwrap();
+        app.note_account(&current, &admin_info("sam"));
+        assert_eq!(app.account.account().tag, "sam");
+        assert!(app.is_admin());
+        app.note_token_refused(&old);
+        assert!(app.is_admin());
+        app.note_token_refused(&current);
+        assert!(!app.is_admin());
+    }
+
+    /// The window opens on a stored account and checks it with the server
+    /// (`InitializeAsync`); Cancel is on screen while it waits and must stop the wait,
+    /// as it does upstream, rather than leave everything disabled until the request's
+    /// 20 seconds run out.
+    #[test]
+    fn cancel_stops_the_check_of_the_stored_account() {
+        // A server that takes the connection and never answers.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", silent.local_addr().unwrap());
+        let ctx = egui::Context::default();
+        let mut app = state(&Look::default(), true);
+        app.account = AccountStore::in_memory(
+            StoredAccount {
+                host,
+                tag: "alex".into(),
+                name: "Alex".into(),
+                ..StoredAccount::default()
+            },
+            "alex-token",
+        );
+
+        app.show_sign_in();
+        app.sign_in_opened();
+        assert!(app.windows.sign_in.as_ref().unwrap().busy);
+        app.sign_in_action(SignInAction::Cancel);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.windows.sign_in.as_ref().unwrap().busy && std::time::Instant::now() < deadline {
+            for completion in app.rt.drain() {
+                completion(&mut app, &ctx);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let window = app.windows.sign_in.as_ref().unwrap();
+        assert!(!window.busy, "Cancel ends the check");
+        assert_eq!(window.status, t(s::ModlightSignIn_Canceled));
+        assert_eq!(window.tone, Tone::Neutral);
+        assert!(window.cancel.is_none());
+        drop(silent);
+    }
+
+    /// Signing out while the storage chip's request is out: its answer must not put the
+    /// signed-out account's figure back beside "Sign in" (upstream's `Clear` cancels it).
+    #[test]
+    fn signing_out_drops_the_chips_reading_in_flight() {
+        let ctx = egui::Context::default();
+        let mut app = state(&Look::default(), true);
+        // A server that is a closed port here: the reading fails at once, locally.
+        app.account = AccountStore::in_memory(
+            StoredAccount {
+                host: "http://127.0.0.1:9".into(),
+                tag: "alex".into(),
+                ..StoredAccount::default()
+            },
+            "alex-token",
+        );
+        app.refresh_account_strip();
+        assert!(app.strip.in_flight.is_some());
+
+        app.sign_out();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            for completion in app.rt.drain() {
+                completion(&mut app, &ctx);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!app.account.is_signed_in());
+        assert!(
+            !app.strip.has_storage,
+            "no reading for an account signed out of"
         );
     }
 }

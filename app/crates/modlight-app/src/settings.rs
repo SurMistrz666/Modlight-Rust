@@ -690,11 +690,12 @@ impl AppState {
                     Ok(Some(info)) => {
                         window.account.status.clear();
                         window.account.info = Some(info.clone());
-                        state.note_account(&credential.host, &info);
+                        state.note_account(&credential, &info);
                         state.request_avatar(ctx);
                     }
                     Ok(None) => {
-                        window.account.status = t(s::ModlightSignIn_TokenRejected).to_string()
+                        window.account.status = t(s::ModlightSignIn_TokenRejected).to_string();
+                        state.note_token_refused(&credential);
                     }
                     Err(_) => {
                         window.account.status = t(s::SettingsWindow_AccountUnreachable).to_string()

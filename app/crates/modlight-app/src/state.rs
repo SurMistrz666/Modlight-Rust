@@ -383,14 +383,32 @@ impl AppState {
         self.pending.push(command);
     }
 
-    /// Something answered with what `/api/me` says: keep the identity, the role, the quota.
-    pub fn note_account(&mut self, host: &str, info: &AccountInfo) {
-        self.admin.record(host, info);
+    /// `/api/me` answered for `credential`: keep the identity, the role, the quota.
+    ///
+    /// Only while `credential` is still the one signed in. An answer that set out before
+    /// a sign-out or another sign-in is about the account that went away, and keeping it
+    /// would give the new token the old account's tag (which decides whose queued
+    /// uploads it sends and whose settings marker counts), name and role.
+    pub fn note_account(&mut self, credential: &Credential, info: &AccountInfo) {
+        if self.credential().as_ref() != Some(credential) {
+            return;
+        }
+        let role_changed = self.admin.record(&credential.host, info);
         self.account.adopt(info);
+        if role_changed {
+            self.apply_admin_role();
+        }
     }
 
-    /// The token was refused: the role it carried goes with it.
-    pub fn note_token_refused(&mut self) {
-        self.admin.forget();
+    /// `credential` was refused: the role it carried goes with it (`ModlightAdmin.Forget`
+    /// in `GetAccountAsync`). A refusal of a credential no longer signed in says nothing
+    /// about the one that is.
+    pub fn note_token_refused(&mut self, credential: &Credential) {
+        if self.credential().as_ref() != Some(credential) {
+            return;
+        }
+        if self.admin.forget() {
+            self.apply_admin_role();
+        }
     }
 }
