@@ -625,29 +625,44 @@ pub fn set_send_to(enabled: bool) -> Result<(), String> {
 
 // ------------------------------------------------------------------ one running copy
 
-/// Hand `files` to a Modlight already running for this user. `true` when one took
-/// them: this start then has nothing left to do and exits. `false` when this start is
-/// the first: it now owns the mutex and takes later starts' files itself. With no
-/// files, `true` just says another copy runs and answered (a `-silent` start).
+/// Hand `files` to a Modlight already running for this user. `true` when this start has
+/// nothing left to do and exits: another copy runs (it took the files, or did not answer
+/// in time). `false` when this start is the first: it now owns the mutex and takes later
+/// starts' files itself. With no files, it only asks whether another copy runs (a
+/// `-silent` start).
 pub fn forward_to_running_instance(files: &[PathBuf]) -> bool {
-    match claim_first_instance() {
-        Claim::First => false,
-        Claim::Other | Claim::Unknown => {
-            let files: Vec<PathBuf> = files
-                .iter()
-                .filter_map(|file| std::path::absolute(file).ok())
-                .collect();
-            send_to_first(&Request::Files(files))
-        }
-    }
+    hand_over(claim_first_instance(), || {
+        let files: Vec<PathBuf> = files
+            .iter()
+            .filter_map(|file| std::path::absolute(file).ok())
+            .collect();
+        send_to_first(&Request::Files(files))
+    })
 }
 
-/// Bring the windows of a Modlight already running forward. `true` when one answered;
-/// `false` when this start is the first (see [`forward_to_running_instance`]).
+/// Bring the windows of a Modlight already running forward. `true` when another copy
+/// runs (this start then exits); `false` when this start is the first (see
+/// [`forward_to_running_instance`]).
 pub fn activate_running_instance() -> bool {
-    match claim_first_instance() {
+    hand_over(claim_first_instance(), || send_to_first(&Request::Activate))
+}
+
+/// `SingleInstanceManager`: whether this start ends after `send` handed its request
+/// over. The first start runs. A later one ends whether or not the first answered, as
+/// upstream's (`RedirectArgumentsToFirstInstance` swallows a failure, and `Main` runs
+/// only in the first instance): two copies would share the settings, the upload queue
+/// and the history. A start that could not read the mutex at all (`Claim::Unknown`)
+/// runs when nobody answers.
+fn hand_over(claim: Claim, send: impl FnOnce() -> bool) -> bool {
+    match claim {
         Claim::First => false,
-        Claim::Other | Claim::Unknown => send_to_first(&Request::Activate),
+        Claim::Other => {
+            if !send() {
+                log::warn!("Modlight is already running for this user but did not answer");
+            }
+            true
+        }
+        Claim::Unknown => send(),
     }
 }
 
@@ -1479,6 +1494,23 @@ mod tests {
         assert!(!acceptable(&folder.path().join("missing.png")));
         assert!(!acceptable(Path::new(r"\\.\PhysicalDrive0")));
         assert!(!acceptable(Path::new(r"\\.\pipe\x")));
+    }
+
+    #[test]
+    fn a_later_start_never_runs_beside_the_first() {
+        // The first start runs, and sends nothing.
+        let sent = std::cell::Cell::new(false);
+        assert!(!hand_over(Claim::First, || sent.replace(true)));
+        assert!(!sent.get());
+        // A later one ends whether the first took its files or never answered
+        // (`RedirectArgumentsToFirstInstance` swallows the failure, and `Main` runs only
+        // in the first instance): two copies would share the settings, the upload queue
+        // and the history.
+        assert!(hand_over(Claim::Other, || true));
+        assert!(hand_over(Claim::Other, || false));
+        // Only a start that could not read the mutex at all runs when nobody answers.
+        assert!(hand_over(Claim::Unknown, || true));
+        assert!(!hand_over(Claim::Unknown, || false));
     }
 
     #[test]
