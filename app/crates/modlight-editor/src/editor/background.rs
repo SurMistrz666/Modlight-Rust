@@ -384,6 +384,35 @@ mod tests {
     use super::*;
     use crate::editor::{Editor, EditorConfig};
 
+    /// Smart padding is found anew for every picture opened (`InvalidateSmartPaddingCache`
+    /// when the preview changes): the border found on the last picture would crop the
+    /// next one, or hide it altogether.
+    #[test]
+    fn a_new_picture_gets_its_own_smart_padding() {
+        let mut e = Editor::new(ImageEditorOptions::default(), EditorConfig::default());
+        // A 10 pixel white border round a dark middle.
+        let mut bordered = RgbaImage::from_pixel(100, 80, Rgba([255; 4]));
+        for y in 10..70 {
+            for x in 10..90 {
+                bordered.put_pixel(x, y, Rgba([0, 0, 0, 255]));
+            }
+        }
+        e.load_image(bordered, None);
+        e.set_settings_panel_open(true);
+        assert_eq!(e.background_state().smart_insets, (10, 10, 10, 10));
+        // A small picture with a 2 pixel border.
+        let mut small = RgbaImage::from_pixel(16, 12, Rgba([255; 4]));
+        for y in 2..10 {
+            for x in 2..14 {
+                small.put_pixel(x, y, Rgba([0, 0, 0, 255]));
+            }
+        }
+        e.load_image(small, None);
+        assert_eq!(e.background_state().smart_insets, (2, 2, 2, 2));
+        let layout = crate::frame::layout(&e.background_state(), e.core.canvas_size());
+        assert_eq!(layout.viewport, (12.0, 8.0));
+    }
+
     /// An Image background remembered from the last session is read from disk once,
     /// when the Background panel first shows it; not on every frame.
     #[test]
