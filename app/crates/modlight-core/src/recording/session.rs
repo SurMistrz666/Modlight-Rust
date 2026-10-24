@@ -584,7 +584,11 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
     let mut final_path = path.clone();
     if params.two_pass && !abort_requested && recorded && path.exists() {
         control.change_state(RecordState::Encoding);
-        final_path = two_pass_encode(&params, &path, &control);
+        let (output, failure) = two_pass_encode(&params, &path, &control);
+        final_path = output;
+        if failure.is_some() {
+            error = failure;
+        }
     }
 
     if abort_requested {
@@ -597,36 +601,49 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
 
     let exists = final_path.exists();
     SessionOutcome {
-        path: (!abort_requested && exists).then_some(final_path),
+        path: (!abort_requested && error.is_none() && exists).then_some(final_path),
         aborted: abort_requested && error.is_none(),
         error,
     }
 }
 
 /// `ProcessTwoPassEncoding`: GIF through the palette filters, anything else re-encoded
-/// with the chosen codec; the lossless first pass is deleted.
+/// with the chosen codec; the lossless first pass is deleted. Returns the finished file
+/// and, when the pass failed, ffmpeg's output for the output box (upstream's
+/// `ShowError`).
 fn two_pass_encode(
     params: &SessionParams,
     input: &Path,
     control: &Arc<RecorderControl>,
-) -> PathBuf {
+) -> (PathBuf, Option<String>) {
     let output = params.two_pass_output.clone();
+    // The first pass and the finished file share a name when the codec's container is
+    // MP4 and the name pattern gives the same name twice (both are named when the
+    // recording starts; upstream named the second at the end). ffmpeg cannot write over
+    // the file it reads, so the first pass moves aside to the session's scratch name.
+    let mut input = input.to_path_buf();
+    if input == output {
+        let aside = append_to_file_name(&input, "-temp");
+        let _ = std::fs::remove_file(&aside);
+        if std::fs::rename(&input, &aside).is_ok() {
+            input = aside;
+        }
+    }
     let listener: Arc<dyn FFmpegListener> = Arc::new(Listener {
         control: control.clone(),
     });
-    let ok = if params.ffmpeg.VideoCodec == FFmpegVideoCodec::gif {
+    let (ok, ffmpeg_output) = if params.ffmpeg.VideoCodec == FFmpegVideoCodec::gif {
         run(
             &params.ffmpeg_path,
-            &gif_encode_args(input, &output, &params.ffmpeg),
+            &gif_encode_args(&input, &output, &params.ffmpeg),
             true,
             listener,
         )
-        .0
     } else {
         let options = ScreenRecordingOptions {
             is_recording: false,
             is_lossless: false,
-            input_path: Some(input.to_path_buf()),
+            input_path: Some(input.clone()),
             output_path: output.clone(),
             fps: params.fps,
             duration: 0.0,
@@ -634,17 +651,19 @@ fn two_pass_encode(
             ..ScreenRecordingOptions::default()
         };
         match options.ffmpeg_commands() {
-            Some(args) => run(&params.ffmpeg_path, &args, true, listener).0,
-            None => false,
+            Some(args) => run(&params.ffmpeg_path, &args, true, listener),
+            None => (false, String::new()),
         }
     };
     if input != output && input.exists() {
-        let _ = std::fs::remove_file(input);
+        let _ = std::fs::remove_file(&input);
     }
-    if !ok {
+    if ok {
+        (output, None)
+    } else {
         log::warn!("The second pass of the recording failed.");
+        (output, Some(ffmpeg_output))
     }
-    output
 }
 
 /// A frame source that repeats one picture (QA, tests): BGRA from an RGBA image.
