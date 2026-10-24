@@ -827,7 +827,7 @@ impl AppState {
                         continue;
                     }
                     ids.push(id);
-                    bytes += row.size.max(0);
+                    bytes = bytes.saturating_add(row.size.max(0));
                     added += 1;
                 }
                 if added == 0 {
@@ -1725,6 +1725,35 @@ pub(crate) mod tests {
         state.space.loaded_once = true;
         state.space_select_view(1);
         assert_eq!(state.config.last_folder_id(), "", "a kind is no folder");
+    }
+
+    /// Emptying the trash counts its bytes from the listing: sizes are the server's
+    /// numbers, and a sum past `i64::MAX` panicked the counting task, so the question
+    /// never came and the Empty trash button stayed disabled for the rest of the session.
+    #[test]
+    fn an_absurd_trash_still_asks_before_emptying() {
+        let big = i64::MAX / 2 + 1;
+        let body = format!(
+            r#"{{"page":1,"perPage":120,"total":2,"items":[{{"id":"a","size":{big}}},{{"id":"b","size":{big}}}]}}"#
+        );
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let host = server(Box::leak(reply.into_bytes().into_boxed_slice()));
+        let mut state = state_on(&host);
+        state.empty_trash();
+        settle(&mut state, |s| s.windows.confirm.is_some());
+        let Some(confirm) = state.windows.confirm.as_ref() else {
+            panic!("no question was asked");
+        };
+        assert!(matches!(
+            &confirm.action,
+            ConfirmAction::EmptyTrash { ids, bytes } if ids.len() == 2 && *bytes == i64::MAX
+        ));
+        assert!(state.emptying_trash, "waiting for the answer");
+        state.confirm_finished(ConfirmOutcome::No);
+        assert!(!state.emptying_trash);
     }
 
     /// Codes are unique on one server only: another deployment can have a file called
