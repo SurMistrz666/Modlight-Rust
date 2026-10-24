@@ -32,7 +32,7 @@ what it did.
 | Culture and UI language | `GetUserDefaultLocaleName`, `GetUserPreferredUILanguages` | |
 | Client-area animations | `SPI_GETCLIENTAREAANIMATION` | |
 | Network availability | `GetAdaptersAddresses`: an adapter that is up, not loopback or a tunnel, with a unicast address | |
-| Clipboard | arboard for text and file lists; pictures read here as the "PNG" format, else `CF_DIBV5`/`CF_DIB` turned into a BMP file, and decoded under the app's limits | Chromium's 32-bit `BI_RGB` with an alpha mask keeps its transparency; all-zero alpha counts as opaque. |
+| Clipboard | arboard for text and file lists; pictures read here as the "PNG" format, else `CF_DIBV5`/`CF_DIB` turned into a BMP file, and decoded under the app's limits. Asked for in upstream's order (`ClipboardUpload`): a picture, then text, then a file list | A Mac asks for the file list first. Chromium's 32-bit `BI_RGB` with an alpha mask keeps its transparency; all-zero alpha counts as opaque. |
 | Ctrl+V on the main window | A `WH_KEYBOARD` hook of the UI thread | Also gives the shortcuts page Print Screen, Scroll Lock, Pause, the media keys and the Win modifier, which egui never reports. |
 | Task sounds | `PlaySoundW` with upstream's WAV files | |
 | Global hotkeys (`RegisterHotKey`) | `global-hotkey` (which calls `RegisterHotKey`); keys global-hotkey has no code for (Oem8, the ABNT keys) through `RegisterHotKey` directly | WinForms key codes are virtual-key codes; Ctrl, Shift, Alt and Win are themselves, and the defaults are upstream's Print Screen set. |
