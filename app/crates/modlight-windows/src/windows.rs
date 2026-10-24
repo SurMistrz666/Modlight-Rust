@@ -66,6 +66,25 @@ pub fn visible_frame() -> Option<(f32, f32, f32, f32)> {
     ))
 }
 
+/// Every monitor's working area, in the points [`visible_frame`] uses, the primary
+/// monitor first.
+pub fn visible_frames() -> Vec<(f32, f32, f32, f32)> {
+    let scale = primary_scale();
+    let mut list = monitors();
+    list.sort_by_key(|monitor| !monitor.primary);
+    list.into_iter()
+        .map(|monitor| {
+            let area = rect_to_points(monitor.work, scale);
+            (
+                area.x as f32,
+                area.y as f32,
+                area.width as f32,
+                area.height as f32,
+            )
+        })
+        .collect()
+}
+
 /// `CaptureHelpers.IsActiveWindowFullscreen`: the foreground window (not the desktop)
 /// covers the whole monitor it is mostly on.
 pub fn active_window_fullscreen() -> bool {

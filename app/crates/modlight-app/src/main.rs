@@ -313,20 +313,8 @@ fn main() -> ExitCode {
         .join(modlight_core::config::APPLICATION_CONFIG_FILE)
         .exists();
     let config = AppConfig::load(&profile);
-    // `CleanupManager`: old log files, when asked for.
-    if config.get("AutoCleanupLogFiles").and_then(|v| v.as_bool()) == Some(true) {
-        let keep = config
-            .get("CleanupKeepFileCount")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(10)
-            .max(0) as usize;
-        modlight_core::debug_log::cleanup_folder(
-            &profile.join(modlight_core::debug_log::LOGS_FOLDER),
-            "Modlight-Log-",
-            ".txt",
-            keep,
-        );
-    }
+    // `CleanupManager`: old settings backups and log files, when asked for.
+    modlight_core::debug_log::cleanup(&profile, &config);
     let credentials: Box<dyn CredentialStore> = if qa_mode {
         Box::new(FileCredentialStore::new(profile.join("credentials")))
     } else {
@@ -376,16 +364,25 @@ fn main() -> ExitCode {
     {
         viewport = viewport.with_decorations(false);
     }
-    let remembered_size = bounds
-        .size
-        .filter(|_| bounds.remember_size)
-        .map(|(w, h)| vec2(w as f32, h as f32).max(MAIN_MIN_SIZE));
+    // `RestoreWindowBounds`: the remembered size and place, on a screen that exists (the
+    // screens are asked for only when there is something to put on one).
+    let screens = if bounds.size.is_some() || bounds.position.is_some() {
+        platform::system::visible_frames()
+    } else {
+        Vec::new()
+    };
+    let (remembered_size, remembered) = modlight_core::config::restore_main_window(
+        &bounds,
+        (MAIN_SIZE.x, MAIN_SIZE.y),
+        (MAIN_MIN_SIZE.x, MAIN_MIN_SIZE.y),
+        &screens,
+    );
+    let remembered_size = remembered_size.map(|(w, h)| vec2(w, h));
     if let Some(size) = remembered_size {
         viewport = viewport.with_inner_size(size);
     }
-    let remembered = bounds.position.filter(|_| bounds.remember_position);
     if let Some((x, y)) = remembered {
-        viewport = viewport.with_position(egui::pos2(x as f32, y as f32));
+        viewport = viewport.with_position(egui::pos2(x, y));
     }
     // `WindowStartupLocation="CenterScreen"`.
     #[cfg(windows)]

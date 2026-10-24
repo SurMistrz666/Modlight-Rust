@@ -1995,11 +1995,22 @@ impl crate::state::AppState {
         self.start_hotkeys();
     }
 
-    /// `SettingManager.LoadAllSettings` after an import or a reset.
-    fn reload_settings_files(&mut self) {
-        self.config = modlight_core::config::AppConfig::load(&self.env.profile);
+    /// `SettingManager.LoadAllSettings` after an import, or after a reset, which loads
+    /// without fallback support (the backups the saves kept hold what was just reset)
+    /// and writes every file at once (`SaveAllSettings`), so the next start finds the
+    /// defaults rather than falling back to those backups.
+    fn reload_settings_files(&mut self, reset: bool) {
+        self.config = modlight_core::config::AppConfig::load_with(&self.env.profile, !reset);
+        // My space reads its page size only when it starts: the restored one (the default
+        // after a reset) is taken before anything saves the one on screen over it.
+        let page_size = self.config.page_size();
         self.apply_settings_document(None);
-        self.save_config();
+        self.space_set_page_size(page_size);
+        if reset {
+            self.save_hotkeys();
+        } else {
+            self.save_config();
+        }
     }
 
     fn app_status(&mut self, text: String, busy: bool) {
@@ -2193,6 +2204,12 @@ impl crate::state::AppState {
         }
     }
 
+    /// What `ExportAsync` runs first: `SaveAllSettings`, the hotkeys file with the rest
+    /// (it is written only once the hotkeys change, so a profile may have none yet).
+    fn save_for_export(&mut self) {
+        self.save_hotkeys();
+    }
+
     /// `OnExportClick` + `ExportAsync`.
     fn export_backup(&mut self) {
         if !self.dialogs_allowed() {
@@ -2219,7 +2236,7 @@ impl crate::state::AppState {
         else {
             return;
         };
-        self.save_config();
+        self.save_for_export();
         self.app_status(
             t(s::ApplicationSettingsWindow_ExportingBackup).to_string(),
             true,
@@ -2269,7 +2286,7 @@ impl crate::state::AppState {
             let result = modlight_core::backup::import(&path, &profile);
             move |state: &mut crate::state::AppState, _ctx: &egui::Context| match result {
                 Ok(report) => {
-                    state.reload_settings_files();
+                    state.reload_settings_files(false);
                     let mut text = format(
                         t(s::ApplicationSettingsWindow_BackupImportedFrom),
                         &[Arg::from(path.display().to_string())],
@@ -2307,7 +2324,7 @@ impl crate::state::AppState {
     pub fn reset_settings_confirmed(&mut self) {
         match modlight_core::backup::reset(&self.env.profile) {
             Ok(()) => {
-                self.reload_settings_files();
+                self.reload_settings_files(true);
                 self.app_status(
                     t(s::ApplicationSettingsWindow_SettingsReset).to_string(),
                     false,
@@ -2332,6 +2349,133 @@ mod tests {
         assert!(entries.len() > 2);
         assert_eq!(tokens[0], "$result");
         assert!(tokens.contains(&"%y".to_string()));
+    }
+
+    /// A state over a personal folder of its own, as the QA app runs (no Keychain, no
+    /// system hotkeys).
+    fn profile_state(profile: &std::path::Path) -> crate::state::AppState {
+        use modlight_core::account::{AccountStore, FileCredentialStore};
+        let env = crate::state::Env {
+            profile: profile.to_path_buf(),
+            qa: true,
+            frozen_now: None,
+            machine: "QA Mac".into(),
+            system_language: "en".into(),
+            system_locale: "en_US".into(),
+            reduce_motion: true,
+            system_dark: Some(true),
+        };
+        let account = AccountStore::load(
+            profile,
+            Box::new(FileCredentialStore::new(profile.join("credentials"))),
+        );
+        let config = modlight_core::config::AppConfig::load(profile);
+        crate::state::AppState::new(env, config, account)
+    }
+
+    /// `SettingManager.ResetSettings` loads without fallback support: the settings that
+    /// were just deleted must not come back from the copy the last save kept.
+    #[test]
+    fn a_reset_does_not_come_back_from_the_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path();
+        std::fs::write(
+            profile.join(modlight_core::config::APPLICATION_CONFIG_FILE),
+            r#"{"ShowTray":false,"UploadLimit":3}"#,
+        )
+        .unwrap();
+        // No hotkeys at all (every default one removed).
+        std::fs::write(
+            profile.join(modlight_core::config::HOTKEYS_CONFIG_FILE),
+            r#"{"Hotkeys":[]}"#,
+        )
+        .unwrap();
+        let mut state = profile_state(profile);
+        state.start_hotkeys();
+        assert!(!state.config.show_tray());
+        assert!(state.captures.hotkeys.hotkeys.is_empty());
+        // Two saves: the second keeps the first in Backup.
+        state.save_hotkeys();
+        state.save_hotkeys();
+        state.reset_settings_confirmed();
+        let defaults = modlight_core::hotkeys::default_hotkeys().len();
+        assert!(state.config.show_tray(), "the default after a reset");
+        assert_eq!(state.config.get("UploadLimit"), None);
+        assert_eq!(state.captures.hotkeys.hotkeys.len(), defaults);
+        // What the next start reads: the defaults, as upstream's SaveAllSettings left
+        // them, not the backups of what was reset.
+        let again = modlight_core::config::AppConfig::load(profile);
+        assert!(again.show_tray());
+        assert_eq!(again.get("UploadLimit"), None);
+        assert_eq!(modlight_core::hotkeys::load(&again).len(), defaults);
+    }
+
+    /// After an import (`LoadAllSettings`) the restored file is what the app runs with
+    /// and what stays on disk: the page size My space was showing must not be written
+    /// over the one the backup brought, nor survive a reset.
+    #[test]
+    fn an_import_keeps_the_page_size_the_backup_brought() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path();
+        let file = profile.join(modlight_core::config::APPLICATION_CONFIG_FILE);
+        std::fs::write(&file, r#"{"ModlightPageSize":120}"#).unwrap();
+        let mut state = profile_state(profile);
+        state.space.page_size = 120;
+        // What backup::import wrote.
+        std::fs::write(&file, r#"{"ModlightPageSize":30}"#).unwrap();
+        state.reload_settings_files(false);
+        assert_eq!(state.space.page_size, 30);
+        assert_eq!(
+            modlight_core::config::AppConfig::load(profile).page_size(),
+            30
+        );
+        // A reset brings back the default.
+        modlight_core::backup::reset(profile).unwrap();
+        state.reload_settings_files(true);
+        assert_eq!(state.space.page_size, 120);
+        assert_eq!(
+            modlight_core::config::AppConfig::load(profile).page_size(),
+            120
+        );
+    }
+
+    /// `ExportAsync` saves every settings file first (`SaveAllSettings`), so a backup
+    /// carries the hotkeys this installation runs with even when they were never changed
+    /// (no `HotkeysConfig.json` yet): restored elsewhere, they replace that one's.
+    #[test]
+    fn an_export_carries_the_hotkeys_even_when_never_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        let mut state = profile_state(&profile);
+        state.start_hotkeys();
+        assert!(
+            !profile
+                .join(modlight_core::config::HOTKEYS_CONFIG_FILE)
+                .exists()
+        );
+        state.save_for_export();
+        let archive = dir.path().join("backup.sxb");
+        modlight_core::backup::export(&profile, &archive, true, false).unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(
+            elsewhere.join(modlight_core::config::HOTKEYS_CONFIG_FILE),
+            r#"{"Hotkeys":[]}"#,
+        )
+        .unwrap();
+        let report = modlight_core::backup::import(&archive, &elsewhere).unwrap();
+        assert!(
+            report
+                .written
+                .contains(&modlight_core::config::HOTKEYS_CONFIG_FILE.to_string()),
+            "{report:?}"
+        );
+        let restored = modlight_core::config::AppConfig::load(&elsewhere);
+        assert_eq!(
+            modlight_core::hotkeys::load(&restored).len(),
+            modlight_core::hotkeys::default_hotkeys().len()
+        );
     }
 
     #[test]
