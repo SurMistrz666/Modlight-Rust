@@ -1449,10 +1449,7 @@ mod tests {
         let mut asks = Vec::new();
         let mut events = events;
         events.insert(0, egui::Event::ModifiersChanged(modifiers));
-        for events in [
-            vec![egui::Event::PointerMoved(pos2(150.0, 150.0))],
-            events,
-        ] {
+        for events in [vec![egui::Event::PointerMoved(pos2(150.0, 150.0))], events] {
             let input = egui::RawInput {
                 screen_rect: Some(screen),
                 events,
