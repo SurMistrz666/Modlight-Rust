@@ -116,6 +116,11 @@ impl AppState {
                         ],
                     )),
                 };
+                // Checked again: the diagnosis can change the role, and the tab is then
+                // dropped or read anew (`apply_admin_role`); this verdict is not its.
+                if state.server_tab.generation != generation {
+                    return;
+                }
                 state.server_tab.state = tab_state;
             }) as Box<dyn FnOnce(&mut AppState, &egui::Context) + Send>
         });
@@ -965,5 +970,66 @@ mod tests {
         me(&mut app, "kim", "admin");
         assert_eq!(app.server_tab.state, AdminState::Idle);
         assert!(app.server_tab.read_at.is_none());
+    }
+
+    /// `DiagnoseNotFoundAsync`: the report answers 404 and `/api/me` says the role is
+    /// gone. The account loses the tab, and the verdict is not written into the tab it
+    /// has just left (upstream's `Owns` check after the diagnosis).
+    #[test]
+    fn a_role_lost_while_the_report_was_read_takes_the_tab_away() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        runtime.spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                let (status, body) = if head.starts_with("GET /api/me ") {
+                    ("200 OK", r#"{"tag":"alex","role":"user"}"#)
+                } else {
+                    ("404 Not Found", "{}")
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let ctx = egui::Context::default();
+        let mut app = state(&Look::default(), true);
+        app.account = AccountStore::in_memory(
+            StoredAccount {
+                host,
+                tag: "alex".into(),
+                ..StoredAccount::default()
+            },
+            "alex-token",
+        );
+        me(&mut app, "alex", "admin");
+        app.tab = Tab::Admin;
+        app.server_tab_refresh();
+        assert_eq!(app.server_tab.state, AdminState::Loading);
+
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while app.is_admin() && Instant::now() < deadline {
+            for completion in app.rt.drain() {
+                completion(&mut app, &ctx);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!app.is_admin());
+        assert_eq!(app.tab, Tab::MySpace);
+        assert_eq!(
+            app.server_tab.state,
+            AdminState::Idle,
+            "nothing is written into the tab just left"
+        );
     }
 }
