@@ -478,6 +478,9 @@ pub struct UploadSettings {
     pub modlight_folder_id: Option<String>,
     pub modlight_folder_name: Option<String>,
     pub use_custom_time_zone: bool,
+    /// `CustomTimeZone`, the `TimeZoneInfo` as the file holds it (read through
+    /// `CustomTimeZone::from_time_zone_info`).
+    pub custom_time_zone: Option<Value>,
     pub name_format_pattern: String,
     pub name_format_pattern_active_window: String,
     pub file_upload_use_name_pattern: bool,
@@ -503,6 +506,7 @@ impl Default for UploadSettings {
             modlight_folder_id: None,
             modlight_folder_name: None,
             use_custom_time_zone: false,
+            custom_time_zone: None,
             name_format_pattern: "%ra{10}".into(),
             name_format_pattern_active_window: "%pn_%ra{10}".into(),
             file_upload_use_name_pattern: false,
