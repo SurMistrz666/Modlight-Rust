@@ -128,6 +128,25 @@ impl AppState {
             ..AdminTab::default()
         };
     }
+
+    /// `MainWindow.ApplyAdminRole`: the answer about who administers this server changed
+    /// (another account, a role given or taken away, a sign-out).
+    ///
+    /// An administrator looking at the tab gets it read again: the numbers on screen are
+    /// the previous account's, or another server's. Otherwise the report is dropped (and
+    /// not kept for a later visit, where it could still look fresh), and when the role is
+    /// gone the window leaves the tab, whose button has just disappeared.
+    pub fn apply_admin_role(&mut self) {
+        let admin = self.is_admin();
+        if admin && self.tab == crate::state::Tab::Admin {
+            self.server_tab_refresh();
+            return;
+        }
+        self.server_tab_forget();
+        if !admin && self.tab == crate::state::Tab::Admin {
+            self.tab = crate::state::Tab::MySpace;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------- drawing
@@ -857,5 +876,94 @@ fn files(ui: &mut Ui, colors: &Colors, rows: &[FileRow]) {
             );
         });
         ui.add_space(-3.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use modlight_api::AccountInfo;
+    use modlight_core::account::{AccountStore, StoredAccount};
+
+    use super::*;
+    use crate::qa::{Look, state};
+    use crate::state::Tab;
+
+    /// Signed in to a server that is a closed port on this machine: a report asked for
+    /// fails at once and nothing leaves the machine.
+    fn signed_in(app: &mut AppState, tag: &str) {
+        app.account = AccountStore::in_memory(
+            StoredAccount {
+                host: "http://127.0.0.1:9".into(),
+                tag: tag.into(),
+                ..StoredAccount::default()
+            },
+            &format!("{tag}-token"),
+        );
+    }
+
+    fn me(app: &mut AppState, tag: &str, role: &str) {
+        let credential = app.credential().unwrap();
+        let info = AccountInfo {
+            tag: Some(tag.into()),
+            role: Some(role.into()),
+            ..Default::default()
+        };
+        app.note_account(&credential, &info);
+    }
+
+    fn report_open(app: &mut AppState) {
+        app.tab = Tab::Admin;
+        app.server_tab.state = AdminState::Ready;
+        app.server_tab.host = "http://127.0.0.1:9".into();
+        app.server_tab.read_at = Some(Instant::now());
+    }
+
+    /// `MainWindow.ApplyAdminRole`: the tab and its report follow what the server says
+    /// about who is signed in.
+    #[test]
+    fn the_server_tab_follows_the_role() {
+        // Signed out with the tab open: the report goes and so does the tab.
+        let mut app = state(&Look::default(), true);
+        signed_in(&mut app, "alex");
+        me(&mut app, "alex", "admin");
+        assert!(app.is_admin());
+        report_open(&mut app);
+        app.sign_out();
+        assert_eq!(
+            app.tab,
+            Tab::MySpace,
+            "no tab left on screen without its button"
+        );
+        assert_eq!(app.server_tab.state, AdminState::Idle);
+
+        // Demoted on the website while looking at the report.
+        let mut app = state(&Look::default(), true);
+        signed_in(&mut app, "alex");
+        me(&mut app, "alex", "admin");
+        report_open(&mut app);
+        me(&mut app, "alex", "user");
+        assert_eq!(app.tab, Tab::MySpace);
+        assert_eq!(app.server_tab.state, AdminState::Idle);
+
+        // Another administrator signs in with the tab open: the report is read again.
+        let mut app = state(&Look::default(), true);
+        signed_in(&mut app, "alex");
+        me(&mut app, "alex", "admin");
+        report_open(&mut app);
+        signed_in(&mut app, "sam");
+        me(&mut app, "sam", "admin");
+        assert_eq!(app.tab, Tab::Admin);
+        assert_eq!(app.server_tab.state, AdminState::Loading);
+
+        // ... and with the tab closed, the other account's report is not kept for later.
+        let mut app = state(&Look::default(), true);
+        signed_in(&mut app, "alex");
+        me(&mut app, "alex", "admin");
+        report_open(&mut app);
+        app.tab = Tab::MySpace;
+        signed_in(&mut app, "kim");
+        me(&mut app, "kim", "admin");
+        assert_eq!(app.server_tab.state, AdminState::Idle);
+        assert!(app.server_tab.read_at.is_none());
     }
 }
