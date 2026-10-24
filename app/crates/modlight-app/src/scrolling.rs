@@ -711,7 +711,17 @@ pub fn action(state: &mut AppState, action: ScrollingAction) {
             if let Some(window) = state.scrolling.as_mut()
                 && let Some(options) = window.editing.take()
             {
-                window.options = options;
+                window.options = options.clone();
+                // `OnSaveOptionsClick` writes `CaptureSettingsReference
+                // .ScrollingCaptureOptions`: the defaults, or the hotkey's own capture
+                // settings.
+                let home = crate::tools::jobs::OptionsHome::of_capture(&window.settings);
+                window.settings.capture_settings.scrolling_capture_options = options.clone();
+                state.save_task_member(
+                    &home,
+                    &["CaptureSettings", "ScrollingCaptureOptions"],
+                    &options,
+                );
             }
         }
         ScrollingAction::Help => {}
@@ -726,4 +736,90 @@ impl Scroller for FakeScroller {
     fn activate(&self, _window: Option<&WindowInfo>) {}
     fn scroll_to_top(&self) {}
     fn scroll(&self, _method: ScrollMethod, _amount: i64) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use modlight_core::hotkeys::{FakeBackend, HotkeyManager, HotkeySettings, HotkeyType};
+
+    fn edit_and_save(state: &mut AppState, delay: i64, method: ScrollMethod) {
+        action(state, ScrollingAction::Options);
+        let editing = state.scrolling.as_mut().unwrap().editing.as_mut().unwrap();
+        editing.scroll_delay = delay;
+        editing.scroll_method = method;
+        action(state, ScrollingAction::SaveOptions);
+        let window = state.scrolling.as_ref().unwrap();
+        assert!(window.editing.is_none());
+        assert_eq!(window.options.scroll_delay, delay);
+    }
+
+    /// "OK" in the options writes upstream's `CaptureSettingsReference
+    /// .ScrollingCaptureOptions`: the settings the window was opened with keep them, and
+    /// the next scrolling capture starts with them.
+    #[test]
+    fn saved_options_are_kept_in_the_settings() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.scrolling = Some(ScrollingWindow::new(state.default_task_settings()));
+        edit_and_save(&mut state, 900, ScrollMethod::PageDown);
+        let saved = state
+            .default_task_settings()
+            .capture_settings
+            .scrolling_capture_options;
+        assert_eq!(saved.scroll_delay, 900);
+        assert_eq!(saved.scroll_method, ScrollMethod::PageDown);
+        assert_eq!(
+            saved.start_delay,
+            ScrollingCaptureOptions::default().start_delay
+        );
+        // Cancel keeps what was saved.
+        action(&mut state, ScrollingAction::Options);
+        state
+            .scrolling
+            .as_mut()
+            .unwrap()
+            .editing
+            .as_mut()
+            .unwrap()
+            .scroll_delay = 100;
+        action(&mut state, ScrollingAction::CancelOptions);
+        assert_eq!(
+            state
+                .default_task_settings()
+                .capture_settings
+                .scrolling_capture_options
+                .scroll_delay,
+            900
+        );
+
+        // A hotkey with capture settings of its own keeps them in its own.
+        let task = serde_json::json!({
+            "Job": "ScrollingCapture",
+            "UseDefaultCaptureSettings": false,
+            "CaptureSettings": { "ShowCursor": false }
+        });
+        let hotkey = HotkeySettings {
+            task,
+            ..HotkeySettings::new(HotkeyType::ScrollingCapture, 0)
+        };
+        state.captures.hotkeys =
+            HotkeyManager::new(Box::new(FakeBackend::default()), vec![hotkey], false);
+        let defaults = state.config.get("DefaultTaskSettings").cloned().unwrap();
+        let settings = state.captures.hotkeys.hotkeys[0].task_settings(&defaults);
+        state.scrolling = Some(ScrollingWindow::new(settings));
+        edit_and_save(&mut state, 1500, ScrollMethod::DownArrow);
+        let own =
+            &state.captures.hotkeys.hotkeys[0].task["CaptureSettings"]["ScrollingCaptureOptions"];
+        assert_eq!(own["ScrollDelay"], 1500);
+        assert_eq!(own["ScrollMethod"], "DownArrow");
+        assert_eq!(
+            state
+                .default_task_settings()
+                .capture_settings
+                .scrolling_capture_options
+                .scroll_delay,
+            900,
+            "the defaults stay as they were"
+        );
+    }
 }

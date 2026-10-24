@@ -165,8 +165,8 @@ impl RegionCaptureOptions {
     }
 }
 
-/// `ScrollingCaptureOptions`.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+/// `ScrollingCaptureOptions` (written back by the scrolling capture window's options).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase", default)]
 pub struct ScrollingCaptureOptions {
     pub start_delay: i64,
