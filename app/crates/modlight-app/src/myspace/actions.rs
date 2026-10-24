@@ -1143,54 +1143,58 @@ impl AppState {
         if link.is_empty() {
             return;
         }
+        let Some(to) = convert_to else {
+            self.save_download(credential, file.name, link, suggested);
+            return;
+        };
+        // The dry run first (`checkFirst`): a refusal arrives as a header on a response
+        // already taken for a download, so it is asked for before anything else, and a
+        // refused conversion never gets as far as the save panel.
+        let api = self.api.clone();
+        self.rt.spawn(async move {
+            let verdict = api.check_conversion(&credential, &link).await;
+            Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
+                if verdict.ok {
+                    state.save_download(credential, file.name, link, suggested);
+                    return;
+                }
+                let title = format(
+                    t(s::MySpace_ConvertRefusedTitle),
+                    &[Arg::from(to.to_uppercase())],
+                );
+                state.notice(
+                    icons::TRIANGLE_ALERT,
+                    &title,
+                    convert::refusal_text(&verdict.reason),
+                    true,
+                );
+            })
+        });
+    }
+
+    /// Ask where, then pull `link` down there. The destination is replaced only by a
+    /// whole download (`Api::download_to_file`): a failure leaves it as it was.
+    fn save_download(&mut self, credential: Credential, name: String, link: String, suggested: String) {
         let Some(path) = self.choose_save_path(&suggested) else {
             return;
         };
-        let check_first = convert_to.is_some();
-        let api = self.api.clone();
-        let name = file.name.clone();
-        let extension = convert_to.clone().unwrap_or_default().to_uppercase();
-        self.rt.spawn(async move {
-            if check_first {
-                let verdict = api.check_conversion(&credential, &link).await;
-                if !verdict.ok {
-                    return Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
-                        let title =
-                            format(t(s::MySpace_ConvertRefusedTitle), &[Arg::from(extension)]);
-                        state.notice(
-                            icons::TRIANGLE_ALERT,
-                            &title,
-                            convert::refusal_text(&verdict.reason),
-                            true,
-                        );
-                    }) as crate::runtime::Completion;
-                }
-            }
-            let started = name.clone();
-            let result = api.download_to_file(&credential, &link, &path).await;
-            if result.is_err() {
-                let _ = tokio::fs::remove_file(&path).await;
-            }
-            Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
-                let _ = started;
-                match result {
-                    Ok(()) => {
-                        let saved = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        let text = format(t(s::MySpace_DownloadSaved), &[Arg::from(saved)]);
-                        state.notice(icons::CIRCLE_CHECK, &text, "", false);
-                    }
-                    Err(error) => state.report_failure(&error, &credential.host),
-                }
-            }) as crate::runtime::Completion
-        });
-        let text = format(
-            t(s::MySpace_DownloadStarted),
-            &[Arg::from(file.name.as_str())],
-        );
+        let text = format(t(s::MySpace_DownloadStarted), &[Arg::from(name.as_str())]);
         self.notice(icons::DOWNLOAD, &text, "", false);
+        let api = self.api.clone();
+        self.rt.spawn(async move {
+            let result = api.download_to_file(&credential, &link, &path).await;
+            Box::new(move |state: &mut AppState, _ctx: &egui::Context| match result {
+                Ok(()) => {
+                    let saved = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let text = format(t(s::MySpace_DownloadSaved), &[Arg::from(saved)]);
+                    state.notice(icons::CIRCLE_CHECK, &text, "", false);
+                }
+                Err(error) => state.report_failure(&error, &credential.host),
+            })
+        });
     }
 
     /// Where a download goes: the save panel, or (QA) the profile's Downloads folder,
@@ -1452,10 +1456,15 @@ mod tests {
     /// A signed-in state whose server refuses connections at once (nothing listens on
     /// port 1), so a listing the test starts never reaches anything.
     pub(crate) fn offline_state() -> AppState {
+        state_on("http://127.0.0.1:1")
+    }
+
+    /// A signed-in QA state whose account lives on `host`.
+    pub(crate) fn state_on(host: &str) -> AppState {
         let mut state = crate::qa::state(&crate::qa::Look::default(), true);
         state.account = AccountStore::in_memory(
             StoredAccount {
-                host: "http://127.0.0.1:1".into(),
+                host: host.into(),
                 tag: "alex".into(),
                 ..StoredAccount::default()
             },
@@ -1463,6 +1472,40 @@ mod tests {
         );
         state.space.has_account = true;
         state
+    }
+
+    /// A server on 127.0.0.1 answering every request with `reply` as is.
+    fn server(reply: &'static [u8]) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut head = Vec::new();
+                let mut buffer = [0u8; 4096];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&buffer[..n]),
+                    }
+                }
+                let _ = stream.write_all(reply);
+            }
+        });
+        host
+    }
+
+    /// Run completions until `done` or ten seconds.
+    fn settle(state: &mut AppState, done: impl Fn(&AppState) -> bool) {
+        let ctx = egui::Context::default();
+        let started = std::time::Instant::now();
+        while !done(state) && started.elapsed().as_secs() < 10 {
+            for completion in state.rt.drain() {
+                completion(state, &ctx);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     pub(crate) fn row(id: &str, folder: Option<&str>) -> Upload {
@@ -1545,5 +1588,81 @@ mod tests {
         );
         assert!(state.space.is_busy, "the folder's page is asked for again");
         assert_eq!(state.space.page, 1);
+    }
+
+    /// A download the server refuses (404) never wrote a byte: the file the person
+    /// agreed to replace is still theirs. It used to be deleted as a "part-written" file.
+    #[test]
+    fn a_refused_download_keeps_the_file_it_would_have_replaced() {
+        let host = server(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let mut state = state_on(&host);
+        let profile = tempfile::tempdir().unwrap();
+        state.env.profile = profile.path().to_path_buf();
+        listing(&mut state, 1, 30, 1, &["a"]);
+        let downloads = profile.path().join("Downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        std::fs::write(downloads.join("a.png"), b"my older a.png").unwrap();
+
+        state.download("a", None);
+        settle(&mut state, |s| s.toasts.iter().any(|t| t.failed));
+        assert!(state.toasts.iter().any(|t| t.failed), "the refusal is said");
+        assert_eq!(
+            std::fs::read(downloads.join("a.png")).unwrap(),
+            b"my older a.png"
+        );
+    }
+
+    /// `SaveAsync(checkFirst: true)`: the conversion is asked about BEFORE the save
+    /// panel, so a refusal never gets as far as asking where to put the file, and no
+    /// "download started" is said for a download that does not start.
+    #[test]
+    fn a_refused_conversion_never_asks_where_to_save() {
+        let host = server(
+            b"HTTP/1.1 415 Unsupported Media Type\r\nX-Convert-Refused: no-audio\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        let mut state = state_on(&host);
+        let profile = tempfile::tempdir().unwrap();
+        state.env.profile = profile.path().to_path_buf();
+        listing(&mut state, 1, 30, 1, &["a"]);
+        state.space.files[0].file.row.kind = Some("video".into());
+
+        state.download("a", Some("mp3".into()));
+        let started = format(t(s::MySpace_DownloadStarted), &[Arg::from("a.png")]);
+        assert!(
+            state.toasts.iter().all(|t| t.title != started),
+            "nothing has started yet"
+        );
+        settle(&mut state, |s| s.toasts.iter().any(|t| t.failed));
+        let refusal = state.toasts.iter().find(|t| t.failed).expect("the refusal");
+        assert_eq!(
+            refusal.title,
+            format(t(s::MySpace_ConvertRefusedTitle), &[Arg::from("MP3")])
+        );
+        assert_eq!(refusal.detail, convert::refusal_text("no-audio"));
+        assert!(state.toasts.iter().all(|t| t.title != started));
+        assert!(
+            !profile.path().join("Downloads").exists(),
+            "no destination was asked for"
+        );
+    }
+
+    /// The conversion the server would make is then saved under the stem and the new
+    /// extension, and said so.
+    #[test]
+    fn an_accepted_conversion_is_saved() {
+        let host = server(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nconverted");
+        let mut state = state_on(&host);
+        let profile = tempfile::tempdir().unwrap();
+        state.env.profile = profile.path().to_path_buf();
+        listing(&mut state, 1, 30, 1, &["a"]);
+
+        state.download("a", Some("jpg".into()));
+        let saved = format(t(s::MySpace_DownloadSaved), &[Arg::from("a.jpg")]);
+        settle(&mut state, |s| s.toasts.iter().any(|t| t.title == saved));
+        assert!(state.toasts.iter().all(|t| !t.failed));
+        assert_eq!(
+            std::fs::read(profile.path().join("Downloads").join("a.jpg")).unwrap(),
+            b"converted"
+        );
     }
 }
