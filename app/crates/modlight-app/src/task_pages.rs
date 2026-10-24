@@ -2020,6 +2020,16 @@ fn tools(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
     );
 }
 
+/// The action list with one action switched on or off (`ExternalProgram.IsActive`). An
+/// entry that is not an action (a hand-edited file) stays as it is.
+fn set_action_active(programs: &[Value], index: usize, active: bool) -> Vec<Value> {
+    let mut list = programs.to_vec();
+    if let Some(Value::Object(program)) = list.get_mut(index) {
+        program.insert("IsActive".into(), json!(active));
+    }
+    list
+}
+
 fn actions(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
     let colors = ctx.colors;
     override_group(
@@ -2089,9 +2099,10 @@ fn actions(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
             ctx.state.selected_action = Some(index);
         }
         if let Some((index, value)) = toggled {
-            let mut list = programs.clone();
-            list[index]["IsActive"] = json!(value);
-            b.set(&["ExternalPrograms"], Value::Array(list));
+            b.set(
+                &["ExternalPrograms"],
+                Value::Array(set_action_active(&programs, index, value)),
+            );
         }
         ui.horizontal(|ui| {
             // `ButtonRow`: 6 apart.
@@ -3424,6 +3435,27 @@ mod tests {
         }
         *document = root;
         pages
+    }
+
+    /// Switching an action on or off in a list a hand-edited file broke (an entry that is
+    /// not an object) must not panic: `list[index]["IsActive"] = ...` did.
+    #[test]
+    fn a_broken_action_entry_does_not_crash_its_check_box() {
+        let programs = vec![
+            serde_json::json!("oops"),
+            serde_json::json!({"Name": "Optimise", "IsActive": false, "Extra": 1}),
+            serde_json::json!(null),
+        ];
+        let list = set_action_active(&programs, 0, true);
+        assert_eq!(list[0], serde_json::json!("oops"));
+        let list = set_action_active(&list, 1, true);
+        assert_eq!(
+            list[1],
+            serde_json::json!({"Name": "Optimise", "IsActive": true, "Extra": 1})
+        );
+        let list = set_action_active(&list, 2, true);
+        assert_eq!(list[2], serde_json::json!(null));
+        assert_eq!(set_action_active(&list, 9, true), list);
     }
 
     /// The file names page previews names the way the task names them: with "Use custom
