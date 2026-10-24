@@ -40,6 +40,8 @@ pub struct EditorSession {
     pub closed: bool,
     /// The title last given to the window.
     title: String,
+    /// A save of this frame's requests could not write the picture.
+    save_failed: bool,
 }
 
 /// The editor windows and their counter.
@@ -204,6 +206,7 @@ impl AppState {
             finish: Some(finish),
             closed: false,
             title: String::new(),
+            save_failed: false,
         });
     }
 
@@ -267,8 +270,15 @@ impl AppState {
         else {
             return;
         };
-        let requests = self.windows.editors.sessions[index].editor.take_requests();
+        let session = &mut self.windows.editors.sessions[index];
+        let requests = session.editor.take_requests();
+        session.save_failed = false;
         for request in requests {
+            // The exit confirmation's "Yes" saves, then closes: not over a picture the
+            // save could not write (upstream closed after its error message).
+            if request == Request::Close && self.session(key).is_some_and(|s| s.save_failed) {
+                continue;
+            }
             self.editor_request(key, request);
         }
     }
@@ -372,8 +382,27 @@ impl AppState {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 let bytes = encode_for_path(&image, &path, &settings);
-                if let Err(error) = std::fs::write(&path, bytes) {
+                let written = if bytes.is_empty() {
+                    Err("the picture could not be encoded".to_string())
+                } else {
+                    std::fs::write(&path, bytes).map_err(|e| e.to_string())
+                };
+                if let Err(error) = written {
                     log::warn!("Modlight: the edited image could not be saved: {error}");
+                    // `ImageHelpers.SaveImage`: `e.ShowError()`.
+                    self.uploads.windows.messages.push_back(
+                        crate::dialogs::message::MessageBox::new(
+                            &format!(
+                                "Modlight - {}",
+                                modlight_core::l10n::t(modlight_core::l10n::s::Error)
+                            ),
+                            &format!("{}\n\n{error}", path.display()),
+                            modlight_core::tasks::host::MessageIcon::Error,
+                        ),
+                    );
+                    if let Some(s) = self.session(key) {
+                        s.save_failed = true;
+                    }
                     return;
                 }
                 let text = path.to_string_lossy().into_owned();
@@ -895,6 +924,33 @@ mod tests {
             );
             assert!(session.editor.take_requests().contains(&Request::Close));
         }
+    }
+
+    /// A save that fails says so (`ImageHelpers.SaveImage` shows the error), and the exit
+    /// confirmation's "Yes" (save, then close) leaves the editor open instead of closing
+    /// over the unsaved picture.
+    #[test]
+    fn a_failed_save_says_so_and_keeps_the_editor_open() {
+        let image = RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]));
+        let (mut state, key) = editor_state(Some(image), false);
+        let dir = tempfile::tempdir().unwrap();
+        // A file where the folder should be: neither the folder nor the file can be made.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let target = blocker.join("out.png").to_string_lossy().into_owned();
+        {
+            let session = state.session(key).unwrap();
+            session.editor.image_file_path = Some(target.clone());
+            session.editor.is_dirty = true;
+            session.editor.confirmation_answer(Some(true));
+        }
+        let messages = state.uploads.windows.messages.len();
+        state.editor_requests(key);
+        assert_eq!(state.uploads.windows.messages.len(), messages + 1);
+        let session = state.session(key).unwrap();
+        assert!(!session.closed, "the editor closed over an unsaved picture");
+        assert!(session.editor.is_dirty);
+        assert!(session.editor.take_requests().is_empty());
     }
 
     /// `OnLoadRecentFileRequested`: a recent file that is no longer there leaves the
