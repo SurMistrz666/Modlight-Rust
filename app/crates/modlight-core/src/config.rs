@@ -421,6 +421,31 @@ impl AppConfig {
         self.set("MainFormMaximized", json!(maximized));
     }
 
+    /// `MainWindow.SaveWindowBounds`: minimised is not a place, so nothing is recorded;
+    /// maximised is recorded as a state and never as a size (a screen-sized "normal" size
+    /// would leave "restore down" nothing to restore to); only a window in its normal
+    /// state records where it is (`Position`) and how big its client area is
+    /// (`ClientSize`, rounded). Whether to use them is `RememberMainForm*`'s business
+    /// at the next start. Returns whether anything changed.
+    pub fn record_main_window(&mut self, window: &WindowSnapshot) -> bool {
+        if window.minimized {
+            return false;
+        }
+        let members = |config: &AppConfig| {
+            ["MainFormSize", "MainFormPosition", "MainFormMaximized"]
+                .map(|member| config.get(member).cloned())
+        };
+        let before = members(self);
+        let normal = !window.maximized && !window.fullscreen;
+        let round = |(a, b): (f32, f32)| (a.round() as i64, b.round() as i64);
+        self.set_main_window(
+            window.size.filter(|_| normal).map(round),
+            window.position.filter(|_| normal).map(round),
+            window.maximized,
+        );
+        members(self) != before
+    }
+
     /// The toast settings of the default task (`TaskSettingsGeneral.ToastWindow*`).
     pub fn toast(&self) -> ToastSettings {
         let general = self
@@ -478,6 +503,75 @@ pub struct MainWindowBounds {
     pub size: Option<(i64, i64)>,
     pub position: Option<(i64, i64)>,
     pub maximized: bool,
+}
+
+/// The main window as the system reports it in a frame, in points: its state, the top
+/// left corner of its frame and the size of its client area.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WindowSnapshot {
+    pub minimized: bool,
+    pub maximized: bool,
+    pub fullscreen: bool,
+    pub position: Option<(f32, f32)>,
+    pub size: Option<(f32, f32)>,
+}
+
+/// A screen's working area (without the menu bar and the Dock, or the taskbar):
+/// x, y, width, height in points, origin at the top left of the primary screen.
+pub type ScreenArea = (f32, f32, f32, f32);
+
+/// The size and the position the main window opens with, each when remembered.
+pub type RestoredBounds = (Option<(f32, f32)>, Option<(f32, f32)>);
+
+/// `MainWindow.RestoreWindowBounds`: the size (never below `min_size`) and the place the
+/// main window opens with, each `None` when it is not remembered. Both are put back on
+/// the screen the window would mostly be on (the primary one, `screens[0]`, when it
+/// would be on none): a place remembered against a display that has since been
+/// unplugged would otherwise open the window nowhere. `screens` empty: no correction.
+pub fn restore_main_window(
+    bounds: &MainWindowBounds,
+    default_size: (f32, f32),
+    min_size: (f32, f32),
+    screens: &[ScreenArea],
+) -> RestoredBounds {
+    let want_size = bounds.remember_size && bounds.size.is_some();
+    let want_position = bounds.remember_position && bounds.position.is_some();
+    if !want_size && !want_position {
+        return (None, None);
+    }
+    let (mut width, mut height) = match bounds.size.filter(|_| want_size) {
+        Some((w, h)) => ((w as f32).max(min_size.0), (h as f32).max(min_size.1)),
+        None => default_size,
+    };
+    let (mut x, mut y) = bounds
+        .position
+        .map(|(x, y)| (x as f32, y as f32))
+        .unwrap_or_default();
+    // `FindScreenFor`: the most overlap wins; none at all means the primary screen.
+    let overlap = |&(sx, sy, sw, sh): &ScreenArea| {
+        let w = ((x + width).min(sx + sw) - x.max(sx)).max(0.0);
+        let h = ((y + height).min(sy + sh) - y.max(sy)).max(0.0);
+        w * h
+    };
+    let mut screen = screens.first();
+    let mut best = 0.0;
+    for candidate in screens {
+        let area = overlap(candidate);
+        if area > best {
+            best = area;
+            screen = Some(candidate);
+        }
+    }
+    if let Some(&(sx, sy, sw, sh)) = screen {
+        width = width.min(min_size.0.max(sw));
+        height = height.min(min_size.1.max(sh));
+        x = x.clamp(sx, sx.max(sx + sw - width));
+        y = y.clamp(sy, sy.max(sy + sh - height));
+    }
+    (
+        want_size.then_some((width, height)),
+        want_position.then_some((x, y)),
+    )
 }
 
 /// How the notification window behaves (the task's toast settings).
@@ -653,6 +747,130 @@ mod tests {
         let new_year = chrono::Local.with_ymd_and_hms(2027, 1, 1, 9, 0, 0).unwrap();
         backup_weekly(&file, &folder, new_year).unwrap();
         assert!(folder.join("ApplicationConfig-2027-01-W01.json").exists());
+    }
+
+    /// `SaveWindowBounds`: what a frame reports goes into `MainFormSize`,
+    /// `MainFormPosition` and `MainFormMaximized` the way upstream writes them.
+    #[test]
+    fn the_main_window_is_recorded_as_upstream_records_it() {
+        let mut config = AppConfig::in_memory();
+        let normal = WindowSnapshot {
+            position: Some((100.4, 50.6)),
+            size: Some((1200.2, 800.7)),
+            ..Default::default()
+        };
+        // Minimised is not a place.
+        assert!(!config.record_main_window(&WindowSnapshot {
+            minimized: true,
+            ..normal
+        }));
+        assert_eq!(config.get("MainFormSize"), None);
+        // A window in its normal state: its place and its client size, rounded.
+        assert!(config.record_main_window(&normal));
+        assert_eq!(config.get("MainFormSize"), Some(&json!("1200, 801")));
+        assert_eq!(config.get("MainFormPosition"), Some(&json!("100, 51")));
+        assert_eq!(config.get("MainFormMaximized"), Some(&json!(false)));
+        assert!(!config.record_main_window(&normal), "nothing new");
+        // Maximised is a state, never a size.
+        assert!(config.record_main_window(&WindowSnapshot {
+            maximized: true,
+            position: Some((0.0, 25.0)),
+            size: Some((1512.0, 920.0)),
+            ..Default::default()
+        }));
+        let bounds = config.main_window();
+        assert!(bounds.maximized);
+        assert_eq!(bounds.size, Some((1200, 801)));
+        assert_eq!(bounds.position, Some((100, 51)));
+        // Full screen is neither a size nor maximised.
+        assert!(config.record_main_window(&WindowSnapshot {
+            fullscreen: true,
+            position: Some((0.0, 0.0)),
+            size: Some((1512.0, 982.0)),
+            ..Default::default()
+        }));
+        let bounds = config.main_window();
+        assert!(!bounds.maximized);
+        assert_eq!(bounds.size, Some((1200, 801)));
+        // The switches only decide what the next start uses; the bounds are kept.
+        config.set("RememberMainFormSize", json!(false));
+        assert!(config.record_main_window(&WindowSnapshot {
+            size: Some((900.0, 600.0)),
+            ..normal
+        }));
+        assert_eq!(config.main_window().size, Some((900, 600)));
+    }
+
+    /// `RestoreWindowBounds`: remembered bounds come back on a screen that exists.
+    #[test]
+    fn a_remembered_window_opens_on_a_screen_that_exists() {
+        let default = (1040.0, 720.0);
+        let min = (880.0, 540.0);
+        let laptop: ScreenArea = (0.0, 33.0, 1512.0, 916.0);
+        let right: ScreenArea = (1512.0, 0.0, 2560.0, 1415.0);
+        let bounds = |size, position| MainWindowBounds {
+            remember_size: true,
+            remember_position: true,
+            size: Some(size),
+            position: Some(position),
+            maximized: false,
+        };
+        // On a screen that is there: as it was.
+        assert_eq!(
+            restore_main_window(&bounds((1200, 800), (100, 60)), default, min, &[laptop]),
+            (Some((1200.0, 800.0)), Some((100.0, 60.0)))
+        );
+        // The display on the right is gone: back onto the one there is.
+        assert_eq!(
+            restore_main_window(&bounds((1200, 800), (2400, 200)), default, min, &[laptop]),
+            (Some((1200.0, 800.0)), Some((312.0, 149.0)))
+        );
+        // With it plugged in, the window stays there.
+        assert_eq!(
+            restore_main_window(
+                &bounds((1200, 800), (2400, 200)),
+                default,
+                min,
+                &[laptop, right]
+            ),
+            (Some((1200.0, 800.0)), Some((2400.0, 200.0)))
+        );
+        // Larger than the screen: the screen's size; smaller than the minimum: the minimum.
+        assert_eq!(
+            restore_main_window(&bounds((3000, 2000), (0, 33)), default, min, &[laptop]),
+            (Some((1512.0, 916.0)), Some((0.0, 33.0)))
+        );
+        assert_eq!(
+            restore_main_window(&bounds((300, 200), (10, 40)), default, min, &[laptop]),
+            (Some((880.0, 540.0)), Some((10.0, 40.0)))
+        );
+        // Above the menu bar or past the left edge: inside the working area.
+        assert_eq!(
+            restore_main_window(&bounds((1000, 700), (-50, 5)), default, min, &[laptop]).1,
+            Some((0.0, 33.0))
+        );
+        // Not remembered, or never recorded: nothing.
+        let mut off = bounds((1200, 800), (100, 60));
+        off.remember_size = false;
+        off.remember_position = false;
+        assert_eq!(
+            restore_main_window(&off, default, min, &[laptop]),
+            (None, None)
+        );
+        let never = MainWindowBounds {
+            size: None,
+            position: None,
+            ..bounds((0, 0), (0, 0))
+        };
+        assert_eq!(
+            restore_main_window(&never, default, min, &[laptop]),
+            (None, None)
+        );
+        // No screens known: no correction.
+        assert_eq!(
+            restore_main_window(&bounds((1200, 800), (5000, 5000)), default, min, &[]),
+            (Some((1200.0, 800.0)), Some((5000.0, 5000.0)))
+        );
     }
 
     #[test]
