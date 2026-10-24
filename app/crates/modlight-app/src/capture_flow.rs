@@ -458,6 +458,10 @@ impl AppState {
         let Some(outcome) = session.outcome.clone() else {
             return;
         };
+        if matches!(purpose, OverlayPurpose::Capture) && session.request.kind == RegionKind::Default
+        {
+            self.remember_magnifier(&session, &settings);
+        }
         match purpose {
             OverlayPurpose::Capture => {
                 if session.request.kind == RegionKind::Transparent {
@@ -541,6 +545,29 @@ impl AppState {
                 }
             }
         }
+    }
+
+    /// The region capture's options are upstream's `CaptureSettingsReference
+    /// .SurfaceOptions` itself, so the magnifier's zoom (the wheel, normalized to the
+    /// display) and the magnifier the wheel showed stay for the next capture, in the
+    /// defaults or the hotkey's own capture settings.
+    fn remember_magnifier(&mut self, session: &RegionSession, settings: &TaskSettings) {
+        let options = &session.request.options;
+        if session.magnifier_pixel_count == options.magnifier_pixel_count
+            && session.show_magnifier == options.show_magnifier
+        {
+            return;
+        }
+        let home = crate::tools::jobs::OptionsHome::of_capture(settings);
+        // Merged into `SurfaceOptions`, its other members untouched.
+        self.save_task_member(
+            &home,
+            &["CaptureSettings", "SurfaceOptions"],
+            &serde_json::json!({
+                "MagnifierPixelCount": session.magnifier_pixel_count,
+                "ShowMagnifier": session.show_magnifier,
+            }),
+        );
     }
 
     /// `CaptureBase.AfterCapture`.
@@ -1406,5 +1433,41 @@ mod tests {
         state.overlay_closed(overlay, &egui::Context::default());
         assert_eq!(last_region().rect, captured);
         set_last_region(LastRegion::default());
+    }
+
+    /// The region capture works on upstream's `CaptureSettingsReference.SurfaceOptions`
+    /// itself: the magnifier's zoom set with the wheel (and the magnifier it shows) stays
+    /// for the next capture.
+    #[test]
+    fn the_magnifier_zoom_is_remembered() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let mut settings = state.default_task_settings();
+        settings.capture_settings.surface_options.show_magnifier = false;
+        state.set_task_member(
+            crate::task_pages::TaskTarget::Defaults,
+            &["CaptureSettings", "SurfaceOptions", "ShowMagnifier"],
+            serde_json::json!(false),
+        );
+        let CaptureStep::Region(request) = capture::capture(
+            CaptureKind::Region(RegionKind::Default),
+            &settings,
+            state.captures.source.as_ref(),
+        ) else {
+            panic!("no overlay");
+        };
+        let mut session = RegionSession::new(request);
+        session.render_scale = 2.0;
+        session.wheel(-1.0);
+        session.wheel(-1.0);
+        assert_eq!(session.magnifier_pixel_count, 19);
+        session.cancel();
+        let overlay = RegionOverlay::new(session, OverlayPurpose::Capture, settings, 0.0);
+        state.overlay_closed(overlay, &egui::Context::default());
+        let options = state
+            .default_task_settings()
+            .capture_settings
+            .surface_options;
+        assert_eq!(options.magnifier_pixel_count, 19);
+        assert!(options.show_magnifier);
     }
 }
