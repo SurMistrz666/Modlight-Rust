@@ -858,6 +858,10 @@ impl AppState {
                     t(s::MySpace_EmptyTrashConfirm),
                     &[Arg::from(ids.len()), Arg::from(cloud_size(bytes))],
                 );
+                // Not "busy" while the question is up: it is modal over the window, and
+                // the one confirmation window can be taken by a question asked elsewhere,
+                // which would otherwise leave the button disabled for good.
+                state.emptying_trash = false;
                 state.windows.confirm = Some(Confirm::new(
                     t(s::MySpace_EmptyTrashTitle),
                     &question,
@@ -872,6 +876,7 @@ impl AppState {
             self.emptying_trash = false;
             return;
         };
+        self.emptying_trash = true;
         let api = self.api.clone();
         self.rt.spawn(async move {
             let mut affected = 0;
@@ -1751,9 +1756,45 @@ pub(crate) mod tests {
             &confirm.action,
             ConfirmAction::EmptyTrash { ids, bytes } if ids.len() == 2 && *bytes == i64::MAX
         ));
-        assert!(state.emptying_trash, "waiting for the answer");
         state.confirm_finished(ConfirmOutcome::No);
         assert!(!state.emptying_trash);
+    }
+
+    /// The question about emptying the trash shares the one confirmation window with the
+    /// rest of the app; one asked elsewhere (a notice's "Delete file", the components
+    /// window) replaces it. That used to leave the trash "being emptied" for good, so its
+    /// button did nothing until the app was restarted.
+    #[test]
+    fn a_replaced_empty_trash_question_does_not_disable_the_button() {
+        let body = r#"{"page":1,"perPage":120,"total":1,"items":[{"id":"a","size":5}]}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let host = server(Box::leak(reply.into_bytes().into_boxed_slice()));
+        let mut state = state_on(&host);
+        state.empty_trash();
+        settle(&mut state, |s| s.windows.confirm.is_some());
+        assert!(matches!(
+            state.windows.confirm.as_ref().map(|c| &c.action),
+            Some(ConfirmAction::EmptyTrash { .. })
+        ));
+
+        // Another question takes the window, and is answered.
+        state.windows.confirm = Some(Confirm::new(
+            "Delete",
+            "Delete this file?",
+            ConfirmAction::DeleteLocalFile(std::path::PathBuf::from("/nonexistent/x.png")),
+        ));
+        state.confirm_finished(ConfirmOutcome::No);
+
+        // The trash can be emptied again: it counts and asks again.
+        state.empty_trash();
+        settle(&mut state, |s| s.windows.confirm.is_some());
+        assert!(matches!(
+            state.windows.confirm.as_ref().map(|c| &c.action),
+            Some(ConfirmAction::EmptyTrash { .. })
+        ));
     }
 
     /// Codes are unique on one server only: another deployment can have a file called
