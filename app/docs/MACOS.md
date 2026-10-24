@@ -20,7 +20,7 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | "Reduce motion" (`SystemParameters`) | `com.apple.universalaccess reduceMotion` | Read once at start. |
 | Desktop notice placement (`NotificationWindow`, screen working area) | The visible frame of the main screen (menu bar and Dock excluded) | |
 | Explorer "Show in folder" | `open -R` (reveal in Finder) | Opening a file or folder is `open -- <path>`. |
-| `NetworkChange` events + `NetworkInterface.GetIsNetworkAvailable` | `getifaddrs`: an interface other than loopback that is up, running and has an address, read before every pass of the queue (at least every 15 s) | Nothing is sent to find out. There is no change event: the queue's 15 s poll and its wake-ups stand in for `NetworkAvailabilityChanged`. |
+| `NetworkChange` events + `NetworkInterface.GetIsNetworkAvailable` | `getifaddrs`: an interface other than loopback that is up, running and has an address that is not link-local IPv6, read before every pass of the queue (at least every 15 s) | Nothing is sent to find out. A Mac on no network keeps tunnels (`utun`) and AirDrop's `awdl0`/`llw0` up with only `fe80::` addresses (Windows leaves tunnels out too). There is no change event: the queue's 15 s poll and its wake-ups stand in for `NetworkAvailabilityChanged`. |
 | `FileSystemWatcher` (watch folders) | FSEvents through the `notify` crate | Same filter rules, 1 s duplicate timer and "wait until the size stops changing" timing. FSEvents repeats flags and does not pair renames, so files are tracked by device, inode and birth time; a rename inside one folder is ignored, a move between folders or from outside is reported (as Windows' Deleted + Created). Folders and symlinks are never reported. On SMB volumes only this Mac's own changes are seen. A watched folder's "move to the screenshots folder" takes a unique name when the name exists instead of asking (nobody is at the window). |
 | Clipboard (`ClipboardHelpers`) | NSPasteboard through `arboard` | Text, images and Finder file lists. Reading asks for the file list first: Finder also puts the file's icon and name on the pasteboard, which upstream's image-then-text order would upload instead of the file. A picture is read as its PNG or TIFF bytes (PNG first, as the pasteboard holds it) and decoded under the app's limits, not by arboard. QA and headless runs never read the real clipboard (macOS may ask for paste permission). |
 | Taskbar progress (`TaskbarManager`) | Not shown | macOS has no per-window taskbar progress; the tray icon's progress and the Upload tab carry it. The setting's check box is shown disabled, as upstream shows it where the platform does not support it. |
@@ -179,6 +179,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
   address past 256 MiB. Files the system decodes for the editor (`NSImage`, HEIC) are
   measured first and refused by the same limits. Upstream (SkiaSharp) decoded whatever
   size a file claimed.
+- **Pictures larger than the GPU takes** (over 16384 px a side on Apple GPUs: a long
+  scrolling capture, many screenshots combined) are shown by the image viewer, a pinned
+  picture and the image combiner's preview from a copy that fits (`tools::kit::texture`);
+  the picture itself is untouched. Uploading it whole fails, which wgpu treats as fatal.
 - **Deleting the folder you stand in** reloads the folder list; upstream loses that
   refresh and keeps showing the deleted folder until the next reload.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
