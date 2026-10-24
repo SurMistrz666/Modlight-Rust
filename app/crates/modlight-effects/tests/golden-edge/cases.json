@@ -213,5 +213,35 @@
     "deterministic": true,
     "width": 7,
     "height": 5
+  },
+  {
+    "name": "reflection.default.p1x1",
+    "effect": "reflection",
+    "set": "edge",
+    "input": "p1x1",
+    "values": {
+      "percentage": 20,
+      "max_alpha": 255,
+      "min_alpha": 0,
+      "offset": 0,
+      "skew": false,
+      "skew_size": 25
+    },
+    "error": "ArgumentNullException: Value cannot be null. (Parameter 'image')"
+  },
+  {
+    "name": "reflection.min-percentage.photo",
+    "effect": "reflection",
+    "set": "edge",
+    "input": "photo",
+    "values": {
+      "percentage": 1,
+      "max_alpha": 255,
+      "min_alpha": 0,
+      "offset": 0,
+      "skew": false,
+      "skew_size": 25
+    },
+    "error": "ArgumentNullException: Value cannot be null. (Parameter 'image')"
   }
 ]
