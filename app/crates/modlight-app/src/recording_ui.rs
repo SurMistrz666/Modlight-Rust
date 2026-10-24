@@ -53,6 +53,8 @@ pub struct Recording {
     pub activate: bool,
     /// Dragging the timer moves the area before recording (`OnTimerPointerMoved`).
     drag_from: Option<(egui::Pos2, IRect)>,
+    /// The session's ended passes the "action completed" sound was played for.
+    sounds: u32,
 }
 
 /// A toolbar button.
@@ -83,6 +85,7 @@ impl Recording {
             confirming_abort: false,
             activate: false,
             drag_from: None,
+            sounds: 0,
         }
     }
 
@@ -270,16 +273,8 @@ impl Recording {
             } else {
                 COMPACT_ACTION_WIDTH
             };
-            let (start_text, start_icon) = match state.status {
-                RecordingStatus::Working | RecordingStatus::Recording | RecordingStatus::Paused => {
-                    (t(c::ScreenRecordForm_Stop), icons::SQUARE)
-                }
-                _ => (t(c::ScreenRecordWindow_Start), icons::CIRCLE_PLAY),
-            };
-            let (pause_text, pause_icon) = match state.status {
-                RecordingStatus::Waiting | RecordingStatus::Paused => (t(c::Resume), icons::PLAY),
-                _ => (t(c::ScreenRecordWindow_Pause), icons::PAUSE),
-            };
+            let (start_text, start_icon) = start_label(state.status);
+            let (pause_text, pause_icon) = pause_label(state.status);
             let restart_enabled = matches!(
                 state.status,
                 RecordingStatus::Recording | RecordingStatus::Paused
@@ -348,6 +343,26 @@ fn action_look(colors: &Colors) -> Look {
     look
 }
 
+/// The Start/Stop button's text and glyph (`UpdateUI`: `ScreenRecordForm_Start`,
+/// `ScreenRecordForm_Stop`).
+fn start_label(status: RecordingStatus) -> (&'static str, char) {
+    match status {
+        RecordingStatus::Working | RecordingStatus::Recording | RecordingStatus::Paused => {
+            (t(c::ScreenRecordForm_Stop), icons::SQUARE)
+        }
+        _ => (t(c::ScreenRecordForm_Start), icons::CIRCLE_PLAY),
+    }
+}
+
+/// The Pause/Resume button's text and glyph (`UpdateUI`: `Strings.Resume`,
+/// `Strings.Pause`).
+fn pause_label(status: RecordingStatus) -> (&'static str, char) {
+    match status {
+        RecordingStatus::Waiting | RecordingStatus::Paused => (t(c::Resume), icons::PLAY),
+        _ => (t(c::Pause), icons::PAUSE),
+    }
+}
+
 /// Goldenrod while waiting or paused, red while recording (`SetRecordingAccent`).
 fn accent(state: &ControlState) -> Color32 {
     if state.status == RecordingStatus::Recording {
@@ -392,7 +407,8 @@ impl AppState {
             recording.control.start_stop();
             return;
         }
-        if self.captures.overlay.is_some() {
+        // An overlay open or being prepared (the desktop is being taken for it).
+        if self.captures.overlay.is_some() || self.captures.busy {
             return;
         }
         let mut settings = settings;
@@ -638,6 +654,7 @@ impl AppState {
             confirming_abort: false,
             activate,
             drag_from: None,
+            sounds: 0,
         });
         log::info!(
             "Starting screen recording. Video encoder: \"{}\", Audio encoder: \"{}\", FPS: {fps}",
@@ -654,6 +671,10 @@ impl AppState {
         let Some(recording) = self.captures.recording.take() else {
             return;
         };
+        // A last pass that ended after the last frame looked.
+        if recording.control.parts_ended() > recording.sounds {
+            self.play_task_sound(NotificationSound::ActionCompleted, &recording.settings);
+        }
         if let Some(error) = outcome.error.filter(|_| !outcome.aborted) {
             // `FFmpegCLIManager.ShowError`: ffmpeg's output in the output box (phase 5).
             self.open_output_box(
@@ -666,7 +687,6 @@ impl AppState {
         let Some(path) = outcome.path else {
             return;
         };
-        self.play_task_sound(NotificationSound::ActionCompleted, &recording.settings);
         self.run_image_task(PendingImage {
             metadata: recording.metadata,
             settings: recording.settings,
@@ -723,12 +743,84 @@ impl AppState {
         }
     }
 
+    /// `FinishRecording`: the name the after-capture window gave, if any. A rename that
+    /// is refused shows upstream's message and the recording keeps its name.
+    pub(crate) fn recording_file_named(&mut self, path: PathBuf, name: Option<&str>) -> PathBuf {
+        let Some(name) = name.filter(|n| !n.is_empty()) else {
+            return path;
+        };
+        match rename_recording(&path, name) {
+            Ok(renamed) => renamed,
+            Err(message) => {
+                self.uploads.windows.messages.push_back(MessageBox::new(
+                    &format!(
+                        "Modlight - {}",
+                        modlight_core::l10n::t(modlight_core::l10n::helpers::Error)
+                    ),
+                    &message,
+                    MessageIcon::Error,
+                ));
+                path
+            }
+        }
+    }
+
     /// Repaint while the timer runs.
     pub fn tick_recording(&mut self, ctx: &egui::Context) {
         if self.captures.recording.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        // "Action completed" each time a pass of the recording ends (a pause, the stop),
+        // as upstream's loop plays it: not after the second pass.
+        let due = self.captures.recording.as_mut().and_then(|recording| {
+            let ended = recording.control.parts_ended();
+            (ended > recording.sounds).then(|| {
+                recording.sounds = ended;
+                recording.settings.clone()
+            })
+        });
+        if let Some(settings) = due {
+            self.play_task_sound(NotificationSound::ActionCompleted, &settings);
+        }
     }
+}
+
+/// `FileHelpers.RenameFile(path, name + extension)` as `FinishRecording` uses it: the
+/// file keeps its extension, and another file of that name is never written over
+/// (`File.Move` refuses; `rename` would replace it). An error is upstream's "Rename file
+/// error" text with the reason, and the recording keeps its name.
+pub(crate) fn rename_recording(path: &std::path::Path, name: &str) -> Result<PathBuf, String> {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // `OrdinalIgnoreCase`, which folds every letter, not only ASCII ones.
+    if stem.to_lowercase() == name.to_lowercase() {
+        return Ok(path.to_path_buf());
+    }
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let target = path.with_file_name(if ext.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}.{ext}")
+    });
+    let failed = |reason: String| {
+        format!(
+            "{}\n{}: {reason}",
+            modlight_core::l10n::t(modlight_core::l10n::helpers::FileHelpers_Rename_file_error),
+            target.display()
+        )
+    };
+    if target.symlink_metadata().is_ok() {
+        return Err(failed(
+            std::io::Error::from(std::io::ErrorKind::AlreadyExists).to_string(),
+        ));
+    }
+    std::fs::rename(path, &target).map_err(|error| failed(error.to_string()))?;
+    Ok(target)
 }
 
 /// `HandleExistsFile` with a unique name.
@@ -741,4 +833,134 @@ fn unique(path: PathBuf) -> PathBuf {
             .to_string_lossy()
             .into_owned(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use modlight_core::l10n::{Language, set_thread_language};
+
+    /// The after-capture window's new name for a recording (`FinishRecording`) keeps the
+    /// extension and never writes over another file: upstream's `File.Move` refuses, says
+    /// so ("Rename file error") and the recording keeps its name.
+    #[test]
+    fn a_new_name_never_replaces_another_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let clip = dir.path().join("abc123.mp4");
+        std::fs::write(&clip, b"recording").unwrap();
+        let other = dir.path().join("holiday.mp4");
+        std::fs::write(&other, b"somebody's video").unwrap();
+        let error = rename_recording(&clip, "holiday").unwrap_err();
+        assert!(error.contains("holiday.mp4"), "{error}");
+        assert_eq!(std::fs::read(&other).unwrap(), b"somebody's video");
+        assert_eq!(std::fs::read(&clip).unwrap(), b"recording");
+        assert_eq!(rename_recording(&clip, "ABC123").unwrap(), clip);
+        let renamed = rename_recording(&clip, "trip").unwrap();
+        assert_eq!(renamed, dir.path().join("trip.mp4"));
+        assert_eq!(std::fs::read(&renamed).unwrap(), b"recording");
+        assert!(!clip.exists());
+        // The same name with a Polish capital is no rename either (`OrdinalIgnoreCase`).
+        let polish = dir.path().join("ćwiczenie.mp4");
+        std::fs::write(&polish, b"recording").unwrap();
+        assert_eq!(rename_recording(&polish, "Ćwiczenie").unwrap(), polish);
+    }
+
+    /// The recording hotkey pressed again while the area is still being prepared (the
+    /// desktop being taken for the overlay) is not a second request: the other ways to
+    /// open the overlay wait for `busy` the same way.
+    #[test]
+    fn a_second_press_while_the_area_is_prepared_asks_nothing_more() {
+        use image::RgbaImage;
+        use modlight_core::capture::source::{
+            CaptureError, CaptureSource, FakeSource, ScreenInfo, WindowCapture, WindowInfo,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Counting {
+            inner: FakeSource,
+            taken: Arc<AtomicUsize>,
+        }
+        impl CaptureSource for Counting {
+            fn screens(&self) -> Vec<ScreenInfo> {
+                self.inner.screens()
+            }
+            fn cursor_position(&self) -> (i32, i32) {
+                self.inner.cursor_position()
+            }
+            fn windows(&self) -> Vec<WindowInfo> {
+                self.inner.windows()
+            }
+            fn active_window(&self) -> Option<WindowInfo> {
+                self.inner.active_window()
+            }
+            fn capture_rect(&self, rect: IRect, cursor: bool) -> Result<RgbaImage, CaptureError> {
+                self.taken.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                self.inner.capture_rect(rect, cursor)
+            }
+            fn capture_window(
+                &self,
+                window: &WindowInfo,
+                how: WindowCapture,
+            ) -> Result<RgbaImage, CaptureError> {
+                self.inner.capture_window(window, how)
+            }
+        }
+
+        let profile = tempfile::tempdir().unwrap();
+        let tools = profile.path().join(modlight_core::components::TOOLS_FOLDER);
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(
+            tools.join(modlight_core::download::tool::FFMPEG_FILE_NAME),
+            b"x",
+        )
+        .unwrap();
+        let env = crate::state::Env {
+            profile: profile.path().to_path_buf(),
+            qa: true,
+            frozen_now: None,
+            machine: "QA Mac".into(),
+            system_language: "en".into(),
+            system_locale: "en_US".into(),
+            reduce_motion: true,
+            system_dark: Some(true),
+        };
+        let account = modlight_core::account::AccountStore::in_memory(
+            modlight_core::account::StoredAccount::default(),
+            "",
+        );
+        let mut state = AppState::new(env, modlight_core::config::AppConfig::in_memory(), account);
+        let taken = Arc::new(AtomicUsize::new(0));
+        state.captures.source = Arc::new(Counting {
+            inner: crate::qa_capture::qa_desktop(),
+            taken: taken.clone(),
+        });
+        let settings = state.default_task_settings();
+        for _ in 0..2 {
+            state.start_screen_recording(
+                ScreenRecordOutput::FFmpeg,
+                RecordStartMethod::Region,
+                settings.clone(),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        assert_eq!(taken.load(Ordering::SeqCst), 1);
+    }
+
+    /// While recording the button says upstream's `Strings.Pause` (`UpdateUI`), which
+    /// in Polish is "Pauza"; `ScreenRecordWindow_Pause` ("Wstrzymaj") is only the
+    /// window's text before `UpdateUI` first runs.
+    #[test]
+    fn the_buttons_say_what_upstream_says() {
+        set_thread_language(Some(Language::Polish));
+        assert_eq!(pause_label(RecordingStatus::Recording).0, "Pauza");
+        assert_eq!(pause_label(RecordingStatus::Paused).0, "Ponów");
+        assert_eq!(pause_label(RecordingStatus::Waiting).0, "Ponów");
+        assert_eq!(start_label(RecordingStatus::Waiting).0, "Rozpocznij");
+        assert_eq!(start_label(RecordingStatus::Recording).0, "Zatrzymaj");
+        set_thread_language(Some(Language::English));
+        assert_eq!(pause_label(RecordingStatus::Recording).0, "Pause");
+        assert_eq!(start_label(RecordingStatus::Waiting).0, "Start");
+        set_thread_language(None);
+    }
 }

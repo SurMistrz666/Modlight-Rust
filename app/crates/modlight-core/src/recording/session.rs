@@ -6,7 +6,7 @@
 //! reads it, exactly as upstream's form and its `RecordResetEvent` do.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -88,6 +88,12 @@ pub struct ControlState {
     pub region: IRect,
     /// The session is over (the window closes).
     pub finished: bool,
+    /// Abort was asked for. Final: a status the session sets afterwards (ffmpeg saying it
+    /// has started) does not undo it.
+    pub aborted: bool,
+    /// How many passes of the recording loop have ended (a pause, the stop, an abort):
+    /// upstream plays "action completed" at each, and the window does.
+    pub parts_ended: u32,
 }
 
 /// The switches between the recording window and the session thread.
@@ -96,8 +102,30 @@ pub struct RecorderControl {
     /// `RecordResetEvent`.
     reset: Mutex<bool>,
     signal: Condvar,
-    /// Set while ffmpeg runs: asks it to finish (`StopRequested`).
-    stop: AtomicBool,
+    /// How often ffmpeg has been asked to finish (`StopRequested`) since the current part
+    /// began: each request is one `FFmpegCLIManager.Close`, and the third kills it.
+    stop: AtomicU32,
+}
+
+/// Seconds from a settings file as a `Duration`: one too large for a timer is the
+/// longest there is, and anything that is not a positive number is none.
+fn seconds(value: f64) -> Duration {
+    if value > 0.0 {
+        Duration::try_from_secs_f64(value).unwrap_or(Duration::MAX)
+    } else {
+        Duration::ZERO
+    }
+}
+
+/// The start delay as upstream waits it: `(int)(ScreenRecordStartDelay * 1000)`
+/// milliseconds, and none when that is not a positive `int`.
+fn start_delay(value: f64) -> Duration {
+    let milliseconds = value * 1000.0;
+    if milliseconds >= 1.0 && milliseconds <= i32::MAX as f64 {
+        Duration::from_millis(milliseconds as u64)
+    } else {
+        Duration::ZERO
+    }
 }
 
 impl RecorderControl {
@@ -114,10 +142,12 @@ impl RecorderControl {
                 restart_requested: false,
                 region,
                 finished: false,
+                aborted: false,
+                parts_ended: 0,
             }),
             reset: Mutex::new(false),
             signal: Condvar::new(),
-            stop: AtomicBool::new(false),
+            stop: AtomicU32::new(0),
         })
     }
 
@@ -167,11 +197,37 @@ impl RecorderControl {
     }
 
     fn request_stop(&self) {
-        self.stop.store(true, Ordering::SeqCst);
+        self.stop.fetch_add(1, Ordering::SeqCst);
     }
 
     pub fn stop_requested(&self) -> bool {
+        self.stop_requests() > 0
+    }
+
+    /// How often ffmpeg was asked to finish since the current part began.
+    pub fn stop_requests(&self) -> u32 {
         self.stop.load(Ordering::SeqCst)
+    }
+
+    /// Whether Abort was pressed (or its hotkey), whatever the status says now.
+    pub fn is_aborted(&self) -> bool {
+        self.state.lock().unwrap().aborted
+    }
+
+    /// The part the session is about to record begins, when the status still allows
+    /// it (`Waiting` or `Paused`, and no abort): `ChangeState(AfterStart)` and a fresh
+    /// count of stop requests, in one step, so an abort pressed at that very moment is
+    /// not undone by it. Returns the status the part began from.
+    fn begin_part(&self) -> Option<RecordingStatus> {
+        let mut state = self.state.lock().unwrap();
+        let from = state.status;
+        if state.aborted || !matches!(from, RecordingStatus::Waiting | RecordingStatus::Paused) {
+            return None;
+        }
+        state.state = RecordState::AfterStart;
+        state.status = RecordingStatus::Working;
+        self.stop.store(0, Ordering::SeqCst);
+        Some(from)
     }
 
     /// `StartStopRecording`.
@@ -203,7 +259,11 @@ impl RecorderControl {
 
     /// `AbortRecording`.
     pub fn abort(&self) {
-        self.set_status(RecordingStatus::Aborted);
+        {
+            let mut state = self.state.lock().unwrap();
+            state.status = RecordingStatus::Aborted;
+            state.aborted = true;
+        }
         self.request_stop();
         self.set_event();
     }
@@ -273,7 +333,7 @@ impl RecorderControl {
                 }
                 if state.duration > 0.0 {
                     state.is_countdown = true;
-                    state.countdown = Duration::from_secs_f64(state.duration);
+                    state.countdown = seconds(state.duration);
                 }
                 state.timer.start();
             }
@@ -288,6 +348,16 @@ impl RecorderControl {
 
     fn finish(&self) {
         self.state.lock().unwrap().finished = true;
+    }
+
+    /// A pass of the recording loop ended (where upstream plays "action completed").
+    fn part_ended(&self) {
+        self.state.lock().unwrap().parts_ended += 1;
+    }
+
+    /// How many passes of the recording loop have ended so far.
+    pub fn parts_ended(&self) -> u32 {
+        self.state.lock().unwrap().parts_ended
     }
 
     /// The timer text, `mm:ss:ff` (`UpdateTimer`).
@@ -396,9 +466,19 @@ fn record_once(
     } else {
         None
     };
-    let mut ffmpeg = FFmpegRun::start(&params.ffmpeg_path, &args, pipe, false, listener)
-        .map_err(|e| e.to_string())?;
+    let mut ffmpeg = match FFmpegRun::start(&params.ffmpeg_path, &args, pipe, false, listener) {
+        Ok(ffmpeg) => ffmpeg,
+        Err(error) => {
+            // The capture started for it must not go on (a ScreenCaptureKit stream is
+            // not stopped by letting go of it).
+            if let Some(source) = source.as_mut() {
+                source.stop();
+            }
+            return Err(error.to_string());
+        }
+    };
 
+    let mut written = 0u64;
     if let Some(source) = source.as_mut() {
         let interval = Duration::from_secs_f64(1.0 / options.fps.max(1) as f64);
         let frame_limit = if options.duration > 0.0 {
@@ -408,12 +488,11 @@ fn record_once(
         };
         let expected = (source.size().0 as usize) * (source.size().1 as usize) * 4;
         let waited_from = Instant::now();
-        let mut written = 0u64;
         let mut next = Instant::now();
         let mut stdin = ffmpeg.take_stdin();
         while !control.stop_requested() && (frame_limit == 0 || written < frame_limit) {
             let Some(frame) = source.latest() else {
-                if waited_from.elapsed() > Duration::from_secs(5) {
+                if waited_from.elapsed() > FIRST_FRAME_TIMEOUT {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(5));
@@ -444,16 +523,36 @@ fn record_once(
         drop(stdin);
         source.stop();
     } else {
+        // ffmpeg's own camera and microphone input: it stops when `q` is typed, and only
+        // then (the end of its standard input does not stop it). If the app exits first,
+        // it is asked to finish then.
+        ffmpeg.stop_at_exit();
+        // One `Close` per request to stop, as upstream's: `q`, `q` again, then a kill.
+        // Not more: after the `q` ffmpeg still writes the end of the file, which for an
+        // MP4 moves its index to the front and takes a while for a long recording.
+        let mut closed = 0;
         while ffmpeg.is_running() {
-            if control.stop_requested() {
+            let requests = control.stop_requests();
+            while closed < requests {
                 ffmpeg.close();
+                closed += 1;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
     }
     let (ok, output) = ffmpeg.wait();
-    if ok { Ok(()) } else { Err(output) }
+    if !ok {
+        return Err(output);
+    }
+    if pipe && written == 0 && !control.stop_requested() {
+        // Not one frame arrived: an empty video is a failure, not a recording.
+        return Err(output);
+    }
+    Ok(())
 }
+
+/// How long the screen is given to deliver the recording's first frame.
+const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `ScreenRecordManager.StartRecording`'s task. Blocks until the recording is done.
 pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> SessionOutcome {
@@ -476,14 +575,14 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
         if control.status() == RecordingStatus::Paused || !params.auto_start {
             control.wait_event(None);
         } else {
-            let delay = Duration::from_secs_f64(params.start_delay.max(0.0));
+            let delay = start_delay(params.start_delay);
             if !delay.is_zero() {
                 control.start_countdown(delay);
                 control.wait_event(Some(delay));
             }
         }
 
-        if control.status() == RecordingStatus::Aborted {
+        if control.is_aborted() {
             abort_requested = true;
         }
 
@@ -494,15 +593,10 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
             let _ = std::fs::remove_file(&temp_path);
         }
 
-        if matches!(
-            control.status(),
-            RecordingStatus::Waiting | RecordingStatus::Paused
-        ) {
-            if control.status() == RecordingStatus::Paused && path.exists() {
+        if let Some(from) = control.begin_part() {
+            if from == RecordingStatus::Paused && path.exists() {
                 let _ = std::fs::rename(&path, &concat_path);
             }
-            control.change_state(RecordState::AfterStart);
-            control.stop.store(false, Ordering::SeqCst);
             let region = control.snapshot().region;
             let options = ScreenRecordingOptions {
                 is_recording: true,
@@ -540,7 +634,7 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
                 }
             }
             control.change_state(RecordState::RecordingEnd);
-            if control.status() == RecordingStatus::Aborted {
+            if control.is_aborted() {
                 abort_requested = true;
             }
             if control.restart_requested() {
@@ -551,6 +645,10 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
                 break;
             }
         }
+
+        // `PlayNotificationSoundAsync(ActionCompleted)`: each pass, before the parts are
+        // joined.
+        control.part_ended();
 
         if concat_path.exists()
             && path.exists()
@@ -565,10 +663,23 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
         }
     }
 
+    // Abort pressed after the last look (while the parts were being joined, say) is
+    // still an abort: upstream read it only inside the loop and delivered the file.
+    if control.is_aborted() {
+        abort_requested = true;
+    }
     let mut final_path = path.clone();
     if params.two_pass && !abort_requested && recorded && path.exists() {
         control.change_state(RecordState::Encoding);
-        final_path = two_pass_encode(&params, &path, &control);
+        let (output, failure) = two_pass_encode(&params, &path, &control);
+        final_path = output;
+        if failure.is_some() {
+            error = failure;
+        }
+        // The abort hotkey works while the window is hidden for the second pass.
+        if control.is_aborted() {
+            abort_requested = true;
+        }
     }
 
     if abort_requested {
@@ -581,36 +692,49 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
 
     let exists = final_path.exists();
     SessionOutcome {
-        path: (!abort_requested && exists).then_some(final_path),
+        path: (!abort_requested && error.is_none() && exists).then_some(final_path),
         aborted: abort_requested && error.is_none(),
         error,
     }
 }
 
 /// `ProcessTwoPassEncoding`: GIF through the palette filters, anything else re-encoded
-/// with the chosen codec; the lossless first pass is deleted.
+/// with the chosen codec; the lossless first pass is deleted. Returns the finished file
+/// and, when the pass failed, ffmpeg's output for the output box (upstream's
+/// `ShowError`).
 fn two_pass_encode(
     params: &SessionParams,
     input: &Path,
     control: &Arc<RecorderControl>,
-) -> PathBuf {
+) -> (PathBuf, Option<String>) {
     let output = params.two_pass_output.clone();
+    // The first pass and the finished file share a name when the codec's container is
+    // MP4 and the name pattern gives the same name twice (both are named when the
+    // recording starts; upstream named the second at the end). ffmpeg cannot write over
+    // the file it reads, so the first pass moves aside to the session's scratch name.
+    let mut input = input.to_path_buf();
+    if input == output {
+        let aside = append_to_file_name(&input, "-temp");
+        let _ = std::fs::remove_file(&aside);
+        if std::fs::rename(&input, &aside).is_ok() {
+            input = aside;
+        }
+    }
     let listener: Arc<dyn FFmpegListener> = Arc::new(Listener {
         control: control.clone(),
     });
-    let ok = if params.ffmpeg.VideoCodec == FFmpegVideoCodec::gif {
+    let (ok, ffmpeg_output) = if params.ffmpeg.VideoCodec == FFmpegVideoCodec::gif {
         run(
             &params.ffmpeg_path,
-            &gif_encode_args(input, &output, &params.ffmpeg),
+            &gif_encode_args(&input, &output, &params.ffmpeg),
             true,
             listener,
         )
-        .0
     } else {
         let options = ScreenRecordingOptions {
             is_recording: false,
             is_lossless: false,
-            input_path: Some(input.to_path_buf()),
+            input_path: Some(input.clone()),
             output_path: output.clone(),
             fps: params.fps,
             duration: 0.0,
@@ -618,17 +742,19 @@ fn two_pass_encode(
             ..ScreenRecordingOptions::default()
         };
         match options.ffmpeg_commands() {
-            Some(args) => run(&params.ffmpeg_path, &args, true, listener).0,
-            None => false,
+            Some(args) => run(&params.ffmpeg_path, &args, true, listener),
+            None => (false, String::new()),
         }
     };
     if input != output && input.exists() {
-        let _ = std::fs::remove_file(input);
+        let _ = std::fs::remove_file(&input);
     }
-    if !ok {
+    if ok {
+        (output, None)
+    } else {
         log::warn!("The second pass of the recording failed.");
+        (output, Some(ffmpeg_output))
     }
-    output
 }
 
 /// A frame source that repeats one picture (QA, tests): BGRA from an RGBA image.
@@ -698,6 +824,40 @@ mod tests {
         assert!(text.starts_with("00:02:") || text == "00:03:00", "{text}");
         control.abort();
         assert_eq!(control.status(), RecordingStatus::Aborted);
+    }
+
+    #[test]
+    fn a_fixed_length_too_long_for_a_timer_does_not_panic() {
+        // A settings file can hold any number; the countdown saturates instead.
+        let control = RecorderControl::new(IRect::new(0, 0, 8, 8), 1e300);
+        control.change_state(RecordState::AfterRecordingStart);
+        assert_eq!(control.status(), RecordingStatus::Recording);
+        let text = RecorderControl::timer_text(&control.snapshot());
+        assert_eq!(text.len(), 8, "{text}");
+        control.change_state(RecordState::RecordingEnd);
+        assert_eq!(start_delay(1e300), Duration::ZERO);
+        assert_eq!(start_delay(-3.0), Duration::ZERO);
+        assert_eq!(start_delay(2.5), Duration::from_millis(2500));
+    }
+
+    #[test]
+    fn an_abort_is_never_undone() {
+        // Pressed just before a part begins: the part does not begin.
+        let control = RecorderControl::new(IRect::new(0, 0, 8, 8), 0.0);
+        control.abort();
+        assert_eq!(control.begin_part(), None);
+        assert_eq!(control.status(), RecordingStatus::Aborted);
+        // Pressed while ffmpeg was starting, which then says it has started: the status
+        // reads Recording, the abort stands.
+        let control = RecorderControl::new(IRect::new(0, 0, 8, 8), 0.0);
+        assert_eq!(control.begin_part(), Some(RecordingStatus::Waiting));
+        assert_eq!(control.status(), RecordingStatus::Working);
+        control.start_stop();
+        control.change_state(RecordState::AfterRecordingStart);
+        assert!(control.is_aborted());
+        assert_eq!(control.stop_requests(), 1);
+        control.abort();
+        assert_eq!(control.stop_requests(), 2);
     }
 
     #[test]

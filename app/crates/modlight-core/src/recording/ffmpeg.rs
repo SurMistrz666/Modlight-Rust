@@ -34,6 +34,69 @@ pub struct FFmpegRun {
     reader: Option<std::thread::JoinHandle<()>>,
     close_tries: u32,
     stdin_is_frames: bool,
+    /// Asked to finish when the app exits ([`FFmpegRun::stop_at_exit`]).
+    #[cfg(unix)]
+    at_exit: Option<at_exit::Registration>,
+}
+
+/// ffmpeg recording a camera or a microphone stops when `q` is typed or on a signal,
+/// never at the end of its standard input, which is all an app that quits leaves it:
+/// it would go on recording with nobody left to stop it. Each one still running when
+/// the app exits (normally or through `process::exit`) is sent SIGINT, ffmpeg's Ctrl+C:
+/// it finishes the file and exits. A recording of the screen needs none of this: its
+/// frames come through standard input, whose end finishes it.
+#[cfg(unix)]
+pub mod at_exit {
+    use std::sync::{Mutex, Once};
+
+    static RUNNING: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    static HOOK: Once = Once::new();
+
+    extern "C" fn on_exit() {
+        stop_all();
+    }
+
+    /// Ask every registered ffmpeg to finish (what the exit hook does).
+    pub fn stop_all() {
+        let pids: Vec<u32> = RUNNING.lock().map(|r| r.clone()).unwrap_or_default();
+        for pid in pids {
+            if let Ok(pid) = i32::try_from(pid)
+                && pid > 0
+            {
+                // SAFETY: a plain signal to a child of ours; its registration ends as
+                // soon as it is seen to have exited.
+                unsafe {
+                    libc::kill(pid, libc::SIGINT);
+                }
+            }
+        }
+    }
+
+    /// One ffmpeg asked to finish at exit, until dropped.
+    pub struct Registration(u32);
+
+    impl Registration {
+        pub fn new(pid: u32) -> Registration {
+            HOOK.call_once(|| {
+                // SAFETY: registering a plain extern "C" function.
+                unsafe {
+                    libc::atexit(on_exit);
+                }
+            });
+            if let Ok(mut running) = RUNNING.lock() {
+                running.push(pid);
+            }
+            Registration(pid)
+        }
+    }
+
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            if let Ok(mut running) = RUNNING.lock() {
+                running.retain(|pid| *pid != self.0);
+            }
+        }
+    }
 }
 
 /// `HH:MM:SS.ff` as ffmpeg prints it.
@@ -160,7 +223,19 @@ impl FFmpegRun {
             reader,
             close_tries: 0,
             stdin_is_frames: frames_on_stdin,
+            #[cfg(unix)]
+            at_exit: None,
         })
+    }
+
+    /// Ask this ffmpeg to finish if the app exits while it runs (a camera or a
+    /// microphone, which nothing else would stop; see [`at_exit`]). On Windows it is
+    /// left as upstream leaves it.
+    pub fn stop_at_exit(&mut self) {
+        #[cfg(unix)]
+        if self.at_exit.is_none() && self.is_running() {
+            self.at_exit = Some(at_exit::Registration::new(self.child.id()));
+        }
     }
 
     /// Standard input, for the frame writer.
@@ -177,7 +252,13 @@ impl FFmpegRun {
     }
 
     pub fn is_running(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        let running = matches!(self.child.try_wait(), Ok(None));
+        #[cfg(unix)]
+        if !running {
+            // Gone: its process id may be somebody else's from now on.
+            self.at_exit = None;
+        }
+        running
     }
 
     /// `Close`: ask ffmpeg to finish (end of frames, or `q`), and kill it on the third ask.
@@ -206,6 +287,10 @@ impl FFmpegRun {
     pub fn wait(mut self) -> (bool, String) {
         self.stdin = None;
         let status = self.child.wait();
+        #[cfg(unix)]
+        {
+            self.at_exit = None;
+        }
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
@@ -275,6 +360,49 @@ pub fn concatenate(ffmpeg: &Path, inputs: &[PathBuf], output: &Path, delete_inpu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A camera or microphone recording is asked to finish when the app exits: without
+    /// it, ffmpeg goes on recording after its standard input has closed (checked with
+    /// the real one). The stand-in, like ffmpeg, writes its file and exits on SIGINT.
+    #[cfg(unix)]
+    #[test]
+    fn a_device_recording_is_asked_to_finish_when_the_app_exits() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("finished");
+        let tool = dir.path().join("ffmpeg");
+        std::fs::write(
+            &tool,
+            format!(
+                "#!/bin/sh\ntrap 'echo done > \"{}\"; exit 0' INT\n\
+                 echo 'Press [q] to stop' >&2\nwhile :; do sleep 0.05; done\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut run = FFmpegRun::start(&tool, &[], false, false, Arc::new(())).unwrap();
+        run.stop_at_exit();
+        // The end of standard input is not the end of the recording.
+        run.stdin = None;
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(run.is_running());
+        // What the exit hook does.
+        at_exit::stop_all();
+        for _ in 0..100 {
+            if !run.is_running() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if run.is_running() {
+            run.kill();
+            panic!("still recording after the app exited");
+        }
+        let (ok, _) = run.wait();
+        assert!(ok);
+        assert!(marker.exists());
+    }
 
     #[test]
     fn progress_is_the_time_against_the_duration() {

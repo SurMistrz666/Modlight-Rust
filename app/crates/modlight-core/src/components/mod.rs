@@ -556,7 +556,9 @@ pub fn migrate(config: &mut AppConfig) -> bool {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        if overrides && !path.is_empty() && !Path::new(&path).is_file() {
+        // Resolved as the recorder resolves it (`GetAbsolutePath`), as upstream checks it.
+        let resolved = crate::names::file_helpers::get_absolute_path(&path);
+        if overrides && !path.is_empty() && !Path::new(&resolved).is_file() {
             log::info!("Components: dropped a custom ffmpeg path that points at nothing ({path}).");
             options.insert("OverrideCLIPath".into(), json!(false));
             options.insert("CLIPath".into(), json!(""));
@@ -663,6 +665,37 @@ mod tests {
         assert_eq!(options["CLIPath"], json!(""));
         assert_eq!(options["x"], json!(1));
         assert!(!migrate(&mut config), "only once");
+    }
+
+    /// A working path is left alone, however it is written: the recorder reads it through
+    /// `GetAbsolutePath` (folder and environment variables, relative to the app), and so
+    /// does upstream's check.
+    #[cfg(unix)]
+    #[test]
+    fn a_working_ffmpeg_path_with_a_variable_is_kept() {
+        let Some(tmp) = std::env::var_os("TMPDIR").map(PathBuf::from) else {
+            return;
+        };
+        let dir = tempfile::tempdir_in(&tmp).unwrap();
+        std::fs::write(dir.path().join("ffmpeg"), b"#!/bin/sh\n").unwrap();
+        let name = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let written = format!("%TMPDIR%/{name}/ffmpeg");
+        let mut config = AppConfig::in_memory();
+        config.set(
+            "DefaultTaskSettings",
+            json!({ "CaptureSettings": { "FFmpegOptions": {
+                "OverrideCLIPath": true, "CLIPath": written } } }),
+        );
+        assert!(migrate(&mut config));
+        let options =
+            &config.get("DefaultTaskSettings").unwrap()["CaptureSettings"]["FFmpegOptions"];
+        assert_eq!(options["OverrideCLIPath"], json!(true));
+        assert_eq!(options["CLIPath"], json!(written));
     }
 
     #[cfg(windows)]
