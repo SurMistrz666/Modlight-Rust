@@ -190,6 +190,9 @@ Everything not listed behaves as upstream does. The per-screen state is in
   wrote straight into the destination and deleted it on any failure, so a file the
   person had agreed to replace was lost even when the server refused before sending a
   byte.
+- **The loose-files shelf's count** follows files in no folder that are moved, trashed,
+  deleted or restored, as every folder's count does. Upstream skipped files whose folder
+  is null, so the shelf kept its old count until the next reload.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
   server's origin, and a request with the wrong `state` is answered and ignored instead
   of ending the sign-in. `Access-Control-Allow-Private-Network: true` is granted, but only

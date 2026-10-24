@@ -524,11 +524,22 @@ impl MySpace {
         }
     }
 
+    /// Whose tally a file's folder is: the folder, or for a file in no folder the
+    /// loose-files shelf (addressed by the root sentinel). Not for an upload's target,
+    /// where no folder means "the account's default", which may be any folder.
+    fn tally_of(&self, folder_id: Option<&str>) -> Option<String> {
+        match folder_id {
+            Some(id) => Some(id.to_string()),
+            None => self.unfiled.as_ref().map(|u| u.id.clone()),
+        }
+    }
+
     /// A file was trashed or deleted for good.
     pub fn note_file_removed(&mut self, id: &str) {
         if let Some(file) = self.file(id).cloned() {
             if !file.is_trashed {
-                self.adjust_folder_tally(file.folder_id.as_deref(), -1, -file.size);
+                let tally = self.tally_of(file.folder_id.as_deref());
+                self.adjust_folder_tally(tally.as_deref(), -1, -file.size);
             }
             self.remove(id);
         }
@@ -538,7 +549,8 @@ impl MySpace {
     pub fn note_file_restored(&mut self, id: &str) {
         if let Some(file) = self.file(id).cloned() {
             if file.is_trashed {
-                self.adjust_folder_tally(file.folder_id.as_deref(), 1, file.size);
+                let tally = self.tally_of(file.folder_id.as_deref());
+                self.adjust_folder_tally(tally.as_deref(), 1, file.size);
             }
             self.remove(id);
         }
@@ -559,8 +571,9 @@ impl MySpace {
             if file.folder_id.as_deref() == target {
                 continue;
             }
-            self.adjust_folder_tally(file.folder_id.as_deref(), -1, -file.size);
-            self.adjust_folder_tally(target, 1, file.size);
+            let (from, to) = (self.tally_of(file.folder_id.as_deref()), self.tally_of(target));
+            self.adjust_folder_tally(from.as_deref(), -1, -file.size);
+            self.adjust_folder_tally(to.as_deref(), 1, file.size);
         }
         self.apply_rows(rows);
         if let Some(current) = self.current_folder.clone() {
@@ -596,5 +609,84 @@ impl MySpace {
 
     pub fn now_ages(&self) -> DateTime<Utc> {
         Utc::now()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: &str, folder: Option<&str>, size: i64) -> Upload {
+        Upload {
+            id: Some(id.into()),
+            code: Some(format!("c{id}")),
+            size,
+            folder_id: folder.map(str::to_string),
+            url: Some(format!("https://h/t/c{id}")),
+            ..Upload::default()
+        }
+    }
+
+    /// The top of the library: a loose-files shelf of three files and one folder.
+    fn library(files: Vec<Upload>) -> MySpace {
+        let mut space = MySpace::default();
+        let folders: FolderList = serde_json::from_value(serde_json::json!({
+            "rootValue": "root",
+            "unfiled": { "fileCount": 3, "size": 300 },
+            "folders": [{ "id": "f1", "name": "One", "fileCount": 0, "size": 0 }]
+        }))
+        .unwrap();
+        space.apply_folders(folders);
+        let total = files.len() as i64;
+        space.apply_page(
+            UploadPage {
+                page: 1,
+                per_page: 120,
+                total,
+                items: Some(files),
+                ..UploadPage::default()
+            },
+            1,
+        );
+        space
+    }
+
+    fn shelf(space: &MySpace) -> (i64, i64) {
+        let unfiled = space.unfiled.as_ref().expect("the shelf");
+        (unfiled.file_count, unfiled.size)
+    }
+
+    /// A file in no folder belongs to the loose-files shelf's tally, which the moves,
+    /// trashes and restores of such files left as it was until the next reload.
+    #[test]
+    fn loose_files_leaving_or_arriving_correct_the_shelf() {
+        let mut space = library(vec![row("a", None, 100), row("b", None, 100)]);
+        space.note_files_moved(&["a".into()], Some("f1"), &[row("a", Some("f1"), 100)], 0.0);
+        assert_eq!(shelf(&space), (2, 200), "moved out of no folder");
+        assert_eq!(space.find("f1").unwrap().file_count, 1);
+
+        space.note_files_moved(&["a".into()], None, &[row("a", None, 100)], 0.0);
+        assert_eq!(shelf(&space), (3, 300), "moved back to no folder");
+        assert_eq!(space.find("f1").unwrap().file_count, 0);
+
+        space.note_file_removed("b");
+        assert_eq!(shelf(&space), (2, 200), "trashed");
+
+        let mut trash = library(Vec::new());
+        trash.trashed = true;
+        let mut gone = row("t", None, 50);
+        gone.url = None;
+        trash.apply_page(
+            UploadPage {
+                page: 1,
+                per_page: 120,
+                total: 1,
+                items: Some(vec![gone]),
+                ..UploadPage::default()
+            },
+            1,
+        );
+        trash.note_file_restored("t");
+        assert_eq!(shelf(&trash), (4, 350), "restored into no folder");
     }
 }
