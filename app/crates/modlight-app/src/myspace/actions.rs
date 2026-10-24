@@ -252,16 +252,34 @@ impl AppState {
                 }
                 state.space.merging = false;
                 if let Ok(page) = answer {
-                    let arrived = state.space.merge_newest(page);
-                    if !arrived.is_empty() {
-                        state.load_thumbnails(&arrived);
-                    }
+                    state.merged(page);
                 }
                 if state.space.merge_queued {
                     state.merge_newest();
                 }
             })
         });
+    }
+
+    /// The first page asked for again after an upload: new rows on top (`Merge`).
+    pub(crate) fn merged(&mut self, page: modlight_api::UploadPage) {
+        let before: Vec<String> = self.space.files.iter().map(|f| f.file.id.clone()).collect();
+        let arrived = self.space.merge_newest(page);
+        // What the new rows pushed off the bottom gives its picture back.
+        self.forget_cards_gone(&before);
+        if !arrived.is_empty() {
+            self.load_thumbnails(&arrived);
+        }
+    }
+
+    /// Cards of `ids` no longer on the grid let go of their pictures and their moving
+    /// preview (`pictures.Forget`, `motion.Forget`).
+    fn forget_cards_gone(&mut self, ids: &[String]) {
+        for id in ids {
+            if self.space.file(id).is_none() {
+                self.media.forget(id);
+            }
+        }
     }
 
     // ------------------------------------------------------------------ getting about
@@ -495,6 +513,7 @@ impl AppState {
                 let now = self.time;
                 self.space
                     .note_files_moved(&ids, target.as_deref(), rows, now);
+                self.forget_cards_gone(&ids);
                 let place = match &target {
                     None => t(s::MySpace_Unfiled).to_string(),
                     Some(id) => self.space.folder_name_for(Some(id)),
@@ -1722,6 +1741,62 @@ pub(crate) mod tests {
         assert!(state.media.bytes.get("ca").is_none());
         assert!(!state.media.motion_bytes.is_refused("cb"));
         assert!(state.media.motion_bytes.is_refused("ca"));
+    }
+
+    /// Cards that leave the grid without a new listing (pushed off the bottom of page 1
+    /// by new uploads, moved out of the open folder) give their pictures back to the
+    /// budget, as upstream's `Remove` and `Merge` do (`pictures.Forget`).
+    #[test]
+    fn cards_that_leave_the_grid_give_their_pictures_back() {
+        let ctx = egui::Context::default();
+        let picture = |state: &mut AppState, id: &str| {
+            let image = egui::ColorImage::filled([4, 4], egui::Color32::RED);
+            let texture = ctx.load_texture(id, image, egui::TextureOptions::LINEAR);
+            state.media.thumbs.insert(id.to_string(), texture);
+            state.media.budget.add(id.to_string(), 64);
+        };
+
+        // Page 1 of 30, full; one upload lands and pushes "f29" off the bottom.
+        let mut state = offline_state();
+        let ids: Vec<String> = (0..30).map(|i| format!("f{i}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        listing(&mut state, 1, 30, 30, &refs);
+        for id in &ids {
+            picture(&mut state, id);
+        }
+        let mut items = vec![row("new", None)];
+        items.extend(ids.iter().map(|id| row(id, None)));
+        state.merged(UploadPage {
+            page: 1,
+            per_page: 30,
+            total: 31,
+            items: Some(items),
+            ..UploadPage::default()
+        });
+        assert!(state.space.file("f29").is_none(), "pushed off the page");
+        assert!(!state.media.thumbs.contains_key("f29"));
+        assert_eq!(state.media.budget.count(), 29);
+
+        // A file moved out of the folder on screen.
+        let mut state = offline_state();
+        listing(&mut state, 1, 30, 2, &["stay", "go"]);
+        state.space.current_folder = Some("f1".into());
+        for entry in &mut state.space.files {
+            entry.file.folder_id = Some("f1".into());
+        }
+        picture(&mut state, "stay");
+        picture(&mut state, "go");
+        state.edit_done(
+            EditDone::Moved {
+                ids: vec!["go".into()],
+                target: None,
+            },
+            &[row("go", None)],
+        );
+        assert!(state.space.file("go").is_none());
+        assert!(!state.media.thumbs.contains_key("go"));
+        assert!(state.media.thumbs.contains_key("stay"));
+        assert_eq!(state.media.budget.count(), 1);
     }
 
     /// The conversion the server would make is then saved under the stem and the new
