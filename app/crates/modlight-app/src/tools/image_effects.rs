@@ -440,17 +440,18 @@ impl ImageEffectsWindow {
     }
 }
 
-/// `preset.ApplyEffects(source)`, a panic turned into the error line.
+/// `preset.ApplyEffects(source)`: an effect's failure (GDI+'s "Parameter is not valid."
+/// for a bitmap too large to make) or a panic becomes the error line.
 fn apply_guarded(preset: &Preset, source: &RgbaImage) -> Result<Option<RgbaImage>, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| preset.apply(source))).map_err(
-        |panic| {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| preset.try_apply(source)))
+        .map_err(|panic| {
             panic
                 .downcast_ref::<&str>()
                 .map(|s| s.to_string())
                 .or_else(|| panic.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "Image effect failed.".to_string())
-        },
-    )
+        })
+        .and_then(|result| result)
 }
 
 /// `SanitizeImportedPreset`.

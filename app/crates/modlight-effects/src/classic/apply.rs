@@ -13,19 +13,170 @@ use crate::sk::{Bitmap, Blend, C, Canvas, Font, Join, Paint, Sampling, Shader, S
 
 impl Preset {
     /// `ApplyEffects`: the enabled effects in order on a copy of `image`; `None` when an
-    /// effect gives no picture (a crop outside the image), as upstream's null.
+    /// effect gives no picture (a crop outside the image), as upstream's null, or fails.
     pub fn apply(&self, image: &RgbaImage) -> Option<RgbaImage> {
+        self.try_apply(image).ok().flatten()
+    }
+
+    /// `ApplyEffects` with upstream's failure kept apart: `Err` with GDI+'s message when an
+    /// effect asks for a bitmap GDI+ cannot make ([`refused_by_gdi`]), which upstream's
+    /// preview shows and which stops a task.
+    pub fn try_apply(&self, image: &RgbaImage) -> Result<Option<RgbaImage>, String> {
         let mut bmp = Bitmap::from_image(image);
         for c in bmp.px.iter_mut() {
             *c = store(*c);
         }
         for effect in self.effects.iter().filter(|e| e.enabled) {
-            bmp = apply_effect(effect, bmp)?;
+            if refused_by_gdi(effect, &bmp) {
+                return Err(GDI_INVALID_PARAMETER.to_string());
+            }
+            bmp = match apply_effect(effect, bmp) {
+                Some(b) => b,
+                None => return Ok(None),
+            };
             if bmp.w < 1 || bmp.h < 1 {
-                return None;
+                return Ok(None);
             }
         }
-        Some(bmp.to_image())
+        Ok(Some(bmp.to_image()))
+    }
+}
+
+/// `new Bitmap(...)`'s `ArgumentException` for a size GDI+ cannot allocate.
+pub const GDI_INVALID_PARAMETER: &str = "Parameter is not valid.";
+
+/// GDI+ makes no bitmap whose pixels take more than 2 GiB (32 bits per pixel).
+fn gdi_can_make(w: i64, h: i64) -> bool {
+    w.saturating_mul(h).saturating_mul(4) <= i32::MAX as i64
+}
+
+/// True when upstream's effect fails on `bmp` with these values because a bitmap it
+/// makes is larger than GDI+ allows (margins, sizes and scales come from the options
+/// panel, up to a million, or from a package, any `int`), or because Reflection asks
+/// for an empty or negative one. The port refuses before allocating anything.
+pub fn refused_by_gdi(e: &ClassicEffect, bmp: &Bitmap) -> bool {
+    use Kind::*;
+    let (w, h) = (bmp.w as i64, bmp.h as i64);
+    let i = |p: &str| e.int(p) as i64;
+    let round = |v: f64| v.round_ties_even() as i64;
+    let too_large = |(bw, bh): (i64, i64)| bw > 0 && bh > 0 && !gdi_can_make(bw, bh);
+    // `ApplyAspectRatio` on the picture.
+    let aspect = |tw: i64, th: i64| {
+        if tw == 0 {
+            (round(th as f64 / h as f64 * w as f64), th)
+        } else if th == 0 {
+            (tw, round(tw as f64 / w as f64 * h as f64))
+        } else {
+            (tw, th)
+        }
+    };
+    match e.kind {
+        Canvas => {
+            let m = e.padding("Margin");
+            let (l, t, r, b) = if e.text("MarginMode") == "PercentageOfCanvas" {
+                let p = |v: i32, of: i64| round(v as f64 / 100.0 * of as f64);
+                (p(m.left, w), p(m.top, h), p(m.right, w), p(m.bottom, h))
+            } else {
+                (m.left as i64, m.top as i64, m.right as i64, m.bottom as i64)
+            };
+            too_large((w + l + r, h + t + b))
+        }
+        AutoCrop => {
+            // Padding is added only round a picture that was cropped.
+            let p = i("Padding");
+            p > 0 && {
+                let r = gdi::auto_crop_rect(bmp, true, e.flags("Sides"));
+                r != (0, 0, bmp.w, bmp.h) && too_large((r.2 as i64 + 2 * p, r.3 as i64 + 2 * p))
+            }
+        }
+        ForceProportions if e.text("Method") != "Crop" => {
+            let target =
+                i("ProportionalWidth").max(1) as f64 / i("ProportionalHeight").max(1) as f64;
+            if target > w as f64 / h as f64 {
+                too_large((round(h as f64 * target), h))
+            } else {
+                too_large((w, round(w as f64 / target)))
+            }
+        }
+        Resize => {
+            let (tw, th) = (i("Width"), i("Height"));
+            (tw > 0 || th > 0) && too_large(aspect(tw, th))
+        }
+        Scale => {
+            let (wp, hp) = (
+                e.float("WidthPercentage") as f64,
+                e.float("HeightPercentage") as f64,
+            );
+            (wp > 0.0 || hp > 0.0)
+                && too_large(aspect(
+                    round(wp / 100.0 * w as f64),
+                    round(hp / 100.0 * h as f64),
+                ))
+        }
+        Skew => {
+            let (x, y) = (i("Horizontally"), i("Vertically"));
+            too_large((w + x.abs(), h + y.abs()))
+        }
+        Shadow | Glow => {
+            let s = i("Size").max(0);
+            let (ox, oy) = e.point("Offset");
+            too_large((w + 2 * s + (ox as i64).abs(), h + 2 * s + (oy as i64).abs()))
+        }
+        Reflection => {
+            // `AddReflection` clones `height * percentage / 100` rows (GDI+ refuses an
+            // empty rectangle), `DrawReflection` makes the picture plus those plus Offset.
+            let rows = (bmp.h as f32 * (i("Percentage").clamp(1, 100) as f32 / 100.0)) as i64;
+            let skew = if e.bool("Skew") {
+                i("SkewSize").abs()
+            } else {
+                0
+            };
+            let total = h + rows + i("Offset");
+            rows < 1 || total < 1 || too_large((w + skew, total))
+        }
+        DrawBorder => {
+            let s = i("Size").max(1);
+            e.text("Type") != "Inside" && too_large((w + 2 * s, h + 2 * s))
+        }
+        DrawCheckerboard => {
+            let s = 2 * i("Size").max(1);
+            too_large((s, s))
+        }
+        Pixelate => {
+            let s = i("Size");
+            i("BorderSize") > 0 && e.color("BorderColor").a > 0 && too_large((s, s))
+        }
+        DrawParticles if e.bool("RandomSize") => {
+            let s = i("RandomSizeMin").max(i("RandomSizeMax"));
+            too_large((s, s))
+        }
+        DrawImage => {
+            let (sw, sh) = e.point("Size");
+            let (sw, sh) = (sw as i64, sh as i64);
+            match e.text("SizeMode").as_str() {
+                "AbsoluteSize" => {
+                    too_large((if sw == -1 { w } else { sw }, if sh == -1 { h } else { sh }))
+                }
+                "PercentageOfCanvas" => too_large((
+                    round(sw as f64 / 100.0 * w as f64),
+                    round(sh as f64 / 100.0 * h as f64),
+                )),
+                "PercentageOfWatermark" => {
+                    // The watermark's own size (either way round, as RotateFlip may turn
+                    // it), read from the file's header.
+                    let side = safe_local_path(&e.text("ImageLocation"), false)
+                        .and_then(|p| image::image_dimensions(p).ok())
+                        .map(|(a, b)| a.max(b) as f64)
+                        .unwrap_or(0.0);
+                    too_large((
+                        round(sw.abs() as f64 / 100.0 * side),
+                        round(sh.abs() as f64 / 100.0 * side),
+                    ))
+                }
+                _ => false,
+            }
+        }
+        _ => false,
     }
 }
 
