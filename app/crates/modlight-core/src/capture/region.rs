@@ -355,8 +355,7 @@ impl RegionSession {
         self.last_point = point;
         if self.is_light() {
             if self.light_mouse_down {
-                self.selection =
-                    Rect::normalize_and_clamp(self.press_point, point, self.image_size);
+                self.selection = self.light_rect(point);
             }
             return;
         }
@@ -435,12 +434,27 @@ impl RegionSession {
         }
     }
 
+    /// The light capture's area from the press to `point`: `CaptureHelpers.CreateRectangle`,
+    /// which counts the pixels under both corners.
+    fn light_rect(&self, point: Point) -> Rect {
+        let pixel = |v: f64| v.floor();
+        let (x1, x2) = (
+            pixel(self.press_point.x.min(point.x)),
+            pixel(self.press_point.x.max(point.x)) + 1.0,
+        );
+        let (y1, y2) = (
+            pixel(self.press_point.y.min(point.y)),
+            pixel(self.press_point.y.max(point.y)) + 1.0,
+        );
+        Rect::normalize_and_clamp(Point::new(x1, y1), Point::new(x2, y2), self.image_size)
+    }
+
     /// `RegionCaptureLightForm_MouseUp`.
     fn light_released(&mut self, button: Button, point: Point) {
         const MINIMUM: f64 = 5.0;
         match button {
             Button::Left => {
-                let rect = Rect::normalize_and_clamp(self.press_point, point, self.image_size);
+                let rect = self.light_rect(point);
                 if self.light_mouse_down && rect.width > MINIMUM && rect.height > MINIMUM {
                     self.selection = rect;
                     self.complete(rect, false);
@@ -1010,10 +1024,28 @@ mod tests {
         s.pointer_moved(Point::new(110.0, 60.0));
         assert!(s.light_dragging());
         s.pointer_released(Button::Left, Point::new(110.0, 60.0));
-        assert_eq!(completed(&s).1, IRect::new(10, 10, 100, 50));
+        // `CaptureHelpers.CreateRectangle`: both corner pixels belong to the area.
+        assert_eq!(completed(&s).1, IRect::new(10, 10, 101, 51));
         let mut s = RegionSession::new(request(RegionKind::Transparent));
         s.pointer_released(Button::Right, Point::new(1.0, 1.0));
         assert_eq!(s.outcome, Some(RegionOutcome::Cancelled));
+    }
+
+    /// The light and transparent captures' area is `CaptureHelpers.CreateRectangle` of
+    /// the press and the release, which counts both corner pixels, in either direction;
+    /// more than five pixels each way is an area.
+    #[test]
+    fn the_light_area_includes_both_corners() {
+        let mut s = RegionSession::new(request(RegionKind::Light));
+        s.pointer_pressed(Button::Left, Point::new(40.0, 30.0), 1);
+        s.pointer_moved(Point::new(35.0, 25.0));
+        s.pointer_released(Button::Left, Point::new(35.0, 25.0));
+        assert_eq!(completed(&s).1, IRect::new(35, 25, 6, 6));
+        let mut s = RegionSession::new(request(RegionKind::Transparent));
+        s.pointer_pressed(Button::Left, Point::new(40.0, 30.0), 1);
+        s.pointer_moved(Point::new(44.0, 34.0));
+        s.pointer_released(Button::Left, Point::new(44.0, 34.0));
+        assert!(s.outcome.is_none(), "five pixels each way is no area");
     }
 
     #[test]
