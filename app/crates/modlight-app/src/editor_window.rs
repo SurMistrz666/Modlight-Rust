@@ -42,6 +42,9 @@ pub struct EditorSession {
     title: String,
     /// A save of this frame's requests could not write the picture.
     save_failed: bool,
+    /// The options the window opened with: closing writes back only the members this
+    /// window changed (upstream's windows share one live options object).
+    opened_options: serde_json::Value,
 }
 
 /// The editor windows and their counter.
@@ -184,7 +187,9 @@ impl AppState {
             show_start_screen: !task_mode,
             open_background_panel: background_panel,
         };
-        let mut editor = Editor::new(self.editor_options(), config);
+        let options = self.editor_options();
+        let opened_options = options.to_value();
+        let mut editor = Editor::new(options, config);
         let path_text = path.as_ref().map(|p| p.to_string_lossy().into_owned());
         match image {
             Some(image) => editor.load_image(image, path_text),
@@ -207,6 +212,7 @@ impl AppState {
             closed: false,
             title: String::new(),
             save_failed: false,
+            opened_options,
         });
     }
 
@@ -634,8 +640,22 @@ impl AppState {
             TaskResult::ContinueNoSave => session.editor.source_image(),
             TaskResult::None | TaskResult::Cancel => None,
         };
-        let options = session.editor.options.clone();
-        self.store_editor_options(&options);
+        // Only what this window changed: another editor window (or the settings) may have
+        // stored changes of its own since this one opened.
+        let changed = session.editor.options.to_value();
+        let mut stored = self.editor_options().to_value();
+        if let (Some(changed), Some(opened), Some(target)) = (
+            changed.as_object(),
+            session.opened_options.as_object(),
+            stored.as_object_mut(),
+        ) {
+            for (member, value) in changed {
+                if opened.get(member) != Some(value) {
+                    target.insert(member.clone(), value.clone());
+                }
+            }
+        }
+        self.store_editor_options(&ImageEditorOptions::from_value(&stored));
         match session.finish.take() {
             Some(Finish::Task(reply)) => {
                 let _ = reply.send(TaskAnswer::Annotated(result.map(Arc::new)));
@@ -924,6 +944,27 @@ mod tests {
             );
             assert!(session.editor.take_requests().contains(&Request::Close));
         }
+    }
+
+    /// Upstream's editors share one live `ImageEditorOptions`. Here each window works on
+    /// a copy, and closing one writes back only what that window changed, so two
+    /// windows (or the settings) do not undo each other's changes.
+    #[test]
+    fn two_editor_windows_keep_each_others_option_changes() {
+        let image = RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]));
+        let (mut state, a) = editor_state(Some(image.clone()), false);
+        state.open_editor(Some(image), None, false, false, Finish::RunImageTask);
+        let b = state.windows.editors.sessions.last().unwrap().key;
+        state.session(a).unwrap().editor.options.thickness = 9;
+        state.session(b).unwrap().editor.options.quick_crop = false;
+        state.close_editor(a);
+        state.close_editor(b);
+        let options = state.editor_options();
+        assert_eq!(
+            options.thickness, 9,
+            "the first window's change was overwritten"
+        );
+        assert!(!options.quick_crop);
     }
 
     /// A save that fails says so (`ImageHelpers.SaveImage` shows the error), and the exit
