@@ -53,9 +53,10 @@ pub fn from_bytes_as(bytes: &[u8], format: ImageFormat) -> image::ImageResult<Dy
     reader.decode()
 }
 
-/// A picture file, its format from the extension as `image::open` reads it.
+/// A picture file, decoded as what its bytes are (`ImageHelpers.LoadImage` reads it with
+/// `Image.FromStream`), the extension only when the bytes say nothing.
 pub fn open(path: &Path) -> image::ImageResult<DynamicImage> {
-    let mut reader = ImageReader::open(path)?;
+    let mut reader = ImageReader::open(path)?.with_guessed_format()?;
     reader.limits(limits());
     reader.decode()
 }
@@ -149,6 +150,24 @@ mod tests {
         assert!(is_limit(&open(&path).unwrap_err()));
         let path = dir.path().join("huge.jpg");
         std::fs::write(&path, jpeg_claiming(40_000, 40_000)).unwrap();
+        assert!(is_limit(&open(&path).unwrap_err()));
+    }
+
+    /// `ImageHelpers.LoadImage` decodes what the bytes are (`Image.FromStream`): a PNG
+    /// named `.jpg` (renamed by hand, saved by a browser) still opens.
+    #[test]
+    fn a_file_decodes_by_its_content_not_its_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("actually-a-png.jpg");
+        std::fs::write(&path, encoded(ImageFormat::Png)).unwrap();
+        let decoded = open(&path).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (16, 16));
+        let path = dir.path().join("actually-a-jpeg.png");
+        std::fs::write(&path, encoded(ImageFormat::Jpeg)).unwrap();
+        assert_eq!(open(&path).unwrap().width(), 16);
+        // The limits hold whatever the name says.
+        let path = dir.path().join("huge.gif");
+        std::fs::write(&path, png_claiming(30_000, 30_000)).unwrap();
         assert!(is_limit(&open(&path).unwrap_err()));
     }
 

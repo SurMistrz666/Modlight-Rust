@@ -26,9 +26,12 @@ pub fn file_name(
     parser.max_name_length = settings.advanced_settings.name_pattern_max_length as i32;
     parser.max_title_length = settings.advanced_settings.name_pattern_max_title_length as i32;
     if settings.upload_settings.use_custom_time_zone {
-        // The zone itself is not carried by the settings model yet; UTC is what
-        // `TimeZoneInfo.Utc` (the default custom zone) means.
-        parser.custom_time_zone = Some(crate::names::name_parser::CustomTimeZone::Utc);
+        // UTC is honoured; another zone falls back to local time (MACOS.md).
+        parser.custom_time_zone = Some(
+            crate::names::name_parser::CustomTimeZone::from_time_zone_info(
+                settings.upload_settings.custom_time_zone.as_ref(),
+            ),
+        );
     }
     if let Some(metadata) = metadata {
         if let Some(image) = &metadata.image {
@@ -213,4 +216,54 @@ pub fn url_encode(text: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Timelike;
+
+    /// `GetFileName` with "Use custom time zone": the zone the settings name
+    /// (`UploadSettings.CustomTimeZone`, a `TimeZoneInfo` as Newtonsoft writes it). UTC is
+    /// honoured; any other zone falls back to local time on a Mac (MACOS.md), it is not
+    /// read as UTC.
+    #[test]
+    fn the_custom_time_zone_is_the_one_the_settings_name() {
+        let settings = |zone: serde_json::Value| -> TaskSettings {
+            serde_json::from_value(serde_json::json!({
+                "UploadSettings": {
+                    "UseCustomTimeZone": true,
+                    "CustomTimeZone": zone,
+                    "NameFormatPattern": "%h"
+                }
+            }))
+            .unwrap()
+        };
+        let hours = |now: chrono::DateTime<chrono::Utc>| {
+            (
+                format!("{:02}", now.with_timezone(&chrono::Local).hour()),
+                format!("{:02}", now.hour()),
+            )
+        };
+        let windows_zone = settings(serde_json::json!({
+            "Id": "Central European Standard Time",
+            "DisplayName": "(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna",
+            "BaseUtcOffset": "01:00:00",
+            "SupportsDaylightSavingTime": true
+        }));
+        let utc_zone = settings(serde_json::json!({"Id": "UTC", "BaseUtcOffset": "00:00:00"}));
+        let unnamed = settings(serde_json::Value::Null);
+        // The clock may pass a full hour between the reads: accept either side of it.
+        let before = hours(chrono::Utc::now());
+        let (local, _) = file_name(&windows_zone, None, None, 0);
+        let (utc, _) = file_name(&utc_zone, None, None, 0);
+        let (default, _) = file_name(&unnamed, None, None, 0);
+        let after = hours(chrono::Utc::now());
+        assert!(local == before.0 || local == after.0, "{local} {before:?}");
+        assert!(utc == before.1 || utc == after.1, "{utc} {before:?}");
+        assert!(
+            default == before.1 || default == after.1,
+            "TimeZoneInfo.Utc"
+        );
+    }
 }

@@ -1694,7 +1694,12 @@ fn naming(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
             b.f64(&["AdvancedSettings", "NamePatternMaxTitleLength"], 50.0) as i32;
         parser.is_preview_mode = true;
         if b.bool(&["UploadSettings", "UseCustomTimeZone"], false) {
-            parser.custom_time_zone = Some(modlight_core::names::name_parser::CustomTimeZone::Utc);
+            // As the names themselves: UTC, or local time for any other zone (MACOS.md).
+            parser.custom_time_zone = Some(
+                modlight_core::names::name_parser::CustomTimeZone::from_time_zone_info(
+                    b.get(&["UploadSettings", "CustomTimeZone"]),
+                ),
+            );
         }
         if window {
             parser.window_text = Some(modlight_core::title());
@@ -1707,9 +1712,10 @@ fn naming(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
     let capture_pattern = b.str(&u("NameFormatPattern"), "%ra{10}");
     let window_pattern = b.str(&u("NameFormatPatternActiveWindow"), "%pn_%ra{10}");
     let key = format!(
-        "{capture_pattern}\u{1}{window_pattern}\u{1}{}\u{1}{}\u{1}{}\u{1}{}",
+        "{capture_pattern}\u{1}{window_pattern}\u{1}{}\u{1}{}\u{1}{:?}\u{1}{}\u{1}{}",
         ctx.auto_increment,
         b.bool(&["UploadSettings", "UseCustomTimeZone"], false),
+        b.get(&["UploadSettings", "CustomTimeZone", "Id"]),
         b.f64(&["AdvancedSettings", "NamePatternMaxLength"], 100.0),
         b.f64(&["AdvancedSettings", "NamePatternMaxTitleLength"], 50.0),
     );
@@ -1814,26 +1820,38 @@ fn naming(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
             t(s::TaskSettingsWindow_UseCustomTimeZone),
         );
         ui.add_enabled_ui(custom, |ui| {
-            // The system's time zones; the setting stores upstream's TimeZoneInfo shape,
-            // and only UTC is honoured by the name patterns (MACOS.md).
+            // UTC, the zone the port offers, and the one the settings hold when another
+            // installation chose another (the names take it as local time, MACOS.md).
+            // The setting keeps upstream's TimeZoneInfo shape.
             row(
                 ui,
                 colors,
                 TASK_ROW,
                 t(s::TaskSettingsWindow_TimeZoneLabel),
                 |ui| {
-                    let list = vec![(
-                        "UTC".to_string(),
-                        "(UTC) Coordinated Universal Time".to_string(),
-                    )];
-                    let _ = crate::widgets::combo(
-                        ui,
-                        colors,
-                        "time-zone",
-                        300.0,
-                        &"UTC".to_string(),
-                        &list,
-                    );
+                    use modlight_core::names::name_parser::{CustomTimeZone, UTC_DISPLAY_NAME};
+                    let stored = b.get(&u("CustomTimeZone")).cloned();
+                    let mut list = vec![("UTC".to_string(), UTC_DISPLAY_NAME.to_string())];
+                    let current = match CustomTimeZone::from_time_zone_info(stored.as_ref()) {
+                        CustomTimeZone::Other(id) => {
+                            let label = stored
+                                .as_ref()
+                                .and_then(|zone| zone.get("DisplayName"))
+                                .and_then(Value::as_str)
+                                .unwrap_or(&id)
+                                .to_string();
+                            list.push((id.clone(), label));
+                            id
+                        }
+                        CustomTimeZone::Utc => "UTC".to_string(),
+                    };
+                    if let Some(picked) =
+                        crate::widgets::combo(ui, colors, "time-zone", 300.0, &current, &list)
+                        && picked == "UTC"
+                        && current != "UTC"
+                    {
+                        b.set(&u("CustomTimeZone"), CustomTimeZone::utc_time_zone_info());
+                    }
                 },
             );
         });
@@ -2002,6 +2020,16 @@ fn tools(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
     );
 }
 
+/// The action list with one action switched on or off (`ExternalProgram.IsActive`). An
+/// entry that is not an action (a hand-edited file) stays as it is.
+fn set_action_active(programs: &[Value], index: usize, active: bool) -> Vec<Value> {
+    let mut list = programs.to_vec();
+    if let Some(Value::Object(program)) = list.get_mut(index) {
+        program.insert("IsActive".into(), json!(active));
+    }
+    list
+}
+
 fn actions(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
     let colors = ctx.colors;
     override_group(
@@ -2071,9 +2099,10 @@ fn actions(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
             ctx.state.selected_action = Some(index);
         }
         if let Some((index, value)) = toggled {
-            let mut list = programs.clone();
-            list[index]["IsActive"] = json!(value);
-            b.set(&["ExternalPrograms"], Value::Array(list));
+            b.set(
+                &["ExternalPrograms"],
+                Value::Array(set_action_active(&programs, index, value)),
+            );
         }
         ui.horizontal(|ui| {
             // `ButtonRow`: 6 apart.
@@ -3357,5 +3386,108 @@ impl crate::state::AppState {
                 },
             ) as Box<dyn FnOnce(&mut crate::state::AppState, &egui::Context) + Send>
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Timelike;
+
+    /// Draw one task page over `document` (the default task settings) once.
+    fn draw(
+        section: &'static str,
+        document: &mut serde_json::Map<String, Value>,
+    ) -> TaskPagesState {
+        let theme = modlight_core::theme::resolve(
+            &modlight_core::theme::ThemeOptions::default(),
+            Some(true),
+            None,
+        );
+        let colors = Colors::new(&theme);
+        let mut pages = TaskPagesState::default();
+        let mut auto_increment = 0;
+        let mut root = std::mem::take(document);
+        {
+            let mut fonts_set = false;
+            let mut harness = egui_kittest::Harness::new_ui(|ui| {
+                // The app's fonts first: the pages draw with them.
+                if !fonts_set {
+                    fonts_set = true;
+                    ui.ctx().set_fonts(crate::theme::fonts());
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                let mut ctx = TaskPagesCtx {
+                    colors: &colors,
+                    is_default: true,
+                    state: &mut pages,
+                    asks: Vec::new(),
+                    auto_increment: &mut auto_increment,
+                    auto_increment_changed: false,
+                    dev_mode: false,
+                    dialogs: false,
+                };
+                let mut binder = Binder::new(&mut root);
+                page(ui, &mut ctx, &mut binder, section);
+            });
+            harness.run_steps(2);
+        }
+        *document = root;
+        pages
+    }
+
+    /// Switching an action on or off in a list a hand-edited file broke (an entry that is
+    /// not an object) must not panic: `list[index]["IsActive"] = ...` did.
+    #[test]
+    fn a_broken_action_entry_does_not_crash_its_check_box() {
+        let programs = vec![
+            serde_json::json!("oops"),
+            serde_json::json!({"Name": "Optimise", "IsActive": false, "Extra": 1}),
+            serde_json::json!(null),
+        ];
+        let list = set_action_active(&programs, 0, true);
+        assert_eq!(list[0], serde_json::json!("oops"));
+        let list = set_action_active(&list, 1, true);
+        assert_eq!(
+            list[1],
+            serde_json::json!({"Name": "Optimise", "IsActive": true, "Extra": 1})
+        );
+        let list = set_action_active(&list, 2, true);
+        assert_eq!(list[2], serde_json::json!(null));
+        assert_eq!(set_action_active(&list, 9, true), list);
+    }
+
+    /// The file names page previews names the way the task names them: with "Use custom
+    /// time zone" a zone another installation chose is local time here, not UTC, and
+    /// the zone list shows that zone rather than claiming UTC.
+    #[test]
+    fn the_naming_preview_uses_the_zone_the_settings_name() {
+        let mut document = serde_json::json!({
+            "UploadSettings": {
+                "UseCustomTimeZone": true,
+                "CustomTimeZone": {
+                    "Id": "Central European Standard Time",
+                    "DisplayName": "(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna"
+                },
+                "NameFormatPattern": "%h"
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let local = |now: chrono::DateTime<chrono::Utc>| {
+            format!("{:02}", now.with_timezone(&chrono::Local).hour())
+        };
+        let before = local(chrono::Utc::now());
+        let pages = draw("task.upload-file-naming", &mut document);
+        let after = local(chrono::Utc::now());
+        let (_, capture, _) = pages.naming_preview.unwrap();
+        assert!(capture == before || capture == after, "{capture} {before}");
+        // Drawing the page wrote nothing.
+        assert_eq!(
+            document["UploadSettings"]["CustomTimeZone"]["Id"],
+            serde_json::json!("Central European Standard Time")
+        );
     }
 }
