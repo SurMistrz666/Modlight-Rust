@@ -340,3 +340,50 @@ async fn a_marker_from_an_earlier_build_does_not_push_over_a_newer_document() {
     );
     assert_eq!(second.config.get("Language"), Some(&json!("Polish")));
 }
+
+/// The reference server on 127.0.0.1:8420 (`docs/PORT.md` section 4), with the QA
+/// account of `_wzorzec/qa-accounts.env` (or the file `MODLIGHT_QA_ENV` names); skipped
+/// without it. Writes nothing: a machine that takes the account's settings and changes
+/// nothing must never push them back. With a digest of the bytes it pushed on its third
+/// round, because the server's copy never matched its own.
+#[tokio::test]
+async fn against_the_reference_server_a_quiet_machine_writes_nothing() {
+    let Some(token) = qa_token("QA_APP1_TOKEN_WRITE") else {
+        eprintln!("reference server test skipped: no qa-accounts.env");
+        return;
+    };
+    let api = Api::new("0.7.7").unwrap();
+    let credential = Credential::new("http://127.0.0.1:8420", token);
+    let mut machine = Machine::new(json!({}));
+    for round in 1..=4 {
+        let action = machine.round(&api, &credential).await;
+        assert!(
+            !matches!(action, Some(SyncAction::Push | SyncAction::Seed)),
+            "round {round}: {action:?}; nothing changed on this machine"
+        );
+    }
+}
+
+fn qa_token(key: &str) -> Option<String> {
+    let path = std::env::var_os("MODLIGHT_QA_ENV")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let mut dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            loop {
+                let candidate = dir.join("_wzorzec").join("qa-accounts.env");
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+                if !dir.pop() {
+                    return None;
+                }
+            }
+        })?;
+    std::fs::read_to_string(path)
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            let (k, v) = line.split_once('=')?;
+            (k.trim() == key).then(|| v.trim().to_string())
+        })
+}
