@@ -334,6 +334,8 @@ impl AppState {
         }
         let anchor = pager::anchor(pager::first(self.space.page, self.space.page_size), wanted);
         self.space.page_size = wanted;
+        // `RememberPageSize`, before the request: a preference, not a result.
+        self.config.set_page_size(wanted);
         self.save_config();
         let Some(credential) = self.credential() else {
             self.space_signed_out();
@@ -1644,6 +1646,37 @@ mod tests {
             !profile.path().join("Downloads").exists(),
             "no destination was asked for"
         );
+    }
+
+    /// `RememberPageSize` and `RememberFolder` write the two settings when the person
+    /// changes them; every other save leaves them alone. A session that starts signed
+    /// out never takes up the remembered folder, and saving anything (a theme, the
+    /// panel, quitting) wrote "no folder" over it.
+    #[test]
+    fn an_unrelated_save_keeps_the_remembered_page_size_and_folder() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.config.set_page_size(30);
+        state.config.set_last_folder_id(Some("f-design"));
+        // What `AppState::new` reads from the settings file.
+        state.space.page_size = 30;
+        state.space_refresh_account();
+        state.toggle_library_panel();
+        state.save_config();
+        assert_eq!(state.config.page_size(), 30);
+        assert_eq!(state.config.last_folder_id(), "f-design");
+
+        // Signed in, the library writes them when they change.
+        let mut state = offline_state();
+        state.config.set_page_size(30);
+        state.config.set_last_folder_id(Some("f-design"));
+        state.space_refresh_account();
+        assert_eq!(state.space.page_size, 30, "taken up at the first listing");
+        assert_eq!(state.space.current_folder.as_deref(), Some("f-design"));
+        state.space_set_page_size(60);
+        assert_eq!(state.config.page_size(), 60);
+        state.space.loaded_once = true;
+        state.space_select_view(1);
+        assert_eq!(state.config.last_folder_id(), "", "a kind is no folder");
     }
 
     /// The conversion the server would make is then saved under the stem and the new

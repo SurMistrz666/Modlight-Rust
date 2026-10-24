@@ -299,9 +299,10 @@ impl AppState {
         self.config.set_library_panel(self.library_panel);
         self.config.set_folders_section(self.folders_section);
         self.config.set_files_section(self.files_section);
-        self.config.set_page_size(self.space.page_size);
-        self.config
-            .set_last_folder_id(self.space.current_folder.as_deref());
+        // Not the library's page size and folder: those are written when the person
+        // changes them (`remember_folder`, `space_set_page_size`), as upstream's
+        // RememberFolder and RememberPageSize do. Copying them here wrote the defaults of
+        // a library that never loaded (signed out) over what was remembered.
         if let Err(error) = self.config.save() {
             log::warn!("Modlight: settings could not be saved: {error}");
         }
