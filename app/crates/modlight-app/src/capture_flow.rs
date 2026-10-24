@@ -489,15 +489,14 @@ impl AppState {
             }
             OverlayPurpose::Tool(target) => {
                 // A tool's picture: the area as the overlay left it, with where it was.
+                // No capture: "Last region" keeps repeating the last capture's area.
                 let picture = match &outcome {
-                    RegionOutcome::Completed { screen_rect, .. } => capture::finish_region(
+                    RegionOutcome::Completed { screen_rect, .. } => capture::region_picture(
                         &session.request,
                         &outcome,
                         self.captures.source.as_ref(),
-                        modified,
                     )
-                    .and_then(|captured| captured.metadata.image)
-                    .map(|image| (image, *screen_rect)),
+                    .map(|image| (Arc::new(image), *screen_rect)),
                     _ => None,
                 };
                 self.tool_region_closed(target, picture);
@@ -1374,5 +1373,38 @@ mod tests {
         assert_eq!(renamed, folder.path().join("talk.mp4"));
         assert_eq!(std::fs::read(&renamed).unwrap(), b"new recording");
         assert!(!recording.exists());
+    }
+
+    /// The area a tool asked for (OCR, QR, pin from screen) is no capture: upstream's
+    /// `RegionCaptureTasks.GetRegionImage` leaves `LastRegionRectangle` alone, so "Last
+    /// region" still repeats the last capture's area.
+    #[test]
+    fn a_tools_area_is_not_the_last_region() {
+        use modlight_core::capture::geometry::Rect;
+        use modlight_core::capture::{LastRegion, last_region, set_last_region};
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let captured = IRect::new(1, 2, 30, 40);
+        set_last_region(LastRegion {
+            rect: captured,
+            ..LastRegion::default()
+        });
+        let settings = TaskSettings::default();
+        let request = capture::region_request(
+            RegionKind::Default,
+            &settings,
+            state.captures.source.as_ref(),
+        )
+        .unwrap();
+        let mut session = RegionSession::new(request);
+        session.complete(Rect::new(10.0, 10.0, 50.0, 50.0), false);
+        let overlay = RegionOverlay::new(
+            session,
+            OverlayPurpose::Tool(crate::tools::region::RegionFor::QrScan(7)),
+            settings,
+            0.0,
+        );
+        state.overlay_closed(overlay, &egui::Context::default());
+        assert_eq!(last_region().rect, captured);
+        set_last_region(LastRegion::default());
     }
 }
