@@ -182,10 +182,13 @@ impl ImageEffectsWindow {
         self.presets.get_mut(p)?.effects.get_mut(e)
     }
 
-    /// `OnSelectedPresetChanged`.
+    /// `OnSelectedPresetChanged`: new effect items, so the options panel is built anew
+    /// (`SetEffect`) even when the first effect is selected again.
     fn select_preset(&mut self, index: Option<usize>, now: f64) {
         self.selected_preset = index;
         let count = self.preset().map(|p| p.effects.len()).unwrap_or(0);
+        self.texts.clear();
+        self.validation.clear();
         self.set_selected_effect(if count > 0 { Some(0) } else { None });
         self.queue_preview(now);
     }
@@ -2835,6 +2838,34 @@ mod tests {
         assert_eq!(imported.effects[0].text("ImageLocation"), "");
         assert_eq!(imported.effects[1].text("ImageFilePath"), kept);
         assert_eq!(w.selected_preset, Some(w.presets.len() - 1));
+    }
+
+    /// `OnSelectedPresetChanged` makes new effect items, so the options panel is built
+    /// anew (`SetEffect`) even when the first effect stays selected: no text box may keep
+    /// the previous preset's text, which an edit would then write into this preset.
+    #[test]
+    fn switching_presets_rebuilds_the_text_editors() {
+        let watermark = |text: &str| {
+            let mut e = ClassicEffect::new(Kind::DrawText);
+            e.set("Text", Value::Text(text.into()));
+            Preset {
+                name: text.into(),
+                effects: vec![e],
+            }
+        };
+        let mut w = window(vec![watermark("first"), watermark("second")]);
+        assert_eq!(w.selected_effect, Some(0));
+        // What the panel's text boxes hold while the first preset is shown.
+        w.texts.insert("Text", "first".into());
+        w.validation = "first is not a valid value for Font.".into();
+        w.select_preset(Some(1), 0.0);
+        assert_eq!(w.selected_effect, Some(0));
+        assert!(w.texts.is_empty(), "{:?}", w.texts);
+        assert!(w.validation.is_empty());
+        // The same through removing the selected preset.
+        w.texts.insert("Text", "second".into());
+        w.remove_preset(0.0);
+        assert!(w.texts.is_empty(), "{:?}", w.texts);
     }
 
     #[test]
