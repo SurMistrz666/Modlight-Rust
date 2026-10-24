@@ -1935,6 +1935,67 @@ async fn every_answer_the_protocol_allows_is_read_like_upstream() {
     assert_eq!(session, stored(0), "nothing learned, nothing forgotten");
 }
 
+/// Asking where a session stands and getting a gateway's or a busy server's answer says
+/// nothing about the session: it is kept for the next attempt rather than replaced by a
+/// new one that sends the whole file again. Only the server saying it does not have the
+/// session (404, 410, any other refusal) starts over.
+#[tokio::test]
+async fn a_busy_server_does_not_cost_a_stored_session() {
+    use TransferOutcome::{Retry, Success};
+    use TransferReason::ServerError;
+
+    let (file, _) = random_file(1000);
+    let timings = TusTimings::default();
+    let stored = |offset| TusSession {
+        url: Some("/api/files/s1".into()),
+        offset,
+        folder_id: Some("f-1".into()),
+    };
+    for status in [408, 429, 502, 503, 504] {
+        let (result, session, seen, told) = scripted_attempt(
+            vec![
+                Reply::new(status)
+                    .header("Retry-After", "9")
+                    .body("<html>busy</html>"),
+            ],
+            stored(400),
+            &file,
+            1000,
+            timings,
+        )
+        .await;
+        assert_eq!(
+            summary(&result),
+            (Retry, ServerError, status.to_string().as_str()),
+            "{status}"
+        );
+        assert_eq!(result.status, Some(status));
+        assert_eq!(result.retry_after, Some(Duration::from_secs(9)), "{status}");
+        assert_eq!(session, stored(400), "{status}: the session is kept");
+        assert_eq!(methods(&seen), ["HEAD"], "{status}: no new session");
+        assert!(told.is_empty());
+    }
+
+    // A server error of its own about the session still starts over.
+    let (result, session, seen, _) = scripted_attempt(
+        vec![
+            Reply::new(500),
+            Reply::new(201).header("Location", "/api/files/s2"),
+            Reply::new(200)
+                .header("Upload-Offset", "1000")
+                .header("X-Media-Url", "http://h/u/a"),
+        ],
+        stored(400),
+        &file,
+        1000,
+        timings,
+    )
+    .await;
+    assert_eq!(result.outcome, Success);
+    assert_eq!(methods(&seen), ["HEAD", "POST", "PATCH"]);
+    assert_eq!(session.url, None);
+}
+
 #[tokio::test]
 async fn cancelling_a_tus_transfer_keeps_the_session() {
     // A server that takes the body and never answers: the attempt waits until cancelled.
