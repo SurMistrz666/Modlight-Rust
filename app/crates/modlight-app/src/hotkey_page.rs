@@ -30,6 +30,9 @@ use crate::state::AppState;
 use crate::theme::{Colors, Weight};
 use crate::widgets::{Content, Look, button, button_at, layout, paint_icon, trimmed, wrapped};
 
+/// The settings section that holds this page.
+pub const HOTKEYS_SECTION: &str = "hotkeys.list";
+
 /// The page's own state: the selected row, the row whose key is being captured, the
 /// reset question, the open task menu.
 #[derive(Clone, Debug, Default)]
@@ -1047,6 +1050,40 @@ impl AppState {
         }
     }
 
+    /// A key capture whose page went away (the window closed, another page shown) ends
+    /// as upstream's does when the button loses focus or the view is released
+    /// (`StopCapture`): the hotkeys are registered again and heard again. Without this
+    /// they stayed unregistered and ignored until the app restarted. Before every frame.
+    pub fn end_orphaned_hotkey_capture(&mut self) {
+        if !self.captures.hotkeys.ignore {
+            return;
+        }
+        match self.windows.settings.as_mut() {
+            Some(window) if window.hotkeys.capturing.is_some() => {
+                if window.section == HOTKEYS_SECTION {
+                    return;
+                }
+                let mut page = std::mem::take(&mut window.hotkeys);
+                self.stop_hotkey_capture(&mut page);
+                if let Some(window) = self.windows.settings.as_mut() {
+                    window.hotkeys = page;
+                }
+            }
+            _ => {
+                // The row's state went with the window: whatever was typed so far is
+                // finalized as `FinalizeHotkey` does (modifiers alone mean no hotkey).
+                for hotkey in &mut self.captures.hotkeys.hotkeys {
+                    if hotkey.info.is_only_modifiers() {
+                        hotkey.info = HotkeyInfo::default();
+                    }
+                }
+                self.captures.hotkeys.ignore = false;
+                self.captures.hotkeys.register_all();
+                self.save_hotkeys();
+            }
+        }
+    }
+
     fn set_hotkey_binding(&mut self, index: usize, info: HotkeyInfo) {
         if let Some(hotkey) = self.captures.hotkeys.hotkeys.get_mut(index) {
             hotkey.info = info;
@@ -1065,9 +1102,9 @@ impl AppState {
             hotkey.info = HotkeyInfo::default();
         }
         self.captures.hotkeys.ignore = false;
-        if !self.captures.hotkeys.disabled {
-            self.captures.hotkeys.register_all();
-        }
+        // While hotkeys are disabled this takes the "Disable hotkeys" key alone
+        // (`RegisterHotkey`), which the capture had unregistered with the rest.
+        self.captures.hotkeys.register_all();
         self.save_hotkeys();
     }
 
@@ -1169,6 +1206,10 @@ impl AppState {
                 page.confirm_reset = false;
                 page.selected = None;
                 self.save_hotkeys();
+                // `ResetHotkeys`: disabled hotkeys are turned on again.
+                if self.captures.hotkeys.disabled {
+                    self.toggle_hotkeys();
+                }
             }
             Ask::EnableHotkeys => {
                 if self.captures.hotkeys.disabled {
@@ -1259,5 +1300,95 @@ mod tests {
         let mut unique = jobs.clone();
         unique.dedup();
         assert_eq!(unique.len(), jobs.len());
+    }
+
+    use modlight_core::hotkeys::{FakeBackend, HotkeyManager, Keys, default_hotkeys};
+    use std::sync::{Arc, Mutex};
+
+    type Registered = Arc<Mutex<Vec<(u32, HotkeyInfo)>>>;
+
+    /// A QA state whose hotkeys register with a fake backend; the defaults plus a
+    /// "Disable hotkeys" key.
+    fn state_with_hotkeys(disabled: bool) -> (AppState, Registered) {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let backend = FakeBackend::default();
+        let registered = backend.registered.clone();
+        let mut list = default_hotkeys();
+        list.push(HotkeySettings::new(
+            HotkeyType::DisableHotkeys,
+            Keys::CONTROL | Keys::SHIFT | 48,
+        ));
+        state.captures.hotkeys = HotkeyManager::new(Box::new(backend), list, disabled);
+        state.captures.hotkeys.register_all();
+        state.show_settings(Some(HOTKEYS_SECTION));
+        (state, registered)
+    }
+
+    fn count(registered: &Registered) -> usize {
+        registered.lock().unwrap().len()
+    }
+
+    /// Upstream's capture ends when the button loses focus or the view is released
+    /// (`OnHotkeyLostFocus`, `Dispose` -> `StopCapture`). Closing the window or leaving
+    /// the page while a key was being typed left every hotkey unregistered and ignored
+    /// until the app restarted.
+    #[test]
+    fn leaving_the_page_while_typing_a_key_brings_the_hotkeys_back() {
+        let (mut state, registered) = state_with_hotkeys(false);
+        assert_eq!(count(&registered), 6);
+        state.hotkey_page_ask(Ask::Capture(1));
+        assert!(state.captures.hotkeys.ignore);
+        assert_eq!(count(&registered), 0, "nothing registered while typing");
+        // Still on the page: the capture goes on.
+        state.end_orphaned_hotkey_capture();
+        assert!(state.captures.hotkeys.ignore);
+        // The window closes before a key came.
+        state.close_settings();
+        state.end_orphaned_hotkey_capture();
+        assert!(!state.captures.hotkeys.ignore);
+        // The row the capture cleared stays empty; every other key is back.
+        assert_eq!(count(&registered), 5);
+        assert!(!state.captures.hotkeys.hotkeys[1].info.is_valid());
+
+        // Another page shown while typing.
+        let (mut state, registered) = state_with_hotkeys(false);
+        state.hotkey_page_ask(Ask::Capture(0));
+        state.show_settings(Some("application.general"));
+        state.end_orphaned_hotkey_capture();
+        assert!(!state.captures.hotkeys.ignore);
+        assert_eq!(count(&registered), 5);
+        let window = state.windows.settings.as_ref().unwrap();
+        assert_eq!(window.hotkeys.capturing, None);
+    }
+
+    /// `RegisterHotkey` takes the "Disable hotkeys" key even while hotkeys are off, so
+    /// they can be turned on again with it; typing a key on the page dropped it.
+    #[test]
+    fn the_disable_hotkeys_key_stays_registered_after_typing_a_key() {
+        let (mut state, registered) = state_with_hotkeys(true);
+        assert_eq!(count(&registered), 1, "only the switch while disabled");
+        state.hotkey_page_ask(Ask::Capture(0));
+        assert_eq!(count(&registered), 0);
+        state.hotkey_page_ask(Ask::Capture(0));
+        assert!(!state.captures.hotkeys.ignore);
+        assert_eq!(count(&registered), 1);
+        assert_eq!(
+            state.captures.hotkeys.hotkeys[5].status,
+            HotkeyStatus::Registered
+        );
+    }
+
+    /// `HotkeyManager.ResetHotkeys` turns hotkeys back on when they were disabled
+    /// (`TaskHelpers.ToggleHotkeys`).
+    #[test]
+    fn resetting_disabled_hotkeys_turns_them_on() {
+        let (mut state, registered) = state_with_hotkeys(true);
+        state.hotkey_page_ask(Ask::ConfirmReset);
+        assert!(!state.captures.hotkeys.disabled);
+        assert_eq!(
+            state.config.get("DisableHotkeys").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(count(&registered), default_hotkeys().len());
     }
 }
