@@ -409,7 +409,8 @@ impl AppState {
             log::warn!("Modlight: the token could not be removed from the keychain: {error}");
         }
         self.admin.forget();
-        self.server_tab_forget();
+        // The report goes, and the window leaves the Server tab whose button just went.
+        self.apply_admin_role();
         self.media.avatar.clear();
         self.strip.clear_storage();
         self.space_refresh_account();

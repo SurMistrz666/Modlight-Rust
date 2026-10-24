@@ -393,8 +393,11 @@ impl AppState {
         if self.credential().as_ref() != Some(credential) {
             return;
         }
-        self.admin.record(&credential.host, info);
+        let role_changed = self.admin.record(&credential.host, info);
         self.account.adopt(info);
+        if role_changed {
+            self.apply_admin_role();
+        }
     }
 
     /// `credential` was refused: the role it carried goes with it (`ModlightAdmin.Forget`
@@ -404,6 +407,8 @@ impl AppState {
         if self.credential().as_ref() != Some(credential) {
             return;
         }
-        self.admin.forget();
+        if self.admin.forget() {
+            self.apply_admin_role();
+        }
     }
 }
