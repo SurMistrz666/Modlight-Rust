@@ -1112,6 +1112,19 @@ impl AppState {
     fn run_clipboard_content(&mut self, content: ClipboardContent, settings: TaskSettings) {
         match content {
             ClipboardContent::Files(files) => self.upload_files_with(files, settings),
+            // `ProcessImageUpload` -> `RunImageTask`: the quick task menu and the
+            // after-capture window first, when the task asks for them.
+            ClipboardContent::Image(image) => {
+                self.run_image_task(crate::capture_flow::PendingImage {
+                    metadata: modlight_core::tasks::info::TaskMetadata {
+                        image: Some(Arc::new(image)),
+                        ..Default::default()
+                    },
+                    settings: upload_manager::clipboard_image_settings(&settings),
+                    file: None,
+                    skip_quick_menu: false,
+                });
+            }
             other => {
                 let ctx = self.uploads.ctx.clone();
                 upload_manager::clipboard_upload(&mut self.uploads.tasks, other, &settings, &ctx);
@@ -1787,5 +1800,36 @@ mod tests {
             .filter_map(|(folder, _)| folder.folder_path)
             .collect();
         assert_eq!(folders, ["/watched/hotkey"]);
+    }
+
+    /// A clipboard picture goes through `RunImageTask` (`ProcessImageUpload`): when the
+    /// task processes clipboard pictures, its quick task menu and after-capture window
+    /// come first, as they do for a capture.
+    #[test]
+    fn a_clipboard_picture_asks_what_the_task_asks_first() {
+        let picture = || ClipboardContent::Image(image::RgbaImage::new(8, 8));
+        let mut settings = TaskSettings::default();
+        settings
+            .advanced_settings
+            .process_images_during_clipboard_upload = true;
+
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        settings.after_capture_job = AfterCaptureTasks::ShowAfterCaptureWindow;
+        state.run_clipboard_content(picture(), settings.clone());
+        assert_eq!(
+            state.captures.after_capture.len(),
+            1,
+            "the after-capture window"
+        );
+        assert!(
+            state.uploads.tasks.tasks.is_empty(),
+            "no task before it is answered"
+        );
+
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        settings.after_capture_job = AfterCaptureTasks::ShowQuickTaskMenu;
+        state.run_clipboard_content(picture(), settings);
+        assert!(state.captures.quick_menu.is_some(), "the quick task menu");
+        assert!(state.uploads.tasks.tasks.is_empty());
     }
 }

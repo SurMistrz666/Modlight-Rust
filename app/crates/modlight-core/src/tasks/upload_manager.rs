@@ -209,14 +209,9 @@ pub fn start_index_upload(
     manager.start(task, ctx);
 }
 
-/// `ProcessImageUpload`: a clipboard picture is uploaded as it is unless the settings
-/// ask for the after-capture work on it too.
-pub fn process_image_upload(
-    manager: &mut TaskManager,
-    image: image::RgbaImage,
-    settings: &TaskSettings,
-    ctx: &TaskContext,
-) {
+/// `ProcessImageUpload`'s settings: a clipboard picture is uploaded as it is unless the
+/// settings ask for the after-capture work on it too.
+pub fn clipboard_image_settings(settings: &TaskSettings) -> TaskSettings {
     let mut settings = settings.clone();
     if !settings
         .advanced_settings
@@ -224,7 +219,18 @@ pub fn process_image_upload(
     {
         settings.after_capture_job = AfterCaptureTasks::UploadImageToHost;
     }
-    run_image_task(manager, image, &settings, ctx);
+    settings
+}
+
+/// `ProcessImageUpload` without the quick task menu and the after-capture window; the
+/// window sends clipboard pictures through its own `run_image_task`, which shows them.
+pub fn process_image_upload(
+    manager: &mut TaskManager,
+    image: image::RgbaImage,
+    settings: &TaskSettings,
+    ctx: &TaskContext,
+) {
+    run_image_task(manager, image, &clipboard_image_settings(settings), ctx);
 }
 
 /// `RunImageTask`, without the quick task menu and the after-capture window, which
