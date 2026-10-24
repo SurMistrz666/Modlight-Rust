@@ -752,7 +752,10 @@ mod tests {
 
     /// A server on 127.0.0.1 answering every request with `status` and `body`, counting
     /// the requests.
-    fn server(status: &'static str, body: Vec<u8>) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    fn server(
+        status: &'static str,
+        body: Vec<u8>,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
         use std::io::{Read, Write};
         use std::sync::atomic::{AtomicUsize, Ordering};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -809,7 +812,10 @@ mod tests {
         );
         run_frames(&mut state, &ctx, 0.3, |_, _| {});
         assert_eq!(requests.load(Ordering::SeqCst), 1);
-        assert!(state.media.motion_bytes.get("cv1").is_some(), "kept for the next hover");
+        assert!(
+            state.media.motion_bytes.get("cv1").is_some(),
+            "kept for the next hover"
+        );
     }
 
     /// `CloudMotionPlayer.BeginAsync`: a moving preview the server cannot give right now
@@ -830,7 +836,10 @@ mod tests {
             1,
             "one request for one hover, however long the pointer rests"
         );
-        assert!(!state.media.motion_bytes.is_refused("cv1"), "a 503 is not a refusal");
+        assert!(
+            !state.media.motion_bytes.is_refused("cv1"),
+            "a 503 is not a refusal"
+        );
 
         // Leaving and coming back is a new hover, which may ask again.
         state.unhover_file("v1");

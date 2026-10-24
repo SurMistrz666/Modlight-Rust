@@ -198,7 +198,10 @@ mod tests {
         assert!(stills.get("old").is_none());
         assert_eq!(stills.get("taken"), Some(Arc::new(vec![1])));
         stills.rename("absent", "taken");
-        assert!(stills.get("taken").is_none(), "another file's picture is dropped");
+        assert!(
+            stills.get("taken").is_none(),
+            "another file's picture is dropped"
+        );
         for i in 0..400 {
             stills.put(&format!("c{i}"), Arc::new(vec![0]));
         }

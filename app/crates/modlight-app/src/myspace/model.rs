@@ -571,7 +571,10 @@ impl MySpace {
             if file.folder_id.as_deref() == target {
                 continue;
             }
-            let (from, to) = (self.tally_of(file.folder_id.as_deref()), self.tally_of(target));
+            let (from, to) = (
+                self.tally_of(file.folder_id.as_deref()),
+                self.tally_of(target),
+            );
             self.adjust_folder_tally(from.as_deref(), -1, -file.size);
             self.adjust_folder_tally(to.as_deref(), 1, file.size);
         }
