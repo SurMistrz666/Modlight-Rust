@@ -38,6 +38,31 @@ use crate::dialogs::url_upload::UrlUpload;
 use crate::state::{AppState, Effect};
 use crate::upload_tab::COPY_ACKNOWLEDGEMENT;
 
+/// What the clipboard may hold, as [`AppState::read_clipboard`] asks for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClipboardKind {
+    Files,
+    Image,
+    Text,
+}
+
+/// Upstream's order (`ClipboardUpload`, `ClipboardUploadWindow`): a picture, then text,
+/// then a file list. On a Mac a copied file also leaves its icon and its name on the
+/// pasteboard, so there the file list is asked for first.
+const CLIPBOARD_ORDER: [ClipboardKind; 3] = if cfg!(windows) {
+    [
+        ClipboardKind::Image,
+        ClipboardKind::Text,
+        ClipboardKind::Files,
+    ]
+} else {
+    [
+        ClipboardKind::Files,
+        ClipboardKind::Image,
+        ClipboardKind::Text,
+    ]
+};
+
 /// A question a task is waiting on, and where the answer goes.
 pub struct PendingAsk {
     pub task: u64,
@@ -1008,30 +1033,43 @@ impl AppState {
         }
     }
 
-    /// Read the clipboard. On a Mac a copied file also leaves its icon and its name on
-    /// the pasteboard, so the file list is asked for first; otherwise upstream's order.
+    /// Read the clipboard, in [`CLIPBOARD_ORDER`].
     pub fn read_clipboard(&mut self) -> Option<ClipboardContent> {
         if !matches!(self.mode, crate::app::Mode::Normal | crate::app::Mode::Qa) || self.env.qa {
             return self.qa_clipboard.clone();
         }
         let mut clipboard = arboard::Clipboard::new().ok()?;
-        if let Ok(files) = clipboard.get().file_list()
-            && !files.is_empty()
-        {
-            return Some(ClipboardContent::Files(files));
-        }
-        // The picture's bytes, decoded here under the app's limits (arboard's own
-        // decoding has none).
-        if let Some(bytes) = crate::platform::pasteboard::image_bytes() {
-            match modlight_core::image_decode::from_bytes(&bytes) {
-                Ok(picture) => return Some(ClipboardContent::Image(picture.into_rgba8())),
-                Err(error) => log::warn!("Modlight: the clipboard's picture was not read: {error}"),
+        for kind in CLIPBOARD_ORDER {
+            match kind {
+                ClipboardKind::Files => {
+                    if let Ok(files) = clipboard.get().file_list()
+                        && !files.is_empty()
+                    {
+                        return Some(ClipboardContent::Files(files));
+                    }
+                }
+                // The picture's bytes, decoded here under the app's limits (arboard's
+                // own decoding has none).
+                ClipboardKind::Image => {
+                    if let Some(bytes) = crate::platform::pasteboard::image_bytes() {
+                        match modlight_core::image_decode::from_bytes(&bytes) {
+                            Ok(picture) => {
+                                return Some(ClipboardContent::Image(picture.into_rgba8()));
+                            }
+                            Err(error) => log::warn!(
+                                "Modlight: the clipboard's picture was not read: {error}"
+                            ),
+                        }
+                    }
+                }
+                ClipboardKind::Text => {
+                    if let Ok(text) = clipboard.get_text()
+                        && !text.is_empty()
+                    {
+                        return Some(ClipboardContent::Text(text));
+                    }
+                }
             }
-        }
-        if let Ok(text) = clipboard.get_text()
-            && !text.is_empty()
-        {
-            return Some(ClipboardContent::Text(text));
         }
         None
     }
@@ -1653,5 +1691,24 @@ impl AppState {
         let folder = self.uploads.ctx.screenshots_folder(&settings, None);
         let _ = std::fs::create_dir_all(&folder);
         self.effects.push(Effect::OpenFile(folder));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_clipboard_is_read_in_upstreams_order_except_on_a_mac() {
+        use ClipboardKind::*;
+        // `ClipboardUpload` and `ClipboardUploadWindow`: a picture, then text, then a
+        // file list. A Mac asks for the file list first: a copied file also leaves its
+        // icon and its name on the pasteboard.
+        let expected = if cfg!(windows) {
+            [Image, Text, Files]
+        } else {
+            [Files, Image, Text]
+        };
+        assert_eq!(CLIPBOARD_ORDER, expected);
     }
 }
