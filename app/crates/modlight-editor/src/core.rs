@@ -119,12 +119,15 @@ impl EditorCore {
         self.generation += 1;
     }
 
-    /// `LoadImage`: a new document; annotations and history are cleared.
+    /// `LoadImage`: a new document; annotations and history are cleared. The picture
+    /// changed (upstream's view model invalidates what it derived from the old one,
+    /// such as smart padding, when the preview changes).
     pub fn load_image(&mut self, image: RgbaImage) {
         self.set_source(Arc::new(image));
         self.clear_all(true);
         self.raise(CoreEvents {
             invalidate: true,
+            image_changed: true,
             ..CoreEvents::default()
         });
     }
