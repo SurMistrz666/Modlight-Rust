@@ -182,10 +182,13 @@ impl ImageEffectsWindow {
         self.presets.get_mut(p)?.effects.get_mut(e)
     }
 
-    /// `OnSelectedPresetChanged`.
+    /// `OnSelectedPresetChanged`: new effect items, so the options panel is built anew
+    /// (`SetEffect`) even when the first effect is selected again.
     fn select_preset(&mut self, index: Option<usize>, now: f64) {
         self.selected_preset = index;
         let count = self.preset().map(|p| p.effects.len()).unwrap_or(0);
+        self.texts.clear();
+        self.validation.clear();
         self.set_selected_effect(if count > 0 { Some(0) } else { None });
         self.queue_preview(now);
     }
@@ -437,17 +440,18 @@ impl ImageEffectsWindow {
     }
 }
 
-/// `preset.ApplyEffects(source)`, a panic turned into the error line.
+/// `preset.ApplyEffects(source)`: an effect's failure (GDI+'s "Parameter is not valid."
+/// for a bitmap too large to make) or a panic becomes the error line.
 fn apply_guarded(preset: &Preset, source: &RgbaImage) -> Result<Option<RgbaImage>, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| preset.apply(source))).map_err(
-        |panic| {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| preset.try_apply(source)))
+        .map_err(|panic| {
             panic
                 .downcast_ref::<&str>()
                 .map(|s| s.to_string())
                 .or_else(|| panic.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "Image effect failed.".to_string())
-        },
-    )
+        })
+        .and_then(|result| result)
 }
 
 /// `SanitizeImportedPreset`.
@@ -584,7 +588,9 @@ fn invalid_value(text: &str, type_name: &str) -> String {
 fn converter_string(def: &PropDef, value: Option<&Value>) -> String {
     match value {
         Some(Value::Text(text)) => text.clone(),
-        Some(Value::Font(font)) => font.to_converter_string(),
+        Some(Value::Font(font)) => {
+            font.to_culture_string(&modlight_core::culture::Culture::current())
+        }
         Some(Value::Flags(f)) => m::flags_to_string(def, *f),
         Some(Value::Enum(name)) => name.clone(),
         _ => String::new(),
@@ -1383,7 +1389,7 @@ impl ImageEffectsWindow {
                             });
                         });
                 } else {
-                    egui::Popup::menu(&response)
+                    let shown = egui::Popup::menu(&response)
                         .id(id.with("gradient-flyout"))
                         .frame(crate::menus::frame(colors))
                         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -1392,6 +1398,16 @@ impl ImageEffectsWindow {
                                 result = true;
                             }
                         });
+                    // `flyout.Closed += gradient.Sort()`: the stops keep their places
+                    // while the flyout is open (each location box stays with its stop)
+                    // and are put in order once it is gone.
+                    if shown.is_none() {
+                        let mut sorted = gradient.clone();
+                        sorted.sort();
+                        if sorted != gradient {
+                            return set(self, Value::Gradient(sorted));
+                        }
+                    }
                 }
                 if result && edited != gradient {
                     return set(self, Value::Gradient(edited));
@@ -1456,13 +1472,15 @@ impl ImageEffectsWindow {
     fn set_from_text(&mut self, def: &PropDef, text: &str) -> bool {
         let value = match def.ty {
             PType::Text(_) => Some(Value::Text(text.to_string())),
-            PType::Font => match m::FontSpec::parse(text) {
-                Some(font) => Some(Value::Font(font)),
-                None => {
-                    self.validation = invalid_value(text, "Font");
-                    None
+            PType::Font => {
+                match m::FontSpec::parse_in(text, &modlight_core::culture::Culture::current()) {
+                    Some(font) => Some(Value::Font(font)),
+                    None => {
+                        self.validation = invalid_value(text, "Font");
+                        None
+                    }
                 }
-            },
+            }
             PType::Flags(type_name, _) => match m::flags_from_string(def, text) {
                 Some(f) => Some(Value::Flags(f)),
                 None => {
@@ -1954,10 +1972,9 @@ fn gradient_panel_inner(ui: &mut Ui, colors: &Colors, id: Id, gradient: &mut Gra
         gradient.stops.remove(index);
         changed = true;
     }
-    if changed {
-        // `ReorderStops`.
-        gradient.sort();
-    }
+    // `ReorderStops` moves a row to its place but keeps it bound to its stop: the rows
+    // are drawn in location order (`order`) while the stops keep their indices, which the
+    // boxes are keyed by. The stops themselves are sorted when the flyout closes.
     changed
 }
 
@@ -2831,6 +2848,90 @@ mod tests {
         assert_eq!(imported.effects[0].text("ImageLocation"), "");
         assert_eq!(imported.effects[1].text("ImageFilePath"), kept);
         assert_eq!(w.selected_preset, Some(w.presets.len() - 1));
+    }
+
+    /// `OnSelectedPresetChanged` makes new effect items, so the options panel is built
+    /// anew (`SetEffect`) even when the first effect stays selected: no text box may keep
+    /// the previous preset's text, which an edit would then write into this preset.
+    #[test]
+    fn switching_presets_rebuilds_the_text_editors() {
+        let watermark = |text: &str| {
+            let mut e = ClassicEffect::new(Kind::DrawText);
+            e.set("Text", Value::Text(text.into()));
+            Preset {
+                name: text.into(),
+                effects: vec![e],
+            }
+        };
+        let mut w = window(vec![watermark("first"), watermark("second")]);
+        assert_eq!(w.selected_effect, Some(0));
+        // What the panel's text boxes hold while the first preset is shown.
+        w.texts.insert("Text", "first".into());
+        w.validation = "first is not a valid value for Font.".into();
+        w.select_preset(Some(1), 0.0);
+        assert_eq!(w.selected_effect, Some(0));
+        assert!(w.texts.is_empty(), "{:?}", w.texts);
+        assert!(w.validation.is_empty());
+        // The same through removing the selected preset.
+        w.texts.insert("Text", "second".into());
+        w.remove_preset(0.0);
+        assert!(w.texts.is_empty(), "{:?}", w.texts);
+    }
+
+    /// `GradientOptionsPanel` keeps each location box bound to its stop while the rows
+    /// reorder: typing a location past another stop's must go on editing the same stop.
+    #[test]
+    fn a_stop_location_typed_past_another_stays_with_its_stop() {
+        use egui_kittest::kittest::Queryable;
+        let colors = Colors::new(&modlight_core::theme::resolve(
+            &Default::default(),
+            Some(true),
+            None,
+        ));
+        let gradient = Gradient::new(
+            "Vertical",
+            &[
+                (C::rgb(255, 0, 0), 0.0),
+                (C::rgb(0, 255, 0), 20.0),
+                (C::rgb(0, 0, 255), 100.0),
+            ],
+        );
+        let mut fonts_set = false;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(420.0, 420.0))
+            .build_ui_state(
+                move |ui, g: &mut Gradient| {
+                    // The app's fonts take effect from the next pass on.
+                    if !fonts_set {
+                        ui.ctx().set_fonts(crate::theme::fonts());
+                        fonts_set = true;
+                        return;
+                    }
+                    gradient_panel_inner(ui, &colors, Id::new("gradient-test"), g);
+                },
+                gradient,
+            );
+        harness.run();
+        harness
+            .get_by(|n| {
+                n.role() == egui::accesskit::Role::TextInput && n.value().as_deref() == Some("0")
+            })
+            .focus();
+        harness.run();
+        for key in ["5", "0", "1"] {
+            harness.get_by(|n| n.is_focused()).type_text(key);
+            harness.run();
+        }
+        let location_of = |g: &Gradient, c: C| {
+            g.stops
+                .iter()
+                .find(|s| s.color.c == c)
+                .map(|s| s.location)
+                .unwrap()
+        };
+        let g = harness.state();
+        assert_eq!(location_of(g, C::rgb(0, 255, 0)), 20.0, "{:?}", g.stops);
+        assert_eq!(location_of(g, C::rgb(255, 0, 0)), 100.0, "{:?}", g.stops);
     }
 
     #[test]

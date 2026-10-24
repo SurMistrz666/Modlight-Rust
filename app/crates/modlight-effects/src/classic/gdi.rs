@@ -955,8 +955,10 @@ pub fn rotate(src: &Bitmap, angle: f32, upsize: bool, clip: bool) -> Bitmap {
         nw = ow;
         nh = oh;
     }
-    // `bmp.CreateEmptyBitmap()`: the result keeps the source's size.
-    let mut canvas = Canvas::new(ow, oh);
+    // Upstream draws into `bmp.CreateEmptyBitmap()`, the source's size, which cuts the
+    // corners Upsize promises to keep; the result here is the size computed above
+    // (the source's own size unless Upsize is on).
+    let mut canvas = Canvas::new(nw, nh);
     let m = Transform::from_translate(nw as f32 / 2.0, nh as f32 / 2.0)
         .pre_scale(scale, scale)
         .pre_concat(crate::sk::canvas::rotation(angle))

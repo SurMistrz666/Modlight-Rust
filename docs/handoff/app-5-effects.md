@@ -54,7 +54,16 @@ CLASSIC_SHEET=/tmp/sheet.png cargo test -p modlight-effects contact_sheet -- --i
 MODLIGHT_GOLDEN_ONLY=lomo MODLIGHT_GOLDEN_OUT=/tmp/fx cargo test -p modlight-effects --test golden
 # regenerate the goldens (Docker, colima profile modlight):
 scripts/effects-golden/run.sh            # all effects
+# the small pictures and parameter corners of edge.txt into tests/golden-edge:
+EDGE=1 scripts/effects-golden/run.sh
+# every effect at its parameters' ends on 1x1, one-row, one-column and odd pictures,
+# and every classic class at the options panel's ends (no panic, sizes):
+cargo test -p modlight-effects --test edge_inputs --test classic_edge
 ```
+
+Logic review 2026-10-24 (`docs/audit/logic-2026-10-24/07-effects.md`): a one-off run of the
+harness over every parameter's ends and six small pictures (7667 cases, not kept: 91 MB)
+found the Skia differences fixed then; the cases that showed them are in `edge.txt`.
 
 ## Decisions so far
 

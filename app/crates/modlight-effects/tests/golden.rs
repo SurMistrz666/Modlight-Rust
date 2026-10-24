@@ -540,11 +540,58 @@ fn compare_stats(
 
 #[test]
 fn pixels_match_upstream() {
-    let dir = golden_dir();
+    let out = std::env::var_os("MODLIGHT_GOLDEN_OUT").map(PathBuf::from);
+    let (failures, compared) = pixels_match(&golden_dir(), out);
+    assert!(compared > 0 || !only().is_empty(), "no cases compared");
+    assert!(
+        failures.is_empty(),
+        "{} of {compared} cases differ:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Small pictures and the parameter corners that once differed (`tests/golden-edge`,
+/// rendered from `scripts/effects-golden/edge.txt`): the same comparison, and a case
+/// where upstream's effect throws must fail in the port too (the editor then keeps the
+/// picture).
+#[test]
+fn edge_pixels_match_upstream() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden-edge");
+    let cases = read_json(&dir.join("cases.json"));
+    let reg = registry();
+    let mut failures = Vec::new();
+    for case in cases.as_array().unwrap() {
+        if case.get("error").is_none() {
+            continue;
+        }
+        let name = case["name"].as_str().unwrap();
+        let effect = reg.get(case["effect"].as_str().unwrap()).unwrap();
+        let input_name = case["input"].as_str().unwrap();
+        let input = image::open(dir.join("inputs").join(format!("{input_name}.png")))
+            .unwrap()
+            .to_rgba8();
+        let values = values_for(&effect.parameters(), case);
+        if let Ok(img) = effect.apply(&input, &values, &Default::default()) {
+            failures.push(format!(
+                "{name}: upstream fails ({}), the port drew {:?}",
+                case["error"],
+                img.dimensions()
+            ));
+        }
+    }
+    let (more, compared) = pixels_match(&dir, None);
+    failures.extend(more);
+    assert!(compared > 0 || !only().is_empty(), "no cases compared");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Compares every case of `dir` that upstream rendered: the failures and the number of
+/// cases compared.
+fn pixels_match(dir: &Path, out: Option<PathBuf>) -> (Vec<String>, usize) {
     let cases = read_json(&dir.join("cases.json"));
     let reg = registry();
     let only = only();
-    let out = std::env::var_os("MODLIGHT_GOLDEN_OUT").map(PathBuf::from);
     if let Some(o) = &out {
         std::fs::create_dir_all(o.join("actual")).unwrap();
     }
@@ -641,11 +688,5 @@ fn pixels_match_upstream() {
     if let Some(o) = &out {
         std::fs::write(o.join("report.tsv"), report.join("\n")).unwrap();
     }
-    assert!(compared > 0 || !only.is_empty(), "no cases compared");
-    assert!(
-        failures.is_empty(),
-        "{} of {compared} cases differ:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
+    (failures, compared)
 }
