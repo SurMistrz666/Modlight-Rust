@@ -37,6 +37,12 @@
 //!   the queue only when an attempt ended.
 //! * The bytes may come from memory as well as from a file ([`TusSource`]), so the live
 //!   upload can send a large capture that was never saved the same way.
+//! * A `HEAD` answered by a gateway or a busy server (408, 429, 502, 503, 504: the
+//!   offline queue's "never reached the application") keeps the stored session and ends
+//!   the attempt with that answer, as a `POST` answered the same way would. Upstream
+//!   read every refusal of the `HEAD` as a session the server had forgotten and sent the
+//!   whole file again, so a proxy's 502 during a server restart cost a large upload all
+//!   its progress.
 //! * For the rule that the token goes to the account's host and nowhere else
 //!   (`docs/PORT.md`, section 5): upstream sent a STORED session URL as it was stored.
 //!   Here only its path and query are kept and put on the account's current origin before
@@ -305,6 +311,17 @@ enum Stop {
     Failed(String),
 }
 
+/// What asking a stored session where it stands came to.
+enum Head {
+    /// The byte the server got to.
+    Offset(u64),
+    /// The server does not have it any more (404, 410, any other refusal).
+    Gone,
+    /// A gateway or a server too busy to answer (408, 429, 502, 503, 504): nothing is
+    /// known about the session, so it is kept, and the attempt ends with this answer.
+    Unanswered(TransferResult),
+}
+
 /// Where the session stands before the body goes.
 enum Ensured {
     /// Nothing to send: report this (a refusal, or an empty file already stored).
@@ -474,12 +491,17 @@ impl TusClient {
         cancel: &CancellationToken,
     ) -> Result<Ensured, Stop> {
         if let Some(stored) = session.url.clone().filter(|url| !url.is_empty()) {
-            if let Some(url) = rewrite_to_host(&stored, &credential.host)
-                && let Some(offset) = self.head_offset(credential, &url, cancel).await?
-                && offset <= file.length
-            {
-                session.offset = offset;
-                return Ok(Ensured::Ready(url));
+            if let Some(url) = rewrite_to_host(&stored, &credential.host) {
+                match self.head_offset(credential, &url, cancel).await? {
+                    Head::Offset(offset) if offset <= file.length => {
+                        session.offset = offset;
+                        return Ok(Ensured::Ready(url));
+                    }
+                    // Not an answer about the session: keep it for the next attempt
+                    // rather than send the whole file again (upstream started over).
+                    Head::Unanswered(result) => return Ok(Ensured::Report(result)),
+                    Head::Offset(_) | Head::Gone => {}
+                }
             }
             // 404 or 410: the server forgets sessions after a day. Not a failure and not
             // worth reporting; the file is still here and the only cost is the bytes
@@ -493,23 +515,35 @@ impl TusClient {
         self.create_session(credential, file, session, cancel).await
     }
 
-    /// Where the server got to, or `None` when the session is gone (`HeadOffsetAsync`).
+    /// Where the server got to (`HeadOffsetAsync`).
     async fn head_offset(
         &self,
         credential: &Credential,
         url: &str,
         cancel: &CancellationToken,
-    ) -> Result<Option<u64>, Stop> {
+    ) -> Result<Head, Stop> {
         let answer = self
             .handshake(decorate(self.http.head(url), credential), cancel)
             .await?;
+        let status = answer.status.as_u16();
+        // The answers that mean the request never reached the application (the offline
+        // queue's own list) say nothing about the session.
+        if crate::is_worth_queuing(Some(status)) {
+            let retry_after = first_header(&answer.headers, RETRY_AFTER.as_str());
+            return Ok(Head::Unanswered(classify(
+                status,
+                retry_after.as_deref(),
+                &answer.body,
+            )));
+        }
         // 404, 410 and every other refusal alike: no session worth resuming.
         if !answer.status.is_success() {
-            return Ok(None);
+            return Ok(Head::Gone);
         }
         Ok(first_header(&answer.headers, "upload-offset")
             .as_deref()
-            .and_then(parse_offset))
+            .and_then(parse_offset)
+            .map_or(Head::Gone, Head::Offset))
     }
 
     /// `CreateSessionAsync`: one creation, and one more without the folder when the

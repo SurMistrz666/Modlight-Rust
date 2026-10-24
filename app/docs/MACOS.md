@@ -235,6 +235,27 @@ Everything not listed behaves as upstream does. The per-screen state is in
   followed them in the library client). A stored tus session URL is moved onto the
   account's current origin before every request, so the token can never follow a
   `Location` to another host.
+- **A stored resumable session is kept when asking about it gets no real answer.** A `HEAD`
+  of the session answered 408, 429, 502, 503 or 504 (the queue's "never reached the
+  application") ends the attempt as that server error and the next attempt asks again;
+  upstream took any refusal of that `HEAD` for a forgotten session and sent the whole
+  file again from zero (`modlight_api::tus`, test `a_busy_server_does_not_cost_a_stored_session`).
+- **A `Queue.json` that cannot be read is kept, and so is the spool.** A queue file that is
+  there but cannot be read (damaged, unreadable, or a newer build's `Version`) is moved to
+  `Queue.json.unreadable-<UTC time>` (never over an earlier one; a copy when the move is
+  refused) before anything saves a new queue, the debug log says so, and no spooled file
+  is removed that run, since nobody knows which of them it still needs. Upstream read it
+  as an empty queue, overwrote it on the next change and deleted every spooled capture
+  (`modlight_core::upload::store`, test `an_unreadable_queue_file_is_kept_and_so_is_the_spool`).
+- **"Delete file locally" waits for the upload to succeed.** In a task that uploads, the
+  after-capture task deletes the file only once the upload went through. When the upload
+  failed, was refused, was stopped or cancelled (the before-upload window, the large-file
+  question), was handed to the offline queue, or could not run (uploads switched off), the
+  file stays, so it can be retried. A task with no upload step deletes the file as
+  before. This is the meaning the fork's own sign-in gate and queue give the flag
+  ("delete it once it is safely uploaded"). Upstream deleted the file whatever became of
+  the upload (`modlight_core::tasks::worker`, test
+  `delete_file_locally_waits_for_the_upload_to_succeed`).
 - **Live upload refusals** are read as soon as the server answers, without sending the
   rest of the body (upstream wrote the whole file first). A file name containing `"`,
   CR or LF goes out percent-encoded in the multipart header.

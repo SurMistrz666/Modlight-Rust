@@ -7,6 +7,13 @@
 //! one, so a process killed halfway leaves the previous queue, never a truncated one.
 //! Every failure to read answers "nothing queued": a damaged bookkeeping file must not be
 //! able to take the app down with it.
+//!
+//! Not upstream: a `Queue.json` that is there but cannot be read (damaged, unreadable, or
+//! a newer build's version) is not overwritten by the next save, which would lose every
+//! upload it describes. It is moved aside first, to `Queue.json.unreadable-<UTC time>`
+//! (never over an earlier one), and [`LoadedQueue::readable`] tells the queue not to sweep
+//! the spool that run: nobody knows which spooled files that queue still needs. Upstream
+//! read such a file as empty and then deleted every spooled file.
 
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -23,8 +30,22 @@ pub const QUEUE_FILE_NAME: &str = "Queue.json";
 pub const SPOOL_FOLDER_NAME: &str = "Queue";
 
 /// Bumped only when the shape changes in a way an older build cannot read. An unknown
-/// version reads as an empty queue: a downgrade must not wedge the app.
+/// version reads as an empty queue: a downgrade must not wedge the app (the file itself
+/// is set aside, see the module notes).
 pub const CURRENT_VERSION: i32 = 1;
+
+/// What a `Queue.json` that could not be read is renamed to, before the time.
+pub const UNREADABLE_PREFIX: &str = "Queue.json.unreadable-";
+
+/// What reading the queue found.
+#[derive(Debug, Default)]
+pub struct LoadedQueue {
+    /// The usable items, revived for a fresh process.
+    pub items: Vec<QueueItem>,
+    /// There was no file, or it was read whole. `false` when a file was there and could
+    /// not be read: it has been set aside, and the spool must not be swept this run.
+    pub readable: bool,
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -39,7 +60,10 @@ struct QueueFile {
 pub struct QueueStore {
     /// `None` in sandbox mode, where nothing is written to disk at all.
     folder: Option<PathBuf>,
-    lock: Mutex<()>,
+    /// Held while the file is read, checked or written. The flag says the file on disk
+    /// has been looked at this run (read, or set aside when it could not be): until then
+    /// a save checks it first, so it is never written over unread.
+    lock: Mutex<bool>,
 }
 
 impl QueueStore {
@@ -47,7 +71,7 @@ impl QueueStore {
     pub fn new(personal_folder: &Path) -> QueueStore {
         QueueStore {
             folder: Some(personal_folder.to_path_buf()),
-            lock: Mutex::new(()),
+            lock: Mutex::new(false),
         }
     }
 
@@ -55,7 +79,7 @@ impl QueueStore {
     pub fn sandbox() -> QueueStore {
         QueueStore {
             folder: None,
-            lock: Mutex::new(()),
+            lock: Mutex::new(false),
         }
     }
 
@@ -69,51 +93,43 @@ impl QueueStore {
 
     /// Read the queue back, revived for a fresh process.
     pub fn load(&self, now: DateTime<Utc>) -> Vec<QueueItem> {
+        self.load_checked(now).items
+    }
+
+    /// Read the queue back, revived for a fresh process, and say whether the file could
+    /// be read. One that could not is set aside first (see the module notes).
+    pub fn load_checked(&self, now: DateTime<Utc>) -> LoadedQueue {
         let Some(path) = self.queue_file_path() else {
-            return Vec::new();
+            return LoadedQueue {
+                items: Vec::new(),
+                readable: true,
+            };
         };
-        if !path.is_file() {
-            return Vec::new();
-        }
-        let text = {
-            let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-            match std::fs::read_to_string(&path) {
-                Ok(text) => text,
-                Err(error) => {
-                    log::warn!(
-                        "Modlight queue could not be read; starting with an empty one: {error}"
-                    );
-                    return Vec::new();
+        let mut checked = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        *checked = true;
+        match read_queue_file(&path) {
+            Ok(mut items) => {
+                for item in &mut items {
+                    item.revive(now);
+                }
+                LoadedQueue {
+                    items,
+                    readable: true,
                 }
             }
-        };
-        // Newtonsoft writes a byte order mark only when asked; tolerate one anyway.
-        let text = text.trim_start_matches('\u{feff}');
-        let file: QueueFile = match serde_json::from_str(text) {
-            Ok(file) => file,
-            Err(error) => {
-                log::warn!("Modlight queue could not be read; starting with an empty one: {error}");
-                return Vec::new();
+            Err(reason) => {
+                set_aside(&path, &reason, now);
+                LoadedQueue {
+                    items: Vec::new(),
+                    readable: false,
+                }
             }
-        };
-        if file.version != CURRENT_VERSION {
-            return Vec::new();
         }
-        let mut items: Vec<QueueItem> = file
-            .items
-            .unwrap_or_default()
-            .into_iter()
-            .flatten()
-            .filter(QueueItem::is_usable)
-            .collect();
-        for item in &mut items {
-            item.revive(now);
-        }
-        items
     }
 
     /// Write the queue out, whole. A failure is logged and otherwise ignored: the queue
-    /// is still right in memory and is written again on the next change.
+    /// is still right in memory and is written again on the next change. A file nobody
+    /// has read yet this run is checked first, and set aside when it cannot be read.
     pub fn save(&self, items: &[QueueItem]) {
         let Some(path) = self.queue_file_path() else {
             return;
@@ -129,7 +145,13 @@ impl QueueStore {
                 return;
             }
         };
-        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut checked = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        if !*checked {
+            *checked = true;
+            if let Err(reason) = read_queue_file(&path) {
+                set_aside(&path, &reason, Utc::now());
+            }
+        }
         let result = (|| -> std::io::Result<()> {
             if let Some(folder) = path.parent() {
                 std::fs::create_dir_all(folder)?;
@@ -254,6 +276,69 @@ impl QueueStore {
                 Err(error) => log::warn!("Modlight queue: {error}"),
             }
         }
+    }
+}
+
+/// The usable items of `Queue.json` (not yet revived), none when there is no file, or why
+/// a file that is there cannot be read.
+fn read_queue_file(path: &Path) -> Result<Vec<QueueItem>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    // Newtonsoft writes a byte order mark only when asked; tolerate one anyway.
+    let text = text.trim_start_matches('\u{feff}');
+    let file: QueueFile = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    if file.version != CURRENT_VERSION {
+        return Err(format!(
+            "version {} where this build reads {CURRENT_VERSION}",
+            file.version
+        ));
+    }
+    Ok(file
+        .items
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .filter(QueueItem::is_usable)
+        .collect())
+}
+
+/// Move a `Queue.json` that cannot be read out of the way of the next save, to a name of
+/// its own that no earlier one has (`Queue.json.unreadable-<UTC time>`, then `-2`, ...).
+/// Called with the store's lock held. A copy stands in when the rename is refused.
+fn set_aside(path: &Path, reason: &str, now: DateTime<Utc>) {
+    let Some(folder) = path.parent() else {
+        return;
+    };
+    let base = format!("{UNREADABLE_PREFIX}{}", now.format("%Y%m%dT%H%M%SZ"));
+    let mut target = folder.join(&base);
+    let mut number = 2;
+    while std::fs::symlink_metadata(&target).is_ok() {
+        target = folder.join(format!("{base}-{number}"));
+        number += 1;
+    }
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match std::fs::rename(path, &target) {
+        Ok(()) => log::warn!(
+            "Modlight queue: Queue.json could not be read ({reason}); it was moved aside to \
+             {name}, and no spooled file is removed this run."
+        ),
+        Err(error) => match std::fs::copy(path, &target) {
+            Ok(_) => log::warn!(
+                "Modlight queue: Queue.json could not be read ({reason}); it could not be \
+                 moved ({error}), so it was copied to {name}, and no spooled file is removed \
+                 this run."
+            ),
+            Err(copy_error) => log::warn!(
+                "Modlight queue: Queue.json could not be read ({reason}) nor set aside \
+                 ({error}; {copy_error}); no spooled file is removed this run."
+            ),
+        },
     }
 }
 
