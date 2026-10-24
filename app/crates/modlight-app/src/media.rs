@@ -1005,7 +1005,7 @@ mod tests {
         let arrived = state.space.apply_page(page(30), 2);
         state.load_thumbnails(&arrived);
         wait_for("the new page's previews and listing", || {
-            open.load(Ordering::SeqCst) >= THUMBNAIL_SLOTS + 1
+            open.load(Ordering::SeqCst) > THUMBNAIL_SLOTS
         });
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert_eq!(
