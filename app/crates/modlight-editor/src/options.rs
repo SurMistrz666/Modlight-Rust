@@ -390,6 +390,11 @@ impl ImageEditorOptions {
         let max = self.max_recent_image_files.max(0) as usize;
         self.recent_image_files.truncate(max);
     }
+
+    /// `RecentImageFiles.Remove`.
+    pub fn remove_recent_image_file(&mut self, path: &str) {
+        self.recent_image_files.retain(|p| p != path);
+    }
 }
 
 #[cfg(test)]

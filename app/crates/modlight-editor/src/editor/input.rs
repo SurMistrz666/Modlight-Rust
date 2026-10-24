@@ -2195,6 +2195,14 @@ impl Editor {
         }));
     }
 
+    /// `RemoveRecentImageFile`: off the remembered list and the open start screen's.
+    pub fn remove_recent_image_file(&mut self, path: &str) {
+        self.options.remove_recent_image_file(path);
+        if let Some(Modal::StartScreen(s)) = &mut self.modal {
+            s.recent_files.retain(|p| p != path);
+        }
+    }
+
     /// Shows a status line on the start screen (opening it when needed).
     pub fn start_screen_status(&mut self, message: &str) {
         self.show_start_screen();
