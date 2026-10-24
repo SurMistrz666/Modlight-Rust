@@ -13,6 +13,13 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         #[cfg(windows)]
         windows::embed();
+        // The resource compiler (and `winresource`, a build dependency of Windows hosts
+        // only) runs on a Windows host: a Modlight.exe built elsewhere has no icon and no
+        // manifest (no long paths, no common controls 6). Said, not left to be found.
+        #[cfg(not(windows))]
+        println!(
+            "cargo:warning=Modlight.exe resources (icon, version information, manifest) are embedded only when building on Windows"
+        );
     }
 }
 
