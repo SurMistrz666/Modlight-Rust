@@ -154,14 +154,12 @@ impl FFmpegWindow {
         }
     }
 
-    /// `FFmpegOptions.FFmpegPath`.
+    /// `FFmpegOptions.FFmpegPath`: the path a recording runs (a custom one through
+    /// `GetAbsolutePath`), else where the component would be.
     fn ffmpeg_path(&self) -> PathBuf {
-        let ffmpeg = &self.options.ffmpeg;
-        if ffmpeg.OverrideCLIPath && !ffmpeg.CLIPath.is_empty() {
-            return PathBuf::from(&ffmpeg.CLIPath);
-        }
-        self.installed
-            .clone()
+        self.options
+            .ffmpeg
+            .ffmpeg_path(self.installed.clone())
             .unwrap_or_else(|| self.expected.clone())
     }
 
@@ -1535,6 +1533,43 @@ fn advanced_tab(ui: &mut Ui, window: &mut FFmpegWindow, colors: &Colors) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The window looks for devices with, and names when it is missing, the very ffmpeg
+    /// a recording runs: a custom path through `GetAbsolutePath` (variables expanded, a
+    /// relative path from the app's folder), as upstream's `FFmpegPath`.
+    #[test]
+    fn the_window_uses_the_ffmpeg_the_recorder_uses() {
+        let ffmpeg = FFmpegOptions {
+            OverrideCLIPath: true,
+            CLIPath: "%TMPDIR%/tools/ffmpeg".into(),
+            ..FFmpegOptions::default()
+        };
+        let window = FFmpegWindow {
+            target: TaskTarget::Defaults,
+            options: ScreenRecordingOptions {
+                ffmpeg: ffmpeg.clone(),
+                ..ScreenRecordingOptions::default()
+            },
+            tab: 0,
+            confirm_reset: false,
+            video_sources: Vec::new(),
+            audio_sources: Vec::new(),
+            status: String::new(),
+            refreshing: false,
+            generation: 0,
+            installed: None,
+            expected: PathBuf::from("/profile/Tools/ffmpeg"),
+        };
+        assert_eq!(Some(window.ffmpeg_path()), ffmpeg.ffmpeg_path(None));
+        if std::env::var_os("TMPDIR").is_some() {
+            assert!(!window.ffmpeg_path().to_string_lossy().contains('%'));
+        }
+        let window = FFmpegWindow {
+            options: ScreenRecordingOptions::default(),
+            ..window
+        };
+        assert_eq!(window.ffmpeg_path(), PathBuf::from("/profile/Tools/ffmpeg"));
+    }
 
     #[test]
     fn screen_values_from_windows_select_the_screen() {
