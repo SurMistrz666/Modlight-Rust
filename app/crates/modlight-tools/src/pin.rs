@@ -100,10 +100,11 @@ pub fn displayed_image_size(
             options.minimize_size.height.max(1) as f64,
         );
     }
+    // `Math.Round`: halves to even.
     let scale = state.scale as f64 / 100.0;
     (
-        (image.0 * scale).round().max(1.0),
-        (image.1 * scale).round().max(1.0),
+        (image.0 * scale).round_ties_even().max(1.0),
+        (image.1 * scale).round_ties_even().max(1.0),
     )
 }
 
@@ -126,8 +127,8 @@ pub fn window_size(
 /// `ResizeWindow(keepCenter)`: the new top left keeping the centre where it was.
 pub fn keep_center(position: (f64, f64), old: (f64, f64), new: (f64, f64)) -> (f64, f64) {
     (
-        position.0 + ((old.0 - new.0) / 2.0).round(),
-        position.1 + ((old.1 - new.1) / 2.0).round(),
+        position.0 + ((old.0 - new.0) / 2.0).round_ties_even(),
+        position.1 + ((old.1 - new.1) / 2.0).round_ties_even(),
     )
 }
 
@@ -139,8 +140,8 @@ pub fn position(
     size: (f64, f64),
 ) -> (f64, f64) {
     let (bx, by, bw, bh) = background;
-    let mid_x = (bw / 2.0 - size.0 / 2.0).round();
-    let mid_y = (bh / 2.0 - size.1 / 2.0).round();
+    let mid_x = (bw / 2.0 - size.0 / 2.0).round_ties_even();
+    let mid_y = (bh / 2.0 - size.1 / 2.0).round_ties_even();
     let right = bw - size.0;
     let bottom = bh - size.1;
     use ContentAlignment::*;
@@ -240,5 +241,39 @@ mod tests {
         );
         assert!(!toolbar_visible(true, (154.0, 100.0)));
         assert!(toolbar_visible(true, (155.0, 55.0)));
+    }
+
+    /// `Math.Round` rounds half to even: a 5 x 3 picture at 50% is 2 x 2, a window one
+    /// point narrower keeps its left edge, and an odd margin centres to the even side.
+    #[test]
+    fn halves_round_to_even_as_dotnet() {
+        let options = PinToScreenOptions {
+            initial_scale: 50,
+            shadow: false,
+            border: false,
+            ..PinToScreenOptions::default()
+        };
+        let state = PinState::new(&options);
+        assert_eq!(
+            displayed_image_size((5.0, 3.0), &state, &options),
+            (2.0, 2.0)
+        );
+        assert_eq!(
+            displayed_image_size((7.0, 1.0), &state, &options),
+            (4.0, 1.0)
+        );
+        assert_eq!(
+            keep_center((100.0, 100.0), (101.0, 103.0), (100.0, 100.0)),
+            (100.0, 102.0)
+        );
+        assert_eq!(
+            position(
+                ContentAlignment::MiddleCenter,
+                0.0,
+                (0.0, 0.0, 101.0, 103.0),
+                (100.0, 100.0)
+            ),
+            (0.0, 2.0)
+        );
     }
 }
