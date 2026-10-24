@@ -53,6 +53,8 @@ pub struct Recording {
     pub activate: bool,
     /// Dragging the timer moves the area before recording (`OnTimerPointerMoved`).
     drag_from: Option<(egui::Pos2, IRect)>,
+    /// The session's ended passes the "action completed" sound was played for.
+    sounds: u32,
 }
 
 /// A toolbar button.
@@ -83,6 +85,7 @@ impl Recording {
             confirming_abort: false,
             activate: false,
             drag_from: None,
+            sounds: 0,
         }
     }
 
@@ -651,6 +654,7 @@ impl AppState {
             confirming_abort: false,
             activate,
             drag_from: None,
+            sounds: 0,
         });
         log::info!(
             "Starting screen recording. Video encoder: \"{}\", Audio encoder: \"{}\", FPS: {fps}",
@@ -667,6 +671,10 @@ impl AppState {
         let Some(recording) = self.captures.recording.take() else {
             return;
         };
+        // A last pass that ended after the last frame looked.
+        if recording.control.parts_ended() > recording.sounds {
+            self.play_task_sound(NotificationSound::ActionCompleted, &recording.settings);
+        }
         if let Some(error) = outcome.error.filter(|_| !outcome.aborted) {
             // `FFmpegCLIManager.ShowError`: ffmpeg's output in the output box (phase 5).
             self.open_output_box(
@@ -679,7 +687,6 @@ impl AppState {
         let Some(path) = outcome.path else {
             return;
         };
-        self.play_task_sound(NotificationSound::ActionCompleted, &recording.settings);
         self.run_image_task(PendingImage {
             metadata: recording.metadata,
             settings: recording.settings,
@@ -762,6 +769,18 @@ impl AppState {
     pub fn tick_recording(&mut self, ctx: &egui::Context) {
         if self.captures.recording.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        // "Action completed" each time a pass of the recording ends (a pause, the stop),
+        // as upstream's loop plays it: not after the second pass.
+        let due = self.captures.recording.as_mut().and_then(|recording| {
+            let ended = recording.control.parts_ended();
+            (ended > recording.sounds).then(|| {
+                recording.sounds = ended;
+                recording.settings.clone()
+            })
+        });
+        if let Some(settings) = due {
+            self.play_task_sound(NotificationSound::ActionCompleted, &settings);
         }
     }
 }

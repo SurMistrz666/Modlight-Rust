@@ -91,6 +91,9 @@ pub struct ControlState {
     /// Abort was asked for. Final: a status the session sets afterwards (ffmpeg saying it
     /// has started) does not undo it.
     pub aborted: bool,
+    /// How many passes of the recording loop have ended (a pause, the stop, an abort):
+    /// upstream plays "action completed" at each, and the window does.
+    pub parts_ended: u32,
 }
 
 /// The switches between the recording window and the session thread.
@@ -140,6 +143,7 @@ impl RecorderControl {
                 region,
                 finished: false,
                 aborted: false,
+                parts_ended: 0,
             }),
             reset: Mutex::new(false),
             signal: Condvar::new(),
@@ -344,6 +348,16 @@ impl RecorderControl {
 
     fn finish(&self) {
         self.state.lock().unwrap().finished = true;
+    }
+
+    /// A pass of the recording loop ended (where upstream plays "action completed").
+    fn part_ended(&self) {
+        self.state.lock().unwrap().parts_ended += 1;
+    }
+
+    /// How many passes of the recording loop have ended so far.
+    pub fn parts_ended(&self) -> u32 {
+        self.state.lock().unwrap().parts_ended
     }
 
     /// The timer text, `mm:ss:ff` (`UpdateTimer`).
@@ -631,6 +645,10 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
                 break;
             }
         }
+
+        // `PlayNotificationSoundAsync(ActionCompleted)`: each pass, before the parts are
+        // joined.
+        control.part_ended();
 
         if concat_path.exists()
             && path.exists()

@@ -528,3 +528,53 @@ fn a_recording_without_a_single_frame_is_a_failure() {
     assert!(outcome.error.is_some());
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
+
+/// Upstream plays "action completed" each time a pass of its recording loop ends: at a
+/// pause, at the stop (before a second pass, not after it), even at an abort during
+/// the start delay. The session counts them for the window, which plays the sound.
+#[test]
+fn every_part_that_ends_is_counted_for_the_sound() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::libx264, false);
+    p.duration = 0.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 0.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    wait_for(&control, RecordingStatus::Recording);
+    std::thread::sleep(Duration::from_millis(300));
+    control.pause_resume();
+    wait_for(&control, RecordingStatus::Paused);
+    for _ in 0..100 {
+        if control.snapshot().parts_ended == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(control.snapshot().parts_ended, 1, "the pause");
+    control.pause_resume();
+    wait_for(&control, RecordingStatus::Recording);
+    std::thread::sleep(Duration::from_millis(300));
+    control.start_stop();
+    worker.join().unwrap();
+    assert_eq!(control.snapshot().parts_ended, 2, "the pause and the stop");
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::libx264, false);
+    p.start_delay = 5.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 1.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    control.abort();
+    let outcome = worker.join().unwrap();
+    assert!(outcome.aborted);
+    assert_eq!(control.snapshot().parts_ended, 1, "the aborted wait");
+}
