@@ -22,7 +22,7 @@ impl AppState {
         self.rt.spawn(async move {
             let change = sync_skin(&api, &credential, &options).await;
             Box::new(move |state: &mut AppState, ctx: &egui::Context| {
-                state.apply_theme_change(&change, ctx)
+                state.theme_change_arrived(&credential, &options.skin, change, ctx)
             })
         });
     }
@@ -37,9 +37,33 @@ impl AppState {
         self.rt.spawn(async move {
             let change = push_skin(&api, &credential, &options).await;
             Box::new(move |state: &mut AppState, ctx: &egui::Context| {
-                state.apply_theme_change(&change, ctx)
+                state.theme_change_arrived(&credential, &options.skin, change, ctx)
             })
         });
+    }
+
+    /// What a skin sync asked with `credential`, deciding from the skin `based_on`,
+    /// came back.
+    ///
+    /// An answer about an account that is no longer signed in changes nothing (the
+    /// sign-in asked for its own). And the account's skin never replaces one picked here
+    /// while the question was out ("the one thing this must never do is silently discard
+    /// a choice somebody made"): what the server holds is still recorded as confirmed, so
+    /// the pick reads as unconfirmed and is sent with the next push.
+    pub(crate) fn theme_change_arrived(
+        &mut self,
+        credential: &Credential,
+        based_on: &str,
+        mut change: ThemeChange,
+        ctx: &egui::Context,
+    ) {
+        if self.credential().as_ref() != Some(credential) {
+            return;
+        }
+        if !self.options.skin.eq_ignore_ascii_case(based_on) {
+            change.skin = None;
+        }
+        self.apply_theme_change(&change, ctx);
     }
 
     fn apply_theme_change(&mut self, change: &ThemeChange, ctx: &egui::Context) {
@@ -206,5 +230,51 @@ mod tests {
         app.settings_round_done(&current, SyncState::default(), adopt_report("Polish"), &ctx);
         assert_eq!(app.config.get("Language"), Some(&json!("Polish")));
         assert_eq!(app.config.cloud_marker().version, 7);
+    }
+
+    fn adopted(skin: &str) -> ThemeChange {
+        ThemeChange {
+            skin: Some(skin.into()),
+            skin_confirmed: Some(skin.into()),
+        }
+    }
+
+    /// The account's skin arrives (`ModlightTheme.SyncAsync`, at start and at sign-in).
+    /// It belongs to the account it was asked for, and it never replaces a skin picked
+    /// here while the question was out: "the one thing this must never do is silently
+    /// discard a choice somebody made".
+    #[test]
+    fn a_skin_answer_changes_only_what_it_was_asked_about() {
+        let ctx = egui::Context::default();
+        let mut app = state(&Look::default(), true);
+        app.options.set_skin("default");
+        app.options.skin_confirmed = "default".into();
+        let old = app.credential().unwrap();
+
+        // Another account signed in meanwhile: the first account's skin is not this one's.
+        app.account = AccountStore::in_memory(
+            StoredAccount {
+                host: old.host.clone(),
+                tag: "sam".into(),
+                ..StoredAccount::default()
+            },
+            "another-token",
+        );
+        app.theme_change_arrived(&old, "default", adopted("terminal"), &ctx);
+        assert_eq!(app.options.skin, "default");
+        assert_eq!(app.options.skin_confirmed, "default");
+
+        // The person picked a skin while the answer was out: the pick stays, and what the
+        // server holds is recorded, so the pick goes to the server next time.
+        let current = app.credential().unwrap();
+        app.options.set_skin("paper");
+        app.theme_change_arrived(&current, "default", adopted("terminal"), &ctx);
+        assert_eq!(app.options.skin, "paper");
+        assert_eq!(app.options.skin_confirmed, "terminal");
+
+        // Nothing moved meanwhile: the account's skin is taken.
+        app.theme_change_arrived(&current, "paper", adopted("synthwave"), &ctx);
+        assert_eq!(app.options.skin, "synthwave");
+        assert_eq!(app.options.skin_confirmed, "synthwave");
     }
 }

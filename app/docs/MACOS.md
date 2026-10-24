@@ -211,6 +211,17 @@ Everything not listed behaves as upstream does. The per-screen state is in
   machine sent in between. The port hashes a canonical form (members sorted by name,
   integral numbers without a point); a marker written by an earlier build is recognised
   by its old digest. `modlight-core/src/sync/document.rs`, tests `tests/settings_sync.rs`.
+- **Answers about an account that is no longer signed in are dropped** (logic review
+  2026-10-24). Upstream's storage chip adopted an `/api/me` answer that set out before
+  another account signed in (its `Owns` check did not cover a switch), renaming the new
+  account after the old one: the tag decides whose queued uploads the new token sends
+  and whose settings marker counts. A settings round, a skin answer and the Server tab's
+  diagnosis likewise apply only for the credential they were asked with; the chip drops
+  a request for the previous account and asks for the new one at once.
+- **The account's skin never replaces a skin picked while it was being asked for.**
+  Upstream's `ModlightTheme.SyncAsync` wrote the server's skin after the request even if
+  the person had picked another meanwhile, contrary to its own rule; the port keeps the
+  pick and records the server's skin as confirmed, so the pick is pushed.
 - **AI keys** live in the Keychain (service `Modlight`, `ai-*-api-key`). The OpenAI key
   is stored together with the base URL it was entered for (the custom URL, or the
   default endpoint); it is sent only to that base. Settings that point `OpenAICustomURL`
