@@ -340,7 +340,11 @@ impl UploadQueue {
     /// Remember the runtime the worker runs on.
     fn remember_runtime(&self, runtime: Option<tokio::runtime::Handle>) {
         if let Some(runtime) = runtime {
-            let mut slot = self.shared.runtime.lock().unwrap_or_else(|e| e.into_inner());
+            let mut slot = self
+                .shared
+                .runtime
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if slot.is_none() {
                 *slot = Some(runtime);
             }
