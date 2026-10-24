@@ -61,6 +61,9 @@ const RESIZING: &[&str] = &[
     "zigzag_border",
 ];
 
+/// Manipulations whose largest values ask for a canvas of up to 20000 px more a side.
+const HUGE: &[&str] = &["resize_canvas", "resize_image"];
+
 fn inputs() -> Vec<(&'static str, RgbaImage)> {
     let opaque = |w: u32, h: u32| {
         RgbaImage::from_fn(w, h, |x, y| {
@@ -214,6 +217,13 @@ fn every_effect_survives_edge_inputs() {
                     let defs = effect.parameters();
                     let mut seen = std::collections::HashSet::new();
                     for (label, values) in value_sets(&defs) {
+                        // Their largest values make pictures of hundreds of megapixels
+                        // (as upstream does); the golden tests cover their size math.
+                        if HUGE.contains(&effect.id())
+                            && (label.ends_with("=max") || label == "all max")
+                        {
+                            continue;
+                        }
                         for (name, input) in &inputs {
                             let id = effect.id();
                             let report = |what: String| {
