@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use image::{Rgba, RgbaImage};
 use modlight_core::capture::geometry::IRect;
-use modlight_core::recording::options::{FFmpegOptions, FFmpegVideoCodec};
+use modlight_core::recording::options::{FFmpegOptions, FFmpegPaletteUseDither, FFmpegVideoCodec};
 use modlight_core::recording::session::{
     FrameSource, FrameSourceFactory, RecorderControl, RecordingStatus, SessionParams, StillFrames,
     run_session,
@@ -46,13 +46,22 @@ fn frames() -> FrameSourceFactory {
 }
 
 fn params(dir: &std::path::Path, codec: FFmpegVideoCodec, two_pass: bool) -> SessionParams {
+    params_with(dir, ffmpeg().unwrap(), codec, two_pass)
+}
+
+fn params_with(
+    dir: &std::path::Path,
+    ffmpeg_path: PathBuf,
+    codec: FFmpegVideoCodec,
+    two_pass: bool,
+) -> SessionParams {
     let ffmpeg_options = FFmpegOptions {
         VideoCodec: codec,
         ..FFmpegOptions::default()
     };
     let extension = ffmpeg_options.extension();
     SessionParams {
-        ffmpeg_path: ffmpeg().unwrap(),
+        ffmpeg_path,
         ffmpeg: ffmpeg_options,
         fps: 15,
         duration: 1.0,
@@ -186,4 +195,386 @@ fn wait_for(control: &RecorderControl, status: RecordingStatus) {
         std::thread::sleep(Duration::from_millis(25));
     }
     panic!("never reached {status:?}, at {:?}", control.status());
+}
+
+/// A stand-in for ffmpeg: a shell script.
+#[cfg(unix)]
+fn script(dir: &std::path::Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// The real ffmpeg behind a script that first sleeps when its arguments match `pattern`
+/// (a `case` pattern over all of them), so a test can act while that run is going.
+#[cfg(unix)]
+fn slow_ffmpeg(dir: &std::path::Path, pattern: &str) -> PathBuf {
+    let real = ffmpeg().unwrap();
+    script(
+        dir,
+        "ffmpeg",
+        &format!(
+            "case \"$*\" in\n  {pattern}) sleep 1.5 ;;\nesac\nexec '{}' \"$@\"\n",
+            real.display()
+        ),
+    )
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// A camera or a microphone alone is ffmpeg's own avfoundation input, stopped by typing
+/// `q`. ffmpeg then still has to finish the file (an MP4 has its index moved to the
+/// front, which takes a while for a long recording): this stand-in needs 600 ms after
+/// the `q`, and the recording must wait for it rather than kill it half way.
+#[cfg(unix)]
+#[test]
+fn a_camera_recording_is_given_the_time_to_finish_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let ffmpeg = script(
+        tools.path(),
+        "ffmpeg",
+        "echo 'Press [q] to stop, [?] for help' >&2\n\
+         head -c 1 > /dev/null\n\
+         sleep 0.6\n\
+         for last; do :; done\n\
+         printf finished > \"$last\"\n",
+    );
+    let mut p = params_with(dir.path(), ffmpeg, FFmpegVideoCodec::libx264, false);
+    p.ffmpeg.VideoSource = "FaceTime HD Camera".into();
+    p.duration = 0.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 0.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    wait_for(&control, RecordingStatus::Recording);
+    control.start_stop();
+    let outcome = worker.join().unwrap();
+    assert_eq!(outcome.error, None);
+    let path = outcome.path.expect("the finished file");
+    assert_eq!(std::fs::read(path).unwrap(), b"finished");
+}
+
+/// An ffmpeg that does not answer `q` is killed on the third request to stop, as
+/// upstream's `FFmpegCLIManager.Close` does, and never before.
+#[cfg(unix)]
+#[test]
+fn a_camera_recording_that_will_not_stop_is_killed_on_the_third_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    // `exec`: the process that is killed is the one holding the output pipe.
+    let ffmpeg = script(
+        tools.path(),
+        "ffmpeg",
+        "echo 'Press [q] to stop, [?] for help' >&2\nexec sleep 30\n",
+    );
+    let mut p = params_with(dir.path(), ffmpeg, FFmpegVideoCodec::libx264, false);
+    p.ffmpeg.VideoSource = "FaceTime HD Camera".into();
+    p.duration = 0.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 0.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    wait_for(&control, RecordingStatus::Recording);
+    let started = std::time::Instant::now();
+    control.start_stop();
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(!worker.is_finished(), "killed after one request to stop");
+    control.abort();
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(!worker.is_finished(), "killed after two requests to stop");
+    control.abort();
+    let outcome = worker.join().unwrap();
+    assert!(outcome.aborted);
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+/// A second pass that fails says why, in the output box, as upstream's
+/// `FFmpegCLIManager.ShowError`; the recording does not just disappear.
+#[test]
+fn a_second_pass_that_fails_says_why() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::gif, true);
+    // A value from a settings file: the options window offers 0 to 5.
+    p.ffmpeg.GIFDither = FFmpegPaletteUseDither::bayer;
+    p.ffmpeg.GIFBayerScale = 99;
+    let control = RecorderControl::new(IRect::new(0, 0, 40, 30), 1.0);
+    let outcome = run_session(p, control);
+    let error = outcome.error.expect("ffmpeg's output");
+    assert!(error.contains("bayer_scale"), "{error}");
+    assert_eq!(outcome.path, None);
+    assert!(!outcome.aborted);
+}
+
+/// With a name pattern that gives the same name twice (no random part) and a codec whose
+/// container is MP4, the first pass and the finished file have the same name. ffmpeg
+/// cannot write over the file it reads, so the second pass must not be asked to: the
+/// finished file is the encoded one (x264 writes its settings into the stream: CRF for
+/// the second pass, lossless for the first), under the pattern's name.
+#[test]
+fn a_second_pass_never_writes_over_its_own_input() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let p = params(dir.path(), FFmpegVideoCodec::libx264, true);
+    assert_eq!(p.path, p.two_pass_output);
+    let control = RecorderControl::new(IRect::new(0, 0, 40, 30), 1.0);
+    let outcome = run_session(p, control);
+    assert_eq!(outcome.error, None);
+    let path = outcome.path.expect("the encoded file");
+    assert_eq!(path, dir.path().join("clip.mp4"));
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(
+        contains(&bytes, b"crf=28.0"),
+        "the lossless first pass was delivered"
+    );
+    let left: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(left.len(), 1, "{left:?}");
+}
+
+/// Abort pressed while the paused parts are being joined: nothing is delivered.
+#[cfg(unix)]
+#[test]
+fn an_abort_while_the_parts_are_joined_leaves_nothing() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let slow = slow_ffmpeg(tools.path(), "*\"-f concat\"*");
+    let mut p = params_with(dir.path(), slow, FFmpegVideoCodec::libx264, false);
+    p.duration = 0.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 0.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    wait_for(&control, RecordingStatus::Recording);
+    std::thread::sleep(Duration::from_millis(300));
+    control.pause_resume();
+    wait_for(&control, RecordingStatus::Paused);
+    control.pause_resume();
+    wait_for(&control, RecordingStatus::Recording);
+    std::thread::sleep(Duration::from_millis(300));
+    control.start_stop();
+    // The parts are being joined now (the stand-in waits 1.5 s before ffmpeg runs).
+    std::thread::sleep(Duration::from_millis(600));
+    control.abort();
+    let outcome = worker.join().unwrap();
+    assert!(outcome.aborted, "{outcome:?}");
+    assert_eq!(outcome.path, None);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+/// Abort (its hotkey: the window hides while encoding) during a GIF's second pass:
+/// nothing is delivered.
+#[cfg(unix)]
+#[test]
+fn an_abort_during_the_second_pass_leaves_nothing() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let slow = slow_ffmpeg(tools.path(), "*palettegen*");
+    let p = params_with(dir.path(), slow, FFmpegVideoCodec::gif, true);
+    let control = RecorderControl::new(IRect::new(0, 0, 40, 30), 1.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    for _ in 0..400 {
+        if control.snapshot().state == modlight_core::recording::RecordState::Encoding {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        control.snapshot().state,
+        modlight_core::recording::RecordState::Encoding
+    );
+    control.abort();
+    let outcome = worker.join().unwrap();
+    assert!(outcome.aborted, "{outcome:?}");
+    assert_eq!(outcome.path, None);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+/// A frame source that counts how often it was started and stopped.
+#[cfg(unix)]
+struct Counted {
+    inner: StillFrames,
+    started: Arc<std::sync::atomic::AtomicUsize>,
+    stopped: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(unix)]
+impl FrameSource for Counted {
+    fn size(&self) -> (u32, u32) {
+        self.inner.size()
+    }
+    fn start(&mut self) -> Result<(), String> {
+        self.started
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.start()
+    }
+    fn latest(&mut self) -> Option<Arc<Vec<u8>>> {
+        self.inner.latest()
+    }
+    fn stop(&mut self) {
+        self.stopped
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.stop()
+    }
+}
+
+/// An ffmpeg that cannot be started (a custom path to a file that is not a program):
+/// the screen capture that was started for it is stopped again (ScreenCaptureKit's
+/// stream is not stopped by dropping it), and the reason is reported.
+#[cfg(unix)]
+#[test]
+fn the_screen_is_let_go_when_ffmpeg_cannot_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let not_a_program = tools.path().join("ffmpeg");
+    std::fs::write(&not_a_program, b"not a program").unwrap();
+    let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let stopped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (s, t) = (started.clone(), stopped.clone());
+    let mut p = params_with(dir.path(), not_a_program, FFmpegVideoCodec::libx264, false);
+    p.frames = Arc::new(move |rect: IRect, _cursor: bool| {
+        let picture = RgbaImage::new(rect.width as u32, rect.height as u32);
+        Ok(Box::new(Counted {
+            inner: StillFrames::new(&picture),
+            started: s.clone(),
+            stopped: t.clone(),
+        }) as Box<dyn FrameSource>)
+    });
+    let control = RecorderControl::new(IRect::new(0, 0, 16, 16), 1.0);
+    let outcome = run_session(p, control);
+    assert!(outcome.error.is_some(), "{outcome:?}");
+    assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(stopped.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// A start delay or a fixed length too large for a timer (a settings file can hold any
+/// number) is no reason to panic: upstream counts the delay in milliseconds as an `int`
+/// and starts at once when it does not fit.
+#[test]
+fn an_impossible_start_delay_starts_at_once() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::libx264, false);
+    p.start_delay = 1e300;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 1.0);
+    let outcome = std::thread::spawn(move || run_session(p, control))
+        .join()
+        .expect("no panic");
+    assert_eq!(outcome.error, None);
+    assert!(outcome.path.is_some());
+}
+
+/// The screen delivered no frame at all: that is a failure, not an empty video to
+/// upload.
+#[test]
+fn a_recording_without_a_single_frame_is_a_failure() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    struct Silent(StillFrames);
+    impl FrameSource for Silent {
+        fn size(&self) -> (u32, u32) {
+            self.0.size()
+        }
+        fn start(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn latest(&mut self) -> Option<Arc<Vec<u8>>> {
+            None
+        }
+        fn stop(&mut self) {}
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::libx264, false);
+    p.frames = Arc::new(|rect: IRect, _cursor: bool| {
+        let picture = RgbaImage::new(rect.width as u32, rect.height as u32);
+        Ok(Box::new(Silent(StillFrames::new(&picture))) as Box<dyn FrameSource>)
+    });
+    let control = RecorderControl::new(IRect::new(0, 0, 16, 16), 1.0);
+    let outcome = run_session(p, control);
+    assert_eq!(outcome.path, None, "{outcome:?}");
+    assert!(outcome.error.is_some());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+/// Upstream plays "action completed" each time a pass of its recording loop ends: at a
+/// pause, at the stop (before a second pass, not after it), even at an abort during
+/// the start delay. The session counts them for the window, which plays the sound.
+#[test]
+fn every_part_that_ends_is_counted_for_the_sound() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::libx264, false);
+    p.duration = 0.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 0.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    wait_for(&control, RecordingStatus::Recording);
+    std::thread::sleep(Duration::from_millis(300));
+    control.pause_resume();
+    wait_for(&control, RecordingStatus::Paused);
+    for _ in 0..100 {
+        if control.snapshot().parts_ended == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(control.snapshot().parts_ended, 1, "the pause");
+    control.pause_resume();
+    wait_for(&control, RecordingStatus::Recording);
+    std::thread::sleep(Duration::from_millis(300));
+    control.start_stop();
+    worker.join().unwrap();
+    assert_eq!(control.snapshot().parts_ended, 2, "the pause and the stop");
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::libx264, false);
+    p.start_delay = 5.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 1.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    control.abort();
+    let outcome = worker.join().unwrap();
+    assert!(outcome.aborted);
+    assert_eq!(control.snapshot().parts_ended, 1, "the aborted wait");
 }

@@ -623,21 +623,7 @@ impl AppState {
         match pending.file {
             Some(path) => {
                 // `FinishRecording`: a new name renames the file first.
-                let mut path = path;
-                if let Some(name) = custom_name.as_deref().filter(|n| !n.is_empty()) {
-                    match rename_recording(&path, name) {
-                        Ok(renamed) => path = renamed,
-                        // `RenameFile` says why and the file keeps its name.
-                        Err(error) => self.uploads.windows.messages.push_back(MessageBox::new(
-                            &format!("Modlight - {}", t(s::Error)),
-                            &format!(
-                                "{}\n{error}",
-                                t(modlight_core::l10n::helpers::FileHelpers_Rename_file_error)
-                            ),
-                            MessageIcon::Error,
-                        )),
-                    }
-                }
+                let path = self.recording_file_named(path, custom_name.as_deref());
                 if let Some(task) = WorkerTask::file_job(
                     &path,
                     pending.metadata,
@@ -860,37 +846,6 @@ impl AppState {
         };
         format(t(s::ScreenshotDelay0S), &[Arg::from(text)])
     }
-}
-
-/// `FinishRecording`'s `FileHelpers.RenameFile(path, name + ext)`: the recording under
-/// the name typed in the after-capture window (the same name in another case is no
-/// rename, `OrdinalIgnoreCase`). A file of that name already there is never replaced:
-/// .NET's `File.Move` refuses it, where `rename` would silently overwrite it.
-fn rename_recording(path: &std::path::Path, name: &str) -> std::io::Result<PathBuf> {
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    if stem.to_lowercase() == name.to_lowercase() {
-        return Ok(path.to_path_buf());
-    }
-    let ext = path
-        .extension()
-        .map(|e| e.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let target = path.with_file_name(if ext.is_empty() {
-        name.to_string()
-    } else {
-        format!("{name}.{ext}")
-    });
-    if std::fs::symlink_metadata(&target).is_ok() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            format!("\"{}\" already exists", target.display()),
-        ));
-    }
-    std::fs::rename(path, &target)?;
-    Ok(target)
 }
 
 // ---------------------------------------------------------------------- auto capture
@@ -1384,32 +1339,6 @@ pub fn hotkey_problem(state: &AppState) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A name typed in the after-capture window renames the recording first; a file
-    /// of that name already there stays as it is (upstream's `File.Move` refuses to
-    /// replace it), and the recording keeps its own name.
-    #[test]
-    fn renaming_a_recording_never_replaces_another_file() {
-        let folder = tempfile::tempdir().unwrap();
-        let recording = folder.path().join("Recording_01.mp4");
-        let earlier = folder.path().join("demo.mp4");
-        std::fs::write(&recording, b"new recording").unwrap();
-        std::fs::write(&earlier, b"an earlier recording").unwrap();
-        let refused = rename_recording(&recording, "demo").unwrap_err();
-        assert_eq!(refused.kind(), std::io::ErrorKind::AlreadyExists);
-        assert_eq!(std::fs::read(&earlier).unwrap(), b"an earlier recording");
-        assert_eq!(std::fs::read(&recording).unwrap(), b"new recording");
-        // The same name in another case is no rename at all.
-        assert_eq!(
-            rename_recording(&recording, "recording_01").unwrap(),
-            recording
-        );
-        // A free name is taken.
-        let renamed = rename_recording(&recording, "talk").unwrap();
-        assert_eq!(renamed, folder.path().join("talk.mp4"));
-        assert_eq!(std::fs::read(&renamed).unwrap(), b"new recording");
-        assert!(!recording.exists());
-    }
 
     /// The area a tool asked for (OCR, QR, pin from screen) is no capture: upstream's
     /// `RegionCaptureTasks.GetRegionImage` leaves `LastRegionRectangle` alone, so "Last

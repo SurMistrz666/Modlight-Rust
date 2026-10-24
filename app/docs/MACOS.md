@@ -333,6 +333,11 @@ Everything not listed behaves as upstream does. The per-screen state is in
   rotating, restyling or retyping an annotation leaves no undo step (as upstream) but
   counts as an unsaved change: upstream marked only undoable steps, so these edits made
   after a save were dropped on close without the exit confirmation.
+- **Aborting a screen recording** is final whenever it is pressed: while the paused
+  parts are being joined, during the second pass (its hotkey: the window is hidden then)
+  or while ffmpeg is still starting, nothing is kept or uploaded. Upstream read the abort
+  only inside its loop, and ffmpeg announcing that it had started turned the status back
+  to "recording", so such an abort delivered the file anyway.
 
 ## Image editor
 
