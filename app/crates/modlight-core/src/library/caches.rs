@@ -40,6 +40,13 @@ impl ThumbnailCache {
         }
     }
 
+    /// Forget everything (the codes of another server mean other files).
+    pub fn clear(&self) {
+        let mut guard = self.inner.lock().unwrap();
+        guard.0.clear();
+        guard.1.clear();
+    }
+
     /// A file's code changed from `old` to `new` (a custom URL). What is held under
     /// `old` is that file's picture and goes with it; whatever was held under `new`
     /// belonged to some other file that had the code before, and is dropped. The old
@@ -125,6 +132,11 @@ impl MotionCache {
 
     pub fn is_refused(&self, code: &str) -> bool {
         !code.is_empty() && self.inner.lock().unwrap().refused.contains(code)
+    }
+
+    /// Forget everything, refusals included (another server's codes are other files).
+    pub fn clear(&self) {
+        *self.inner.lock().unwrap() = MotionInner::default();
     }
 
     /// A file's code changed from `old` to `new`: its preview and its refusal go with
@@ -218,6 +230,20 @@ mod tests {
         assert_eq!(motion.inner.lock().unwrap().held, 10);
         motion.rename("other", "new");
         assert!(motion.get("new").is_none());
+        assert_eq!(motion.inner.lock().unwrap().held, 0);
+    }
+
+    #[test]
+    fn clearing_forgets_bytes_and_refusals() {
+        let stills = ThumbnailCache::default();
+        stills.put("a", Arc::new(vec![1]));
+        stills.clear();
+        assert!(stills.get("a").is_none());
+        let motion = MotionCache::default();
+        motion.put("a", Arc::new(vec![1]));
+        motion.refuse("b");
+        motion.clear();
+        assert!(motion.get("a").is_none() && !motion.is_refused("b"));
         assert_eq!(motion.inner.lock().unwrap().held, 0);
     }
 }
