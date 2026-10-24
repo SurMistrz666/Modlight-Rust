@@ -183,6 +183,12 @@ pub trait HistoryHost: super::ToolWindow {
     fn data(&mut self) -> &mut HistoryData;
     /// The rows changed (loaded, imported, deleted): filter again.
     fn refilter(&mut self, state: &mut AppState);
+    /// Rows were edited in place (favourite, tag, item, rename: `RefreshVisibleItem`);
+    /// `favorite` when it was the favourite that changed.
+    fn edited(&mut self, state: &mut AppState, favorite: bool) {
+        let _ = favorite;
+        self.refilter(state);
+    }
     /// The selected rows, in the window's order.
     fn selected_ids(&self) -> Vec<i64>;
     /// The rows as the window lists them now (for the viewer's neighbours).
@@ -299,7 +305,7 @@ pub fn run<W: HistoryHost>(window: &mut W, state: &mut AppState, act: Act) {
                 }
                 window.data().save_item(state, *id);
             }
-            window.refilter(state);
+            window.edited(state, true);
         }
         Act::EditTag => {
             let (title, message) = if image_history {
@@ -451,7 +457,7 @@ fn confirm<W: HistoryHost>(window: &mut W, state: &mut AppState, prompt: Prompt)
                 item.set_tag(&value);
             }
             window.data().save_item(state, id);
-            window.refilter(state);
+            window.edited(state, false);
         }
         PromptAction::Rename(id) => {
             let Some(item) = window.data().find(id).cloned() else {
@@ -489,7 +495,7 @@ fn confirm<W: HistoryHost>(window: &mut W, state: &mut AppState, prompt: Prompt)
                 }
             }
             window.data().save_item(state, id);
-            window.refilter(state);
+            window.edited(state, false);
         }
         PromptAction::Delete { ids, files } => {
             let items: Vec<HistoryItem> = ids
@@ -532,7 +538,7 @@ fn save_edit<W: HistoryHost>(window: &mut W, state: &mut AppState, form: &EditFo
         item.tags = Some(logic::parse_tags(&form.tags));
     }
     window.data().save_item(state, form.id);
-    window.refilter(state);
+    window.edited(state, false);
 }
 
 /// `OnImportConfirmClick`: the files read and appended off the UI thread.
