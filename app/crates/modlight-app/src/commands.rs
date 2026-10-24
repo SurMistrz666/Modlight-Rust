@@ -220,8 +220,13 @@ impl AppState {
                     .map(|(menu, _)| menu.choice(index));
                 match choice {
                     Some(Some(choice)) => self.quick_menu_finished(choice),
-                    // "Edit this menu...": the editor window (`QuickTaskMenuEditor`).
-                    Some(None) => self.open_quick_task_menu_editor(),
+                    // "Edit this menu...": the menu closes as after any item (its picture
+                    // goes with it, as upstream's), then the editor opens
+                    // (`QuickTaskMenuEditor`).
+                    Some(None) => {
+                        self.quick_menu_finished(None);
+                        self.open_quick_task_menu_editor();
+                    }
                     None => {}
                 }
             }
@@ -240,5 +245,32 @@ impl AppState {
         if tab == Tab::Admin {
             self.server_tab_show();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// "Edit this menu..." closes the quick task menu before the editor opens (every
+    /// item's `menu.Close()`): the picture it held goes, as upstream's does, instead of
+    /// the menu waiting for a focus change to close it.
+    #[test]
+    fn editing_the_quick_task_menu_closes_it() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let menu = crate::dialogs::quick_task_menu::QuickTaskMenu::new(&state.config);
+        let pending = crate::capture_flow::PendingImage {
+            metadata: Default::default(),
+            settings: state.default_task_settings(),
+            file: None,
+            skip_quick_menu: false,
+        };
+        state.captures.quick_menu = Some((menu, pending));
+        state.run(
+            Command::QuickTask(usize::MAX - 1),
+            &egui::Context::default(),
+        );
+        assert!(state.captures.quick_menu.is_none());
+        assert!(state.captures.quick_task_editor.is_some());
     }
 }
