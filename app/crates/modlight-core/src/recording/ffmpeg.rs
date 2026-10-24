@@ -370,13 +370,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("finished");
+        let ready = dir.path().join("ready");
         let tool = dir.path().join("ffmpeg");
         std::fs::write(
             &tool,
             format!(
-                "#!/bin/sh\ntrap 'echo done > \"{}\"; exit 0' INT\n\
+                "#!/bin/sh\ntrap 'echo done > \"{}\"; exit 0' INT\necho ready > \"{}\"\n\
                  echo 'Press [q] to stop' >&2\nwhile :; do sleep 0.05; done\n",
-                marker.display()
+                marker.display(),
+                ready.display()
             ),
         )
         .unwrap();
@@ -385,11 +387,17 @@ mod tests {
         run.stop_at_exit();
         // The end of standard input is not the end of the recording.
         run.stdin = None;
-        std::thread::sleep(Duration::from_millis(300));
+        // A script made a moment ago can take most of a second to start on macOS (the
+        // system checks a new executable first): wait until its trap is in place.
+        let started = std::time::Instant::now();
+        while !ready.exists() && started.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready.exists(), "the stand-in ffmpeg never started");
         assert!(run.is_running());
         // What the exit hook does.
         at_exit::stop_all();
-        for _ in 0..100 {
+        for _ in 0..500 {
             if !run.is_running() {
                 break;
             }
