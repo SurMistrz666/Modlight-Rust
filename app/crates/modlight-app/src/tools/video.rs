@@ -42,7 +42,9 @@ pub struct ConversionResult {
     pub error: Option<String>,
 }
 
-/// `RunVideoConversionAsync`: ffmpeg to the end, or until stopped (`q`, then a kill).
+/// `RunVideoConversionAsync`: ffmpeg to the end, or until stopped: the cancellation
+/// calls `ffmpeg.Close` once, which is one `q`, and ffmpeg then finishes the file however
+/// long that takes (a kill half way through the index would leave it unreadable).
 pub fn run_conversion(
     ffmpeg: &std::path::Path,
     args: &[String],
@@ -60,13 +62,9 @@ pub fn run_conversion(
     };
     let mut asked = false;
     while run.is_running() {
-        if control.stop.load(Ordering::SeqCst) {
-            // `ffmpeg.Close`: `q`; a second ask kills it.
+        if !asked && control.stop.load(Ordering::SeqCst) {
+            // `cancellationToken.Register(ffmpeg.Close)`: one `q`.
             run.close();
-            if asked {
-                std::thread::sleep(std::time::Duration::from_millis(2000));
-                run.close();
-            }
             asked = true;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -707,5 +705,35 @@ impl AppState {
         let input = file.map(|f| f.to_string_lossy().into_owned());
         self.tools
             .open_keyed(|key| Box::new(VideoWindow::new(key, settings, ffmpeg, input)));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// `StopEncoding` cancels once, which is one `q` (`ffmpeg.Close`); ffmpeg then
+    /// finishes the file (writing the index, `+faststart` moving it to the front), however
+    /// long that takes. A stand-in reads the `q` and takes 3 s to finish.
+    #[test]
+    fn a_stop_lets_ffmpeg_finish_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let finished = dir.path().join("finished");
+        let script = dir.path().join("ffmpeg");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nhead -c 1 >/dev/null\nsleep 3\necho done > '{}'\nexit 0\n",
+                finished.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let control = Arc::new(Control::default());
+        control.stop.store(true, Ordering::SeqCst);
+        let result = run_conversion(&script, &["-i".into(), "in.mov".into()], control);
+        assert!(result.cancelled, "{result:?}");
+        assert!(finished.is_file(), "ffmpeg was killed before it finished");
     }
 }

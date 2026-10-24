@@ -239,12 +239,16 @@ impl Pin {
             self.resize(self.options.keep_center_location);
         }
         let (wheel, command, shift) = ui.input(|i| {
+            // `Delta.Y > 0 ? 1 : Delta.Y < 0 ? -1 : 0`: an event without a vertical part
+            // (a sideways swipe, a trackpad gesture starting or ending) is no step.
             let wheel: f32 = i
                 .raw
                 .events
                 .iter()
                 .filter_map(|e| match e {
-                    egui::Event::MouseWheel { delta, .. } => Some(delta.y.signum()),
+                    egui::Event::MouseWheel { delta, .. } if delta.y != 0.0 => {
+                        Some(delta.y.signum())
+                    }
                     _ => None,
                 })
                 .sum();
@@ -280,7 +284,11 @@ impl Pin {
             if i.key_pressed(egui::Key::ArrowDown) {
                 moved.y += distance;
             }
-            if i.modifiers.command && i.key_pressed(egui::Key::C) {
+            // egui-winit hands Cmd+C over as `Event::Copy`, without a key press of C.
+            if i.modifiers.command
+                && (i.key_pressed(egui::Key::C)
+                    || i.events.iter().any(|e| matches!(e, egui::Event::Copy)))
+            {
                 asks.push(PinAsk::Copy);
             }
             let plus = i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals);
@@ -1412,5 +1420,95 @@ impl AppState {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pin() -> Pin {
+        Pin::new(
+            1,
+            PinSource {
+                image: Arc::new(RgbaImage::new(300, 200)),
+                location: None,
+                pixels_per_point: 1.0,
+            },
+            PinToScreenOptions::default(),
+            OptionsHome::Defaults,
+        )
+    }
+
+    /// One frame of the pinned picture with the pointer over it and these events.
+    fn frame(pin: &mut Pin, events: Vec<egui::Event>, modifiers: egui::Modifiers) -> Vec<PinAsk> {
+        let colors = crate::qa::state(&crate::qa::Look::default(), false).colors;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::fonts());
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), pin.size);
+        let mut asks = Vec::new();
+        let mut events = events;
+        events.insert(0, egui::Event::ModifiersChanged(modifiers));
+        for events in [vec![egui::Event::PointerMoved(pos2(150.0, 150.0))], events] {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..egui::RawInput::default()
+            };
+            ctx.run_ui(input, |ui| {
+                asks = pin.ui(ui, &colors, 10.0);
+            })
+            .drop_without_applying_deltas();
+        }
+        asks
+    }
+
+    fn wheel(x: f32, y: f32) -> egui::Event {
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(x, y),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// `OnPointerWheelChanged`: the direction is the sign of `Delta.Y`, and an event
+    /// without a vertical part (a sideways swipe, a trackpad gesture starting or ending)
+    /// changes nothing.
+    #[test]
+    fn only_the_vertical_wheel_scales_and_fades() {
+        let mut pin = pin();
+        frame(&mut pin, vec![wheel(6.0, 0.0)], egui::Modifiers::NONE);
+        assert_eq!(pin.state.scale, 100);
+        frame(&mut pin, vec![wheel(0.0, 0.0)], egui::Modifiers::NONE);
+        assert_eq!(pin.state.scale, 100);
+        frame(&mut pin, vec![wheel(0.0, 4.0)], egui::Modifiers::NONE);
+        assert_eq!(pin.state.scale, 110);
+        frame(&mut pin, vec![wheel(0.0, -4.0)], egui::Modifiers::NONE);
+        assert_eq!(pin.state.scale, 100);
+        // A gesture ending (zero) after a step down keeps the step.
+        frame(
+            &mut pin,
+            vec![wheel(0.0, -4.0), wheel(0.0, 0.0), wheel(0.0, 0.0)],
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(pin.state.scale, 90);
+
+        pin.state.opacity = 50;
+        frame(&mut pin, vec![wheel(-3.0, 0.0)], egui::Modifiers::COMMAND);
+        assert_eq!(pin.state.opacity, 50);
+        frame(&mut pin, vec![wheel(0.0, 2.0)], egui::Modifiers::COMMAND);
+        assert_eq!(pin.state.opacity, 60);
+    }
+
+    /// `Ctrl+C` copies the picture (Cmd+C here), which egui-winit hands to the window
+    /// as `Event::Copy`, never as a key press of C.
+    #[test]
+    fn cmd_c_copies_the_picture() {
+        let mut pin = pin();
+        let asks = frame(&mut pin, vec![egui::Event::Copy], egui::Modifiers::COMMAND);
+        assert!(asks.contains(&PinAsk::Copy), "{asks:?}");
+        let asks = frame(&mut pin, vec![], egui::Modifiers::COMMAND);
+        assert!(!asks.contains(&PinAsk::Copy), "{asks:?}");
     }
 }

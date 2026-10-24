@@ -490,6 +490,15 @@ impl HistoryHost for ImageHistoryWindow {
         self.load_next_batch();
     }
 
+    /// `RefreshVisibleItem`: the cards draw the rows as they are now, so the loaded
+    /// batches, the selection and the place stay; only a favourite toggled under the
+    /// favourites filter filters again (`OnToggleFavoriteClick`).
+    fn edited(&mut self, state: &mut AppState, favorite: bool) {
+        if favorite && self.settings.favorites {
+            self.refilter(state);
+        }
+    }
+
     fn selected_ids(&self) -> Vec<i64> {
         self.selected.clone()
     }
@@ -988,6 +997,49 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `OnToggleFavoriteClick` refreshes the cards in place (`RefreshVisibleItem`); it
+    /// filters again only under the favourites filter. The batches loaded so far, the
+    /// selection and the place in the grid stay.
+    #[test]
+    fn a_favourite_keeps_the_place_in_the_grid() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let items: Vec<HistoryItem> = (1..=6)
+            .map(|id| HistoryItem {
+                id,
+                file_name: format!("{id}.png"),
+                file_path: format!("/x/{id}.png"),
+                kind: "Image".into(),
+                ..HistoryItem::default()
+            })
+            .collect();
+        let settings = ImageHistorySettings {
+            max_item_count: 2,
+            ..ImageHistorySettings::default()
+        };
+        let mut window = ImageHistoryWindow::new(1, None, settings);
+        window.qa_load(&mut state, items);
+        window.load_next_batch();
+        window.load_next_batch();
+        assert_eq!(window.loaded, 6);
+        window.select_only(4);
+        let id = window.selected[0];
+        window.scroll_to_row = None;
+
+        shared::run(&mut window, &mut state, Act::Favorite);
+        assert!(window.data.find(id).unwrap().favorite());
+        assert_eq!(window.loaded, 6);
+        assert_eq!(window.selected, vec![id]);
+        assert_eq!(window.scroll_to_row, None);
+
+        // Under the favourites filter the cards are filtered again.
+        window.settings.favorites = true;
+        window.refilter(&mut state);
+        window.select_only(0);
+        assert_eq!(window.selected, vec![id]);
+        shared::run(&mut window, &mut state, Act::Favorite);
+        assert!(window.filtered.is_empty());
+    }
 
     #[test]
     fn thumbnails_fit_without_growing() {
