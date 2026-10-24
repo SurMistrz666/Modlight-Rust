@@ -91,7 +91,16 @@ pub async fn run_round(
     };
 
     let account_key = plan::account_key(&credential.host, tag);
+    // Digests of the content, not of the bytes: the server hands its copy back in
+    // another member order (see `document::digest`).
     let local_digest = document::digest(Some(local));
+    let remote_digest = document::digest(Some(&remote.settings));
+    let confirmed_digest = document::confirmed_digest(
+        &marker.digest,
+        local,
+        &remote.settings,
+        marker.version == remote.version,
+    );
     let verdict = document::read_schema(remote.version, &remote.settings);
 
     if verdict == SchemaVerdict::Unknown {
@@ -113,10 +122,10 @@ pub async fn run_round(
             Some(&account_key),
             Some(&marker.account),
             marker.version,
-            Some(&marker.digest),
+            Some(&confirmed_digest),
             Some(&local_digest),
             remote.version,
-            Some(&document::digest(Some(&remote.settings))),
+            Some(&remote_digest),
         )
     };
     report.log.push(format!(
@@ -138,13 +147,12 @@ pub async fn run_round(
             backup(backup_folder, local, "local");
             // The digest of what the SERVER confirmed, not of what this machine ends up
             // holding: a lossy apply then shows as a local change and is pushed once.
-            let digest = document::digest(Some(&remote.settings));
             report.apply = SyncApply::Adopt {
                 document: remote.settings.clone(),
                 marker: CloudMarker {
                     account: account_key,
                     version: remote.version,
-                    digest,
+                    digest: remote_digest,
                 },
             };
         }
