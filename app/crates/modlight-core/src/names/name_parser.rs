@@ -71,7 +71,38 @@ impl CustomTimeZone {
             CustomTimeZone::Other(id.to_string())
         }
     }
+
+    /// `TimeZoneInfo.Utc` as Newtonsoft writes it into a settings file.
+    pub fn utc_time_zone_info() -> serde_json::Value {
+        serde_json::json!({
+            "Id": "UTC",
+            "DisplayName": UTC_DISPLAY_NAME,
+            "StandardName": "Coordinated Universal Time",
+            "DaylightName": "Coordinated Universal Time",
+            "BaseUtcOffset": "00:00:00",
+            "AdjustmentRules": null,
+            "SupportsDaylightSavingTime": false
+        })
+    }
+
+    /// The zone a settings file names (`TaskSettingsUpload.CustomTimeZone`, a
+    /// `TimeZoneInfo` as Newtonsoft writes it: an object with its `Id`), or
+    /// `TimeZoneInfo.Utc`, the member's default, when it names none.
+    pub fn from_time_zone_info(value: Option<&serde_json::Value>) -> CustomTimeZone {
+        let id = match value {
+            Some(serde_json::Value::Object(zone)) => zone.get("Id").and_then(|id| id.as_str()),
+            Some(serde_json::Value::String(id)) => Some(id.as_str()),
+            _ => None,
+        };
+        match id.map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => CustomTimeZone::from_id(id),
+            None => CustomTimeZone::Utc,
+        }
+    }
 }
+
+/// `TimeZoneInfo.Utc.DisplayName`.
+pub const UTC_DISPLAY_NAME: &str = "(UTC) Coordinated Universal Time";
 
 /// Why a pattern could not be parsed: the places where upstream's `Parse` throws.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1080,6 +1111,26 @@ mod tests {
         assert_eq!(parser.parse("%h-%mi").unwrap(), expected);
         assert_eq!(CustomTimeZone::from_id("UTC"), CustomTimeZone::Utc);
         assert_eq!(CustomTimeZone::from_id("Etc/UTC"), CustomTimeZone::Utc);
+        // The member as the settings file holds it.
+        let zone = |value: serde_json::Value| CustomTimeZone::from_time_zone_info(Some(&value));
+        assert_eq!(
+            zone(serde_json::json!({"Id": "UTC", "BaseUtcOffset": "00:00:00"})),
+            CustomTimeZone::Utc
+        );
+        assert_eq!(
+            zone(serde_json::json!({"Id": "Central European Standard Time"})),
+            CustomTimeZone::Other("Central European Standard Time".into())
+        );
+        assert_eq!(zone(serde_json::json!("Etc/UTC")), CustomTimeZone::Utc);
+        assert_eq!(zone(serde_json::json!({})), CustomTimeZone::Utc);
+        assert_eq!(
+            CustomTimeZone::from_time_zone_info(None),
+            CustomTimeZone::Utc
+        );
+        assert_eq!(
+            CustomTimeZone::from_time_zone_info(Some(&CustomTimeZone::utc_time_zone_info())),
+            CustomTimeZone::Utc
+        );
         // %unix is UTC whatever the zone.
         assert_eq!(parser.parse("%unix").unwrap(), "1792418709");
     }
