@@ -1388,7 +1388,7 @@ impl ImageEffectsWindow {
                             });
                         });
                 } else {
-                    egui::Popup::menu(&response)
+                    let shown = egui::Popup::menu(&response)
                         .id(id.with("gradient-flyout"))
                         .frame(crate::menus::frame(colors))
                         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -1397,6 +1397,16 @@ impl ImageEffectsWindow {
                                 result = true;
                             }
                         });
+                    // `flyout.Closed += gradient.Sort()`: the stops keep their places
+                    // while the flyout is open (each location box stays with its stop)
+                    // and are put in order once it is gone.
+                    if shown.is_none() {
+                        let mut sorted = gradient.clone();
+                        sorted.sort();
+                        if sorted != gradient {
+                            return set(self, Value::Gradient(sorted));
+                        }
+                    }
                 }
                 if result && edited != gradient {
                     return set(self, Value::Gradient(edited));
@@ -1961,10 +1971,9 @@ fn gradient_panel_inner(ui: &mut Ui, colors: &Colors, id: Id, gradient: &mut Gra
         gradient.stops.remove(index);
         changed = true;
     }
-    if changed {
-        // `ReorderStops`.
-        gradient.sort();
-    }
+    // `ReorderStops` moves a row to its place but keeps it bound to its stop: the rows
+    // are drawn in location order (`order`) while the stops keep their indices, which the
+    // boxes are keyed by. The stops themselves are sorted when the flyout closes.
     changed
 }
 
@@ -2866,6 +2875,62 @@ mod tests {
         w.texts.insert("Text", "second".into());
         w.remove_preset(0.0);
         assert!(w.texts.is_empty(), "{:?}", w.texts);
+    }
+
+    /// `GradientOptionsPanel` keeps each location box bound to its stop while the rows
+    /// reorder: typing a location past another stop's must go on editing the same stop.
+    #[test]
+    fn a_stop_location_typed_past_another_stays_with_its_stop() {
+        use egui_kittest::kittest::Queryable;
+        let colors = Colors::new(&modlight_core::theme::resolve(
+            &Default::default(),
+            Some(true),
+            None,
+        ));
+        let gradient = Gradient::new(
+            "Vertical",
+            &[
+                (C::rgb(255, 0, 0), 0.0),
+                (C::rgb(0, 255, 0), 20.0),
+                (C::rgb(0, 0, 255), 100.0),
+            ],
+        );
+        let mut fonts_set = false;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(420.0, 420.0))
+            .build_ui_state(
+                move |ui, g: &mut Gradient| {
+                    // The app's fonts take effect from the next pass on.
+                    if !fonts_set {
+                        ui.ctx().set_fonts(crate::theme::fonts());
+                        fonts_set = true;
+                        return;
+                    }
+                    gradient_panel_inner(ui, &colors, Id::new("gradient-test"), g);
+                },
+                gradient,
+            );
+        harness.run();
+        harness
+            .get_by(|n| {
+                n.role() == egui::accesskit::Role::TextInput && n.value().as_deref() == Some("0")
+            })
+            .focus();
+        harness.run();
+        for key in ["5", "0", "1"] {
+            harness.get_by(|n| n.is_focused()).type_text(key);
+            harness.run();
+        }
+        let location_of = |g: &Gradient, c: C| {
+            g.stops
+                .iter()
+                .find(|s| s.color.c == c)
+                .map(|s| s.location)
+                .unwrap()
+        };
+        let g = harness.state();
+        assert_eq!(location_of(g, C::rgb(0, 255, 0)), 20.0, "{:?}", g.stops);
+        assert_eq!(location_of(g, C::rgb(255, 0, 0)), 100.0, "{:?}", g.stops);
     }
 
     #[test]
