@@ -41,6 +41,9 @@ impl AppState {
     /// `RegionCaptureTasks.GetRegionImage`: the overlay; the area comes back to `target`.
     pub fn tool_region(&mut self, target: RegionFor, settings: TaskSettings) {
         if self.captures.overlay.is_some() || self.captures.busy {
+            // Another capture holds the screen: the tool hears "no picture" (its window
+            // stepped aside for the overlay and comes back), as for a cancelled region.
+            self.tool_picture(target, None);
             return;
         }
         self.captures.busy = true;
@@ -132,5 +135,26 @@ impl AppState {
             RegionFor::OcrWindow(key) => self.ocr_region_done(Some(key), None, picture),
             RegionFor::AnalyzeWindow(key) => self.analyze_region_done(key, picture),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::qr::{QrOptions, QrWindow};
+
+    /// A region asked for while another capture holds the screen cannot start; the tool
+    /// that asked still hears "no picture" and comes back, instead of staying hidden.
+    #[test]
+    fn a_region_that_cannot_start_still_answers() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let key = state
+            .tools
+            .open_keyed(|key| Box::new(QrWindow::new(key, QrOptions::default())));
+        state.tools.window_mut::<QrWindow>(key).unwrap().scanning = true;
+        state.captures.busy = true;
+        state.tool_region(RegionFor::QrScan(key), TaskSettings::default());
+        assert!(!state.tools.window_mut::<QrWindow>(key).unwrap().scanning);
+        assert!(state.tools.restore.contains(&key));
     }
 }
