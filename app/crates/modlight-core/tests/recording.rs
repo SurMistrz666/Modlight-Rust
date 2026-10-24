@@ -46,13 +46,22 @@ fn frames() -> FrameSourceFactory {
 }
 
 fn params(dir: &std::path::Path, codec: FFmpegVideoCodec, two_pass: bool) -> SessionParams {
+    params_with(dir, ffmpeg().unwrap(), codec, two_pass)
+}
+
+fn params_with(
+    dir: &std::path::Path,
+    ffmpeg_path: PathBuf,
+    codec: FFmpegVideoCodec,
+    two_pass: bool,
+) -> SessionParams {
     let ffmpeg_options = FFmpegOptions {
         VideoCodec: codec,
         ..FFmpegOptions::default()
     };
     let extension = ffmpeg_options.extension();
     SessionParams {
-        ffmpeg_path: ffmpeg().unwrap(),
+        ffmpeg_path,
         ffmpeg: ffmpeg_options,
         fps: 15,
         duration: 1.0,
@@ -186,4 +195,83 @@ fn wait_for(control: &RecorderControl, status: RecordingStatus) {
         std::thread::sleep(Duration::from_millis(25));
     }
     panic!("never reached {status:?}, at {:?}", control.status());
+}
+
+/// A stand-in for ffmpeg: a shell script.
+#[cfg(unix)]
+fn script(dir: &std::path::Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// A camera or a microphone alone is ffmpeg's own avfoundation input, stopped by typing
+/// `q`. ffmpeg then still has to finish the file (an MP4 has its index moved to the
+/// front, which takes a while for a long recording): this stand-in needs 600 ms after
+/// the `q`, and the recording must wait for it rather than kill it half way.
+#[cfg(unix)]
+#[test]
+fn a_camera_recording_is_given_the_time_to_finish_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let ffmpeg = script(
+        tools.path(),
+        "ffmpeg",
+        "echo 'Press [q] to stop, [?] for help' >&2\n\
+         head -c 1 > /dev/null\n\
+         sleep 0.6\n\
+         for last; do :; done\n\
+         printf finished > \"$last\"\n",
+    );
+    let mut p = params_with(dir.path(), ffmpeg, FFmpegVideoCodec::libx264, false);
+    p.ffmpeg.VideoSource = "FaceTime HD Camera".into();
+    p.duration = 0.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 0.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    wait_for(&control, RecordingStatus::Recording);
+    control.start_stop();
+    let outcome = worker.join().unwrap();
+    assert_eq!(outcome.error, None);
+    let path = outcome.path.expect("the finished file");
+    assert_eq!(std::fs::read(path).unwrap(), b"finished");
+}
+
+/// An ffmpeg that does not answer `q` is killed on the third request to stop, as
+/// upstream's `FFmpegCLIManager.Close` does, and never before.
+#[cfg(unix)]
+#[test]
+fn a_camera_recording_that_will_not_stop_is_killed_on_the_third_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    // `exec`: the process that is killed is the one holding the output pipe.
+    let ffmpeg = script(
+        tools.path(),
+        "ffmpeg",
+        "echo 'Press [q] to stop, [?] for help' >&2\nexec sleep 30\n",
+    );
+    let mut p = params_with(dir.path(), ffmpeg, FFmpegVideoCodec::libx264, false);
+    p.ffmpeg.VideoSource = "FaceTime HD Camera".into();
+    p.duration = 0.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 0.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    wait_for(&control, RecordingStatus::Recording);
+    let started = std::time::Instant::now();
+    control.start_stop();
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(!worker.is_finished(), "killed after one request to stop");
+    control.abort();
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(!worker.is_finished(), "killed after two requests to stop");
+    control.abort();
+    let outcome = worker.join().unwrap();
+    assert!(outcome.aborted);
+    assert!(started.elapsed() < Duration::from_secs(10));
 }
