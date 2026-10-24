@@ -2204,6 +2204,12 @@ impl crate::state::AppState {
         }
     }
 
+    /// What `ExportAsync` runs first: `SaveAllSettings`, the hotkeys file with the rest
+    /// (it is written only once the hotkeys change, so a profile may have none yet).
+    fn save_for_export(&mut self) {
+        self.save_hotkeys();
+    }
+
     /// `OnExportClick` + `ExportAsync`.
     fn export_backup(&mut self) {
         if !self.dialogs_allowed() {
@@ -2230,7 +2236,7 @@ impl crate::state::AppState {
         else {
             return;
         };
-        self.save_config();
+        self.save_for_export();
         self.app_status(
             t(s::ApplicationSettingsWindow_ExportingBackup).to_string(),
             true,
@@ -2430,6 +2436,45 @@ mod tests {
         assert_eq!(
             modlight_core::config::AppConfig::load(profile).page_size(),
             120
+        );
+    }
+
+    /// `ExportAsync` saves every settings file first (`SaveAllSettings`), so a backup
+    /// carries the hotkeys this installation runs with even when they were never changed
+    /// (no `HotkeysConfig.json` yet): restored elsewhere, they replace that one's.
+    #[test]
+    fn an_export_carries_the_hotkeys_even_when_never_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        let mut state = profile_state(&profile);
+        state.start_hotkeys();
+        assert!(
+            !profile
+                .join(modlight_core::config::HOTKEYS_CONFIG_FILE)
+                .exists()
+        );
+        state.save_for_export();
+        let archive = dir.path().join("backup.sxb");
+        modlight_core::backup::export(&profile, &archive, true, false).unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(
+            elsewhere.join(modlight_core::config::HOTKEYS_CONFIG_FILE),
+            r#"{"Hotkeys":[]}"#,
+        )
+        .unwrap();
+        let report = modlight_core::backup::import(&archive, &elsewhere).unwrap();
+        assert!(
+            report
+                .written
+                .contains(&modlight_core::config::HOTKEYS_CONFIG_FILE.to_string()),
+            "{report:?}"
+        );
+        let restored = modlight_core::config::AppConfig::load(&elsewhere);
+        assert_eq!(
+            modlight_core::hotkeys::load(&restored).len(),
+            modlight_core::hotkeys::default_hotkeys().len()
         );
     }
 
