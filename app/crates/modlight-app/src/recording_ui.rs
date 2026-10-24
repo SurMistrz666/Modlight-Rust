@@ -270,16 +270,8 @@ impl Recording {
             } else {
                 COMPACT_ACTION_WIDTH
             };
-            let (start_text, start_icon) = match state.status {
-                RecordingStatus::Working | RecordingStatus::Recording | RecordingStatus::Paused => {
-                    (t(c::ScreenRecordForm_Stop), icons::SQUARE)
-                }
-                _ => (t(c::ScreenRecordWindow_Start), icons::CIRCLE_PLAY),
-            };
-            let (pause_text, pause_icon) = match state.status {
-                RecordingStatus::Waiting | RecordingStatus::Paused => (t(c::Resume), icons::PLAY),
-                _ => (t(c::ScreenRecordWindow_Pause), icons::PAUSE),
-            };
+            let (start_text, start_icon) = start_label(state.status);
+            let (pause_text, pause_icon) = pause_label(state.status);
             let restart_enabled = matches!(
                 state.status,
                 RecordingStatus::Recording | RecordingStatus::Paused
@@ -346,6 +338,26 @@ fn action_look(colors: &Colors) -> Look {
     look.hover_border = None;
     look.spacing = 7.0;
     look
+}
+
+/// The Start/Stop button's text and glyph (`UpdateUI`: `ScreenRecordForm_Start`,
+/// `ScreenRecordForm_Stop`).
+fn start_label(status: RecordingStatus) -> (&'static str, char) {
+    match status {
+        RecordingStatus::Working | RecordingStatus::Recording | RecordingStatus::Paused => {
+            (t(c::ScreenRecordForm_Stop), icons::SQUARE)
+        }
+        _ => (t(c::ScreenRecordForm_Start), icons::CIRCLE_PLAY),
+    }
+}
+
+/// The Pause/Resume button's text and glyph (`UpdateUI`: `Strings.Resume`,
+/// `Strings.Pause`).
+fn pause_label(status: RecordingStatus) -> (&'static str, char) {
+    match status {
+        RecordingStatus::Waiting | RecordingStatus::Paused => (t(c::Resume), icons::PLAY),
+        _ => (t(c::Pause), icons::PAUSE),
+    }
 }
 
 /// Goldenrod while waiting or paused, red while recording (`SetRecordingAccent`).
@@ -741,4 +753,27 @@ fn unique(path: PathBuf) -> PathBuf {
             .to_string_lossy()
             .into_owned(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use modlight_core::l10n::{Language, set_thread_language};
+
+    /// While recording the button says upstream's `Strings.Pause` (`UpdateUI`), which
+    /// in Polish is "Pauza"; `ScreenRecordWindow_Pause` ("Wstrzymaj") is only the
+    /// window's text before `UpdateUI` first runs.
+    #[test]
+    fn the_buttons_say_what_upstream_says() {
+        set_thread_language(Some(Language::Polish));
+        assert_eq!(pause_label(RecordingStatus::Recording).0, "Pauza");
+        assert_eq!(pause_label(RecordingStatus::Paused).0, "Ponów");
+        assert_eq!(pause_label(RecordingStatus::Waiting).0, "Ponów");
+        assert_eq!(start_label(RecordingStatus::Waiting).0, "Rozpocznij");
+        assert_eq!(start_label(RecordingStatus::Recording).0, "Zatrzymaj");
+        set_thread_language(Some(Language::English));
+        assert_eq!(pause_label(RecordingStatus::Recording).0, "Pause");
+        assert_eq!(start_label(RecordingStatus::Waiting).0, "Start");
+        set_thread_language(None);
+    }
 }
