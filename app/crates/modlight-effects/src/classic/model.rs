@@ -706,6 +706,10 @@ impl GdiColor {
     /// `ColorConverter.ConvertToString` with the invariant culture.
     pub fn to_converter_string(&self) -> String {
         if let Some(n) = &self.name {
+            // `Color.Empty` converts to "".
+            if n == "Empty" {
+                return String::new();
+            }
             return n.clone();
         }
         let c = self.c;
@@ -2099,6 +2103,16 @@ mod tests {
         assert!(!p.effects[1].enabled);
         assert_eq!(display_name(&p.effects[1]), "Soft");
         assert!(p.to_export_string().contains("\"$type\": \"Shadow\""));
+    }
+
+    /// `Color.Empty` is written as "" (`ColorConverter`), which Windows reads back as
+    /// empty; "Empty" is no colour name there, so it would fail and keep the default.
+    #[test]
+    fn the_empty_colour_round_trips_as_an_empty_string() {
+        let empty = GdiColor::parse("").unwrap();
+        assert_eq!(empty.c, C::ZERO);
+        assert_eq!(empty.to_converter_string(), "");
+        assert_eq!(GdiColor::parse(&empty.to_converter_string()), Some(empty));
     }
 
     #[test]
