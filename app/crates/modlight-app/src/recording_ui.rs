@@ -404,7 +404,8 @@ impl AppState {
             recording.control.start_stop();
             return;
         }
-        if self.captures.overlay.is_some() {
+        // An overlay open or being prepared (the desktop is being taken for it).
+        if self.captures.overlay.is_some() || self.captures.busy {
             return;
         }
         let mut settings = settings;
@@ -759,6 +760,88 @@ fn unique(path: PathBuf) -> PathBuf {
 mod tests {
     use super::*;
     use modlight_core::l10n::{Language, set_thread_language};
+
+    /// The recording hotkey pressed again while the area is still being prepared (the
+    /// desktop being taken for the overlay) is not a second request: the other ways to
+    /// open the overlay wait for `busy` the same way.
+    #[test]
+    fn a_second_press_while_the_area_is_prepared_asks_nothing_more() {
+        use image::RgbaImage;
+        use modlight_core::capture::source::{
+            CaptureError, CaptureSource, FakeSource, ScreenInfo, WindowCapture, WindowInfo,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Counting {
+            inner: FakeSource,
+            taken: Arc<AtomicUsize>,
+        }
+        impl CaptureSource for Counting {
+            fn screens(&self) -> Vec<ScreenInfo> {
+                self.inner.screens()
+            }
+            fn cursor_position(&self) -> (i32, i32) {
+                self.inner.cursor_position()
+            }
+            fn windows(&self) -> Vec<WindowInfo> {
+                self.inner.windows()
+            }
+            fn active_window(&self) -> Option<WindowInfo> {
+                self.inner.active_window()
+            }
+            fn capture_rect(&self, rect: IRect, cursor: bool) -> Result<RgbaImage, CaptureError> {
+                self.taken.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                self.inner.capture_rect(rect, cursor)
+            }
+            fn capture_window(
+                &self,
+                window: &WindowInfo,
+                how: WindowCapture,
+            ) -> Result<RgbaImage, CaptureError> {
+                self.inner.capture_window(window, how)
+            }
+        }
+
+        let profile = tempfile::tempdir().unwrap();
+        let tools = profile.path().join(modlight_core::components::TOOLS_FOLDER);
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(
+            tools.join(modlight_core::download::tool::FFMPEG_FILE_NAME),
+            b"x",
+        )
+        .unwrap();
+        let env = crate::state::Env {
+            profile: profile.path().to_path_buf(),
+            qa: true,
+            frozen_now: None,
+            machine: "QA Mac".into(),
+            system_language: "en".into(),
+            system_locale: "en_US".into(),
+            reduce_motion: true,
+            system_dark: Some(true),
+        };
+        let account = modlight_core::account::AccountStore::in_memory(
+            modlight_core::account::StoredAccount::default(),
+            "",
+        );
+        let mut state = AppState::new(env, modlight_core::config::AppConfig::in_memory(), account);
+        let taken = Arc::new(AtomicUsize::new(0));
+        state.captures.source = Arc::new(Counting {
+            inner: crate::qa_capture::qa_desktop(),
+            taken: taken.clone(),
+        });
+        let settings = state.default_task_settings();
+        for _ in 0..2 {
+            state.start_screen_recording(
+                ScreenRecordOutput::FFmpeg,
+                RecordStartMethod::Region,
+                settings.clone(),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        assert_eq!(taken.load(Ordering::SeqCst), 1);
+    }
 
     /// While recording the button says upstream's `Strings.Pause` (`UpdateUI`), which
     /// in Polish is "Pauza"; `ScreenRecordWindow_Pause` ("Wstrzymaj") is only the
