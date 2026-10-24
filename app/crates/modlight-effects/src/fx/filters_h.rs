@@ -792,6 +792,11 @@ fn minecraft_grass(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
     let border_h = total * bs;
     let overlap = p.i("overlap").clamp(0, 8) * bs;
     let nh = src.h + border_h - overlap;
+    if nh <= 0 {
+        // `new SKBitmap(width, newHeight)` cannot allocate: upstream's effect throws and
+        // the editor keeps the picture.
+        return Err("Unable to allocate pixels for the bitmap.".into());
+    }
     let mut canvas = Canvas::new(src.w, nh);
     let image_y = if top { border_h - overlap } else { 0 };
     canvas.draw_bitmap(src, 0.0, image_y as f32, &Paint::default());
