@@ -709,13 +709,31 @@ pub fn path_text(ui: &Ui, colors: &Colors, rect: Rect, text: &str) {
     ui.painter().galley(pos, galley, colors.text_secondary());
 }
 
-/// A texture from an RGBA picture.
+/// A texture from an RGBA picture. A picture larger than the GPU takes on a side (a long
+/// scrolling capture, many screenshots combined) is uploaded as a copy that fits: the
+/// whole one would fail to upload, which wgpu treats as fatal. The texture is drawn into
+/// rectangles of the picture's own size, so only its sharpness changes.
 pub fn texture(
     ctx: &egui::Context,
     name: &str,
     image: &image::RgbaImage,
     nearest: bool,
 ) -> TextureHandle {
+    let max = ctx.input(|i| i.max_texture_side).max(1) as u32;
+    let fitted;
+    let image = if image.width() > max || image.height() > max {
+        let scale = (max as f64 / image.width() as f64).min(max as f64 / image.height() as f64);
+        let side = |v: u32| ((v as f64 * scale).round() as u32).clamp(1, max);
+        let (w, h) = (side(image.width()), side(image.height()));
+        fitted = if nearest {
+            image::imageops::resize(image, w, h, image::imageops::FilterType::Nearest)
+        } else {
+            image::imageops::thumbnail(image, w, h)
+        };
+        &fitted
+    } else {
+        image
+    };
     let color = egui::ColorImage::from_rgba_unmultiplied(
         [image.width() as usize, image.height() as usize],
         image.as_raw(),
@@ -917,4 +935,31 @@ pub fn toggle_at(
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A picture taller or wider than the GPU takes (a scrolling capture, combined
+    /// screenshots) is shown from a copy that fits; uploading it whole fails (wgpu treats
+    /// that as fatal, egui asserts it in debug builds).
+    #[test]
+    fn a_texture_never_exceeds_the_largest_side() {
+        let ctx = egui::Context::default();
+        let max = ctx.input(|i| i.max_texture_side);
+        let tall = image::RgbaImage::new(300, (max * 3 + 7) as u32);
+        let texture = texture(&ctx, "tall", &tall, false);
+        let [w, h] = texture.size();
+        assert_eq!(h, max);
+        assert_eq!(w, 100);
+        let small = image::RgbaImage::new(30, 20);
+        assert_eq!(texture_size_of(&ctx, &small), [30, 20]);
+        let wide = image::RgbaImage::new((max * 2) as u32, 1);
+        assert_eq!(texture_size_of(&ctx, &wide), [max, 1]);
+    }
+
+    fn texture_size_of(ctx: &egui::Context, image: &image::RgbaImage) -> [usize; 2] {
+        texture(ctx, "t", image, true).size()
+    }
 }
