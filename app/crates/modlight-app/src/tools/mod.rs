@@ -387,8 +387,10 @@ mod tests {
     fn frame(state: &mut AppState) {
         let ctx = egui::Context::default();
         ctx.set_fonts(crate::theme::fonts());
-        ctx.run_ui(egui::RawInput::default(), |ui| draw_windows(ui.ctx(), state))
-            .drop_without_applying_deltas();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            draw_windows(ui.ctx(), state)
+        })
+        .drop_without_applying_deltas();
     }
 
     #[test]
