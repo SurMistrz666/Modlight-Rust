@@ -818,7 +818,8 @@ impl AppState {
             .collect()
     }
 
-    /// The window list for the capture menu (titles cut at 50, "...").
+    /// The window list for the capture menu: titles cut to 50 characters, the last three
+    /// of them dots (`Truncate(50, "...")`).
     pub fn window_entries(&self) -> Vec<(String, modlight_core::capture::source::WindowInfo)> {
         self.captures
             .source
@@ -831,7 +832,7 @@ impl AppState {
                     w.title.clone()
                 };
                 if title.chars().count() > 50 {
-                    title = title.chars().take(50).collect::<String>() + "...";
+                    title = title.chars().take(47).collect::<String>() + "...";
                 }
                 (title, w)
             })
@@ -1469,5 +1470,35 @@ mod tests {
             .surface_options;
         assert_eq!(options.magnifier_pixel_count, 19);
         assert!(options.show_magnifier);
+    }
+
+    /// `selectedWindow.Text.Truncate(50, "...")`: at most 50 characters with the dots.
+    #[test]
+    fn long_window_titles_are_cut_to_fifty_characters() {
+        use modlight_core::capture::source::{CaptureSource, FakeSource, WindowInfo};
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let sample = FakeSource::sample();
+        let long = "A window title that goes on and on, well past fifty characters";
+        let fifty = "x".repeat(50);
+        let windows = vec![
+            WindowInfo {
+                title: long.into(),
+                ..sample.windows()[0].clone()
+            },
+            WindowInfo {
+                title: fifty.clone(),
+                ..sample.windows()[1].clone()
+            },
+        ];
+        state.captures.source = Arc::new(FakeSource::new(
+            sample.desktop().clone(),
+            1.0,
+            sample.screens(),
+            windows,
+        ));
+        let entries = state.window_entries();
+        assert_eq!(entries[0].0.chars().count(), 50);
+        assert_eq!(entries[0].0, format!("{}...", &long[..47]));
+        assert_eq!(entries[1].0, fifty, "fifty fit as they are");
     }
 }
