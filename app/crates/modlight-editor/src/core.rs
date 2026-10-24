@@ -348,6 +348,11 @@ impl EditorCore {
 
     fn transform_annotations(&mut self, f: &dyn Fn(Point) -> Point) {
         for a in &mut self.annotations {
+            // `SetTailPoint(transform(GetEffectiveTailPoint()))`, with the tail taken
+            // before the body moves: a default tail follows the body, so taking it after
+            // (upstream's order) would move it twice.
+            let balloon_tail =
+                matches!(a.kind, Kind::SpeechBalloon(_)).then(|| balloon_effective_tail_point(a));
             a.start = f(a.start);
             a.end = f(a.end);
             match &mut a.kind {
@@ -359,15 +364,14 @@ impl EditorCore {
                 Kind::Number(n) if n.tail_initialized => {
                     n.tail_point = f(n.tail_point);
                 }
-                Kind::SpeechBalloon(_) => {}
+                // A bent line keeps its shape (upstream left the curve point behind).
+                Kind::Line { curve, .. } | Kind::Arrow { curve, .. } if curve.activated => {
+                    curve.point = f(curve.point);
+                }
                 _ => {}
             }
-            if matches!(a.kind, Kind::SpeechBalloon(_)) {
-                // `SetTailPoint(transform(GetEffectiveTailPoint()))` after the endpoints
-                // moved: a balloon without a tail point gets its default one, transformed
-                // once more, as upstream's call order does.
-                let tail = f(balloon_effective_tail_point(a));
-                set_balloon_tail(a, tail);
+            if let Some(tail) = balloon_tail {
+                set_balloon_tail(a, f(tail));
             }
         }
     }
@@ -535,24 +539,14 @@ impl EditorCore {
                 self.annotations.remove(index);
                 continue;
             }
-            let a = &mut self.annotations[index];
-            let mut needs = false;
-            if lo >= cut_end {
-                needs = true;
-            } else if hi > cut_end {
-                needs = true;
-                if axis(a.start) > cut_start && axis(a.start) < cut_end {
-                    a.start = with_axis(a.start, cut_start);
-                }
-                if axis(a.end) > cut_start && axis(a.end) < cut_end {
-                    a.end = with_axis(a.end, cut_start);
-                }
-            }
-            if !needs {
+            // Wholly after the strip, or across it; anything else stays where it is.
+            let after = lo >= cut_end;
+            if !after && hi <= cut_end {
                 continue;
             }
-            a.start = with_axis(a.start, axis(a.start) - cut_size);
-            a.end = with_axis(a.end, axis(a.end) - cut_size);
+            let a = &mut self.annotations[index];
+            // Where a coordinate goes: past the strip back by its size, inside it to the
+            // seam, before it unchanged.
             let shift = |v: f32| {
                 if v >= cut_end {
                     v - cut_size
@@ -562,6 +556,19 @@ impl EditorCore {
                     v
                 }
             };
+            // The balloon's tail as it is before the body moves (a default tail follows
+            // the body and would otherwise move twice).
+            let balloon_tail =
+                matches!(a.kind, Kind::SpeechBalloon(_)).then(|| balloon_effective_tail_point(a));
+            if after {
+                a.start = with_axis(a.start, axis(a.start) - cut_size);
+                a.end = with_axis(a.end, axis(a.end) - cut_size);
+            } else {
+                // Across the strip: the part before it stays, the rest closes up (upstream
+                // moved both ends back, shifting the part before the strip as well).
+                a.start = with_axis(a.start, shift(axis(a.start)));
+                a.end = with_axis(a.end, shift(axis(a.end)));
+            }
             match &mut a.kind {
                 Kind::Freehand { points, .. } => {
                     for p in points.iter_mut() {
@@ -572,10 +579,12 @@ impl EditorCore {
                     let t = n.tail_point;
                     n.tail_point = with_axis(t, shift(axis(t)));
                 }
+                Kind::Line { curve, .. } | Kind::Arrow { curve, .. } if curve.activated => {
+                    curve.point = with_axis(curve.point, shift(axis(curve.point)));
+                }
                 _ => {}
             }
-            if matches!(a.kind, Kind::SpeechBalloon(_)) {
-                let t = balloon_effective_tail_point(a);
+            if let Some(t) = balloon_tail {
                 set_balloon_tail(a, with_axis(t, shift(axis(t))));
             }
         }
@@ -613,15 +622,23 @@ impl EditorCore {
                 continue;
             }
             let a = &mut self.annotations[index];
+            // The balloon's tail before the body moves (a default tail follows the body).
+            let balloon_tail =
+                matches!(a.kind, Kind::SpeechBalloon(_)).then(|| balloon_effective_tail_point(a));
             a.start = a.start.offset(-xf, -yf);
             a.end = a.end.offset(-xf, -yf);
-            if let Kind::Freehand { points, .. } = &mut a.kind {
-                for p in points.iter_mut() {
-                    *p = p.offset(-xf, -yf);
+            match &mut a.kind {
+                Kind::Freehand { points, .. } => {
+                    for p in points.iter_mut() {
+                        *p = p.offset(-xf, -yf);
+                    }
                 }
+                Kind::Line { curve, .. } | Kind::Arrow { curve, .. } if curve.activated => {
+                    curve.point = curve.point.offset(-xf, -yf);
+                }
+                _ => {}
             }
-            if matches!(a.kind, Kind::SpeechBalloon(_)) {
-                let t = balloon_effective_tail_point(a);
+            if let Some(t) = balloon_tail {
                 set_balloon_tail(a, t.offset(-xf, -yf));
             } else if let Kind::Number(n) = &a.kind
                 && n.tail_initialized
@@ -1039,6 +1056,104 @@ mod tests {
         core.undo();
         assert_eq!(core.annotations()[0].id, a_id);
         assert_eq!(core.selected(), Some(a_id));
+    }
+
+    fn balloon(x: f32, y: f32, w: f32, h: f32) -> Annotation {
+        let mut b = Annotation::speech_balloon();
+        b.start = Point::new(x, y);
+        b.end = Point::new(x + w, y + h);
+        b
+    }
+
+    /// A balloon whose tail was never dragged has its default tail under the body (as
+    /// every balloon drawn large enough has); the image operations move that tail once,
+    /// with the body, instead of moving the body and then the new default again.
+    #[test]
+    fn a_default_balloon_tail_moves_once_with_the_image() {
+        let tail = |core: &EditorCore| balloon_effective_tail_point(&core.annotations()[0]);
+        // The default tail of a 200 x 100 balloon at (100, 100) is (200, 230).
+        let mut core = core_with(400, 300);
+        core.add_annotation(balloon(100.0, 100.0, 200.0, 100.0));
+        assert!(core.crop(Rect::new(50.0, 50.0, 350.0, 250.0)));
+        assert_eq!(tail(&core), Point::new(150.0, 180.0));
+
+        let mut core = core_with(400, 300);
+        core.add_annotation(balloon(100.0, 100.0, 200.0, 100.0));
+        assert!(core.rotate_90_clockwise());
+        assert_eq!(tail(&core), Point::new(70.0, 200.0));
+
+        let mut core = core_with(400, 300);
+        core.add_annotation(balloon(100.0, 100.0, 200.0, 100.0));
+        assert!(core.flip_vertical());
+        assert_eq!(tail(&core), Point::new(200.0, 70.0));
+
+        let mut core = core_with(400, 300);
+        core.add_annotation(balloon(100.0, 100.0, 200.0, 100.0));
+        assert!(core.cut_out(20, 40, false));
+        assert_eq!(tail(&core), Point::new(200.0, 210.0));
+    }
+
+    fn curved_line() -> Annotation {
+        let mut l = Annotation::line();
+        l.start = Point::new(10.0, 100.0);
+        l.end = Point::new(200.0, 100.0);
+        crate::model::set_curve_point(&mut l, Point::new(105.0, 150.0));
+        l
+    }
+
+    /// A line or arrow bent by its middle handle keeps its shape: the curve point moves
+    /// with the image like the end points.
+    #[test]
+    fn a_curved_line_keeps_its_shape_through_image_operations() {
+        let curve = |core: &EditorCore| core.annotations()[0].curve().unwrap().point;
+        let mut core = core_with(400, 300);
+        core.add_annotation(curved_line());
+        assert!(core.crop(Rect::new(5.0, 5.0, 305.0, 205.0)));
+        assert_eq!(curve(&core), Point::new(100.0, 145.0));
+
+        let mut core = core_with(400, 300);
+        core.add_annotation(curved_line());
+        assert!(core.rotate_90_clockwise());
+        assert_eq!(curve(&core), Point::new(150.0, 105.0));
+
+        let mut core = core_with(400, 300);
+        core.add_annotation(curved_line());
+        assert!(core.resize_image(200, 150));
+        assert_eq!(curve(&core), Point::new(52.5, 75.0));
+
+        let mut core = core_with(400, 300);
+        core.add_annotation(curved_line());
+        assert!(core.cut_out(50, 70, true));
+        let a = &core.annotations()[0];
+        assert_eq!((a.start.x, a.end.x), (10.0, 180.0));
+        assert_eq!(curve(&core), Point::new(85.0, 150.0));
+    }
+
+    /// An annotation across the removed strip keeps the part before the strip where it
+    /// was and loses the strip's width; upstream moved its whole body back by the width.
+    #[test]
+    fn a_cut_through_an_annotation_shortens_it() {
+        let mut core = core_with(100, 100);
+        core.add_annotation(rect(20.0, 5.0, 60.0, 10.0));
+        assert!(core.cut_out(30, 50, true));
+        let a = &core.annotations()[0];
+        assert_eq!((a.start.x, a.end.x), (20.0, 60.0));
+
+        let mut core = core_with(100, 100);
+        core.add_annotation(rect(5.0, 20.0, 10.0, 60.0));
+        assert!(core.cut_out(30, 50, false));
+        let a = &core.annotations()[0];
+        assert_eq!((a.start.y, a.end.y), (20.0, 60.0));
+
+        // Drawn right to left, with an end inside the strip.
+        let mut core = core_with(100, 100);
+        let mut r = Annotation::rectangle();
+        r.start = Point::new(80.0, 5.0);
+        r.end = Point::new(40.0, 15.0);
+        core.add_annotation(r);
+        assert!(core.cut_out(30, 50, true));
+        let a = &core.annotations()[0];
+        assert_eq!((a.start.x, a.end.x), (60.0, 30.0));
     }
 
     #[test]
