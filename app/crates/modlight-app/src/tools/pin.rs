@@ -284,7 +284,11 @@ impl Pin {
             if i.key_pressed(egui::Key::ArrowDown) {
                 moved.y += distance;
             }
-            if i.modifiers.command && i.key_pressed(egui::Key::C) {
+            // egui-winit hands Cmd+C over as `Event::Copy`, without a key press of C.
+            if i.modifiers.command
+                && (i.key_pressed(egui::Key::C)
+                    || i.events.iter().any(|e| matches!(e, egui::Event::Copy)))
+            {
                 asks.push(PinAsk::Copy);
             }
             let plus = i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals);
@@ -1498,5 +1502,16 @@ mod tests {
         assert_eq!(pin.state.opacity, 50);
         frame(&mut pin, vec![wheel(0.0, 2.0)], egui::Modifiers::COMMAND);
         assert_eq!(pin.state.opacity, 60);
+    }
+
+    /// `Ctrl+C` copies the picture (Cmd+C here), which egui-winit hands to the window
+    /// as `Event::Copy`, never as a key press of C.
+    #[test]
+    fn cmd_c_copies_the_picture() {
+        let mut pin = pin();
+        let asks = frame(&mut pin, vec![egui::Event::Copy], egui::Modifiers::COMMAND);
+        assert!(asks.contains(&PinAsk::Copy), "{asks:?}");
+        let asks = frame(&mut pin, vec![], egui::Modifiers::COMMAND);
+        assert!(!asks.contains(&PinAsk::Copy), "{asks:?}");
     }
 }
