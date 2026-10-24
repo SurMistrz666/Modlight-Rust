@@ -207,6 +207,21 @@ fn script(dir: &std::path::Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
+/// The real ffmpeg behind a script that first sleeps when its arguments match `pattern`
+/// (a `case` pattern over all of them), so a test can act while that run is going.
+#[cfg(unix)]
+fn slow_ffmpeg(dir: &std::path::Path, pattern: &str) -> PathBuf {
+    let real = ffmpeg().unwrap();
+    script(
+        dir,
+        "ffmpeg",
+        &format!(
+            "case \"$*\" in\n  {pattern}) sleep 1.5 ;;\nesac\nexec '{}' \"$@\"\n",
+            real.display()
+        ),
+    )
+}
+
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
@@ -331,4 +346,74 @@ fn a_second_pass_never_writes_over_its_own_input() {
         .map(|e| e.file_name())
         .collect();
     assert_eq!(left.len(), 1, "{left:?}");
+}
+
+/// Abort pressed while the paused parts are being joined: nothing is delivered.
+#[cfg(unix)]
+#[test]
+fn an_abort_while_the_parts_are_joined_leaves_nothing() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let slow = slow_ffmpeg(tools.path(), "*\"-f concat\"*");
+    let mut p = params_with(dir.path(), slow, FFmpegVideoCodec::libx264, false);
+    p.duration = 0.0;
+    let control = RecorderControl::new(IRect::new(0, 0, 32, 32), 0.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    wait_for(&control, RecordingStatus::Recording);
+    std::thread::sleep(Duration::from_millis(300));
+    control.pause_resume();
+    wait_for(&control, RecordingStatus::Paused);
+    control.pause_resume();
+    wait_for(&control, RecordingStatus::Recording);
+    std::thread::sleep(Duration::from_millis(300));
+    control.start_stop();
+    // The parts are being joined now (the stand-in waits 1.5 s before ffmpeg runs).
+    std::thread::sleep(Duration::from_millis(600));
+    control.abort();
+    let outcome = worker.join().unwrap();
+    assert!(outcome.aborted, "{outcome:?}");
+    assert_eq!(outcome.path, None);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+/// Abort (its hotkey: the window hides while encoding) during a GIF's second pass:
+/// nothing is delivered.
+#[cfg(unix)]
+#[test]
+fn an_abort_during_the_second_pass_leaves_nothing() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let slow = slow_ffmpeg(tools.path(), "*palettegen*");
+    let p = params_with(dir.path(), slow, FFmpegVideoCodec::gif, true);
+    let control = RecorderControl::new(IRect::new(0, 0, 40, 30), 1.0);
+    let worker = {
+        let control = control.clone();
+        std::thread::spawn(move || run_session(p, control))
+    };
+    for _ in 0..400 {
+        if control.snapshot().state == modlight_core::recording::RecordState::Encoding {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        control.snapshot().state,
+        modlight_core::recording::RecordState::Encoding
+    );
+    control.abort();
+    let outcome = worker.join().unwrap();
+    assert!(outcome.aborted, "{outcome:?}");
+    assert_eq!(outcome.path, None);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
