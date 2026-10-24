@@ -1311,7 +1311,11 @@ impl WorkerTask {
         self.with(|s| {
             s.data = None;
             if !s.keep_image {
+                // `Dispose`: the picture goes, and with it the metadata's reference to
+                // the same picture (upstream's `Metadata.Image` is that disposed bitmap).
+                // The finished task stays on the list for the whole session.
                 s.image = None;
+                s.info.metadata.image = None;
             }
         });
     }
@@ -1321,6 +1325,7 @@ impl WorkerTask {
         self.with(|s| {
             s.keep_image = false;
             s.image = None;
+            s.info.metadata.image = None;
         });
     }
 }
@@ -1330,4 +1335,115 @@ fn write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::RwLock;
+    use std::sync::atomic::{AtomicBool, AtomicI64};
+    use std::sync::mpsc::Receiver;
+
+    use super::*;
+    use crate::tasks::host::{TaskChannel, TaskMessage};
+    use crate::tasks::settings::AppUploadSettings;
+    use crate::upload::queue::{AccountSlot, UploadQueue};
+    use crate::upload::store::QueueStore;
+    use crate::upload::transport::ApiTransport;
+
+    /// The task machinery over `profile` with nobody signed in, and the window's end of
+    /// the channel. Nothing here talks to a server.
+    fn context(
+        runtime: &tokio::runtime::Runtime,
+        profile: &Path,
+    ) -> (TaskContext, Receiver<TaskMessage>) {
+        let api = modlight_api::Api::new("0.0.0").unwrap();
+        let tus = modlight_api::TusClient::new("0.0.0").unwrap();
+        let account: AccountSlot = Arc::new(RwLock::new(None));
+        let queue = UploadQueue::new(
+            QueueStore::new(profile),
+            account.clone(),
+            Arc::new(ApiTransport::with_tus(api.clone(), tus.clone())),
+            Arc::new(|| true),
+        );
+        let (channel, receiver) = TaskChannel::new(Arc::new(|| {}));
+        let ctx = TaskContext {
+            api,
+            tus,
+            account,
+            queue,
+            channel,
+            runtime: runtime.handle().clone(),
+            settings: Arc::new(RwLock::new(AppUploadSettings::default())),
+            personal_folder: profile.to_path_buf(),
+            auto_increment: Arc::new(AtomicI64::new(0)),
+            strip_png_color_space: Arc::new(AtomicBool::new(false)),
+        };
+        (ctx, receiver)
+    }
+
+    fn wait_for_end(receiver: &Receiver<TaskMessage>, id: u64) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match receiver.recv_timeout(left) {
+                Ok(TaskMessage::Event {
+                    task,
+                    event: TaskEvent::TaskCompleted,
+                }) if task == id => return,
+                Ok(_) => {}
+                Err(error) => panic!("the task did not end: {error}"),
+            }
+        }
+    }
+
+    /// A finished task stays on the task list for the rest of the session, so it must
+    /// not hold on to the decoded capture (tens of megabytes for a large screen) once
+    /// nothing needs it: neither in `image` nor in `info.metadata.image`.
+    #[test]
+    fn a_finished_image_task_lets_go_of_its_picture() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let profile = tempfile::tempdir().unwrap();
+        let (ctx, receiver) = context(&runtime, profile.path());
+        for toast in [false, true] {
+            let mut settings = TaskSettings::default();
+            settings.after_capture_job = AfterCaptureTasks::None;
+            settings
+                .general_settings
+                .show_toast_notification_after_task_completed = toast;
+            let picture = Arc::new(image::RgbaImage::new(64, 32));
+            let metadata = TaskMetadata {
+                image: Some(picture.clone()),
+                ..TaskMetadata::default()
+            };
+            let task = WorkerTask::image_upload(metadata, settings, None, &ctx);
+            task.start(&ctx);
+            wait_for_end(&receiver, task.id);
+            // The worker's last step runs just after the event; give it a moment.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while task.with(|s| s.data.is_some() || (!toast && s.image.is_some()))
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(task.status(), TaskStatus::Completed);
+            if toast {
+                // The notice is built from the task after it ended, so the picture is
+                // still there until the task list lets go of it.
+                assert!(task.with(|s| s.image.is_some()));
+                task.release_image();
+            }
+            task.with(|s| {
+                assert!(s.image.is_none(), "toast {toast}: the task's picture");
+                assert!(
+                    s.info.metadata.image.is_none(),
+                    "toast {toast}: the picture kept in the task's metadata"
+                );
+            });
+            assert_eq!(Arc::strong_count(&picture), 1, "toast {toast}");
+        }
+    }
 }
