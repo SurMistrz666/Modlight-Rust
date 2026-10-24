@@ -535,6 +535,11 @@ fn reflection(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
     let offset = p.i("offset");
     let (skew, skew_size) = (p.b("skew"), p.i("skew_size"));
     let rh = (src.h as f32 * pct as f32 / 100.0) as i32;
+    if rh <= 0 {
+        // Upstream draws into `new SKBitmap(width, 0)`, which has no pixels, and the
+        // effect throws (the editor keeps the picture).
+        return Err("The reflection is less than one pixel tall.".into());
+    }
     let nh = src.h + offset + rh;
     let mut nw = src.w;
     if skew && skew_size > 0 {
@@ -542,9 +547,6 @@ fn reflection(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
     }
     let mut canvas = Canvas::new(nw, nh);
     canvas.draw_bitmap(src, 0.0, 0.0, &Paint::default());
-    if rh <= 0 {
-        return Ok(canvas.into_bitmap());
-    }
     let mut flipped = Canvas::new(src.w, rh);
     flipped.translate(0.0, src.h as f32);
     flipped.scale(1.0, -1.0);

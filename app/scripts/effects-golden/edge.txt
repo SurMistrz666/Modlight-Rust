@@ -22,3 +22,6 @@ minecraft_grass.max-overlap.p7x5|minecraft_grass|p7x5|overlap=8
 gaussian_blur.default.p1x1|gaussian_blur|p1x1|
 pixelate.default.p9x1|pixelate|p9x1|
 vignette.default.t7x5|vignette|t7x5|
+# Upstream fails when the reflection is less than a row tall (an empty SKBitmap).
+reflection.default.p1x1|reflection|p1x1|
+reflection.min-percentage.photo|reflection|photo|percentage=1
