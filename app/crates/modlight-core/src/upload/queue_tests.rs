@@ -580,6 +580,47 @@ async fn cancel_leaves_a_mark_and_abandons_the_session() {
     assert!(b.finished().iter().any(|o| o.canceled));
 }
 
+/// The Upload tab's Cancel runs on the window's thread, which is not inside the
+/// runtime: the session must still be abandoned on the server (`ThreadPool` upstream).
+#[test]
+fn cancel_from_the_window_thread_abandons_the_session() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let b = bench();
+    b.take_over("a.png", None);
+    b.fake.answer(|item| {
+        item.tus_url = Some("https://files.example.com/api/files/w1".into());
+        item.tus_offset = 3;
+        TransferResult::failure(TransferOutcome::Retry, QueueReason::Unreachable, "")
+    });
+    // The worker's pass runs on the runtime, as `initialize` runs it.
+    runtime.block_on(b.pump_now());
+    assert_eq!(
+        b.item().tus_url.as_deref(),
+        Some("https://files.example.com/api/files/w1")
+    );
+    b.queue.drain_events();
+
+    // The click: on a thread with no runtime of its own.
+    assert!(tokio::runtime::Handle::try_current().is_err());
+    let id = b.item().id;
+    b.queue.cancel(&id);
+    assert_eq!(b.queue.count(), 0);
+    assert!(b.finished()[0].canceled);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while b.fake.abandoned.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        b.fake.abandoned.lock().unwrap().as_slice(),
+        ["https://files.example.com/api/files/w1"],
+        "the half-finished session is abandoned on the server"
+    );
+}
+
 #[tokio::test]
 async fn the_queue_comes_back_after_a_restart() {
     let b = bench();
