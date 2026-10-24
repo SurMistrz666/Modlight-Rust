@@ -88,6 +88,9 @@ pub struct ControlState {
     pub region: IRect,
     /// The session is over (the window closes).
     pub finished: bool,
+    /// Abort was asked for. Final: a status the session sets afterwards (ffmpeg saying it
+    /// has started) does not undo it.
+    pub aborted: bool,
 }
 
 /// The switches between the recording window and the session thread.
@@ -115,6 +118,7 @@ impl RecorderControl {
                 restart_requested: false,
                 region,
                 finished: false,
+                aborted: false,
             }),
             reset: Mutex::new(false),
             signal: Condvar::new(),
@@ -180,6 +184,27 @@ impl RecorderControl {
         self.stop.load(Ordering::SeqCst)
     }
 
+    /// Whether Abort was pressed (or its hotkey), whatever the status says now.
+    pub fn is_aborted(&self) -> bool {
+        self.state.lock().unwrap().aborted
+    }
+
+    /// The part the session is about to record begins, when the status still allows
+    /// it (`Waiting` or `Paused`, and no abort): `ChangeState(AfterStart)` and a fresh
+    /// count of stop requests, in one step, so an abort pressed at that very moment is
+    /// not undone by it. Returns the status the part began from.
+    fn begin_part(&self) -> Option<RecordingStatus> {
+        let mut state = self.state.lock().unwrap();
+        let from = state.status;
+        if state.aborted || !matches!(from, RecordingStatus::Waiting | RecordingStatus::Paused) {
+            return None;
+        }
+        state.state = RecordState::AfterStart;
+        state.status = RecordingStatus::Working;
+        self.stop.store(0, Ordering::SeqCst);
+        Some(from)
+    }
+
     /// `StartStopRecording`.
     pub fn start_stop(&self) {
         match self.status() {
@@ -209,7 +234,11 @@ impl RecorderControl {
 
     /// `AbortRecording`.
     pub fn abort(&self) {
-        self.set_status(RecordingStatus::Aborted);
+        {
+            let mut state = self.state.lock().unwrap();
+            state.status = RecordingStatus::Aborted;
+            state.aborted = true;
+        }
         self.request_stop();
         self.set_event();
     }
@@ -499,7 +528,7 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
             }
         }
 
-        if control.status() == RecordingStatus::Aborted {
+        if control.is_aborted() {
             abort_requested = true;
         }
 
@@ -510,15 +539,10 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
             let _ = std::fs::remove_file(&temp_path);
         }
 
-        if matches!(
-            control.status(),
-            RecordingStatus::Waiting | RecordingStatus::Paused
-        ) {
-            if control.status() == RecordingStatus::Paused && path.exists() {
+        if let Some(from) = control.begin_part() {
+            if from == RecordingStatus::Paused && path.exists() {
                 let _ = std::fs::rename(&path, &concat_path);
             }
-            control.change_state(RecordState::AfterStart);
-            control.stop.store(0, Ordering::SeqCst);
             let region = control.snapshot().region;
             let options = ScreenRecordingOptions {
                 is_recording: true,
@@ -556,7 +580,7 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
                 }
             }
             control.change_state(RecordState::RecordingEnd);
-            if control.status() == RecordingStatus::Aborted {
+            if control.is_aborted() {
                 abort_requested = true;
             }
             if control.restart_requested() {
@@ -581,6 +605,11 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
         }
     }
 
+    // Abort pressed after the last look (while the parts were being joined, say) is
+    // still an abort: upstream read it only inside the loop and delivered the file.
+    if control.is_aborted() {
+        abort_requested = true;
+    }
     let mut final_path = path.clone();
     if params.two_pass && !abort_requested && recorded && path.exists() {
         control.change_state(RecordState::Encoding);
@@ -588,6 +617,10 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
         final_path = output;
         if failure.is_some() {
             error = failure;
+        }
+        // The abort hotkey works while the window is hidden for the second pass.
+        if control.is_aborted() {
+            abort_requested = true;
         }
     }
 
@@ -733,6 +766,26 @@ mod tests {
         assert!(text.starts_with("00:02:") || text == "00:03:00", "{text}");
         control.abort();
         assert_eq!(control.status(), RecordingStatus::Aborted);
+    }
+
+    #[test]
+    fn an_abort_is_never_undone() {
+        // Pressed just before a part begins: the part does not begin.
+        let control = RecorderControl::new(IRect::new(0, 0, 8, 8), 0.0);
+        control.abort();
+        assert_eq!(control.begin_part(), None);
+        assert_eq!(control.status(), RecordingStatus::Aborted);
+        // Pressed while ffmpeg was starting, which then says it has started: the status
+        // reads Recording, the abort stands.
+        let control = RecorderControl::new(IRect::new(0, 0, 8, 8), 0.0);
+        assert_eq!(control.begin_part(), Some(RecordingStatus::Waiting));
+        assert_eq!(control.status(), RecordingStatus::Working);
+        control.start_stop();
+        control.change_state(RecordState::AfterRecordingStart);
+        assert!(control.is_aborted());
+        assert_eq!(control.stop_requests(), 1);
+        control.abort();
+        assert_eq!(control.stop_requests(), 2);
     }
 
     #[test]

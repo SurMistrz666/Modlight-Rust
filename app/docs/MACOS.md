@@ -250,6 +250,11 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **GIF bit depth 4** is written as a 256-colour GIF (the encoder has no 16-colour
   palette mode). A custom time zone other than UTC in file name patterns falls back to
   local time.
+- **Aborting a screen recording** is final whenever it is pressed: while the paused
+  parts are being joined, during the second pass (its hotkey: the window is hidden then)
+  or while ffmpeg is still starting, nothing is kept or uploaded. Upstream read the abort
+  only inside its loop, and ffmpeg announcing that it had started turned the status back
+  to "recording", so such an abort delivered the file anyway.
 
 ## Image editor
 
