@@ -196,7 +196,8 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **A custom URL** moves the file's cached previews (and a "no moving preview" answer)
   from its old code to the new one. Upstream's caches are keyed by code and kept the old
   entries, so a file that later took the freed code was drawn with the other file's
-  picture.
+  picture. The caches also belong to one server and are emptied when the library lists
+  another: a code is unique on one deployment only.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
   server's origin, and a request with the wrong `state` is answered and ignored instead
   of ending the sign-in. `Access-Control-Allow-Private-Network: true` is granted, but only
