@@ -370,8 +370,14 @@ pub fn base_of(url: Option<&str>, ext: Option<&str>) -> String {
         return url.to_string();
     };
     let suffix = format!(".{ext}");
-    if url.len() >= suffix.len() && url[url.len() - suffix.len()..].eq_ignore_ascii_case(&suffix) {
-        url[..url.len() - suffix.len()].to_string()
+    // Compared as bytes: in a link that does not end in its extension the cut can fall
+    // inside a character, and slicing the text there panics. A match begins with the
+    // ASCII dot, so wherever the bytes match the cut is a character boundary.
+    let Some(cut) = url.len().checked_sub(suffix.len()) else {
+        return url.to_string();
+    };
+    if url.as_bytes()[cut..].eq_ignore_ascii_case(suffix.as_bytes()) {
+        url[..cut].to_string()
     } else {
         url.to_string()
     }
@@ -692,5 +698,22 @@ mod tests {
         assert!(trashed.is_trashed);
         assert!(!trashed.has_link());
         assert!(!trashed.has_media_base());
+    }
+
+    /// The listing row's link is the server's string: one that does not end in its
+    /// extension may end in characters the extension's length cuts in half.
+    #[test]
+    fn a_link_cut_inside_a_character_is_not_a_panic() {
+        assert_eq!(
+            base_of(Some("https://h.example/T/ąąę"), Some("jpeg")),
+            "https://h.example/T/ąąę"
+        );
+        assert_eq!(
+            base_of(Some("https://h.example/T/zdjęcie.JPEG"), Some("jpeg")),
+            "https://h.example/T/zdjęcie"
+        );
+        let mut row = upload("image", "image/jpeg", "jpeg");
+        row.url = Some("https://h.example/T/ąąę".into());
+        assert_eq!(CloudFile::new(row).media_base, "https://h.example/T/ąąę");
     }
 }
