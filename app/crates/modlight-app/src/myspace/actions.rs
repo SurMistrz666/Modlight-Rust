@@ -1457,7 +1457,7 @@ fn sanitize_file_name(name: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use modlight_api::{Upload, UploadPage};
     use modlight_core::account::{AccountStore, StoredAccount};

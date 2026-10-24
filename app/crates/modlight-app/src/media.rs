@@ -384,6 +384,12 @@ impl AppState {
 
     /// Per frame: start the dwell-delayed fetch, advance the playing reel.
     pub fn tick_motion(&mut self, ctx: &egui::Context) {
+        // Behind another tab no card is under the pointer, whatever was last hovered.
+        if self.tab != crate::state::Tab::MySpace
+            && let Some((hovered, _)) = self.media.motion.hovered.clone()
+        {
+            self.unhover_file(&hovered);
+        }
         let dwell = modlight_core::library::MOTION_DWELL_MILLIS as f64 / 1000.0;
         if let Some((id, since)) = self.media.motion.hovered.clone() {
             let playing_this = self

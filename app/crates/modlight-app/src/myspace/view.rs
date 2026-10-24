@@ -95,9 +95,20 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) {
     let pager_height = crate::myspace::pager::height(ui, state);
     let list = Rect::from_min_max(main.min, pos2(main.right(), main.bottom() - pager_height));
 
-    if state.space.has_content() {
-        grid(ui, state, list);
-    } else if state.space.has_account {
+    let drawn = if state.space.has_content() {
+        grid(ui, state, list)
+    } else {
+        Vec::new()
+    };
+    // A card that was not drawn this frame (scrolled away, its section folded, the grid
+    // gone) is not under the pointer: its moving preview stops, as a PointerExited
+    // would stop it, instead of ticking on unseen.
+    if let Some((hovered, _)) = state.media.motion.hovered.clone()
+        && !drawn.contains(&hovered)
+    {
+        state.unhover_file(&hovered);
+    }
+    if !state.space.has_content() && state.space.has_account {
         // The empty scroller still answers a right click with the background menu.
         let response = ui.interact(list, Id::new("cloud-empty-background"), Sense::click());
         if response.clicked() {
@@ -688,7 +699,8 @@ fn rotate_text(
 }
 
 /// Folder shelf and file cards in one scroller.
-fn grid(ui: &mut Ui, state: &mut AppState, rect: Rect) {
+/// The scroller with the shelf and the cards; returns the ids of the cards drawn.
+fn grid(ui: &mut Ui, state: &mut AppState, rect: Rect) -> Vec<String> {
     let colors = state.colors.clone();
     let card_h = card_height(ui);
     let folders: Vec<CloudFolder> = state.space.visible_folders().into_iter().cloned().collect();
@@ -710,6 +722,7 @@ fn grid(ui: &mut Ui, state: &mut AppState, rect: Rect) {
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    let mut drawn: Vec<String> = Vec::new();
     let output = scroll.show_viewport(&mut child, |ui, viewport| {
         let origin = ui.max_rect().min;
         let width = rect.width();
@@ -874,6 +887,9 @@ fn grid(ui: &mut Ui, state: &mut AppState, rect: Rect) {
                 }
                 first_visible.get_or_insert(index);
                 last_visible = Some(index);
+                if let Some(entry) = state.space.files.get(index) {
+                    drawn.push(entry.file.id.clone());
+                }
                 if card(ui, state, &colors, index, to_screen(local)) {
                     item_pressed = true;
                 }
@@ -909,6 +925,7 @@ fn grid(ui: &mut Ui, state: &mut AppState, rect: Rect) {
         let _ = shelf_height;
     });
     let _ = output;
+    drawn
 }
 
 fn notice_height(ui: &Ui, text: &str, width: f32) -> f32 {
@@ -1685,4 +1702,68 @@ pub fn plan_card(
         paint_surface as fn(&egui::Painter, &Colors, Rect, f32, Fill, Option<Color32>),
     );
     clicked
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::media::{Animation, Reel};
+
+    /// A state with one video card whose moving preview is playing under the pointer.
+    fn playing(ctx: &egui::Context) -> AppState {
+        let mut state = crate::myspace::actions::tests::offline_state();
+        crate::myspace::actions::tests::listing(&mut state, 1, 30, 1, &["v"]);
+        let frame = egui::ColorImage::filled([4, 4], Color32::RED);
+        let reel = Reel::new(
+            ctx,
+            "test-reel",
+            Animation {
+                frames: vec![frame.clone(), frame],
+                delays_ms: vec![80, 80],
+            },
+            0.0,
+        );
+        state.media.motion.hovered = Some(("v".into(), 0.0));
+        state.media.motion.playing = Some(("v".into(), reel));
+        state
+    }
+
+    /// A card that is no longer drawn (scrolled out of view, its section folded) is not
+    /// under the pointer any more: its moving preview stops. It used to play on, asking
+    /// for a frame every 80 ms, until the pointer happened to reach another card.
+    #[test]
+    fn a_card_that_is_not_drawn_stops_moving() {
+        let ctx = egui::Context::default();
+        let mut state = playing(&ctx);
+        state.files_section = false;
+        // The first pass runs while the harness is built, before the app's fonts are in.
+        let fonts_in = std::rc::Rc::new(std::cell::Cell::new(false));
+        let ready = fonts_in.clone();
+        let mut harness = egui_kittest::Harness::new_ui_state(
+            move |ui, state: &mut AppState| {
+                if ready.get() {
+                    super::ui(ui, state);
+                }
+            },
+            state,
+        );
+        harness.ctx.set_fonts(crate::theme::fonts());
+        harness.step();
+        fonts_in.set(true);
+        harness.step();
+        let state = harness.state();
+        assert!(state.media.motion.hovered.is_none());
+        assert!(state.media.motion.playing.is_none());
+    }
+
+    /// Nor does a reel go on ticking behind another tab.
+    #[test]
+    fn another_tab_stops_the_moving_preview() {
+        let ctx = egui::Context::default();
+        let mut state = playing(&ctx);
+        state.tab = crate::state::Tab::Upload;
+        state.tick_motion(&ctx);
+        assert!(state.media.motion.hovered.is_none());
+        assert!(state.media.motion.playing.is_none());
+    }
 }
