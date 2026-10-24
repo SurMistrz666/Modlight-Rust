@@ -156,6 +156,7 @@ impl AppState {
 
     /// Hotkeys pressed since the last frame, and those QA pressed. Whether any ran.
     pub fn pump_hotkeys(&mut self) -> bool {
+        self.end_orphaned_hotkey_capture();
         let mut pressed: Vec<HotkeySettings> = Vec::new();
         if self.mode == Mode::Normal && !self.env.qa {
             for id in crate::platform::hotkeys::SystemHotkeys::pressed() {
@@ -194,16 +195,22 @@ impl AppState {
         any
     }
 
-    /// `TaskHelpers.ToggleHotkeys`.
+    /// `TaskHelpers.ToggleHotkeys` with the default task settings.
     pub fn toggle_hotkeys(&mut self) {
+        let settings = self.default_task_settings();
+        self.toggle_hotkeys_with(&settings);
+    }
+
+    /// `TaskHelpers.ToggleHotkeys(taskSettings)`: the sound and the notice follow the
+    /// task's settings (a "Disable hotkeys" key's own).
+    pub fn toggle_hotkeys_with(&mut self, settings: &TaskSettings) {
         let disabled = !self.captures.hotkeys.disabled;
         self.config
             .set("DisableHotkeys", serde_json::json!(disabled));
         self.captures.hotkeys.toggle(disabled);
         self.save_config();
-        let settings = self.default_task_settings();
         if settings.general_settings.play_sound_after_action {
-            self.play_task_sound(NotificationSound::ActionCompleted, &settings);
+            self.play_task_sound(NotificationSound::ActionCompleted, settings);
         }
         if settings
             .general_settings
@@ -297,7 +304,7 @@ impl AppState {
             StopScreenRecording => self.recording_stop(),
             PauseScreenRecording => self.recording_pause(),
             AbortScreenRecording => self.recording_abort(),
-            DisableHotkeys => self.toggle_hotkeys(),
+            DisableHotkeys => self.toggle_hotkeys_with(&settings),
             OpenMainWindow => self.push(crate::commands::Command::ShowMainWindow),
             OpenScreenshotsFolder => self.open_screenshots_folder(),
             ExitShareX => self.quit_requested = true,
@@ -457,6 +464,10 @@ impl AppState {
         let Some(outcome) = session.outcome.clone() else {
             return;
         };
+        if matches!(purpose, OverlayPurpose::Capture) && session.request.kind == RegionKind::Default
+        {
+            self.remember_magnifier(&session, &settings);
+        }
         match purpose {
             OverlayPurpose::Capture => {
                 if session.request.kind == RegionKind::Transparent {
@@ -488,15 +499,14 @@ impl AppState {
             }
             OverlayPurpose::Tool(target) => {
                 // A tool's picture: the area as the overlay left it, with where it was.
+                // No capture: "Last region" keeps repeating the last capture's area.
                 let picture = match &outcome {
-                    RegionOutcome::Completed { screen_rect, .. } => capture::finish_region(
+                    RegionOutcome::Completed { screen_rect, .. } => capture::region_picture(
                         &session.request,
                         &outcome,
                         self.captures.source.as_ref(),
-                        modified,
                     )
-                    .and_then(|captured| captured.metadata.image)
-                    .map(|image| (image, *screen_rect)),
+                    .map(|image| (Arc::new(image), *screen_rect)),
                     _ => None,
                 };
                 self.tool_region_closed(target, picture);
@@ -523,6 +533,8 @@ impl AppState {
                 } = outcome
                 {
                     crate::scrolling::region_chosen(self, screen_rect, window);
+                } else {
+                    crate::scrolling::selection_cancelled(self);
                 }
             }
             OverlayPurpose::Recording(output) => {
@@ -541,6 +553,29 @@ impl AppState {
                 }
             }
         }
+    }
+
+    /// The region capture's options are upstream's `CaptureSettingsReference
+    /// .SurfaceOptions` itself, so the magnifier's zoom (the wheel, normalized to the
+    /// display) and the magnifier the wheel showed stay for the next capture, in the
+    /// defaults or the hotkey's own capture settings.
+    fn remember_magnifier(&mut self, session: &RegionSession, settings: &TaskSettings) {
+        let options = &session.request.options;
+        if session.magnifier_pixel_count == options.magnifier_pixel_count
+            && session.show_magnifier == options.show_magnifier
+        {
+            return;
+        }
+        let home = crate::tools::jobs::OptionsHome::of_capture(settings);
+        // Merged into `SurfaceOptions`, its other members untouched.
+        self.save_task_member(
+            &home,
+            &["CaptureSettings", "SurfaceOptions"],
+            &serde_json::json!({
+                "MagnifierPixelCount": session.magnifier_pixel_count,
+                "ShowMagnifier": session.show_magnifier,
+            }),
+        );
     }
 
     /// `CaptureBase.AfterCapture`.
@@ -590,23 +625,17 @@ impl AppState {
                 // `FinishRecording`: a new name renames the file first.
                 let mut path = path;
                 if let Some(name) = custom_name.as_deref().filter(|n| !n.is_empty()) {
-                    let stem = path
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    if !stem.eq_ignore_ascii_case(name) {
-                        let ext = path
-                            .extension()
-                            .map(|e| e.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        let target = path.with_file_name(if ext.is_empty() {
-                            name.to_string()
-                        } else {
-                            format!("{name}.{ext}")
-                        });
-                        if std::fs::rename(&path, &target).is_ok() {
-                            path = target;
-                        }
+                    match rename_recording(&path, name) {
+                        Ok(renamed) => path = renamed,
+                        // `RenameFile` says why and the file keeps its name.
+                        Err(error) => self.uploads.windows.messages.push_back(MessageBox::new(
+                            &format!("Modlight - {}", t(s::Error)),
+                            &format!(
+                                "{}\n{error}",
+                                t(modlight_core::l10n::helpers::FileHelpers_Rename_file_error)
+                            ),
+                            MessageIcon::Error,
+                        )),
                     }
                 }
                 if let Some(task) = WorkerTask::file_job(
@@ -797,7 +826,8 @@ impl AppState {
             .collect()
     }
 
-    /// The window list for the capture menu (titles cut at 50, "...").
+    /// The window list for the capture menu: titles cut to 50 characters, the last three
+    /// of them dots (`Truncate(50, "...")`).
     pub fn window_entries(&self) -> Vec<(String, modlight_core::capture::source::WindowInfo)> {
         self.captures
             .source
@@ -810,7 +840,7 @@ impl AppState {
                     w.title.clone()
                 };
                 if title.chars().count() > 50 {
-                    title = title.chars().take(50).collect::<String>() + "...";
+                    title = title.chars().take(47).collect::<String>() + "...";
                 }
                 (title, w)
             })
@@ -830,6 +860,37 @@ impl AppState {
         };
         format(t(s::ScreenshotDelay0S), &[Arg::from(text)])
     }
+}
+
+/// `FinishRecording`'s `FileHelpers.RenameFile(path, name + ext)`: the recording under
+/// the name typed in the after-capture window (the same name in another case is no
+/// rename, `OrdinalIgnoreCase`). A file of that name already there is never replaced:
+/// .NET's `File.Move` refuses it, where `rename` would silently overwrite it.
+fn rename_recording(path: &std::path::Path, name: &str) -> std::io::Result<PathBuf> {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if stem.to_lowercase() == name.to_lowercase() {
+        return Ok(path.to_path_buf());
+    }
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let target = path.with_file_name(if ext.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}.{ext}")
+    });
+    if std::fs::symlink_metadata(&target).is_ok() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("\"{}\" already exists", target.display()),
+        ));
+    }
+    std::fs::rename(path, &target)?;
+    Ok(target)
 }
 
 // ---------------------------------------------------------------------- auto capture
@@ -1318,4 +1379,197 @@ pub fn hotkey_problem(state: &AppState) -> Option<String> {
     #[cfg(not(windows))]
     let text = modlight_core::l10n::mac::HotkeyProblem;
     Some(format(t(text), &[Arg::from(keys)]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A name typed in the after-capture window renames the recording first; a file
+    /// of that name already there stays as it is (upstream's `File.Move` refuses to
+    /// replace it), and the recording keeps its own name.
+    #[test]
+    fn renaming_a_recording_never_replaces_another_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let recording = folder.path().join("Recording_01.mp4");
+        let earlier = folder.path().join("demo.mp4");
+        std::fs::write(&recording, b"new recording").unwrap();
+        std::fs::write(&earlier, b"an earlier recording").unwrap();
+        let refused = rename_recording(&recording, "demo").unwrap_err();
+        assert_eq!(refused.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&earlier).unwrap(), b"an earlier recording");
+        assert_eq!(std::fs::read(&recording).unwrap(), b"new recording");
+        // The same name in another case is no rename at all.
+        assert_eq!(
+            rename_recording(&recording, "recording_01").unwrap(),
+            recording
+        );
+        // A free name is taken.
+        let renamed = rename_recording(&recording, "talk").unwrap();
+        assert_eq!(renamed, folder.path().join("talk.mp4"));
+        assert_eq!(std::fs::read(&renamed).unwrap(), b"new recording");
+        assert!(!recording.exists());
+    }
+
+    /// The area a tool asked for (OCR, QR, pin from screen) is no capture: upstream's
+    /// `RegionCaptureTasks.GetRegionImage` leaves `LastRegionRectangle` alone, so "Last
+    /// region" still repeats the last capture's area.
+    #[test]
+    fn a_tools_area_is_not_the_last_region() {
+        use modlight_core::capture::geometry::Rect;
+        use modlight_core::capture::{LastRegion, last_region, set_last_region};
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let captured = IRect::new(1, 2, 30, 40);
+        set_last_region(LastRegion {
+            rect: captured,
+            ..LastRegion::default()
+        });
+        let settings = TaskSettings::default();
+        let request = capture::region_request(
+            RegionKind::Default,
+            &settings,
+            state.captures.source.as_ref(),
+        )
+        .unwrap();
+        let mut session = RegionSession::new(request);
+        session.complete(Rect::new(10.0, 10.0, 50.0, 50.0), false);
+        let overlay = RegionOverlay::new(
+            session,
+            OverlayPurpose::Tool(crate::tools::region::RegionFor::QrScan(7)),
+            settings,
+            0.0,
+        );
+        state.overlay_closed(overlay, &egui::Context::default());
+        assert_eq!(last_region().rect, captured);
+        set_last_region(LastRegion::default());
+    }
+
+    /// The region capture works on upstream's `CaptureSettingsReference.SurfaceOptions`
+    /// itself: the magnifier's zoom set with the wheel (and the magnifier it shows) stays
+    /// for the next capture.
+    #[test]
+    fn the_magnifier_zoom_is_remembered() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let mut settings = state.default_task_settings();
+        settings.capture_settings.surface_options.show_magnifier = false;
+        state.set_task_member(
+            crate::task_pages::TaskTarget::Defaults,
+            &["CaptureSettings", "SurfaceOptions", "ShowMagnifier"],
+            serde_json::json!(false),
+        );
+        let CaptureStep::Region(request) = capture::capture(
+            CaptureKind::Region(RegionKind::Default),
+            &settings,
+            state.captures.source.as_ref(),
+        ) else {
+            panic!("no overlay");
+        };
+        let mut session = RegionSession::new(request);
+        session.render_scale = 2.0;
+        session.wheel(-1.0);
+        session.wheel(-1.0);
+        assert_eq!(session.magnifier_pixel_count, 19);
+        session.cancel();
+        let overlay = RegionOverlay::new(session, OverlayPurpose::Capture, settings, 0.0);
+        state.overlay_closed(overlay, &egui::Context::default());
+        let options = state
+            .default_task_settings()
+            .capture_settings
+            .surface_options;
+        assert_eq!(options.magnifier_pixel_count, 19);
+        assert!(options.show_magnifier);
+    }
+
+    /// `SelectWindowAsync`: a cancelled selection says so and brings the scrolling
+    /// capture window back (`RestoreAndActivate`); it stayed hidden for good.
+    #[test]
+    fn a_cancelled_scrolling_selection_brings_the_window_back() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let settings = state.default_task_settings();
+        let mut window = crate::scrolling::ScrollingWindow::new(settings.clone());
+        window.minimized = true;
+        state.scrolling = Some(window);
+        let request = capture::region_request(
+            RegionKind::Default,
+            &settings,
+            state.captures.source.as_ref(),
+        )
+        .unwrap();
+        let mut session = RegionSession::new(request);
+        session.cancel();
+        let overlay = RegionOverlay::new(session, OverlayPurpose::ScrollingRegion, settings, 0.0);
+        state.overlay_closed(overlay, &egui::Context::default());
+        let window = state.scrolling.as_ref().unwrap();
+        assert!(!window.minimized);
+        assert!(!window.capturing);
+        assert_eq!(
+            window.status_text,
+            t(modlight_core::l10n::capture::ScrollingCaptureWindow_Selection_cancelled)
+        );
+    }
+
+    /// `ExecuteJob` hands `ToggleHotkeys` the hotkey's own settings: a "Disable hotkeys"
+    /// key whose task plays no sound and shows no notice switches silently.
+    #[test]
+    fn the_disable_hotkeys_key_follows_its_own_settings() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let task = serde_json::json!({
+            "Job": "DisableHotkeys",
+            "UseDefaultGeneralSettings": false,
+            "GeneralSettings": {
+                "PlaySoundAfterAction": false,
+                "ShowToastNotificationAfterTaskCompleted": false
+            }
+        });
+        let hotkey = HotkeySettings {
+            task,
+            ..HotkeySettings::new(HotkeyType::DisableHotkeys, 0)
+        };
+        state.captures.hotkeys =
+            HotkeyManager::new(Box::new(FakeBackend::default()), vec![hotkey], false);
+        let defaults = state.default_task_settings().general_settings;
+        assert!(defaults.show_toast_notification_after_task_completed);
+        state.effects.clear();
+        state.captures.simulated.push(0);
+        assert!(state.pump_hotkeys());
+        assert!(state.captures.hotkeys.disabled);
+        assert!(state.windows.notification.is_none(), "no notice");
+        assert!(
+            !state
+                .effects
+                .iter()
+                .any(|e| matches!(e, crate::state::Effect::PlaySound(..))),
+            "no sound"
+        );
+    }
+
+    /// `selectedWindow.Text.Truncate(50, "...")`: at most 50 characters with the dots.
+    #[test]
+    fn long_window_titles_are_cut_to_fifty_characters() {
+        use modlight_core::capture::source::{CaptureSource, FakeSource, WindowInfo};
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let sample = FakeSource::sample();
+        let long = "A window title that goes on and on, well past fifty characters";
+        let fifty = "x".repeat(50);
+        let windows = vec![
+            WindowInfo {
+                title: long.into(),
+                ..sample.windows()[0].clone()
+            },
+            WindowInfo {
+                title: fifty.clone(),
+                ..sample.windows()[1].clone()
+            },
+        ];
+        state.captures.source = Arc::new(FakeSource::new(
+            sample.desktop().clone(),
+            1.0,
+            sample.screens(),
+            windows,
+        ));
+        let entries = state.window_entries();
+        assert_eq!(entries[0].0.chars().count(), 50);
+        assert_eq!(entries[0].0, format!("{}...", &long[..47]));
+        assert_eq!(entries[1].0, fifty, "fifty fit as they are");
+    }
 }
