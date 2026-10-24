@@ -584,7 +584,9 @@ fn invalid_value(text: &str, type_name: &str) -> String {
 fn converter_string(def: &PropDef, value: Option<&Value>) -> String {
     match value {
         Some(Value::Text(text)) => text.clone(),
-        Some(Value::Font(font)) => font.to_converter_string(),
+        Some(Value::Font(font)) => {
+            font.to_culture_string(&modlight_core::culture::Culture::current())
+        }
         Some(Value::Flags(f)) => m::flags_to_string(def, *f),
         Some(Value::Enum(name)) => name.clone(),
         _ => String::new(),
@@ -1456,13 +1458,15 @@ impl ImageEffectsWindow {
     fn set_from_text(&mut self, def: &PropDef, text: &str) -> bool {
         let value = match def.ty {
             PType::Text(_) => Some(Value::Text(text.to_string())),
-            PType::Font => match m::FontSpec::parse(text) {
-                Some(font) => Some(Value::Font(font)),
-                None => {
-                    self.validation = invalid_value(text, "Font");
-                    None
+            PType::Font => {
+                match m::FontSpec::parse_in(text, &modlight_core::culture::Culture::current()) {
+                    Some(font) => Some(Value::Font(font)),
+                    None => {
+                        self.validation = invalid_value(text, "Font");
+                        None
+                    }
                 }
-            },
+            }
             PType::Flags(type_name, _) => match m::flags_from_string(def, text) {
                 Some(f) => Some(Value::Flags(f)),
                 None => {
