@@ -116,15 +116,23 @@ pub fn double_click_time() -> Duration {
 pub fn sharex_running() -> bool {
     use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE};
     let name = wide(std::ffi::OsStr::new("82E6AC09-0FEF-4390-AD9F-0DD3F5561EFC"));
-    // SAFETY: `name` is NUL-terminated and outlives the call; the handle is closed.
-    unsafe {
-        match OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, PCWSTR(name.as_ptr())) {
-            Ok(handle) => {
-                let _ = CloseHandle(handle);
-                true
-            }
-            Err(_) => false,
+    // SAFETY: `name` is NUL-terminated and outlives the call.
+    mutex_exists(unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, PCWSTR(name.as_ptr())) })
+}
+
+/// Whether `OpenMutexW`'s answer says the mutex is there; what it opened is closed. A
+/// mutex this process may not open (one of a ShareX running as administrator) is there
+/// too, as upstream's `UnauthorizedAccessException` branch says: existing is the whole
+/// question.
+fn mutex_exists(opened: windows::core::Result<windows::Win32::Foundation::HANDLE>) -> bool {
+    use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
+    match opened {
+        Ok(handle) => {
+            // SAFETY: the handle OpenMutexW just gave, closed once.
+            let _ = unsafe { CloseHandle(handle) };
+            true
         }
+        Err(error) => error.code() == ERROR_ACCESS_DENIED.to_hresult(),
     }
 }
 
@@ -179,5 +187,23 @@ pub fn wake_for_hotkeys(ctx: egui::Context) {
         });
     if let Err(error) = spawned {
         log::warn!("Modlight: the hotkey wake-up could not start: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_mutex_this_process_may_not_open_still_says_sharex_runs() {
+        use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND};
+        // `IsShareXRunning`'s `UnauthorizedAccessException` branch: a ShareX running as
+        // administrator holds a mutex this process may not open, and it runs.
+        let denied = windows::core::Error::from_hresult(ERROR_ACCESS_DENIED.to_hresult());
+        assert!(mutex_exists(Err(denied)));
+        let missing = windows::core::Error::from_hresult(ERROR_FILE_NOT_FOUND.to_hresult());
+        assert!(!mutex_exists(Err(missing)));
+        // Whatever this machine runs, asking answers.
+        let _ = sharex_running();
     }
 }
