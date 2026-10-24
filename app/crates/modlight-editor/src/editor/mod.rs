@@ -42,6 +42,9 @@ pub enum TaskResult {
 pub enum Request {
     /// Copy the result image (`CopyRequested`).
     CopyImage,
+    /// Copy the result image after a change, and nothing else
+    /// (`AutoCopyImageToClipboard`: no notification, no closing after the task action).
+    AutoCopyImage,
     /// Save to `ImageFilePath`, or ask the host where (`SaveRequested`).
     Save,
     SaveAs,
@@ -364,11 +367,13 @@ impl Editor {
         self.input.sel.selected
     }
 
-    /// Applies a change to the selected annotation (the view's `Apply*`).
+    /// Applies a change to the selected annotation (the view's `Apply*`). It leaves no
+    /// undo step, but it is an unsaved change (upstream did not mark it).
     pub(crate) fn with_selected(&mut self, f: impl FnOnce(&mut Annotation)) {
         if let Some(id) = self.input.sel.selected {
             if let Some(a) = self.core.annotation_mut(id) {
                 f(a);
+                self.is_dirty = true;
             } else if let Some(p) = self.input.pending.as_mut().filter(|p| p.id == id) {
                 f(p);
             }
@@ -460,11 +465,20 @@ impl Editor {
                 self.is_dirty = true;
             }
             self.input.suppress_dirty = false;
-            if self.options.auto_copy_image_to_clipboard && self.has_image() {
-                self.requests.push(Request::CopyImage);
-            }
+            self.queue_auto_copy();
         }
         self.invalidate();
+    }
+
+    /// `QueueAutoCopyImageToClipboard`: one copy of the picture for everything that
+    /// changed before the host looks (upstream coalesces them by version).
+    fn queue_auto_copy(&mut self) {
+        if self.options.auto_copy_image_to_clipboard
+            && self.has_image()
+            && !self.requests.contains(&Request::AutoCopyImage)
+        {
+            self.requests.push(Request::AutoCopyImage);
+        }
     }
 
     /// `RecalculateNumberCounter`.
@@ -503,9 +517,7 @@ impl Editor {
         self.tools.number_counter = self.tools.step_start_number;
         self.pump();
         self.is_dirty = false;
-        if self.options.auto_copy_image_to_clipboard && self.has_image() {
-            self.requests.push(Request::CopyImage);
-        }
+        self.queue_auto_copy();
     }
 
     /// `LoadBitmapIntoEditor` (open, recent file, clipboard, URL).
@@ -673,10 +685,10 @@ impl Editor {
         self.pump();
     }
 
+    /// The core reorders what the view shows as selected, and nothing when nothing is:
+    /// a memento restored by undo leaves the core with a selection the view cleared.
     fn sync_core_selection(&mut self) {
-        if let Some(id) = self.input.sel.selected {
-            self.core.select(Some(id));
-        }
+        self.core.select(self.input.sel.selected);
     }
 
     /// `OnCopyRequested`: the annotation goes to the editor's own clipboard; the system
@@ -1269,15 +1281,11 @@ pub enum InsertPlacement {
     CanvasExpandRight,
 }
 
-/// Paste and duplicate move only the start and end points and freehand points.
+/// Paste and duplicate put the copy 20 pixels down and right, all of it: upstream moved
+/// only the end points and freehand points, leaving a bent line's curve point and a
+/// step's or balloon's tail where the original's were.
 fn offset_clone(a: &mut Annotation, offset: f32) {
-    a.start = a.start.offset(offset, offset);
-    a.end = a.end.offset(offset, offset);
-    if let Some(points) = a.freehand_points_mut() {
-        for p in points.iter_mut() {
-            *p = p.offset(offset, offset);
-        }
-    }
+    a.translate(offset, offset);
 }
 
 /// `BuildImageSizeNotification`.

@@ -40,6 +40,11 @@ pub struct EditorSession {
     pub closed: bool,
     /// The title last given to the window.
     title: String,
+    /// A save of this frame's requests could not write the picture.
+    save_failed: bool,
+    /// The options the window opened with: closing writes back only the members this
+    /// window changed (upstream's windows share one live options object).
+    opened_options: serde_json::Value,
 }
 
 /// The editor windows and their counter.
@@ -182,7 +187,9 @@ impl AppState {
             show_start_screen: !task_mode,
             open_background_panel: background_panel,
         };
-        let mut editor = Editor::new(self.editor_options(), config);
+        let options = self.editor_options();
+        let opened_options = options.to_value();
+        let mut editor = Editor::new(options, config);
         let path_text = path.as_ref().map(|p| p.to_string_lossy().into_owned());
         match image {
             Some(image) => editor.load_image(image, path_text),
@@ -204,6 +211,8 @@ impl AppState {
             finish: Some(finish),
             closed: false,
             title: String::new(),
+            save_failed: false,
+            opened_options,
         });
     }
 
@@ -267,8 +276,15 @@ impl AppState {
         else {
             return;
         };
-        let requests = self.windows.editors.sessions[index].editor.take_requests();
+        let session = &mut self.windows.editors.sessions[index];
+        let requests = session.editor.take_requests();
+        session.save_failed = false;
         for request in requests {
+            // The exit confirmation's "Yes" saves, then closes: not over a picture the
+            // save could not write (upstream closed after its error message).
+            if request == Request::Close && self.session(key).is_some_and(|s| s.save_failed) {
+                continue;
+            }
             self.editor_request(key, request);
         }
     }
@@ -299,6 +315,13 @@ impl AppState {
                         modlight_editor::ui::icons::ACTION_COPY,
                     );
                     s.editor.close_after_task_action();
+                }
+            }
+            // `AutoCopyImageToClipboard`: only the host's copy handler runs.
+            Request::AutoCopyImage => {
+                if let Some(image) = self.session(key).and_then(|s| s.editor.snapshot()) {
+                    self.effects
+                        .push(crate::state::Effect::CopyImage(Arc::new(image)));
                 }
             }
             Request::Save | Request::SaveAs => {
@@ -365,8 +388,27 @@ impl AppState {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 let bytes = encode_for_path(&image, &path, &settings);
-                if let Err(error) = std::fs::write(&path, bytes) {
+                let written = if bytes.is_empty() {
+                    Err("the picture could not be encoded".to_string())
+                } else {
+                    std::fs::write(&path, bytes).map_err(|e| e.to_string())
+                };
+                if let Err(error) = written {
                     log::warn!("Modlight: the edited image could not be saved: {error}");
+                    // `ImageHelpers.SaveImage`: `e.ShowError()`.
+                    self.uploads.windows.messages.push_back(
+                        crate::dialogs::message::MessageBox::new(
+                            &format!(
+                                "Modlight - {}",
+                                modlight_core::l10n::t(modlight_core::l10n::s::Error)
+                            ),
+                            &format!("{}\n\n{error}", path.display()),
+                            modlight_core::tasks::host::MessageIcon::Error,
+                        ),
+                    );
+                    if let Some(s) = self.session(key) {
+                        s.save_failed = true;
+                    }
                     return;
                 }
                 let text = path.to_string_lossy().into_owned();
@@ -393,20 +435,32 @@ impl AppState {
                     &upload,
                     &ctx,
                 );
-                if let Some(s) = self.session(key) {
-                    s.editor.close_after_task_action();
-                }
+                self.editor_task_action_done(
+                    key,
+                    modlight_core::l10n::editor::MainViewModel_ImageIsUploading,
+                    modlight_editor::ui::icons::ACTION_UPLOAD,
+                );
             }
             // `TaskHelpers.PrintImage(image)` (phase 5, `tools::print`).
             Request::Print => {
                 if let Some(image) = self.session(key).and_then(|s| s.editor.snapshot()) {
                     self.print_picture(image);
+                    self.editor_task_action_done(
+                        key,
+                        modlight_core::l10n::editor::MainViewModel_ImagePrinted,
+                        modlight_editor::ui::icons::ACTION_PRINT,
+                    );
                 }
             }
             // `TaskHelpers.PinToScreen(image)` (phase 5, `tools::pin`).
             Request::PinToScreen => {
                 if let Some(image) = self.session(key).and_then(|s| s.editor.snapshot()) {
                     self.pin_picture(std::sync::Arc::new(image), &settings);
+                    self.editor_task_action_done(
+                        key,
+                        modlight_core::l10n::editor::MainViewModel_ImagePinnedToScreen,
+                        modlight_editor::ui::icons::ACTION_PIN_TO_SCREEN,
+                    );
                 }
             }
             // The screen colour picker (phase 5, `tools::editor_hooks`).
@@ -426,8 +480,19 @@ impl AppState {
                 };
                 self.editor_file_chosen(key, request, &path);
             }
+            // `OnLoadRecentFileRequested`: a file that is gone leaves the recent list.
             Request::OpenRecent(path) => {
-                self.editor_file_chosen(key, Request::OpenImage, Path::new(&path));
+                if !Path::new(&path).is_file() {
+                    if let Some(s) = self.session(key) {
+                        s.editor.remove_recent_image_file(&path);
+                        s.editor.start_screen_status(&modlight_core::l10n::tf(
+                            modlight_core::l10n::editor::EditorView_FileNoLongerExistsFormat,
+                            &[path.as_str().into()],
+                        ));
+                    }
+                    return;
+                }
+                self.editor_file_chosen(key, Request::OpenRecent(path.clone()), Path::new(&path));
             }
             Request::BrowseEffectFile(param) => {
                 if headless {
@@ -517,11 +582,14 @@ impl AppState {
             return;
         }
         let Some(image) = load_image(path) else {
+            // A recent file always answers on the start screen (`ShowStartScreenStatus`
+            // opens it); a picked one only when the start screen is up.
             if let Some(s) = self.session(key)
-                && matches!(
-                    s.editor.modal,
-                    Some(modlight_editor::editor::Modal::StartScreen(_))
-                )
+                && (matches!(request, Request::OpenRecent(_))
+                    || matches!(
+                        s.editor.modal,
+                        Some(modlight_editor::editor::Modal::StartScreen(_))
+                    ))
             {
                 // `OnLoadRecentFileRequested`: upstream's sentence with the path.
                 s.editor.start_screen_status(&modlight_core::l10n::tf(
@@ -545,6 +613,16 @@ impl AppState {
         }
     }
 
+    /// After Upload, Print and Pin to screen (`UploadCommand`, `PrintCommand`,
+    /// `PinToScreenCommand`): their notice, then `CloseAfterTaskActionIfEnabled`.
+    fn editor_task_action_done(&mut self, key: u64, notice: modlight_core::l10n::Key, icon: char) {
+        if let Some(s) = self.session(key) {
+            s.editor
+                .show_task_action_notification(modlight_core::l10n::t(notice), icon);
+            s.editor.close_after_task_action();
+        }
+    }
+
     /// The window closed: the options are kept and the result goes where it is owed.
     pub fn close_editor(&mut self, key: u64) {
         let Some(index) = self
@@ -562,8 +640,22 @@ impl AppState {
             TaskResult::ContinueNoSave => session.editor.source_image(),
             TaskResult::None | TaskResult::Cancel => None,
         };
-        let options = session.editor.options.clone();
-        self.store_editor_options(&options);
+        // Only what this window changed: another editor window (or the settings) may have
+        // stored changes of its own since this one opened.
+        let changed = session.editor.options.to_value();
+        let mut stored = self.editor_options().to_value();
+        if let (Some(changed), Some(opened), Some(target)) = (
+            changed.as_object(),
+            session.opened_options.as_object(),
+            stored.as_object_mut(),
+        ) {
+            for (member, value) in changed {
+                if opened.get(member) != Some(value) {
+                    target.insert(member.clone(), value.clone());
+                }
+            }
+        }
+        self.store_editor_options(&ImageEditorOptions::from_value(&stored));
         match session.finish.take() {
             Some(Finish::Task(reply)) => {
                 let _ = reply.send(TaskAnswer::Annotated(result.map(Arc::new)));
@@ -767,6 +859,194 @@ pub fn editor_viewports(state: &mut AppState, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn editor_state(image: Option<RgbaImage>, task_mode: bool) -> (AppState, u64) {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.open_editor(image, None, task_mode, false, Finish::RunImageTask);
+        let key = state.windows.editors.sessions.last().unwrap().key;
+        (state, key)
+    }
+
+    fn copies(state: &AppState) -> usize {
+        state
+            .effects
+            .iter()
+            .filter(|e| matches!(e, crate::state::Effect::CopyImage(_)))
+            .count()
+    }
+
+    /// `AutoCopyImageToClipboard` only hands the picture to the clipboard
+    /// (`RequestCopyToClipboardAsync`): no "copied" notice, and with "Close editor after
+    /// task" on the editor stays open (the Copy command's own close would end a capture's
+    /// annotate step before anything was drawn).
+    #[test]
+    fn auto_copy_copies_without_the_copy_commands_notice_or_closing() {
+        let image = RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]));
+        let (mut state, key) = editor_state(Some(image), true);
+        {
+            let s = state.session(key).unwrap();
+            s.editor.options.auto_copy_image_to_clipboard = true;
+            s.editor.options.auto_close_editor_on_task = true;
+            let _ = s.editor.take_requests();
+            let mut r = modlight_editor::model::Annotation::rectangle();
+            r.end = modlight_editor::geom::Point::new(10.0, 10.0);
+            s.editor.core.add_annotation(r);
+            s.editor.pump();
+        }
+        state.editor_requests(key);
+        assert_eq!(copies(&state), 1);
+        let s = state.session(key).unwrap();
+        assert!(!s.closed, "an automatic copy must not close the editor");
+        assert_eq!(s.editor.task_result, TaskResult::None);
+        assert!(s.editor.notification.is_none());
+    }
+
+    /// Print and Pin to screen are task actions (`PrintCommand`, `PinToScreenCommand`):
+    /// their notice, and the editor closes when "Close editor after task" is on.
+    #[test]
+    fn print_and_pin_show_their_notice_and_close_when_asked() {
+        use modlight_core::l10n::{editor as s, t};
+        for (request, notice) in [
+            (Request::Print, t(s::MainViewModel_ImagePrinted)),
+            (
+                Request::PinToScreen,
+                t(s::MainViewModel_ImagePinnedToScreen),
+            ),
+        ] {
+            let image = RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]));
+            let (mut state, key) = editor_state(Some(image), false);
+            {
+                let session = state.session(key).unwrap();
+                let _ = session.editor.take_requests();
+                session.editor.request(request.clone());
+            }
+            state.editor_requests(key);
+            let session = state.session(key).unwrap();
+            assert_eq!(
+                session
+                    .editor
+                    .notification
+                    .as_ref()
+                    .map(|n| n.message.as_str()),
+                Some(notice),
+                "{request:?}"
+            );
+            assert_eq!(session.editor.task_result, TaskResult::None);
+
+            session.editor.options.auto_close_editor_on_task = true;
+            session.editor.request(request.clone());
+            state.editor_requests(key);
+            let session = state.session(key).unwrap();
+            assert_eq!(
+                session.editor.task_result,
+                TaskResult::Cancel,
+                "{request:?}"
+            );
+            assert!(session.editor.take_requests().contains(&Request::Close));
+        }
+    }
+
+    /// Upstream's editors share one live `ImageEditorOptions`. Here each window works on
+    /// a copy, and closing one writes back only what that window changed, so two
+    /// windows (or the settings) do not undo each other's changes.
+    #[test]
+    fn two_editor_windows_keep_each_others_option_changes() {
+        let image = RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]));
+        let (mut state, a) = editor_state(Some(image.clone()), false);
+        state.open_editor(Some(image), None, false, false, Finish::RunImageTask);
+        let b = state.windows.editors.sessions.last().unwrap().key;
+        state.session(a).unwrap().editor.options.thickness = 9;
+        state.session(b).unwrap().editor.options.quick_crop = false;
+        state.close_editor(a);
+        state.close_editor(b);
+        let options = state.editor_options();
+        assert_eq!(
+            options.thickness, 9,
+            "the first window's change was overwritten"
+        );
+        assert!(!options.quick_crop);
+    }
+
+    /// A save that fails says so (`ImageHelpers.SaveImage` shows the error), and the exit
+    /// confirmation's "Yes" (save, then close) leaves the editor open instead of closing
+    /// over the unsaved picture.
+    #[test]
+    fn a_failed_save_says_so_and_keeps_the_editor_open() {
+        let image = RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]));
+        let (mut state, key) = editor_state(Some(image), false);
+        let dir = tempfile::tempdir().unwrap();
+        // A file where the folder should be: neither the folder nor the file can be made.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let target = blocker.join("out.png").to_string_lossy().into_owned();
+        {
+            let session = state.session(key).unwrap();
+            session.editor.image_file_path = Some(target.clone());
+            session.editor.is_dirty = true;
+            session.editor.confirmation_answer(Some(true));
+        }
+        let messages = state.uploads.windows.messages.len();
+        state.editor_requests(key);
+        assert_eq!(state.uploads.windows.messages.len(), messages + 1);
+        let session = state.session(key).unwrap();
+        assert!(!session.closed, "the editor closed over an unsaved picture");
+        assert!(session.editor.is_dirty);
+        assert!(session.editor.take_requests().is_empty());
+    }
+
+    /// `OnLoadRecentFileRequested`: a recent file that is no longer there leaves the
+    /// list (the options' and the start screen's) and the start screen says so.
+    #[test]
+    fn a_recent_file_that_is_gone_leaves_the_list() {
+        use modlight_core::l10n::{editor as s, tf};
+        use modlight_editor::editor::Modal;
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone.png").to_string_lossy().into_owned();
+        let kept = dir.path().join("kept.png");
+        RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]))
+            .save(&kept)
+            .unwrap();
+        let kept = kept.to_string_lossy().into_owned();
+        let (mut state, key) = editor_state(None, false);
+        {
+            let session = state.session(key).unwrap();
+            session.editor.options.recent_image_files = vec![gone.clone(), kept.clone()];
+            session.editor.close_modal();
+            session.editor.show_start_screen();
+            session.editor.request(Request::OpenRecent(gone.clone()));
+        }
+        state.editor_requests(key);
+        let session = state.session(key).unwrap();
+        assert_eq!(
+            session.editor.options.recent_image_files,
+            vec![kept.clone()]
+        );
+        let Some(Modal::StartScreen(screen)) = &session.editor.modal else {
+            panic!("the start screen shows the reason");
+        };
+        assert_eq!(screen.recent_files, vec![kept.clone()]);
+        assert_eq!(
+            screen.status.as_deref(),
+            Some(
+                tf(
+                    s::EditorView_FileNoLongerExistsFormat,
+                    &[gone.as_str().into()]
+                )
+                .as_str()
+            )
+        );
+
+        // The one that is there opens.
+        session.editor.request(Request::OpenRecent(kept.clone()));
+        state.editor_requests(key);
+        let session = state.session(key).unwrap();
+        assert!(session.editor.modal.is_none());
+        assert_eq!(session.editor.image_size(), (4, 4));
+        assert_eq!(
+            session.editor.image_file_path.as_deref(),
+            Some(kept.as_str())
+        );
+    }
 
     /// S3: an address that answers with a small file claiming an enormous picture gets
     /// upstream's "not a valid image", and nothing is allocated for it.

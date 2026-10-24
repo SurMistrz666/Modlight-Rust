@@ -844,6 +844,7 @@ fn handle_resize(e: &mut Editor, tag: HandleTag, current: Point, shift: bool) {
     }
     if let Some(slot) = e.core.annotation_mut(id) {
         *slot = a;
+        e.is_dirty = true;
     }
     e.input.sel.start_point = current;
     if refresh_effect {
@@ -982,6 +983,7 @@ fn handle_move(e: &mut Editor, current: Point) {
     if let Some(a) = e.core.annotation_mut(id) {
         a.translate(dx, dy);
         is_effect = a.is_effect();
+        e.is_dirty |= dx != 0.0 || dy != 0.0;
     }
     e.input.sel.last_drag_point = current;
     if is_effect {
@@ -1091,8 +1093,10 @@ pub fn commit_text_edit(e: &mut Editor) {
     }
     if let Some(a) = e.core.annotation_mut(edit.id)
         && let Some(t) = a.text_data_mut()
+        && t.text != edit.text
     {
         t.text = edit.text;
+        e.is_dirty = true;
     }
     e.invalidate();
 }
@@ -2195,6 +2199,14 @@ impl Editor {
         }));
     }
 
+    /// `RemoveRecentImageFile`: off the remembered list and the open start screen's.
+    pub fn remove_recent_image_file(&mut self, path: &str) {
+        self.options.remove_recent_image_file(path);
+        if let Some(Modal::StartScreen(s)) = &mut self.modal {
+            s.recent_files.retain(|p| p != path);
+        }
+    }
+
     /// Shows a status line on the start screen (opening it when needed).
     pub fn start_screen_status(&mut self, message: &str) {
         self.show_start_screen();
@@ -2427,6 +2439,210 @@ mod tests {
         let a = &e.core.annotations()[0];
         assert!(a.bounds().width() > 100.0);
         assert_eq!(e.selected(), Some(a.id));
+    }
+
+    /// Edits that leave no undo step (moving, resizing, restyling, retyping) are unsaved
+    /// changes too: after a save, closing asks again instead of dropping them.
+    /// Selecting an annotation changes nothing.
+    #[test]
+    fn edits_without_an_undo_step_ask_before_closing() {
+        let mut e = editor();
+        e.select_tool(EditorTool::Rectangle);
+        drag(
+            &mut e,
+            Point::new(10.0, 10.0),
+            Point::new(110.0, 60.0),
+            Modifiers::NONE,
+        );
+        let id = e.core.annotations()[0].id;
+        let saved = |e: &mut Editor| {
+            e.is_dirty = false;
+        };
+        e.select_tool(EditorTool::Select);
+        saved(&mut e);
+        set_selected_shape(&mut e, id);
+        assert!(!e.is_dirty, "selecting is not an edit");
+        drag(
+            &mut e,
+            Point::new(50.0, 30.0),
+            Point::new(70.0, 40.0),
+            Modifiers::NONE,
+        );
+        assert!(e.is_dirty, "moved");
+
+        saved(&mut e);
+        drag(
+            &mut e,
+            Point::new(130.0, 70.0),
+            Point::new(150.0, 90.0),
+            Modifiers::NONE,
+        );
+        assert!(e.is_dirty, "resized");
+
+        saved(&mut e);
+        move_selected(&mut e, 1.0, 0.0);
+        assert!(e.is_dirty, "nudged");
+
+        saved(&mut e);
+        e.set_selected_color("#FF00FF00");
+        assert!(e.is_dirty, "recoloured");
+
+        saved(&mut e);
+        e.request_close(false);
+        assert!(e.take_requests().contains(&Request::Close));
+
+        e.select_tool(EditorTool::Text);
+        pointer_pressed(
+            &mut e,
+            Point::new(200.0, 200.0),
+            Button::Left,
+            Modifiers::NONE,
+            1,
+        );
+        e.text_editing.as_mut().unwrap().text = "Hello".into();
+        commit_text_edit(&mut e);
+        let text = e.core.annotations().last().unwrap().id;
+        saved(&mut e);
+        show_text_editor(&mut e, text);
+        commit_text_edit(&mut e);
+        assert!(!e.is_dirty, "opened and closed unchanged");
+        show_text_editor(&mut e, text);
+        e.text_editing.as_mut().unwrap().text = "Hello world".into();
+        commit_text_edit(&mut e);
+        assert!(e.is_dirty, "retyped");
+        e.request_close(false);
+        assert_eq!(e.modal, Some(Modal::Confirmation));
+    }
+
+    /// A duplicate or a pasted copy is the same shape 20 pixels away: a bent line's
+    /// curve point and a step's or balloon's tail move with it.
+    #[test]
+    fn duplicates_and_pastes_keep_curves_and_tails() {
+        let mut e = editor();
+        let mut line = Annotation::line();
+        line.start = Point::new(10.0, 100.0);
+        line.end = Point::new(200.0, 100.0);
+        model::set_curve_point(&mut line, Point::new(105.0, 150.0));
+        let id = line.id;
+        e.core.add_annotation(line);
+        set_selected_shape(&mut e, id);
+        e.duplicate_selected();
+        let copy = e.core.annotations().last().unwrap();
+        assert_ne!(copy.id, id);
+        assert_eq!(copy.curve().unwrap().point, Point::new(125.0, 170.0));
+
+        let mut step = Annotation::number();
+        step.start = Point::new(50.0, 50.0);
+        set_number_tail(&mut step, Point::new(90.0, 120.0));
+        let id = step.id;
+        e.core.add_annotation(step);
+        set_selected_shape(&mut e, id);
+        e.copy_annotation();
+        e.paste_annotation();
+        let pasted = e.core.annotations().last().unwrap();
+        assert_eq!(pasted.start, Point::new(70.0, 70.0));
+        assert_eq!(model::number_tail_handle(pasted), Point::new(110.0, 140.0));
+
+        let mut balloon = Annotation::speech_balloon();
+        balloon.start = Point::new(100.0, 100.0);
+        balloon.end = Point::new(200.0, 150.0);
+        set_balloon_tail(&mut balloon, Point::new(60.0, 220.0));
+        let id = balloon.id;
+        e.core.add_annotation(balloon);
+        set_selected_shape(&mut e, id);
+        commit_text_edit(&mut e);
+        e.duplicate_selected();
+        let copy = e.core.annotations().last().unwrap();
+        assert_eq!(balloon_effective_tail_point(copy), Point::new(80.0, 240.0));
+    }
+
+    /// What is added while the Crop tool is active (an inserted picture or emoji, a
+    /// paste, a duplicate) is one undo step like anywhere else.
+    #[test]
+    fn additions_with_the_crop_tool_active_can_be_undone() {
+        let mut e = editor();
+        e.select_tool(EditorTool::Rectangle);
+        drag(
+            &mut e,
+            Point::new(10.0, 10.0),
+            Point::new(60.0, 60.0),
+            Modifiers::NONE,
+        );
+        let rectangle = e.core.annotations()[0].id;
+        set_selected_shape(&mut e, rectangle);
+        e.copy_annotation();
+        e.select_tool(EditorTool::Crop);
+        e.paste_annotation();
+        assert_eq!(e.core.annotations().len(), 2);
+        e.undo();
+        assert_eq!(
+            e.core.annotations().len(),
+            1,
+            "the paste was not undone alone"
+        );
+
+        e.select_tool(EditorTool::Crop);
+        e.insert_image_annotation(Arc::new(RgbaImage::new(10, 10)), None, false);
+        assert_eq!(e.core.annotations().len(), 2);
+        e.undo();
+        assert_eq!(e.core.annotations().len(), 1, "the inserted picture stayed");
+        assert_eq!(e.core.annotations()[0].id, rectangle);
+    }
+
+    /// Home, End, Page Up and Page Down move the selected annotation only. After an
+    /// undo the core still remembered the annotation selected when its memento was
+    /// made, while nothing showed as selected; the keys reordered that one.
+    #[test]
+    fn z_order_keys_need_a_selection() {
+        let mut e = editor();
+        e.select_tool(EditorTool::Rectangle);
+        drag(
+            &mut e,
+            Point::new(10.0, 10.0),
+            Point::new(60.0, 60.0),
+            Modifiers::NONE,
+        );
+        drag(
+            &mut e,
+            Point::new(100.0, 10.0),
+            Point::new(160.0, 60.0),
+            Modifiers::NONE,
+        );
+        let order: Vec<AnnotationId> = e.core.annotations().iter().map(|a| a.id).collect();
+        set_selected_shape(&mut e, order[0]);
+        e.delete_selected();
+        e.undo();
+        assert_eq!(e.selected(), None);
+        for key in [
+            egui::Key::Home,
+            egui::Key::End,
+            egui::Key::PageUp,
+            egui::Key::PageDown,
+        ] {
+            key_down(&mut e, key, egui::Modifiers::NONE);
+            let now: Vec<AnnotationId> = e.core.annotations().iter().map(|a| a.id).collect();
+            assert_eq!(now, order, "{key:?} reordered an unselected annotation");
+        }
+        assert!(e.core.can_redo(), "the undo was replaced by a reorder");
+    }
+
+    #[test]
+    fn auto_copy_asks_for_one_plain_copy_per_change() {
+        let mut e = editor();
+        e.options.auto_copy_image_to_clipboard = true;
+        e.load_image(
+            RgbaImage::from_pixel(50, 40, image::Rgba([9, 9, 9, 255])),
+            None,
+        );
+        assert_eq!(e.take_requests(), vec![Request::AutoCopyImage]);
+        e.select_tool(EditorTool::Rectangle);
+        drag(
+            &mut e,
+            Point::new(5.0, 5.0),
+            Point::new(30.0, 30.0),
+            Modifiers::NONE,
+        );
+        assert_eq!(e.take_requests(), vec![Request::AutoCopyImage]);
     }
 
     #[test]
