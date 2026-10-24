@@ -597,8 +597,11 @@ impl EditorCore {
         };
         let x = bounds.left.max(0.0) as i32;
         let y = bounds.top.max(0.0) as i32;
-        let width = ((source.width() as i32 - x) as f32).min(bounds.width()) as i32;
-        let height = ((source.height() as i32 - y) as f32).min(bounds.height()) as i32;
+        // The part of the area left of or above the image is not in the picture.
+        let visible_w = bounds.width() - (-bounds.left).max(0.0);
+        let visible_h = bounds.height() - (-bounds.top).max(0.0);
+        let width = ((source.width() as i32 - x) as f32).min(visible_w) as i32;
+        let height = ((source.height() as i32 - y) as f32).min(visible_h) as i32;
         if width <= 0 || height <= 0 {
             return false;
         }
@@ -1012,6 +1015,18 @@ mod tests {
         assert_eq!(core.annotations().len(), 2);
         core.redo();
         assert_eq!(core.source().unwrap().dimensions(), (70, 50));
+    }
+
+    /// A crop area that starts left of or above the image (a Shift-square quick crop
+    /// dragged towards the corner) crops what it covers of the image; upstream kept the
+    /// area's full size from the edge and took pixels the area never covered.
+    #[test]
+    fn a_crop_area_over_the_edge_crops_what_it_covers() {
+        let mut core = core_with(200, 100);
+        core.add_annotation(rect(60.0, 20.0, 10.0, 10.0));
+        assert!(core.crop(Rect::new(-20.0, -10.0, 80.0, 60.0)));
+        assert_eq!(core.source().unwrap().dimensions(), (80, 60));
+        assert_eq!(core.annotations()[0].start, Point::new(60.0, 20.0));
     }
 
     #[test]
