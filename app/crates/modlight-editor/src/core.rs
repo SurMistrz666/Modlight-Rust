@@ -163,11 +163,11 @@ impl EditorCore {
         self.history.add(m);
     }
 
-    /// `CreateAnnotationsMemento`: skipped while the crop tool is active unless forced.
-    pub fn create_annotations_memento(&mut self, exclude: Option<AnnotationId>, force: bool) {
-        if !force && self.active_tool == EditorTool::Crop {
-            return;
-        }
+    /// `CreateAnnotationsMemento`. Upstream skips it while the Crop tool is active
+    /// (unless forced), for the crop annotation its core drew; the port's crop never
+    /// enters the document, and the skip only lost the undo step of a picture, emoji or
+    /// paste added with the Crop tool active.
+    pub fn create_annotations_memento(&mut self, exclude: Option<AnnotationId>, _force: bool) {
         let m = self.memento(false, exclude);
         self.history.add(m);
     }
@@ -727,9 +727,7 @@ impl EditorCore {
         // The memento is only made when the order actually changes.
         let snapshot = self.memento(false, None);
         if f(&mut self.annotations, index) {
-            if self.active_tool != EditorTool::Crop {
-                self.history.add(snapshot);
-            }
+            self.history.add(snapshot);
             self.raise(CoreEvents {
                 order_changed: true,
                 history_changed: true,
@@ -1172,10 +1170,10 @@ mod tests {
     }
 
     #[test]
-    fn crop_tool_skips_annotation_mementos() {
+    fn additions_with_the_crop_tool_active_are_recorded() {
         let mut core = core_with(10, 10);
         core.active_tool = EditorTool::Crop;
         core.add_annotation(rect(0.0, 0.0, 2.0, 2.0));
-        assert!(!core.can_undo());
+        assert!(core.can_undo());
     }
 }
