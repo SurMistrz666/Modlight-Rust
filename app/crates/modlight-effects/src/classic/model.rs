@@ -9,6 +9,7 @@
 //! and fonts are the strings their `TypeConverter`s write ("235, 235, 235", "5, 5",
 //! "Arial, 11.25pt"), enums their member names.
 
+use modlight_core::culture::Culture;
 use serde_json::{Map, Value as Json, json};
 
 use crate::sk::C;
@@ -781,8 +782,21 @@ impl FontSpec {
         }
     }
 
+    /// `FontConverter.ConvertToInvariantString`, what Newtonsoft writes into the settings
+    /// and packages whatever the language or region: "Arial, 11.25pt".
     pub fn to_converter_string(&self) -> String {
-        let mut s = format!("{}, {}pt", self.family, fmt_float(self.size_pt));
+        self.to_string_with(',', '.')
+    }
+
+    /// `ConvertToString(null, CurrentCulture, font)`, the options panel's text: the
+    /// region's list separator and decimal ("Arial; 11,25pt" in pl-PL).
+    pub fn to_culture_string(&self, culture: &Culture) -> String {
+        self.to_string_with(list_separator(culture), culture.decimal)
+    }
+
+    fn to_string_with(&self, separator: char, decimal: char) -> String {
+        let size = invariant_float(self.size_pt).replace('.', &decimal.to_string());
+        let mut s = format!("{}{separator} {size}pt", self.family);
         let mut styles = Vec::new();
         if self.bold {
             styles.push("Bold");
@@ -797,28 +811,40 @@ impl FontSpec {
             styles.push("Strikeout");
         }
         if !styles.is_empty() {
-            s.push_str(", style=");
+            s.push(separator);
+            s.push_str(" style=");
             s.push_str(&styles.join(", "));
         }
         s
     }
 
+    /// `FontConverter.ConvertFromInvariantString` (the settings and packages).
     pub fn parse(text: &str) -> Option<FontSpec> {
+        Self::parse_with(text, ',', '.')
+    }
+
+    /// `ConvertFromString(null, CurrentCulture, text)` (the options panel's text box).
+    pub fn parse_in(text: &str, culture: &Culture) -> Option<FontSpec> {
+        Self::parse_with(text, list_separator(culture), culture.decimal)
+    }
+
+    fn parse_with(text: &str, separator: char, decimal: char) -> Option<FontSpec> {
         let t = text.trim();
         if t.is_empty() {
             return None;
         }
         let (main, style) = match t.find("style=") {
-            Some(i) => (t[..i].trim_end_matches([',', ' ']), Some(&t[i + 6..])),
+            Some(i) => (t[..i].trim_end_matches([separator, ' ']), Some(&t[i + 6..])),
             None => (t, None),
         };
-        let mut parts = main.split(',').map(str::trim);
+        let mut parts = main.splitn(2, separator).map(str::trim);
         let family = parts.next()?.to_string();
         let mut size = 8.25f32;
         if let Some(sz) = parts.next() {
             let num: String = sz
                 .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .take_while(|c| c.is_ascii_digit() || *c == decimal)
+                .map(|c| if c == decimal { '.' } else { c })
                 .collect();
             let mut v: f32 = num.parse().ok()?;
             if sz.ends_with("px") {
@@ -828,7 +854,7 @@ impl FontSpec {
         }
         let mut f = FontSpec::new(&family, size);
         if let Some(style) = style {
-            for s in style.split(',').map(str::trim) {
+            for s in style.split([',', separator]).map(str::trim) {
                 match s {
                     "Bold" => f.bold = true,
                     "Italic" => f.italic = true,
@@ -1653,19 +1679,27 @@ pub fn presets_to_settings(presets: &[Preset]) -> Json {
 // ---------- names ----------
 
 /// .NET's `float.ToString()`: the shortest text that reads back as the same float, in
-/// the current culture's decimal separator.
+/// the current culture's decimal separator (the region's format, not the interface
+/// language: `modlight_core::culture`).
 pub fn fmt_float(v: f32) -> String {
+    let decimal = Culture::current().decimal;
+    invariant_float(v).replace('.', &decimal.to_string())
+}
+
+/// `float.ToString(CultureInfo.InvariantCulture)`.
+fn invariant_float(v: f32) -> String {
     let s = format!("{v}");
-    let s = if s.contains('e') {
+    if s.contains('e') {
         format!("{}", v as f64)
     } else {
         s
-    };
-    if modlight_core::l10n::language() == modlight_core::l10n::Language::Polish {
-        s.replace('.', ",")
-    } else {
-        s
     }
+}
+
+/// `TextInfo.ListSeparator` of the two modelled cultures (Windows' NLS data, which
+/// upstream runs with: `;` where the decimal separator is a comma).
+fn list_separator(culture: &Culture) -> char {
+    if culture.decimal == ',' { ';' } else { ',' }
 }
 
 /// `Helpers.GetProperName`: "BitsPerChannel" is "Bits per channel".
@@ -2093,6 +2127,71 @@ mod tests {
             parse_padding("0, 0, 0, 30"),
             Some(Padding::new(0, 0, 0, 30))
         );
+    }
+
+    /// Newtonsoft writes a font with `ConvertToInvariantString`: "Arial, 11.25pt" whatever
+    /// the interface language or the region, so Windows and this app read it back.
+    #[test]
+    fn fonts_are_written_invariant_in_every_language_and_region() {
+        use modlight_core::culture::{Culture, set_thread_culture};
+        use modlight_core::l10n::{Language, set_thread_language};
+        for (language, culture) in [
+            (Language::Polish, Culture::polish()),
+            (Language::Polish, Culture::english()),
+            (Language::English, Culture::polish()),
+        ] {
+            set_thread_language(Some(language));
+            set_thread_culture(Some(culture));
+            let mut text = ClassicEffect::new(Kind::DrawText);
+            let mut font = FontSpec::new("Arial", 11.25);
+            font.bold = true;
+            text.set("TextFont", Value::Font(font.clone()));
+            let json = text.to_json(false);
+            assert_eq!(json["TextFont"], "Arial, 11.25pt, style=Bold");
+            let back = ClassicEffect::from_json(&json).unwrap();
+            assert_eq!(back.font("TextFont"), font);
+        }
+        set_thread_language(None);
+        set_thread_culture(None);
+    }
+
+    /// The options panel's text box shows and reads a font in the region's culture, as
+    /// `ConvertToString(null, CurrentCulture, ...)` and `ConvertFromString` do.
+    #[test]
+    fn fonts_in_the_panel_follow_the_region() {
+        use modlight_core::culture::Culture;
+        let mut font = FontSpec::new("Segoe UI", 11.25);
+        font.italic = true;
+        let polish = font.to_culture_string(&Culture::polish());
+        assert_eq!(polish, "Segoe UI; 11,25pt; style=Italic");
+        assert_eq!(
+            FontSpec::parse_in(&polish, &Culture::polish()),
+            Some(font.clone())
+        );
+        let english = font.to_culture_string(&Culture::english());
+        assert_eq!(english, "Segoe UI, 11.25pt, style=Italic");
+        assert_eq!(
+            FontSpec::parse_in(&english, &Culture::english()),
+            Some(font)
+        );
+    }
+
+    /// `GetSummary` formats numbers with the region's culture (`$"{Value}"`), which the
+    /// interface language does not decide.
+    #[test]
+    fn summaries_follow_the_region_not_the_language() {
+        use modlight_core::culture::{Culture, set_thread_culture};
+        use modlight_core::l10n::{Language, set_thread_language};
+        let mut gamma = ClassicEffect::new(Kind::Gamma);
+        gamma.set("Value", Value::Float(1.5));
+        set_thread_language(Some(Language::English));
+        set_thread_culture(Some(Culture::polish()));
+        assert_eq!(summary(&gamma).as_deref(), Some("1,5"));
+        set_thread_language(Some(Language::Polish));
+        set_thread_culture(Some(Culture::english()));
+        assert_eq!(summary(&gamma).as_deref(), Some("1.5"));
+        set_thread_language(None);
+        set_thread_culture(None);
     }
 
     #[test]
