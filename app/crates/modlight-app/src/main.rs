@@ -72,6 +72,9 @@ fn parse() -> Result<Args, String> {
         #[cfg(windows)]
         ignored: Vec::new(),
     };
+    // Windows: upstream's words, read once the port's own options are out of the way.
+    #[cfg(windows)]
+    let mut upstream: Vec<String> = Vec::new();
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -107,30 +110,69 @@ fn parse() -> Result<Args, String> {
             "-h" | "--help" => return Err(usage()),
             // macOS passes a process serial number to apps opened from Finder.
             other if other.starts_with("-psn_") => {}
-            // Upstream's command line (`CLIManager`, `Program.cs`): a word with one dash is
-            // a command, anything else a file or folder. `-silent` (`-s`) and `-multi`
-            // (`-m`) are taken; `-portable` (`-p`), `-sandbox`, `-NoHotkeys` and the task
-            // commands are accepted and left aside (logged): the personal folder is always
-            // the installed one's, and the hotkey warning is a notice in the window.
+            // Upstream's command line (`CLIManager`, `Program.cs`), read below.
             #[cfg(windows)]
-            other if other.len() > 1 && other.starts_with('-') && !other.starts_with("--") => {
-                let name = &other[1..];
-                let is =
-                    |a: &str, b: &str| name.eq_ignore_ascii_case(a) || name.eq_ignore_ascii_case(b);
-                if is("silent", "s") {
-                    args.silent = true;
-                } else if is("multi", "m") {
-                    args.multi = true;
-                } else {
-                    args.ignored.push(other.to_string());
-                }
+            other if !other.starts_with('-') || (other.len() > 1 && !other.starts_with("--")) => {
+                upstream.push(other.to_string())
             }
-            #[cfg(windows)]
-            other if !other.starts_with('-') => args.files.push(PathBuf::from(other)),
             other => return Err(format!("unknown argument '{other}'\n{}", usage())),
         }
     }
+    // `-silent` (`-s`) and `-multi` (`-m`) are taken; `-portable` (`-p`), `-sandbox`,
+    // `-NoHotkeys` and the task commands (with their parameters) are accepted and left
+    // aside (logged): the personal folder is always the installed one's, and the hotkey
+    // warning is a notice in the window.
+    #[cfg(windows)]
+    {
+        let line = upstream_command_line(&upstream);
+        for (name, parameter) in line.commands {
+            let is =
+                |a: &str, b: &str| name.eq_ignore_ascii_case(a) || name.eq_ignore_ascii_case(b);
+            if is("silent", "s") {
+                args.silent = true;
+            } else if is("multi", "m") {
+                args.multi = true;
+            } else {
+                args.ignored.push(match parameter {
+                    Some(parameter) => format!("-{name} \"{parameter}\""),
+                    None => format!("-{name}"),
+                });
+            }
+        }
+        args.files = line.files;
+    }
     Ok(args)
+}
+
+/// What upstream makes of its command line (`CLIManager.ParseCommands` and
+/// `UseCommandLineArgs`): a word with one dash is a command, and the word right after a
+/// command is that command's parameter (`-ImageEffect <file.sxie>`, which upstream's own
+/// `.sxie` association passes, `-task <name>`, `-workflow <name>`); every other word is
+/// a file or folder to upload.
+#[cfg(any(windows, test))]
+#[derive(Debug, Default, PartialEq)]
+struct CommandLine {
+    /// Each command without its dash, with its parameter.
+    commands: Vec<(String, Option<String>)>,
+    files: Vec<PathBuf>,
+}
+
+#[cfg(any(windows, test))]
+fn upstream_command_line(words: &[String]) -> CommandLine {
+    let mut line = CommandLine::default();
+    // `lastCommand`: the command still waiting for its parameter.
+    let mut waiting: Option<usize> = None;
+    for word in words {
+        if let Some(name) = word.strip_prefix('-') {
+            line.commands.push((name.to_string(), None));
+            waiting = Some(line.commands.len() - 1);
+        } else if let Some(command) = waiting.take() {
+            line.commands[command].1 = Some(word.clone());
+        } else {
+            line.files.push(PathBuf::from(word));
+        }
+    }
+    line
 }
 
 /// The personal folder (`Program.PersonalFolder`).
@@ -367,5 +409,68 @@ fn main() -> ExitCode {
             fail(&format!("Modlight could not start: {error}"), qa_mode);
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(words: &[&str]) -> CommandLine {
+        let words: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+        upstream_command_line(&words)
+    }
+
+    fn command(name: &str, parameter: Option<&str>) -> (String, Option<String>) {
+        (name.to_string(), parameter.map(str::to_string))
+    }
+
+    #[test]
+    fn the_word_after_a_command_is_its_parameter_not_a_file() {
+        // Upstream's `.sxie` association (`"<exe>" -ImageEffect "%1"`): the package is
+        // the command's parameter, never a file to upload.
+        let effect = line(&["-ImageEffect", r"C:\Effects\glow.sxie"]);
+        assert!(effect.files.is_empty(), "{effect:?}");
+        assert_eq!(
+            effect.commands,
+            vec![command("ImageEffect", Some(r"C:\Effects\glow.sxie"))]
+        );
+        // `-task <name> <file>`: the name goes with the command, the file is uploaded.
+        let task = line(&["-task", "Upload", r"C:\a.png"]);
+        assert_eq!(task.commands, vec![command("task", Some("Upload"))]);
+        assert_eq!(task.files, vec![PathBuf::from(r"C:\a.png")]);
+        // `-silent <word>`: upstream reads the word as silent's parameter, not a file.
+        let silent = line(&["-silent", r"C:\a.png"]);
+        assert_eq!(silent.commands, vec![command("silent", Some(r"C:\a.png"))]);
+        assert!(silent.files.is_empty());
+        // Two commands in a row: the first has no parameter.
+        let flags = line(&["-silent", "-multi"]);
+        assert_eq!(
+            flags.commands,
+            vec![command("silent", None), command("multi", None)]
+        );
+    }
+
+    #[test]
+    fn free_standing_words_are_files() {
+        // Explorer's "Upload with Modlight" (`"<exe>" "%1"`) and Send to (every file).
+        let send_to = line(&[r"C:\a.png", r"D:\b c\d.txt", r"\\server\share\e.jpg"]);
+        assert!(send_to.commands.is_empty());
+        assert_eq!(
+            send_to.files,
+            vec![
+                PathBuf::from(r"C:\a.png"),
+                PathBuf::from(r"D:\b c\d.txt"),
+                PathBuf::from(r"\\server\share\e.jpg"),
+            ]
+        );
+        // A file before a command, and one after the command's parameter.
+        let mixed = line(&["a.png", "-workflow", "Capture", "b.png"]);
+        assert_eq!(mixed.commands, vec![command("workflow", Some("Capture"))]);
+        assert_eq!(
+            mixed.files,
+            vec![PathBuf::from("a.png"), PathBuf::from("b.png")]
+        );
+        assert_eq!(line(&[]), CommandLine::default());
     }
 }
