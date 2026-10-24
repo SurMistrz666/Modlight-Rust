@@ -215,6 +215,13 @@ Everything not listed behaves as upstream does. The per-screen state is in
   application") ends the attempt as that server error and the next attempt asks again;
   upstream took any refusal of that `HEAD` for a forgotten session and sent the whole
   file again from zero (`modlight_api::tus`, test `a_busy_server_does_not_cost_a_stored_session`).
+- **A `Queue.json` that cannot be read is kept, and so is the spool.** A queue file that is
+  there but cannot be read (damaged, unreadable, or a newer build's `Version`) is moved to
+  `Queue.json.unreadable-<UTC time>` (never over an earlier one; a copy when the move is
+  refused) before anything saves a new queue, the debug log says so, and no spooled file
+  is removed that run, since nobody knows which of them it still needs. Upstream read it
+  as an empty queue, overwrote it on the next change and deleted every spooled capture
+  (`modlight_core::upload::store`, test `an_unreadable_queue_file_is_kept_and_so_is_the_spool`).
 - **Live upload refusals** are read as soon as the server answers, without sending the
   rest of the body (upstream wrote the whole file first). A file name containing `"`,
   CR or LF goes out percent-encoded in the multipart header.
