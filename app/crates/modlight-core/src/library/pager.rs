@@ -22,27 +22,37 @@ pub fn clamp_page_size(size: i64) -> i64 {
     }
 }
 
-/// Pages for `total` files; an empty listing is one page, not zero.
+/// Pages for `total` files; an empty listing is one page, not zero. (The total is the
+/// server's number, so the arithmetic here and below cannot be allowed to overflow.)
 pub fn page_count(total: i64, per_page: i64) -> i64 {
     if per_page <= 0 {
         return 1;
     }
-    1.max((total + per_page - 1) / per_page)
+    1.max(ceil_div(total, per_page))
+}
+
+/// `a / b` rounded up, for `b > 0`, without the `a + b - 1` that overflows near the top.
+fn ceil_div(a: i64, b: i64) -> i64 {
+    a / b + i64::from(a % b > 0)
 }
 
 /// The 1-based number of the first file on `page`.
 pub fn first(page: i64, per_page: i64) -> i64 {
-    (page.max(1) - 1) * per_page.max(1) + 1
+    (page.max(1) - 1)
+        .saturating_mul(per_page.max(1))
+        .saturating_add(1)
 }
 
 /// The 1-based number of the last file on `page`.
 pub fn last(page: i64, per_page: i64, total: i64) -> i64 {
-    total.max(0).min(page.max(1) * per_page.max(1))
+    total
+        .max(0)
+        .min(page.max(1).saturating_mul(per_page.max(1)))
 }
 
 /// The page of `new_size` that holds the file `first_on_screen`.
 pub fn anchor(first_on_screen: i64, new_size: i64) -> i64 {
-    1.max((first_on_screen.max(1) + new_size.max(1) - 1) / new_size.max(1))
+    1.max(ceil_div(first_on_screen.max(1), new_size.max(1)))
 }
 
 pub fn clamp_page(page: i64, total_pages: i64) -> i64 {
@@ -365,5 +375,20 @@ mod tests {
         );
         crate::l10n::set_thread_language(None);
         crate::culture::set_thread_culture(None);
+    }
+
+    /// `total` is a number from the server: an absurd one must not overflow the paging
+    /// arithmetic (a panic in a debug build, a negative page count in a release one).
+    #[test]
+    fn absurd_totals_do_not_overflow() {
+        assert_eq!(page_count(i64::MAX, 120), i64::MAX / 120 + 1);
+        let pages = page_count(i64::MAX, 30);
+        assert_eq!(last(pages, 30, i64::MAX), i64::MAX);
+        assert!(first(pages, 30) > 0);
+        assert_eq!(anchor(i64::MAX, 120), i64::MAX / 120 + 1);
+        let mut pager = Pager::default();
+        pager.update(i64::MAX, 120, i64::MAX);
+        assert_eq!(pager.page, i64::MAX / 120 + 1);
+        assert!(pager.can_previous() && !pager.can_next());
     }
 }
