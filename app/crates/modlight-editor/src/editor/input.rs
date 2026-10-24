@@ -2556,6 +2556,39 @@ mod tests {
         assert_eq!(balloon_effective_tail_point(copy), Point::new(80.0, 240.0));
     }
 
+    /// What is added while the Crop tool is active (an inserted picture or emoji, a
+    /// paste, a duplicate) is one undo step like anywhere else.
+    #[test]
+    fn additions_with_the_crop_tool_active_can_be_undone() {
+        let mut e = editor();
+        e.select_tool(EditorTool::Rectangle);
+        drag(
+            &mut e,
+            Point::new(10.0, 10.0),
+            Point::new(60.0, 60.0),
+            Modifiers::NONE,
+        );
+        let rectangle = e.core.annotations()[0].id;
+        set_selected_shape(&mut e, rectangle);
+        e.copy_annotation();
+        e.select_tool(EditorTool::Crop);
+        e.paste_annotation();
+        assert_eq!(e.core.annotations().len(), 2);
+        e.undo();
+        assert_eq!(
+            e.core.annotations().len(),
+            1,
+            "the paste was not undone alone"
+        );
+
+        e.select_tool(EditorTool::Crop);
+        e.insert_image_annotation(Arc::new(RgbaImage::new(10, 10)), None, false);
+        assert_eq!(e.core.annotations().len(), 2);
+        e.undo();
+        assert_eq!(e.core.annotations().len(), 1, "the inserted picture stayed");
+        assert_eq!(e.core.annotations()[0].id, rectangle);
+    }
+
     /// Home, End, Page Up and Page Down move the selected annotation only. After an
     /// undo the core still remembered the annotation selected when its memento was
     /// made, while nothing showed as selected; the keys reordered that one.

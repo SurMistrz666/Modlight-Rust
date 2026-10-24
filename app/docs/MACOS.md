@@ -258,7 +258,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
   annotation keeps the part before the strip and closes up the rest; upstream moved the
   whole annotation back by the strip's width. A crop area reaching past the image's
   left or top edge (a Shift-square quick crop) crops the part of the image it covers;
-  upstream kept the area's full size from the edge. Duplicate and paste move the whole copy
+  upstream kept the area's full size from the edge. A picture, emoji or paste added
+  while the Crop tool is active is its own undo step; upstream's core skipped the step
+  for the crop annotation it drew, which the port's crop never adds to the document, so
+  the undo took the addition and the step before it. Duplicate and paste move the whole copy
   20 pixels, curve point and tails included (upstream moved only the ends). Home, End,
   Page Up and Page Down reorder only the annotation shown as selected; upstream's keys
   reordered the one the core still remembered from an undone step. When the exit
