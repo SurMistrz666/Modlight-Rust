@@ -345,12 +345,9 @@ fn border(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
         _ => None,
     };
     let half = s / 2.0;
-    let r = if outside {
-        rect(half, half, nw as f32 - half, nh as f32 - half)
-    } else {
-        rect(half, half, src.w as f32 - half, src.h as f32 - half)
-    };
-    canvas.draw_rect(r, &paint);
+    // `DrawRect` sorts the rect: an inside border wider than half the picture inverts it.
+    let (rw, rh) = if outside { (nw, nh) } else { (src.w, src.h) };
+    canvas.draw_rect_ltrb(half, half, rw as f32 - half, rh as f32 - half, &paint);
     Ok(canvas.into_bitmap())
 }
 

@@ -1,0 +1,217 @@
+[
+  {
+    "name": "border-inside-5.p7x5",
+    "effect": "border",
+    "set": "edge",
+    "input": "p7x5",
+    "values": {
+      "type": "Inside",
+      "size": 5,
+      "dash_style": "Solid",
+      "color": "#FF000000"
+    },
+    "deterministic": true,
+    "width": 7,
+    "height": 5
+  },
+  {
+    "name": "border-inside-5.p1x9",
+    "effect": "border",
+    "set": "edge",
+    "input": "p1x9",
+    "values": {
+      "type": "Inside",
+      "size": 5,
+      "dash_style": "Solid",
+      "color": "#FF000000"
+    },
+    "deterministic": true,
+    "width": 1,
+    "height": 9
+  },
+  {
+    "name": "border-inside-70.photo",
+    "effect": "border",
+    "set": "edge",
+    "input": "photo",
+    "values": {
+      "type": "Inside",
+      "size": 70,
+      "dash_style": "Solid",
+      "color": "#FF000000"
+    },
+    "deterministic": true,
+    "width": 96,
+    "height": 64
+  },
+  {
+    "name": "border-inside-100.photo",
+    "effect": "border",
+    "set": "edge",
+    "input": "photo",
+    "values": {
+      "type": "Inside",
+      "size": 100,
+      "dash_style": "Solid",
+      "color": "#FF000000"
+    },
+    "deterministic": true,
+    "width": 96,
+    "height": 64
+  },
+  {
+    "name": "glare.default.p7x5",
+    "effect": "glare",
+    "set": "edge",
+    "input": "p7x5",
+    "values": {
+      "position_x": 50,
+      "position_y": 30,
+      "radius": 30,
+      "intensity": 80,
+      "ray_count": 6,
+      "ray_length": 50,
+      "color": "#FFFFFFFF"
+    },
+    "deterministic": true,
+    "width": 7,
+    "height": 5
+  },
+  {
+    "name": "glare.min-radius.photo",
+    "effect": "glare",
+    "set": "edge",
+    "input": "photo",
+    "values": {
+      "position_x": 50,
+      "position_y": 30,
+      "radius": 5,
+      "intensity": 80,
+      "ray_count": 6,
+      "ray_length": 50,
+      "color": "#FFFFFFFF"
+    },
+    "deterministic": true,
+    "width": 96,
+    "height": 64
+  },
+  {
+    "name": "neon_glow_border.max-tube_width.photo",
+    "effect": "neon_glow_border",
+    "set": "edge",
+    "input": "photo",
+    "values": {
+      "border_size": 50,
+      "neon_color": "#FF00FFC8",
+      "glow_intensity": 75,
+      "tube_width": 20,
+      "bg_color": "#FF0A0A12",
+      "double_tube": false
+    },
+    "deterministic": true,
+    "width": 196,
+    "height": 164
+  },
+  {
+    "name": "neon_glow_border.min-border_size.p7x5",
+    "effect": "neon_glow_border",
+    "set": "edge",
+    "input": "p7x5",
+    "values": {
+      "border_size": 10,
+      "neon_color": "#FF00FFC8",
+      "glow_intensity": 75,
+      "tube_width": 4,
+      "bg_color": "#FF0A0A12",
+      "double_tube": false
+    },
+    "deterministic": true,
+    "width": 27,
+    "height": 25
+  },
+  {
+    "name": "macos_window.allmin.p1x1",
+    "effect": "macos_window",
+    "set": "edge",
+    "input": "p1x1",
+    "values": {
+      "title": "",
+      "corner_radius": 0,
+      "dark_mode": false,
+      "shadow_size": 0,
+      "padding": 0
+    },
+    "deterministic": true,
+    "width": 1,
+    "height": 39
+  },
+  {
+    "name": "windows11_window.allmin.p7x5",
+    "effect": "windows11_window",
+    "set": "edge",
+    "input": "p7x5",
+    "values": {
+      "title": "",
+      "corner_radius": 0,
+      "dark_mode": false,
+      "shadow_size": 0,
+      "padding": 0
+    },
+    "deterministic": true,
+    "width": 7,
+    "height": 37
+  },
+  {
+    "name": "minecraft_grass.max-overlap.p7x5",
+    "effect": "minecraft_grass",
+    "set": "edge",
+    "input": "p7x5",
+    "values": {
+      "block_size": 16,
+      "grass_rows": 2,
+      "dirt_rows": 4,
+      "top_edge": false,
+      "overlap": 8,
+      "grass_color": "#FF59B030",
+      "dirt_color": "#FF866043"
+    },
+    "error": "Exception: Unable to allocate pixels for the bitmap."
+  },
+  {
+    "name": "gaussian_blur.default.p1x1",
+    "effect": "gaussian_blur",
+    "set": "edge",
+    "input": "p1x1",
+    "values": {
+      "radius": 15
+    },
+    "deterministic": true,
+    "width": 1,
+    "height": 1
+  },
+  {
+    "name": "pixelate.default.p9x1",
+    "effect": "pixelate",
+    "set": "edge",
+    "input": "p9x1",
+    "values": {
+      "size": 10
+    },
+    "deterministic": true,
+    "width": 9,
+    "height": 1
+  },
+  {
+    "name": "vignette.default.t7x5",
+    "effect": "vignette",
+    "set": "edge",
+    "input": "t7x5",
+    "values": {
+      "strength": 0.5,
+      "radius": 0.75
+    },
+    "deterministic": true,
+    "width": 7,
+    "height": 5
+  }
+]

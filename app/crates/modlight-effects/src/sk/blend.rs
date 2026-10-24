@@ -72,6 +72,21 @@ impl Blend {
         }
     }
 
+    /// `SkBlendMode_SupportsCoverageAsAlpha`: the modes for which scaling the source's
+    /// alpha by coverage equals blending with that coverage.
+    pub fn supports_coverage_as_alpha(self) -> bool {
+        matches!(
+            self,
+            Blend::Dst
+                | Blend::SrcOver
+                | Blend::DstOver
+                | Blend::DstOut
+                | Blend::SrcATop
+                | Blend::Xor
+                | Blend::Plus
+        )
+    }
+
     /// Source `s` over destination `d`, both premultiplied.
     pub fn apply(self, s: F4, d: F4) -> F4 {
         let per = |f: &dyn Fn(f32, f32, f32, f32) -> f32| F4 {

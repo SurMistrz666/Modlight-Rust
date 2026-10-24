@@ -4,17 +4,29 @@
 # SkiaSharp 3.119.4 with its Linux native assets); nothing from upstream runs on the host.
 #
 #   scripts/effects-golden/run.sh [comma-separated effect ids]
+#   EDGE=1 scripts/effects-golden/run.sh     # the cases of edge.txt into tests/golden-edge
 #
-# UPSTREAM: the upstream checkout (default ../upstream/Modlight-App next to the repo).
-# OUT: where the harness writes (default crates/modlight-effects/tests/golden). A run
-# limited to some ids writes only their cases.json entries: merge them by name.
+# UPSTREAM: the upstream checkout (default upstream/Modlight-App of the main checkout,
+# also when run from a worktree). OUT: where the harness writes (default
+# crates/modlight-effects/tests/golden, or tests/golden-edge with EDGE=1). A run limited
+# to some ids writes only their cases.json entries: merge them by name. The work folder
+# is made under target/: the Docker VM (colima) shares the home folder, not the
+# system's temporary one.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 APP=$(cd "$HERE/../.." && pwd)
-UPSTREAM=${UPSTREAM:-$(cd "$APP/../.." && pwd)/upstream/Modlight-App}
-OUT=${OUT:-$APP/crates/modlight-effects/tests/golden}
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/effects-golden.XXXXXX")
-cp "$HERE/Program.cs" "$HERE/Harness.csproj" "$WORK/"
+ROOT=$(cd "$(git -C "$APP" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)
+UPSTREAM=${UPSTREAM:-$ROOT/upstream/Modlight-App}
+if [ "${EDGE:-}" = 1 ]; then
+  OUT=${OUT:-$APP/crates/modlight-effects/tests/golden-edge}
+  REQUEST=/harness/edge.txt
+else
+  OUT=${OUT:-$APP/crates/modlight-effects/tests/golden}
+  REQUEST=
+fi
+mkdir -p "$APP/target"
+WORK=$(mktemp -d "$APP/target/effects-golden.XXXXXX")
+cp "$HERE/Program.cs" "$HERE/Harness.csproj" "$HERE/edge.txt" "$WORK/"
 mkdir -p "$OUT" "$WORK/nuget"
 docker run --rm --name modlight-fx-golden \
   -v "$UPSTREAM":/upstream:ro \
@@ -22,5 +34,5 @@ docker run --rm --name modlight-fx-golden \
   -v "$OUT":/out \
   -v "$WORK/nuget":/root/.nuget/packages \
   -w /harness mcr.microsoft.com/dotnet/sdk:10.0 \
-  sh -c "dotnet run -c Release -- /out '${1:-}'"
+  sh -c "dotnet run -c Release -- /out '${1:-}' '$REQUEST'"
 rm -rf "$WORK"
