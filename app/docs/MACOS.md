@@ -9,7 +9,7 @@ Everything not listed behaves as upstream does. The per-screen state is in
 
 | Windows (upstream) | macOS (this port) | Notes |
 |---|---|---|
-| Token encrypted with DPAPI inside `UploadersConfig.json` | Login Keychain, generic password, service `Modlight`, written and read through `/usr/bin/security` | An item created by the app binary itself would be tied to that build and every rebuild would prompt; `security` is a stable owner. QA runs (`--qa-profile`) keep the token in a plain file in the profile instead and never touch the Keychain. The item holds the token together with the origin it was issued for: with the host in one place and the token in another, a host changed in `UploadersConfig.json` (an edited file, somebody else's backup) would otherwise receive the token. A host that is not that origin reads as signed out until the person signs in there; a token saved without its origin (an earlier build) asks for one new sign-in. |
+| Token encrypted with DPAPI inside `UploadersConfig.json` | Login Keychain, generic password, service `Modlight`, written and read through `/usr/bin/security` | An item created by the app binary itself would be tied to that build and every rebuild would prompt; `security` is a stable owner. QA runs (`--qa-profile`) keep the token in a plain file in the profile instead and never touch the Keychain. The item holds the token together with the origin it was issued for: with the host in one place and the token in another, a host changed in `UploadersConfig.json` (an edited file, somebody else's backup) would otherwise receive the token. A host that is not that origin reads as signed out until the person signs in there; a token saved without its origin (an earlier build) asks for one new sign-in. The file still says whether the account is signed in (`SignedInAt`, cleared by a sign-out), so a sign-out sticks even when the Keychain would not delete the item. |
 | Personal folder `Documents\Modlight` (`Program.PersonalFolder`) | `~/Library/Application Support/Modlight` | Same file names inside: `ApplicationConfig.json`, `Queue.json`, `Queue/`, `History.db`. |
 | Notification area icon and its menu (`TrayIconService`) | Menu bar extra (`tray-icon` + `muda`) | Normal mode only; never in QA mode. Exit from it ends the process directly, because a hidden window may never be redrawn to receive a close. |
 | Window chrome: custom title bar with caption buttons | Native traffic lights over a full-size content view | The logo and title start at x = 78 to clear the lights; the band drags and double-click zooms the window. |
@@ -205,6 +205,27 @@ Everything not listed behaves as upstream does. The per-screen state is in
   P2: a link somebody else generated shows a code no app of the person's shows).
   `modlight-api/src/signin.rs`, tests `signin_pickup_fake.rs` and `signin_pickup.rs`,
   snapshot screen `sign-in-waiting`.
+- **Settings sync digests the content, not the bytes** (logic review 2026-10-24). The
+  server keeps the synced document in a Postgres `jsonb` column and hands it back
+  through JavaScript: every object's members in jsonb's order (shorter names first) and
+  `3.0` as `3`. Upstream's digest of the bytes therefore never matched the server's copy
+  of the same settings, so every round alternated between "the server moved" (adopt)
+  and "an unsent local change" (push), writing to the account every other round, and a
+  machine that had just adopted pushed its unchanged settings over a change another
+  machine sent in between. The port hashes a canonical form (members sorted by name,
+  integral numbers without a point); a marker written by an earlier build is recognised
+  by its old digest. `modlight-core/src/sync/document.rs`, tests `tests/settings_sync.rs`.
+- **Answers about an account that is no longer signed in are dropped** (logic review
+  2026-10-24). Upstream's storage chip adopted an `/api/me` answer that set out before
+  another account signed in (its `Owns` check did not cover a switch), renaming the new
+  account after the old one: the tag decides whose queued uploads the new token sends
+  and whose settings marker counts. A settings round, a skin answer and the Server tab's
+  diagnosis likewise apply only for the credential they were asked with; the chip drops
+  a request for the previous account and asks for the new one at once.
+- **The account's skin never replaces a skin picked while it was being asked for.**
+  Upstream's `ModlightTheme.SyncAsync` wrote the server's skin after the request even if
+  the person had picked another meanwhile, contrary to its own rule; the port keeps the
+  pick and records the server's skin as confirmed, so the pick is pushed.
 - **AI keys** live in the Keychain (service `Modlight`, `ai-*-api-key`). The OpenAI key
   is stored together with the base URL it was entered for (the custom URL, or the
   default endpoint); it is sent only to that base. Settings that point `OpenAICustomURL`

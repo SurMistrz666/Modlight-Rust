@@ -183,14 +183,109 @@ pub fn normalize_task_settings(task: &mut Map<String, Value>) {
     }
 }
 
-/// A short, stable name for the contents of a document: lower-case hex SHA-256 of its
-/// compact JSON. Members keep their order, so the same values give the same bytes.
+/// A short, stable name for the CONTENT of a document: lower-case hex SHA-256 of its
+/// canonical form, every object's members sorted by name and every number written as
+/// JavaScript writes it (see [`canonical`]).
+///
+/// Upstream hashes the document's bytes as built. The server keeps the document in a
+/// Postgres `jsonb` column and hands it back through JavaScript, so its copy comes back
+/// with every object's members in jsonb's own order and `3.0` as `3`: the digest of the
+/// server's copy never equals the digest of the same settings built here. Every round
+/// then read as "the server moved" (adopt), the next as "an unsent local change" (push),
+/// for ever, and a machine that had just adopted pushed its settings over a change
+/// another machine had made in between (`MACOS.md`, "Behaviour that differs on purpose").
 pub fn digest(document: Option<&Map<String, Value>>) -> String {
     let Some(document) = document else {
         return String::new();
     };
+    let bytes =
+        serde_json::to_vec(&canonical(&Value::Object(document.clone()))).unwrap_or_default();
+    hex::encode(Sha256::digest(&bytes))
+}
+
+/// The digest an earlier build wrote into the marker: the document's bytes as they are.
+fn legacy_digest(document: &Map<String, Value>) -> String {
     let bytes = serde_json::to_vec(&Value::Object(document.clone())).unwrap_or_default();
     hex::encode(Sha256::digest(&bytes))
+}
+
+/// The form [`digest`] hashes: members sorted by name at every level (arrays keep their
+/// order, which means something), and a number with nothing after the point written
+/// without it, as JavaScript prints it and so as the server hands it back.
+fn canonical(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            Value::Object(
+                keys.into_iter()
+                    .map(|key| (key.clone(), canonical(&map[key])))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+        Value::Number(number) => match number.as_f64() {
+            Some(float)
+                if number.is_f64()
+                    && float.fract() == 0.0
+                    && float.abs() < 9_223_372_036_854_775_808.0 =>
+            {
+                json!(float as i64)
+            }
+            _ => value.clone(),
+        },
+        other => other.clone(),
+    }
+}
+
+/// The document as the server's `jsonb` column prints it: members ordered shorter name
+/// first, then by bytes, at every level. Only for recognising a marker an earlier build
+/// wrote after adopting (it hashed the server's copy as it came back).
+fn jsonb_order(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_by(|a, b| a.len().cmp(&b.len()).then(a.as_bytes().cmp(b.as_bytes())));
+            Value::Object(
+                keys.into_iter()
+                    .map(|key| (key.clone(), jsonb_order(&map[key])))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(jsonb_order).collect()),
+        other => canonical(other),
+    }
+}
+
+/// The marker's digest in today's form.
+///
+/// A marker an earlier build wrote holds the digest of a document's BYTES: of this
+/// machine's document (after a push or a confirm) or of the server's copy (after an
+/// adopt, when this machine took exactly that content). When it names the bytes of what
+/// this machine holds now, in either order, or of the server's copy at the confirmed
+/// version, it is the same fact as today's digest of that content, and is read as such:
+/// otherwise the first round after an update would take an unchanged machine for one
+/// holding a change, and push it over whatever another machine sent meanwhile.
+pub fn confirmed_digest(
+    marker_digest: &str,
+    local: &Map<String, Value>,
+    remote: &Map<String, Value>,
+    remote_is_the_confirmed_version: bool,
+) -> String {
+    if marker_digest.is_empty() || marker_digest == digest(Some(local)) {
+        return marker_digest.to_string();
+    }
+    let local_as_stored = match jsonb_order(&Value::Object(local.clone())) {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    if marker_digest == legacy_digest(local) || marker_digest == legacy_digest(&local_as_stored) {
+        return digest(Some(local));
+    }
+    if remote_is_the_confirmed_version && marker_digest == legacy_digest(remote) {
+        return digest(Some(remote));
+    }
+    marker_digest.to_string()
 }
 
 /// How many bytes the document would occupy on the server.
@@ -376,6 +471,81 @@ mod tests {
         assert_eq!(digest(None), "");
         assert_eq!(digest(Some(&a)).len(), 64);
         assert!(canonical_length(&a) > 10);
+    }
+
+    #[test]
+    fn digests_name_the_content_not_the_bytes() {
+        let built = json!({
+            "schema": 1,
+            "app": {"Language": "Polish", "DefaultTaskSettings": {"GeneralSettings": {"ToastWindowDuration": 3.0, "PlaySoundAfterCapture": true}}}
+        });
+        // The same settings as the server hands them back: jsonb's member order and
+        // JavaScript's numbers.
+        let stored = json!({
+            "app": {"Language": "Polish", "DefaultTaskSettings": {"GeneralSettings": {"ToastWindowDuration": 3, "PlaySoundAfterCapture": true}}},
+            "schema": 1
+        });
+        assert_eq!(digest(built.as_object()), digest(stored.as_object()));
+
+        let changed = json!({
+            "app": {"Language": "English", "DefaultTaskSettings": {"GeneralSettings": {"ToastWindowDuration": 3, "PlaySoundAfterCapture": true}}},
+            "schema": 1
+        });
+        assert_ne!(digest(built.as_object()), digest(changed.as_object()));
+        // A list's order is part of what it says; a fraction is another number.
+        assert_ne!(
+            digest(json!({"a": [1, 2]}).as_object()),
+            digest(json!({"a": [2, 1]}).as_object())
+        );
+        assert_ne!(
+            digest(json!({"a": 3.5}).as_object()),
+            digest(json!({"a": 3}).as_object())
+        );
+        assert_eq!(
+            digest(json!({"a": -0.0}).as_object()),
+            digest(json!({"a": 0}).as_object())
+        );
+    }
+
+    #[test]
+    fn a_marker_an_earlier_build_wrote_still_counts() {
+        let local = build(&config_with(json!({
+            "Language": "Polish",
+            "ShowTray": true,
+            "DefaultTaskSettings": {"GeneralSettings": {"ToastWindowDuration": 3}}
+        })));
+        let as_stored = match jsonb_order(&Value::Object(local.clone())) {
+            Value::Object(map) => map,
+            _ => unreachable!(),
+        };
+        let elsewhere = json!({"schema": 1, "app": {"Language": "English"}});
+        let elsewhere = elsewhere.as_object().unwrap();
+        let today = digest(Some(&local));
+
+        // Written after a push: the bytes of this machine's document.
+        assert_eq!(
+            confirmed_digest(&legacy_digest(&local), &local, elsewhere, false),
+            today
+        );
+        // Written after an adopt: the bytes of the server's copy, the content held here.
+        assert_eq!(
+            confirmed_digest(&legacy_digest(&as_stored), &local, elsewhere, false),
+            today
+        );
+        // The server's copy at the confirmed version.
+        assert_eq!(
+            confirmed_digest(&legacy_digest(elsewhere), &local, elsewhere, true),
+            digest(Some(elsewhere))
+        );
+        assert_eq!(
+            confirmed_digest(&legacy_digest(elsewhere), &local, elsewhere, false),
+            legacy_digest(elsewhere),
+            "not when the server has moved since"
+        );
+        // Today's form, no marker, or a document that is not here: as written.
+        assert_eq!(confirmed_digest(&today, &local, elsewhere, true), today);
+        assert_eq!(confirmed_digest("", &local, elsewhere, true), "");
+        assert_eq!(confirmed_digest("abcd", &local, elsewhere, true), "abcd");
     }
 
     #[test]

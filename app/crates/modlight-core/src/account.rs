@@ -194,7 +194,11 @@ impl AccountStore {
             .and_then(|text| serde_json::from_str::<UploadersFile>(&text).ok())
             .map(|file| file.modlight_account)
             .unwrap_or_default();
-        let token = if account.host.is_empty() {
+        // The file says whether the account is signed in: every sign-in writes
+        // `SignedInAt` and every sign-out clears it. A sign-out whose token the credential
+        // store would not delete (a locked Keychain) then still sticks, as upstream's
+        // sign-out, which is the file, does.
+        let token = if account.host.is_empty() || account.signed_in_at.is_none() {
             None
         } else {
             credentials
@@ -445,6 +449,53 @@ mod tests {
         let again = AccountStore::load(dir.path(), Box::new(FileCredentialStore::new(credentials)));
         assert!(!again.is_signed_in());
         assert_eq!(again.host(), "http://127.0.0.1:8420");
+    }
+
+    /// A credential store that keeps the token and refuses to delete it, as a locked
+    /// Keychain can.
+    struct Undeletable(FileCredentialStore);
+
+    impl CredentialStore for Undeletable {
+        fn load(&self) -> Option<String> {
+            self.0.load()
+        }
+        fn save(&self, token: &str) -> Result<(), String> {
+            self.0.save(token)
+        }
+        fn delete(&self) -> Result<(), String> {
+            Err("the keychain is locked".into())
+        }
+    }
+
+    /// Signing out must stick even when the credential store would not delete the token:
+    /// upstream's sign-out is the account file, which was written. Otherwise the next
+    /// start would be signed in again, quietly, with the token the person signed out of.
+    #[test]
+    fn a_sign_out_sticks_when_the_token_cannot_be_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = dir.path().join("credentials");
+        let store = || {
+            AccountStore::load(
+                dir.path(),
+                Box::new(Undeletable(FileCredentialStore::new(credentials.clone()))),
+            )
+        };
+        let mut signed_in = store();
+        signed_in.save_sign_in(&signed("ToqOse")).unwrap();
+        assert!(store().is_signed_in());
+
+        assert!(signed_in.sign_out().is_err(), "the failure is reported");
+        assert!(!signed_in.is_signed_in());
+        assert!(credentials.exists(), "the store kept the token");
+        let again = store();
+        assert!(!again.is_signed_in(), "signed out after a restart too");
+        assert!(again.credential().is_none());
+        assert_eq!(again.host(), "http://127.0.0.1:8420");
+
+        // A new sign-in works as before.
+        let mut back = store();
+        back.save_sign_in(&signed("ToqOse")).unwrap();
+        assert!(store().is_signed_in());
     }
 
     /// Point `UploadersConfig.json` of `profile` at another host, as an edited file or an

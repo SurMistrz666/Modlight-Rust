@@ -118,9 +118,23 @@ pub fn on_startup(state: &mut AppState) {
     schedule(state, std::time::Duration::ZERO);
 }
 
+/// Arm the timer: after `after`, the UI thread decides whether to check.
 fn schedule(state: &mut AppState, after: std::time::Duration) {
     state.rt.spawn(async move {
         tokio::time::sleep(after).await;
+        move |state: &mut AppState, _ctx: &egui::Context| timer_fired(state)
+    });
+}
+
+/// The timer fired. The setting is read now, not when the timer was armed: upstream
+/// disposes the timer as soon as automatic checks are switched off, so an hour-old timer
+/// must not reach the release host (or put up the question) after the person said no.
+fn timer_fired(state: &mut AppState) {
+    if !state.updates.enabled || !auto_check(state) {
+        state.updates.scheduled = false;
+        return;
+    }
+    state.rt.spawn(async move {
         let outcome = update::check().await;
         move |state: &mut AppState, _ctx: &egui::Context| {
             checked(state, outcome);
@@ -673,4 +687,38 @@ fn button_here(
 ) -> egui::Response {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
     button_at(&mut child, colors, look, content, enabled, rect)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::qa::{Look, state};
+
+    /// The timer was armed at start; the person then switched automatic checks off. When
+    /// it fires it must not check (a request to the release host, and maybe the update
+    /// question) and must not arm again: upstream disposes the timer when the setting goes
+    /// off (`ConfigureAutoUpdate`).
+    #[test]
+    fn a_timer_armed_before_the_setting_went_off_checks_nothing() {
+        let ctx = egui::Context::default();
+        let mut app = state(&Look::default(), false);
+        app.updates.scheduled = true;
+        schedule(&mut app, Duration::ZERO);
+        app.config.set("AutoCheckUpdate", serde_json::json!(false));
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.updates.scheduled && Instant::now() < deadline {
+            for completion in app.rt.drain() {
+                completion(&mut app, &ctx);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!app.updates.scheduled, "the timer is not armed again");
+        assert!(
+            app.updates.first_check,
+            "no check ran after the setting went off"
+        );
+    }
 }
