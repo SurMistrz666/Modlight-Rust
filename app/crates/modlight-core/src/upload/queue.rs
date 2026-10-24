@@ -414,8 +414,13 @@ impl UploadQueue {
 
     /// Read the file back without starting the worker (tests, and the first pump).
     pub fn restore(&self) {
-        let restored = self.shared.store.load(self.now());
-        self.shared.store.sweep_spool(&restored);
+        let loaded = self.shared.store.load_checked(self.now());
+        // A file that could not be read has been set aside with the uploads it describes;
+        // which spooled files they need is unknown, so none is removed this run.
+        if loaded.readable {
+            self.shared.store.sweep_spool(&loaded.items);
+        }
+        let restored = loaded.items;
         let count = restored.len();
         self.lock().items.extend(restored);
         if count > 0 {

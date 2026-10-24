@@ -801,3 +801,100 @@ async fn a_queue_file_from_elsewhere_cannot_delete_the_persons_files() {
     assert_eq!(std::fs::read(&victim).unwrap(), b"keep me");
     assert!(!own.exists(), "the queue's own spooled file went");
 }
+
+/// The files in the personal folder whose names start with `Queue.json.unreadable-`.
+fn set_aside(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("Queue.json.unreadable-"))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// A `Queue.json` this build cannot read (a newer build's version, a damaged file) is
+/// moved aside before anything saves a new queue, never over an earlier one, and the
+/// spooled files are all kept that run: nobody knows which of them it still needs.
+#[test]
+fn an_unreadable_queue_file_is_kept_and_so_is_the_spool() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = QueueStore::new(dir.path());
+    let spooled = store.spool("held", "clip.png", &mut &b"png"[..]).unwrap();
+    let newer = format!(
+        r#"{{"Version":2,"Items":[{{"Id":"held","FileName":"clip.png","SourcePath":{},"OwnsSource":true,"Host":"https://files.example.com","Length":3}}]}}"#,
+        serde_json::to_string(&spooled.to_string_lossy()).unwrap()
+    );
+    let queue_file = dir.path().join(crate::upload::store::QUEUE_FILE_NAME);
+    let now = Utc.with_ymd_and_hms(2026, 10, 24, 15, 30, 12).unwrap();
+    let start = |contents: &str| {
+        std::fs::write(&queue_file, contents).unwrap();
+        let account: AccountSlot = Arc::new(RwLock::new(Some(alex())));
+        let queue = UploadQueue::new(
+            QueueStore::new(dir.path()),
+            account,
+            Arc::new(Fake::default()),
+            Arc::new(|| true),
+        )
+        .with_clock(Arc::new(move || now));
+        queue.restore();
+        queue
+    };
+
+    let queue = start(&newer);
+    assert_eq!(queue.count(), 0, "nothing this build can send");
+    assert!(spooled.exists(), "the spool is not swept");
+    assert!(!queue_file.exists(), "moved aside before anything saves");
+    let aside = set_aside(dir.path());
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), newer);
+
+    // A new queue is saved next to it, and the copy set aside is left alone.
+    let file = dir.path().join("new.png");
+    std::fs::write(&file, b"new").unwrap();
+    assert!(queue.try_take_over(TakeOver {
+        file_name: "new.png".into(),
+        file_path: Some(file),
+        ..TakeOver::default()
+    }));
+    assert!(queue_file.is_file());
+    assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), newer);
+
+    // A damaged file the same second: a second copy, the first untouched.
+    let queue = start("{ not json");
+    assert_eq!(queue.count(), 0);
+    assert!(spooled.exists());
+    let aside = set_aside(dir.path());
+    assert_eq!(aside.len(), 2, "{aside:?}");
+    let contents: Vec<String> = aside
+        .iter()
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect();
+    assert!(contents.contains(&newer) && contents.contains(&"{ not json".to_string()));
+
+    // A save that comes before the read sets the file aside too.
+    std::fs::write(&queue_file, "\u{0}garbage").unwrap();
+    QueueStore::new(dir.path()).save(&[]);
+    assert_eq!(set_aside(dir.path()).len(), 3);
+    assert!(
+        QueueStore::new(dir.path()).load(Utc::now()).is_empty(),
+        "the new file is a readable, empty queue"
+    );
+
+    // A readable queue still sweeps what nothing points at.
+    let account: AccountSlot = Arc::new(RwLock::new(Some(alex())));
+    let queue = UploadQueue::new(
+        QueueStore::new(dir.path()),
+        account,
+        Arc::new(Fake::default()),
+        Arc::new(|| true),
+    );
+    queue.restore();
+    assert!(!spooled.exists(), "an orphan once the queue reads again");
+    assert_eq!(set_aside(dir.path()).len(), 3);
+}
