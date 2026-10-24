@@ -237,12 +237,21 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
         ctx.send_viewport_cmd_to(id, ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd_to(id, ViewportCommand::Focus);
     }
-    if state.tools.windows.is_empty() {
-        return;
-    }
-    let mut windows = std::mem::take(&mut state.tools.windows);
+    draw_windows(ctx, state);
+}
+
+/// The tool windows, each its own native window. A window is out of the list only while
+/// it draws or hears that it closed, so what it does then reaches the other windows (a
+/// dialog's answer to the window that opened it). Windows opened meanwhile are drawn
+/// from the next frame.
+fn draw_windows(ctx: &egui::Context, state: &mut AppState) {
+    let keys: Vec<u64> = state.tools.windows.iter().map(|h| h.key).collect();
     let mut closed = Vec::new();
-    for hosted in windows.iter_mut() {
+    for key in keys {
+        let Some(index) = state.tools.windows.iter().position(|h| h.key == key) else {
+            continue;
+        };
+        let mut hosted = state.tools.windows.remove(index);
         let spec = hosted.window.spec();
         let height = if spec.fit_height {
             hosted.window.content_height().unwrap_or(spec.size.y)
@@ -253,7 +262,6 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
             Some(screen) => screen.size(),
             None => vec2(spec.size.x, height.max(80.0).round()),
         };
-        let key = hosted.key;
         let id = ViewportId::from_hash_of(("tool-window", key));
         let (close_asked, closes_itself) =
             ctx.show_viewport_immediate(id, builder(&spec, size), |ui, _| {
@@ -285,19 +293,21 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
                 let done = hosted.window.ui(ui, state);
                 (close, done)
             });
+        let index = index.min(state.tools.windows.len());
+        state.tools.windows.insert(index, hosted);
         if close_asked || closes_itself {
-            closed.push(hosted.key);
+            closed.push(key);
         }
     }
-    for key in &closed {
-        if let Some(hosted) = windows.iter_mut().find(|h| h.key == *key) {
-            hosted.window.closed(state);
-        }
+    for key in closed {
+        // Out of the list before it hears it: a closing window is no longer one of the
+        // others (one that another closing window took away is gone already).
+        let Some(index) = state.tools.windows.iter().position(|h| h.key == key) else {
+            continue;
+        };
+        let mut hosted = state.tools.windows.remove(index);
+        hosted.window.closed(state);
     }
-    windows.retain(|h| !closed.contains(&h.key));
-    // Windows opened while these were drawn come after them.
-    windows.append(&mut state.tools.windows);
-    state.tools.windows = windows;
 }
 
 impl AppState {
@@ -316,5 +326,102 @@ impl AppState {
         file: std::path::PathBuf,
     ) {
         jobs::run(self, job, settings, Some(file));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A window that, while it draws, answers another window by key (as a dialog answers
+    /// the window that opened it: the analyze options' Save, the image effects' "clear
+    /// all" confirmation).
+    struct Dialog {
+        parent: u64,
+        reached: Option<bool>,
+        close: bool,
+    }
+
+    struct Parent {
+        answered: bool,
+        closed_dialog_seen: Option<bool>,
+    }
+
+    impl ToolWindow for Dialog {
+        fn spec(&self) -> WindowSpec {
+            WindowSpec::fixed("dialog", vec2(200.0, 100.0))
+        }
+
+        fn ui(&mut self, _ui: &mut Ui, state: &mut AppState) -> bool {
+            self.reached = Some(
+                with_window::<Parent, _>(state, self.parent, |parent, _| parent.answered = true)
+                    .is_some(),
+            );
+            self.close
+        }
+
+        fn closed(&mut self, state: &mut AppState) {
+            let parent = self.parent;
+            with_window::<Parent, _>(state, parent, |p, _| p.closed_dialog_seen = Some(true));
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    impl ToolWindow for Parent {
+        fn spec(&self) -> WindowSpec {
+            WindowSpec::fixed("parent", vec2(200.0, 100.0))
+        }
+
+        fn ui(&mut self, _ui: &mut Ui, _state: &mut AppState) -> bool {
+            false
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    fn frame(state: &mut AppState) {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::fonts());
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            draw_windows(ui.ctx(), state)
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn a_window_reaches_the_others_while_it_draws_and_closes() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let parent = state.tools.open(Box::new(Parent {
+            answered: false,
+            closed_dialog_seen: None,
+        }));
+        let dialog = state.tools.open(Box::new(Dialog {
+            parent,
+            reached: None,
+            close: false,
+        }));
+        frame(&mut state);
+        assert_eq!(
+            state.tools.window_mut::<Dialog>(dialog).unwrap().reached,
+            Some(true)
+        );
+        assert!(state.tools.window_mut::<Parent>(parent).unwrap().answered);
+
+        state.tools.window_mut::<Dialog>(dialog).unwrap().close = true;
+        frame(&mut state);
+        assert!(state.tools.window_mut::<Dialog>(dialog).is_none());
+        assert_eq!(
+            state
+                .tools
+                .window_mut::<Parent>(parent)
+                .unwrap()
+                .closed_dialog_seen,
+            Some(true)
+        );
     }
 }

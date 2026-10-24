@@ -294,7 +294,7 @@ pub fn hex_to_color(hex: &str, format: ColorFormat) -> Option<Color> {
     }
     if let Some(rest) = hex.strip_prefix('#') {
         hex = rest;
-    } else if hex.len() >= 2 && hex[..2].eq_ignore_ascii_case("0x") {
+    } else if hex.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("0x")) {
         hex = &hex[2..];
     }
     let wanted = if format == ColorFormat::Rgb { 6 } else { 8 };
@@ -815,6 +815,16 @@ mod tests {
             decimal_to_color(0x12ABEF, ColorFormat::Rgb),
             Color::rgb(0x12, 0xAB, 0xEF)
         );
+    }
+
+    /// The colour picker's hex box hands over whatever is typed or pasted: text that is
+    /// not hex is no colour, whatever its letters (a byte slice inside a letter panicked).
+    #[test]
+    fn hex_text_with_other_letters_is_no_colour() {
+        for text in ["aé", "aé1234", "0ą", "#żółw", "é", "0xé1234", "ą1234567"] {
+            assert_eq!(hex_to_color(text, ColorFormat::Rgb), None, "{text}");
+            assert_eq!(hex_to_color(text, ColorFormat::Rgba), None, "{text}");
+        }
     }
 
     #[test]

@@ -566,7 +566,13 @@ impl ToolWindow for AnalyzeWindow {
         ];
         let rects = kit::right_aligned(ui, &colors, head, &items, 8.0);
         if kit::button_at(ui, &colors, rects[0], items[0].0, items[0].1, idle).clicked() {
-            state.open_analyze_options(self.key, &self.home, &self.options, self.network.clone());
+            // `ShowDialog(this)`: this window waits while its options are open.
+            self.options_window = Some(state.open_analyze_options(
+                self.key,
+                &self.home,
+                &self.options,
+                self.network.clone(),
+            ));
         }
         if kit::button_at(
             ui,
@@ -1342,6 +1348,9 @@ impl AppState {
                         store.save(&value)?;
                     }
                 }
+                // A key entered for another address was never loaded, so never shown or
+                // cleared here: it stays for the tasks it belongs to.
+                None if *account == KEY_ACCOUNTS[0] && options.openai_key_for_other_address => {}
                 None => store.delete()?,
             }
         }
@@ -1377,14 +1386,14 @@ impl AppState {
             .open_keyed(|key| Box::new(AnalyzeWindow::new(key, settings, options, file, network)));
     }
 
-    /// The options dialog of the window `parent`.
+    /// The options dialog of the window `parent`; its key.
     pub fn open_analyze_options(
         &mut self,
         parent: u64,
         home: &OptionsHome,
         options: &AiOptions,
         network: Network,
-    ) {
+    ) -> u64 {
         let home = home.clone();
         let options = options.clone();
         let key = self.tools.open_keyed(|key| {
@@ -1395,6 +1404,7 @@ impl AppState {
         if let Some(window) = self.tools.window_mut::<AnalyzeWindow>(parent) {
             window.options_window = Some(key);
         }
+        key
     }
 
     /// A region for an analyze window arrived.
@@ -1464,6 +1474,55 @@ mod tests {
             state.ai_options(&settings).openai_api_key.as_deref(),
             Some("sk-mine")
         );
+        assert_eq!(
+            state.ai_options(&TaskSettings::default()).openai_api_key,
+            None
+        );
+    }
+
+    /// The options window of a task whose OpenAI address is not the key's never shows
+    /// the key; saving it there (a model, another provider's key) must not delete the
+    /// key the other tasks use.
+    #[test]
+    fn saving_options_keeps_a_key_entered_for_another_address() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let profile = tempfile::tempdir().unwrap();
+        state.env.profile = profile.path().to_path_buf();
+        let mine = AiOptions {
+            openai_api_key: Some("sk-mine".into()),
+            ..AiOptions::default()
+        };
+        state.save_ai_keys(&mine).unwrap();
+
+        // A hotkey that talks to a local server of its own.
+        let settings = TaskSettings {
+            tools_settings: serde_json::json!({"AIOptions": {
+                "OpenAICustomURL": "http://127.0.0.1:1234/v1"
+            }}),
+            ..TaskSettings::default()
+        };
+        let mut local = state.ai_options(&settings);
+        assert!(local.openai_key_for_other_address);
+        local.openai_model = "local-model".into();
+        local.gemini_api_key = Some("g-key".into());
+        state.save_ai_keys(&local).unwrap();
+
+        assert_eq!(
+            state
+                .ai_options(&TaskSettings::default())
+                .openai_api_key
+                .as_deref(),
+            Some("sk-mine")
+        );
+        assert_eq!(
+            state.ai_options(&settings).gemini_api_key.as_deref(),
+            Some("g-key")
+        );
+
+        // A key the window did show and the person cleared is removed.
+        let mut cleared = state.ai_options(&TaskSettings::default());
+        cleared.openai_api_key = Some(String::new());
+        state.save_ai_keys(&cleared).unwrap();
         assert_eq!(
             state.ai_options(&TaskSettings::default()).openai_api_key,
             None

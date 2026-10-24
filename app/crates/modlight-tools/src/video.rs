@@ -183,7 +183,10 @@ impl Conversion {
             return String::new();
         }
         let path = PathBuf::from(&self.output_folder).join(&self.output_name);
-        let has_extension = Path::new(&self.output_name).extension().is_some();
+        // `Path.HasExtension`: a dot with nothing after it is no extension.
+        let has_extension = Path::new(&self.output_name)
+            .extension()
+            .is_some_and(|e| !e.is_empty());
         let path = if has_extension {
             path
         } else {
@@ -481,6 +484,18 @@ mod tests {
         c.write_options(&mut options);
         assert_eq!(options.video_quality, 28);
         assert_eq!(options.output_file_name.as_deref(), Some(" "));
+    }
+
+    /// `Path.HasExtension` is false for a name ending in a dot, and `ChangeExtension`
+    /// then puts the encoder's extension after it ("clip." becomes "clip.mp4"; ffmpeg
+    /// cannot choose a format for "clip.").
+    #[test]
+    fn a_name_ending_in_a_dot_gets_the_extension() {
+        let mut c = conversion(C::X264);
+        c.output_name = "final.".into();
+        assert_eq!(c.output_path(), native("/v/final.mp4"));
+        c.output_name = "final.mkv".into();
+        assert_eq!(c.output_path(), native("/v/final.mkv"));
     }
 
     #[test]

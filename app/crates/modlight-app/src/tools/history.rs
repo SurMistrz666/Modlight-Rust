@@ -15,7 +15,7 @@ use std::sync::Arc;
 use egui::{Align2, Id, Rect, Sense, Ui, pos2, vec2};
 use modlight_core::history::{HistoryItem, HistoryStore};
 use modlight_core::icons;
-use modlight_core::l10n::{Arg, format, history as hl, t};
+use modlight_core::l10n::{Arg, format, helpers as hp, history as hl, t};
 use modlight_core::names::file_helpers;
 use modlight_tools::history::{self as logic, CopyFormat, MenuState};
 
@@ -183,6 +183,12 @@ pub trait HistoryHost: super::ToolWindow {
     fn data(&mut self) -> &mut HistoryData;
     /// The rows changed (loaded, imported, deleted): filter again.
     fn refilter(&mut self, state: &mut AppState);
+    /// Rows were edited in place (favourite, tag, item, rename: `RefreshVisibleItem`);
+    /// `favorite` when it was the favourite that changed.
+    fn edited(&mut self, state: &mut AppState, favorite: bool) {
+        let _ = favorite;
+        self.refilter(state);
+    }
     /// The selected rows, in the window's order.
     fn selected_ids(&self) -> Vec<i64>;
     /// The rows as the window lists them now (for the viewer's neighbours).
@@ -299,7 +305,7 @@ pub fn run<W: HistoryHost>(window: &mut W, state: &mut AppState, act: Act) {
                 }
                 window.data().save_item(state, *id);
             }
-            window.refilter(state);
+            window.edited(state, true);
         }
         Act::EditTag => {
             let (title, message) = if image_history {
@@ -451,7 +457,7 @@ fn confirm<W: HistoryHost>(window: &mut W, state: &mut AppState, prompt: Prompt)
                 item.set_tag(&value);
             }
             window.data().save_item(state, id);
-            window.refilter(state);
+            window.edited(state, false);
         }
         PromptAction::Rename(id) => {
             let Some(item) = window.data().find(id).cloned() else {
@@ -462,9 +468,26 @@ fn confirm<W: HistoryHost>(window: &mut W, state: &mut AppState, prompt: Prompt)
             else {
                 return;
             };
-            // `FileHelpers.RenameFile`: the path changes only when the file moved.
-            let moved = Path::new(&item.file_path).is_file()
-                && std::fs::rename(&item.file_path, &new_path).is_ok();
+            // `FileHelpers.RenameFile`: the path changes only when the file moved. Its
+            // `File.Move` refuses a name another file has; `rename` would replace that
+            // file, so a taken name is refused here first. A failure is said, as upstream.
+            let moved = Path::new(&item.file_path).is_file() && {
+                let result = if std::fs::symlink_metadata(&new_path).is_ok() {
+                    Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+                } else {
+                    std::fs::rename(&item.file_path, &new_path)
+                };
+                if let Err(error) = &result {
+                    state.uploads.windows.messages.push_back(
+                        crate::dialogs::message::MessageBox::new(
+                            &format!("Modlight - {}", t(hp::Error)),
+                            &format!("{}\n{error}", t(hp::FileHelpers_Rename_file_error)),
+                            modlight_core::tasks::host::MessageIcon::Error,
+                        ),
+                    );
+                }
+                result.is_ok()
+            };
             if let Some(entry) = window.data().find_mut(id) {
                 entry.file_name = name;
                 if moved {
@@ -472,7 +495,7 @@ fn confirm<W: HistoryHost>(window: &mut W, state: &mut AppState, prompt: Prompt)
                 }
             }
             window.data().save_item(state, id);
-            window.refilter(state);
+            window.edited(state, false);
         }
         PromptAction::Delete { ids, files } => {
             let items: Vec<HistoryItem> = ids
@@ -515,7 +538,7 @@ fn save_edit<W: HistoryHost>(window: &mut W, state: &mut AppState, form: &EditFo
         item.tags = Some(logic::parse_tags(&form.tags));
     }
     window.data().save_item(state, form.id);
-    window.refilter(state);
+    window.edited(state, false);
 }
 
 /// `OnImportConfirmClick`: the files read and appended off the UI thread.
@@ -1013,13 +1036,16 @@ pub fn key_act(ui: &Ui) -> Option<Act> {
     ui.input(|i| {
         let m = i.modifiers;
         let pressed = |k: Key| i.key_pressed(k);
+        // egui-winit hands Cmd+C (and Cmd+Shift+C) over as `Event::Copy`, without a key
+        // press of C.
+        let copy = pressed(Key::C) || i.events.iter().any(|e| matches!(e, egui::Event::Copy));
         if pressed(Key::Enter) && m.command {
             Some(Act::OpenFile)
         } else if pressed(Key::Enter) && m.shift {
             Some(Act::OpenFolder)
-        } else if pressed(Key::C) && m.command && m.shift {
+        } else if copy && m.command && m.shift {
             Some(Act::Copy(CopyFormat::FilePath))
-        } else if pressed(Key::C) && m.command && !m.shift && !m.alt {
+        } else if copy && m.command && !m.shift && !m.alt {
             Some(Act::Copy(CopyFormat::Url))
         } else if pressed(Key::C) && m.shift && !m.command {
             Some(Act::CopyFile)
@@ -1607,6 +1633,97 @@ mod tests {
         assert_eq!(parse_pair(Some("0, 0")), None);
         assert_eq!(parse_pair(Some("x")), None);
         assert_eq!(parse_pair(None), None);
+    }
+
+    fn rename_prompt(id: i64, name: &str) -> Prompt {
+        Prompt {
+            title: String::new(),
+            message: String::new(),
+            confirm: String::new(),
+            input: Some(name.into()),
+            action: PromptAction::Rename(id),
+        }
+    }
+
+    /// `FileHelpers.RenameFile` moves with `File.Move`, which refuses a name that is
+    /// taken: the other file stays, the item keeps its path, and the error is said.
+    #[test]
+    fn renaming_never_replaces_another_file() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.png");
+        let b = dir.path().join("b.png");
+        std::fs::write(&a, "first").unwrap();
+        std::fs::write(&b, "second").unwrap();
+        let mut window = super::super::history_list::HistoryWindow::new(
+            1,
+            None,
+            modlight_tools::settings::HistorySettings::default(),
+        );
+        window.qa_load(
+            &mut state,
+            vec![HistoryItem {
+                id: 7,
+                file_name: "a.png".into(),
+                file_path: a.to_string_lossy().into_owned(),
+                ..HistoryItem::default()
+            }],
+        );
+        let messages = state.uploads.windows.messages.len();
+        confirm(&mut window, &mut state, rename_prompt(7, "b"));
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "second");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "first");
+        assert_eq!(
+            window.data.find(7).unwrap().file_path,
+            a.to_string_lossy().into_owned()
+        );
+        assert_eq!(state.uploads.windows.messages.len(), messages + 1);
+
+        // A free name moves the file.
+        confirm(&mut window, &mut state, rename_prompt(7, "c"));
+        let c = dir.path().join("c.png");
+        assert_eq!(std::fs::read_to_string(&c).unwrap(), "first");
+        assert!(!a.exists());
+        let item = window.data.find(7).unwrap();
+        assert_eq!(item.file_path, c.to_string_lossy().into_owned());
+        assert_eq!(item.file_name, "c.png");
+    }
+
+    /// What `key_act` makes of one frame's events.
+    fn act_for(modifiers: egui::Modifiers, event: egui::Event) -> Option<Act> {
+        let ctx = egui::Context::default();
+        let mut act = None;
+        let input = egui::RawInput {
+            events: vec![egui::Event::ModifiersChanged(modifiers), event],
+            ..egui::RawInput::default()
+        };
+        ctx.run_ui(input, |ui| act = key_act(ui))
+            .drop_without_applying_deltas();
+        act
+    }
+
+    /// `OnHistoryListKeyDown`'s Ctrl+C and Ctrl+Shift+C (Cmd here). egui-winit hands
+    /// both to the window as `Event::Copy`, never as a key press of C.
+    #[test]
+    fn the_copy_keys_arrive_as_copy_events() {
+        use egui::Modifiers as M;
+        assert_eq!(
+            act_for(M::COMMAND, egui::Event::Copy),
+            Some(Act::Copy(CopyFormat::Url))
+        );
+        assert_eq!(
+            act_for(M::COMMAND | M::SHIFT, egui::Event::Copy),
+            Some(Act::Copy(CopyFormat::FilePath))
+        );
+        let key = |modifiers| egui::Event::Key {
+            key: egui::Key::C,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        assert_eq!(act_for(M::SHIFT, key(M::SHIFT)), Some(Act::CopyFile));
+        assert_eq!(act_for(M::ALT, key(M::ALT)), Some(Act::CopyImage));
     }
 
     #[test]
