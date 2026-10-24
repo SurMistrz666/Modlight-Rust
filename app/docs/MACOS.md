@@ -193,6 +193,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **The loose-files shelf's count** follows files in no folder that are moved, trashed,
   deleted or restored, as every folder's count does. Upstream skipped files whose folder
   is null, so the shelf kept its old count until the next reload.
+- **A custom URL** moves the file's cached previews (and a "no moving preview" answer)
+  from its old code to the new one. Upstream's caches are keyed by code and kept the old
+  entries, so a file that later took the freed code was drawn with the other file's
+  picture.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
   server's origin, and a request with the wrong `state` is answered and ignored instead
   of ending the sign-in. `Access-Control-Allow-Private-Network: true` is granted, but only

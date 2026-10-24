@@ -476,6 +476,19 @@ impl AppState {
     }
 
     fn edit_done(&mut self, done: EditDone, rows: &[modlight_api::Upload]) {
+        // A row whose code changed (a custom URL) takes the previews cached under its
+        // old code along, before anything else can be fetched under either code.
+        for row in rows {
+            let (Some(id), Some(new)) = (row.id.as_deref(), row.code.as_deref()) else {
+                continue;
+            };
+            if let Some(old) = self.space.file(id).map(|f| f.code.clone())
+                && old != new
+            {
+                self.media.bytes.rename(&old, new);
+                self.media.motion_bytes.rename(&old, new);
+            }
+        }
         match done {
             EditDone::Moved { ids, target } => {
                 let count = ids.len();
@@ -1677,6 +1690,38 @@ mod tests {
         state.space.loaded_once = true;
         state.space_select_view(1);
         assert_eq!(state.config.last_folder_id(), "", "a kind is no folder");
+    }
+
+    /// The preview caches are keyed by code, and a custom URL frees the old code for any
+    /// other file to take. What was cached under it must follow the file it belongs to,
+    /// or the next file given that code is drawn with this one's picture.
+    #[test]
+    fn a_new_custom_url_takes_the_cached_previews_with_it() {
+        let mut state = offline_state();
+        listing(&mut state, 1, 30, 2, &["a", "b"]);
+        let picture = std::sync::Arc::new(b"a's picture".to_vec());
+        let reel = std::sync::Arc::new(b"a's reel".to_vec());
+        state.media.bytes.put("ca", picture.clone());
+        state.media.motion_bytes.put("ca", reel.clone());
+        state.media.motion_bytes.refuse("cb");
+
+        let mut renamed = row("a", None);
+        renamed.code = Some("logo".into());
+        state.edit_done(EditDone::CustomUrl { id: "a".into() }, &[renamed]);
+        assert_eq!(state.space.file("a").unwrap().code, "logo");
+        assert!(state.media.bytes.get("ca").is_none(), "the old code is free");
+        assert!(state.media.motion_bytes.get("ca").is_none());
+        assert_eq!(state.media.bytes.get("logo"), Some(picture));
+        assert_eq!(state.media.motion_bytes.get("logo"), Some(reel));
+
+        // b takes a's old code: nothing of a's is found under it, and b's own refusal
+        // goes with b.
+        let mut taken = row("b", None);
+        taken.code = Some("ca".into());
+        state.edit_done(EditDone::CustomUrl { id: "b".into() }, &[taken]);
+        assert!(state.media.bytes.get("ca").is_none());
+        assert!(!state.media.motion_bytes.is_refused("cb"));
+        assert!(state.media.motion_bytes.is_refused("ca"));
     }
 
     /// The conversion the server would make is then saved under the stem and the new
