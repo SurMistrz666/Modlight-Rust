@@ -1495,10 +1495,12 @@ mod tests {
         state.save_ai_keys(&mine).unwrap();
 
         // A hotkey that talks to a local server of its own.
-        let mut settings = TaskSettings::default();
-        settings.tools_settings = serde_json::json!({"AIOptions": {
-            "OpenAICustomURL": "http://127.0.0.1:1234/v1"
-        }});
+        let settings = TaskSettings {
+            tools_settings: serde_json::json!({"AIOptions": {
+                "OpenAICustomURL": "http://127.0.0.1:1234/v1"
+            }}),
+            ..TaskSettings::default()
+        };
         let mut local = state.ai_options(&settings);
         assert!(local.openai_key_for_other_address);
         local.openai_model = "local-model".into();
