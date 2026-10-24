@@ -130,6 +130,12 @@ pub fn name_of(key: Key) -> &'static str {
     generated::NAMES[key.0]
 }
 
+/// Whether the Polish table has its own text for `key` (otherwise Polish falls back to
+/// the English one).
+pub fn has_polish(key: Key) -> bool {
+    generated::TRANSLATED[key.0]
+}
+
 /// Find a key by `Project:Name` (used by tests and by the coverage check).
 pub fn lookup(name: &str) -> Option<Key> {
     generated::NAMES.iter().position(|n| *n == name).map(Key)

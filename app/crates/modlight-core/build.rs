@@ -81,6 +81,8 @@ fn strings(dir: &Path) -> String {
     let mut names = Vec::new();
     let mut english = Vec::new();
     let mut polish = Vec::new();
+    // Whether the Polish table really has the text (not the English fallback below).
+    let mut translated = Vec::new();
     let mut modules = String::new();
 
     let mac_dir = dir.join("../../mac/l10n");
@@ -107,6 +109,10 @@ fn strings(dir: &Path) -> String {
             english.push(value.clone());
             // A key the Polish table lacks falls back to English, like .NET does.
             polish.push(pl.get(name).cloned().unwrap_or_else(|| value.clone()));
+            translated.push(
+                pl.get(name)
+                    .is_some_and(|text| !text.trim().is_empty() || value.trim().is_empty()),
+            );
             writeln!(modules, "    pub const {name}: Key = Key({index});").unwrap();
         }
         writeln!(modules, "}}").unwrap();
@@ -122,6 +128,11 @@ fn strings(dir: &Path) -> String {
     writeln!(out, "pub(crate) static NAMES: [&str; COUNT] = [").unwrap();
     for name in &names {
         writeln!(out, "    {name:?},").unwrap();
+    }
+    writeln!(out, "];").unwrap();
+    writeln!(out, "pub(crate) static TRANSLATED: [bool; COUNT] = [").unwrap();
+    for present in &translated {
+        writeln!(out, "    {present},").unwrap();
     }
     writeln!(out, "];").unwrap();
     for (table, values) in [("ENGLISH", &english), ("POLISH", &polish)] {
