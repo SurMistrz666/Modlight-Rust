@@ -195,16 +195,22 @@ impl AppState {
         any
     }
 
-    /// `TaskHelpers.ToggleHotkeys`.
+    /// `TaskHelpers.ToggleHotkeys` with the default task settings.
     pub fn toggle_hotkeys(&mut self) {
+        let settings = self.default_task_settings();
+        self.toggle_hotkeys_with(&settings);
+    }
+
+    /// `TaskHelpers.ToggleHotkeys(taskSettings)`: the sound and the notice follow the
+    /// task's settings (a "Disable hotkeys" key's own).
+    pub fn toggle_hotkeys_with(&mut self, settings: &TaskSettings) {
         let disabled = !self.captures.hotkeys.disabled;
         self.config
             .set("DisableHotkeys", serde_json::json!(disabled));
         self.captures.hotkeys.toggle(disabled);
         self.save_config();
-        let settings = self.default_task_settings();
         if settings.general_settings.play_sound_after_action {
-            self.play_task_sound(NotificationSound::ActionCompleted, &settings);
+            self.play_task_sound(NotificationSound::ActionCompleted, settings);
         }
         if settings
             .general_settings
@@ -298,7 +304,7 @@ impl AppState {
             StopScreenRecording => self.recording_stop(),
             PauseScreenRecording => self.recording_pause(),
             AbortScreenRecording => self.recording_abort(),
-            DisableHotkeys => self.toggle_hotkeys(),
+            DisableHotkeys => self.toggle_hotkeys_with(&settings),
             OpenMainWindow => self.push(crate::commands::Command::ShowMainWindow),
             OpenScreenshotsFolder => self.open_screenshots_folder(),
             ExitShareX => self.quit_requested = true,
@@ -1499,6 +1505,41 @@ mod tests {
         assert_eq!(
             window.status_text,
             t(modlight_core::l10n::capture::ScrollingCaptureWindow_Selection_cancelled)
+        );
+    }
+
+    /// `ExecuteJob` hands `ToggleHotkeys` the hotkey's own settings: a "Disable hotkeys"
+    /// key whose task plays no sound and shows no notice switches silently.
+    #[test]
+    fn the_disable_hotkeys_key_follows_its_own_settings() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let task = serde_json::json!({
+            "Job": "DisableHotkeys",
+            "UseDefaultGeneralSettings": false,
+            "GeneralSettings": {
+                "PlaySoundAfterAction": false,
+                "ShowToastNotificationAfterTaskCompleted": false
+            }
+        });
+        let hotkey = HotkeySettings {
+            task,
+            ..HotkeySettings::new(HotkeyType::DisableHotkeys, 0)
+        };
+        state.captures.hotkeys =
+            HotkeyManager::new(Box::new(FakeBackend::default()), vec![hotkey], false);
+        let defaults = state.default_task_settings().general_settings;
+        assert!(defaults.show_toast_notification_after_task_completed);
+        state.effects.clear();
+        state.captures.simulated.push(0);
+        assert!(state.pump_hotkeys());
+        assert!(state.captures.hotkeys.disabled);
+        assert!(state.windows.notification.is_none(), "no notice");
+        assert!(
+            !state
+                .effects
+                .iter()
+                .any(|e| matches!(e, crate::state::Effect::PlaySound(..))),
+            "no sound"
         );
     }
 
