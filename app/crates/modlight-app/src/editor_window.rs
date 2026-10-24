@@ -400,20 +400,32 @@ impl AppState {
                     &upload,
                     &ctx,
                 );
-                if let Some(s) = self.session(key) {
-                    s.editor.close_after_task_action();
-                }
+                self.editor_task_action_done(
+                    key,
+                    modlight_core::l10n::editor::MainViewModel_ImageIsUploading,
+                    modlight_editor::ui::icons::ACTION_UPLOAD,
+                );
             }
             // `TaskHelpers.PrintImage(image)` (phase 5, `tools::print`).
             Request::Print => {
                 if let Some(image) = self.session(key).and_then(|s| s.editor.snapshot()) {
                     self.print_picture(image);
+                    self.editor_task_action_done(
+                        key,
+                        modlight_core::l10n::editor::MainViewModel_ImagePrinted,
+                        modlight_editor::ui::icons::ACTION_PRINT,
+                    );
                 }
             }
             // `TaskHelpers.PinToScreen(image)` (phase 5, `tools::pin`).
             Request::PinToScreen => {
                 if let Some(image) = self.session(key).and_then(|s| s.editor.snapshot()) {
                     self.pin_picture(std::sync::Arc::new(image), &settings);
+                    self.editor_task_action_done(
+                        key,
+                        modlight_core::l10n::editor::MainViewModel_ImagePinnedToScreen,
+                        modlight_editor::ui::icons::ACTION_PIN_TO_SCREEN,
+                    );
                 }
             }
             // The screen colour picker (phase 5, `tools::editor_hooks`).
@@ -433,8 +445,19 @@ impl AppState {
                 };
                 self.editor_file_chosen(key, request, &path);
             }
+            // `OnLoadRecentFileRequested`: a file that is gone leaves the recent list.
             Request::OpenRecent(path) => {
-                self.editor_file_chosen(key, Request::OpenImage, Path::new(&path));
+                if !Path::new(&path).is_file() {
+                    if let Some(s) = self.session(key) {
+                        s.editor.remove_recent_image_file(&path);
+                        s.editor.start_screen_status(&modlight_core::l10n::tf(
+                            modlight_core::l10n::editor::EditorView_FileNoLongerExistsFormat,
+                            &[path.as_str().into()],
+                        ));
+                    }
+                    return;
+                }
+                self.editor_file_chosen(key, Request::OpenRecent(path.clone()), Path::new(&path));
             }
             Request::BrowseEffectFile(param) => {
                 if headless {
@@ -524,11 +547,14 @@ impl AppState {
             return;
         }
         let Some(image) = load_image(path) else {
+            // A recent file always answers on the start screen (`ShowStartScreenStatus`
+            // opens it); a picked one only when the start screen is up.
             if let Some(s) = self.session(key)
-                && matches!(
-                    s.editor.modal,
-                    Some(modlight_editor::editor::Modal::StartScreen(_))
-                )
+                && (matches!(request, Request::OpenRecent(_))
+                    || matches!(
+                        s.editor.modal,
+                        Some(modlight_editor::editor::Modal::StartScreen(_))
+                    ))
             {
                 // `OnLoadRecentFileRequested`: upstream's sentence with the path.
                 s.editor.start_screen_status(&modlight_core::l10n::tf(
@@ -549,6 +575,16 @@ impl AppState {
                 s.editor.load_bitmap(image, Some(text.clone()));
                 s.editor.opened_notification(&text);
             }
+        }
+    }
+
+    /// After Upload, Print and Pin to screen (`UploadCommand`, `PrintCommand`,
+    /// `PinToScreenCommand`): their notice, then `CloseAfterTaskActionIfEnabled`.
+    fn editor_task_action_done(&mut self, key: u64, notice: modlight_core::l10n::Key, icon: char) {
+        if let Some(s) = self.session(key) {
+            s.editor
+                .show_task_action_notification(modlight_core::l10n::t(notice), icon);
+            s.editor.close_after_task_action();
         }
     }
 
@@ -814,6 +850,105 @@ mod tests {
         assert!(!s.closed, "an automatic copy must not close the editor");
         assert_eq!(s.editor.task_result, TaskResult::None);
         assert!(s.editor.notification.is_none());
+    }
+
+    /// Print and Pin to screen are task actions (`PrintCommand`, `PinToScreenCommand`):
+    /// their notice, and the editor closes when "Close editor after task" is on.
+    #[test]
+    fn print_and_pin_show_their_notice_and_close_when_asked() {
+        use modlight_core::l10n::{editor as s, t};
+        for (request, notice) in [
+            (Request::Print, t(s::MainViewModel_ImagePrinted)),
+            (
+                Request::PinToScreen,
+                t(s::MainViewModel_ImagePinnedToScreen),
+            ),
+        ] {
+            let image = RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]));
+            let (mut state, key) = editor_state(Some(image), false);
+            {
+                let session = state.session(key).unwrap();
+                let _ = session.editor.take_requests();
+                session.editor.request(request.clone());
+            }
+            state.editor_requests(key);
+            let session = state.session(key).unwrap();
+            assert_eq!(
+                session
+                    .editor
+                    .notification
+                    .as_ref()
+                    .map(|n| n.message.as_str()),
+                Some(notice),
+                "{request:?}"
+            );
+            assert_eq!(session.editor.task_result, TaskResult::None);
+
+            session.editor.options.auto_close_editor_on_task = true;
+            session.editor.request(request.clone());
+            state.editor_requests(key);
+            let session = state.session(key).unwrap();
+            assert_eq!(
+                session.editor.task_result,
+                TaskResult::Cancel,
+                "{request:?}"
+            );
+            assert!(session.editor.take_requests().contains(&Request::Close));
+        }
+    }
+
+    /// `OnLoadRecentFileRequested`: a recent file that is no longer there leaves the
+    /// list (the options' and the start screen's) and the start screen says so.
+    #[test]
+    fn a_recent_file_that_is_gone_leaves_the_list() {
+        use modlight_core::l10n::{editor as s, tf};
+        use modlight_editor::editor::Modal;
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone.png").to_string_lossy().into_owned();
+        let kept = dir.path().join("kept.png");
+        RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]))
+            .save(&kept)
+            .unwrap();
+        let kept = kept.to_string_lossy().into_owned();
+        let (mut state, key) = editor_state(None, false);
+        {
+            let session = state.session(key).unwrap();
+            session.editor.options.recent_image_files = vec![gone.clone(), kept.clone()];
+            session.editor.close_modal();
+            session.editor.show_start_screen();
+            session.editor.request(Request::OpenRecent(gone.clone()));
+        }
+        state.editor_requests(key);
+        let session = state.session(key).unwrap();
+        assert_eq!(
+            session.editor.options.recent_image_files,
+            vec![kept.clone()]
+        );
+        let Some(Modal::StartScreen(screen)) = &session.editor.modal else {
+            panic!("the start screen shows the reason");
+        };
+        assert_eq!(screen.recent_files, vec![kept.clone()]);
+        assert_eq!(
+            screen.status.as_deref(),
+            Some(
+                tf(
+                    s::EditorView_FileNoLongerExistsFormat,
+                    &[gone.as_str().into()]
+                )
+                .as_str()
+            )
+        );
+
+        // The one that is there opens.
+        session.editor.request(Request::OpenRecent(kept.clone()));
+        state.editor_requests(key);
+        let session = state.session(key).unwrap();
+        assert!(session.editor.modal.is_none());
+        assert_eq!(session.editor.image_size(), (4, 4));
+        assert_eq!(
+            session.editor.image_file_path.as_deref(),
+            Some(kept.as_str())
+        );
     }
 
     /// S3: an address that answers with a small file claiming an enormous picture gets
