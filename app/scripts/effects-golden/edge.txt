@@ -1,0 +1,24 @@
+# Cases rendered by `EDGE=1 run.sh` into tests/golden-edge (name|effect id|input|values).
+# Inputs: photo, alpha, and small cuts p1x1, p1x9, p9x1, p7x5, a5x3, transparent t7x5.
+#
+# A stroked rect Skia draws as a path (empty) or sorts first (inverted): inside borders.
+border-inside-5.p7x5|border|p7x5|type=Inside;size=5
+border-inside-5.p1x9|border|p1x9|type=Inside;size=5
+border-inside-70.photo|border|photo|type=Inside;size=70
+border-inside-100.photo|border|photo|type=Inside;size=100
+# Strokes under a pixel wide with a blend mode that cannot carry coverage as alpha
+# (Screen): Skia strokes them at their width instead of as hairlines.
+glare.default.p7x5|glare|p7x5|
+glare.min-radius.photo|glare|photo|radius=5
+# Mask blurs of shapes reaching past the canvas edge.
+neon_glow_border.max-tube_width.photo|neon_glow_border|photo|tube_width=20
+neon_glow_border.min-border_size.p7x5|neon_glow_border|p7x5|border_size=10
+# A round rect without radii is a rect (a framed stroke, not a hairline path).
+macos_window.allmin.p1x1|macos_window|p1x1|corner_radius=0;shadow_size=0;padding=0
+windows11_window.allmin.p7x5|windows11_window|p7x5|corner_radius=0;shadow_size=0;padding=0
+# Upstream fails (no bitmap of a negative height): the port must fail too.
+minecraft_grass.max-overlap.p7x5|minecraft_grass|p7x5|overlap=8
+# Small pictures with the defaults.
+gaussian_blur.default.p1x1|gaussian_blur|p1x1|
+pixelate.default.p9x1|pixelate|p9x1|
+vignette.default.t7x5|vignette|t7x5|

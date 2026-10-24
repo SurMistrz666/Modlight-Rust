@@ -435,11 +435,14 @@ impl Canvas {
         let path = PathBuilder::from_rect(r);
         let m = self.state.matrix;
         // `SkDraw::ComputeRectType`: a plain stroked rect is framed (`AntiFrameRect`), never
-        // turned into a hairline unless its width is zero.
+        // turned into a hairline unless its width is zero. `easy_rect_join` refuses an
+        // empty rect (a line): Skia strokes that one as a path.
+        let empty = !(r.width() > 0.0 && r.height() > 0.0);
         let frame = paint.mask_blur.is_none()
             && paint.dash.is_none()
             && paint.join == Join::Miter
-            && paint.miter > std::f32::consts::SQRT_2
+            && paint.miter >= std::f32::consts::SQRT_2
+            && !(paint.style != Style::Fill && empty)
             && m.kx == 0.0
             && m.ky == 0.0;
         // `SkScan::AntiFillRect` / `AntiFrameRect`: plain anti-aliased rects get exact
@@ -503,6 +506,12 @@ impl Canvas {
     }
 
     pub fn draw_round_rect(&mut self, r: Rect, rx: f32, ry: f32, paint: &Paint) {
+        // `SkCanvas::drawRoundRect` / `onDrawRRect`: without both radii it is a rect, and
+        // a stroked rect is framed rather than stroked as a path.
+        if !(rx > 0.0 && ry > 0.0) {
+            self.draw_rect(r, paint);
+            return;
+        }
         if let Some(path) = round_rect_path(r, rx, ry) {
             self.draw_path(&path, paint);
         }
@@ -594,10 +603,22 @@ impl Canvas {
             outlines.push(path.clone());
         }
         // `SkDrawTreatAsHairline`: zero-width strokes, and anti-aliased strokes at most one
-        // device pixel wide (drawn as hairlines with their width as coverage).
+        // device pixel wide (drawn as hairlines with their width as coverage). `SkDraw::
+        // drawPath` takes a thin stroke as a hairline only when that coverage is one or the
+        // blend mode can carry coverage as alpha; any other mode (Screen, Multiply...)
+        // strokes it at its own width. An image filter draws into its layer with SrcOver.
+        let layer_blend = if paint.image_blur.is_some() {
+            Blend::SrcOver
+        } else {
+            paint.blend
+        };
         let hairline = paint.style == Style::Stroke
             && (paint.stroke_width <= 0.0
-                || (paint.aa && !rect_frame && thin_stroke(paint.stroke_width, matrix)));
+                || (paint.aa
+                    && !rect_frame
+                    && thin_stroke(paint.stroke_width, matrix)
+                    && (hairline_coverage(paint.stroke_width, matrix) == 1.0
+                        || layer_blend.supports_coverage_as_alpha())));
         let stroked = paint.style != Style::Fill && !hairline && paint.stroke_width > 0.0;
         let single_line = if paint.dash.is_none() {
             single_segment(path)
@@ -644,23 +665,44 @@ impl Canvas {
             }
             return;
         }
-        // Draw into a layer, filter it, then composite through the clip.
+        // Draw into a layer, filter it, then composite through the clip. A blur reaches
+        // past the canvas edge: Skia renders a mask filter's mask over the clip bounds
+        // outset by the blur's margin (`compute_bounds`, at most 128 px), and an image
+        // filter's layer over what the blur needs for the clip bounds, so a shape beyond
+        // the edge still blurs in. The layer gets that margin on every side.
+        let sigma_max = paint
+            .mask_blur
+            .unwrap_or(0.0)
+            .max(paint.image_blur.map_or(0.0, |(sx, sy)| sx.max(sy)));
+        let pad = blur::blur_outset(sigma_max).clamp(0, 128) as u32;
+        let (lw, lh) = (w + 2 * pad, h + 2 * pad);
+        let lm = Transform::from_translate(pad as f32, pad as f32).pre_concat(matrix);
         let mut lp = ts_paint.clone();
         lp.blend_mode = tiny_skia::BlendMode::SourceOver;
-        let saved = std::mem::replace(&mut self.pm, Pixmap::new(w, h).unwrap());
+        let saved = std::mem::replace(&mut self.pm, Pixmap::new(lw, lh).unwrap());
         for o in &outlines {
-            self.fill_outline(o, &lp, matrix, None, paint.aa);
+            self.fill_outline(o, &lp, lm, None, paint.aa);
         }
         if hairline {
-            stroke_hairline(&mut self.pm, path, &lp, &stroke, matrix, None);
+            stroke_hairline(&mut self.pm, path, &lp, &stroke, lm, None);
         }
         let layer = std::mem::replace(&mut self.pm, saved);
         let mut px = pixmap_pixels(&layer);
+        let (lwi, lhi) = (lw as i32, lh as i32);
         if let Some(sigma) = paint.mask_blur {
-            px = blur::mask_blur_layer(&px, w as i32, h as i32, sigma);
+            px = blur::mask_blur_layer(&px, lwi, lhi, sigma);
         }
         if let Some((sx, sy)) = paint.image_blur {
-            px = blur::blur_premul(&px, w as i32, h as i32, 0, 0, w as i32, h as i32, sx, sy);
+            px = blur::blur_premul(&px, lwi, lhi, 0, 0, lwi, lhi, sx, sy);
+        }
+        if pad > 0 {
+            let (pad, lw) = (pad as usize, lw as usize);
+            px = (0..h as usize)
+                .flat_map(|y| {
+                    let row = (y + pad) * lw + pad;
+                    px[row..row + w as usize].to_vec()
+                })
+                .collect();
         }
         self.composite(&px, paint.blend, paint.color_filter.as_ref(), 1.0);
     }
@@ -1389,16 +1431,7 @@ fn stroke_hairline(
     let coverage_width = if stroke.width <= 0.0 {
         0.0
     } else {
-        let fast_len = |x: f32, y: f32| {
-            let (mut a, mut b) = (x.abs(), y.abs());
-            if a < b {
-                std::mem::swap(&mut a, &mut b);
-            }
-            a + b * 0.5
-        };
-        let l0 = fast_len(m.sx * stroke.width, m.ky * stroke.width);
-        let l1 = fast_len(m.kx * stroke.width, m.sy * stroke.width);
-        (l0 + l1) * 0.5
+        hairline_coverage(stroke.width, m)
     };
     let b = dev.bounds();
     const PAD: i32 = 3;
@@ -1638,6 +1671,21 @@ fn thin_stroke(width: f32, m: Transform) -> bool {
     let l0 = fast_len(m.sx * width, m.ky * width);
     let l1 = fast_len(m.kx * width, m.sy * width);
     l0 <= 1.0 && l1 <= 1.0
+}
+
+/// `SkDrawTreatAsHairline`'s coverage of a thin stroke: the mean of the two mapped
+/// width vectors' fast lengths.
+fn hairline_coverage(width: f32, m: Transform) -> f32 {
+    let fast_len = |x: f32, y: f32| {
+        let (mut a, mut b) = (x.abs(), y.abs());
+        if a < b {
+            std::mem::swap(&mut a, &mut b);
+        }
+        a + b * 0.5
+    };
+    let l0 = fast_len(m.sx * width, m.ky * width);
+    let l1 = fast_len(m.kx * width, m.sy * width);
+    (l0 + l1) * 0.5
 }
 
 fn matrix_scale(m: Transform) -> f32 {
