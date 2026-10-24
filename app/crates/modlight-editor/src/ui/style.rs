@@ -1221,10 +1221,9 @@ pub fn numeric_box(
     let mut out = None;
     if response.changed() {
         ui.data_mut(|d| d.insert_temp(id, text.clone()));
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
+        if text.trim().is_empty() {
             out = Some(None);
-        } else if let Ok(v) = trimmed.replace(',', ".").parse::<f64>() {
+        } else if let Some(v) = parse_numeric_text(&text) {
             out = Some(Some(v.clamp(min, max)));
         }
     }
@@ -1255,4 +1254,29 @@ pub fn numeric_box(
         }
     }
     out
+}
+
+/// What a `NumericUpDown` takes from its text: a number, with a comma or a point.
+/// `decimal.TryParse` has no NaN or infinity; Rust's `f64` parse reads both, and a NaN
+/// would pass every clamp.
+pub fn parse_numeric_text(text: &str) -> Option<f64> {
+    text.trim()
+        .replace(',', ".")
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn numeric_boxes_take_numbers_only() {
+        assert_eq!(parse_numeric_text(" 12,5 "), Some(12.5));
+        assert_eq!(parse_numeric_text("-3"), Some(-3.0));
+        for text in ["nan", "NaN", "inf", "-infinity", "1e999", "abc"] {
+            assert_eq!(parse_numeric_text(text), None, "{text}");
+        }
+    }
 }
