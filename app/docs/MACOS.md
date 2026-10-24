@@ -222,6 +222,15 @@ Everything not listed behaves as upstream does. The per-screen state is in
   is removed that run, since nobody knows which of them it still needs. Upstream read it
   as an empty queue, overwrote it on the next change and deleted every spooled capture
   (`modlight_core::upload::store`, test `an_unreadable_queue_file_is_kept_and_so_is_the_spool`).
+- **"Delete file locally" waits for the upload to succeed.** In a task that uploads, the
+  after-capture task deletes the file only once the upload went through. When the upload
+  failed, was refused, was stopped or cancelled (the before-upload window, the large-file
+  question), was handed to the offline queue, or could not run (uploads switched off), the
+  file stays, so it can be retried. A task with no upload step deletes the file as
+  before. This is the meaning the fork's own sign-in gate and queue give the flag
+  ("delete it once it is safely uploaded"). Upstream deleted the file whatever became of
+  the upload (`modlight_core::tasks::worker`, test
+  `delete_file_locally_waits_for_the_upload_to_succeed`).
 - **Live upload refusals** are read as soon as the server answers, without sending the
   rest of the body (upstream wrote the whole file first). A file name containing `"`,
   CR or LF goes out percent-encoded in the multipart header.
