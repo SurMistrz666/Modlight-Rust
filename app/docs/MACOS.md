@@ -261,7 +261,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
   Page Up and Page Down reorder only the annotation shown as selected; upstream's keys
   reordered the one the core still remembered from an undone step. When the exit
   confirmation's "Yes" cannot save the picture, the error is shown and the editor stays
-  open; upstream closed after the error and the picture was lost.
+  open; upstream closed after the error and the picture was lost. Moving, resizing,
+  rotating, restyling or retyping an annotation leaves no undo step (as upstream) but
+  counts as an unsaved change: upstream marked only undoable steps, so these edits made
+  after a save were dropped on close without the exit confirmation.
 
 ## Image editor
 

@@ -844,6 +844,7 @@ fn handle_resize(e: &mut Editor, tag: HandleTag, current: Point, shift: bool) {
     }
     if let Some(slot) = e.core.annotation_mut(id) {
         *slot = a;
+        e.is_dirty = true;
     }
     e.input.sel.start_point = current;
     if refresh_effect {
@@ -982,6 +983,7 @@ fn handle_move(e: &mut Editor, current: Point) {
     if let Some(a) = e.core.annotation_mut(id) {
         a.translate(dx, dy);
         is_effect = a.is_effect();
+        e.is_dirty |= dx != 0.0 || dy != 0.0;
     }
     e.input.sel.last_drag_point = current;
     if is_effect {
@@ -1091,8 +1093,10 @@ pub fn commit_text_edit(e: &mut Editor) {
     }
     if let Some(a) = e.core.annotation_mut(edit.id)
         && let Some(t) = a.text_data_mut()
+        && t.text != edit.text
     {
         t.text = edit.text;
+        e.is_dirty = true;
     }
     e.invalidate();
 }
@@ -2435,6 +2439,79 @@ mod tests {
         let a = &e.core.annotations()[0];
         assert!(a.bounds().width() > 100.0);
         assert_eq!(e.selected(), Some(a.id));
+    }
+
+    /// Edits that leave no undo step (moving, resizing, restyling, retyping) are unsaved
+    /// changes too: after a save, closing asks again instead of dropping them.
+    /// Selecting an annotation changes nothing.
+    #[test]
+    fn edits_without_an_undo_step_ask_before_closing() {
+        let mut e = editor();
+        e.select_tool(EditorTool::Rectangle);
+        drag(
+            &mut e,
+            Point::new(10.0, 10.0),
+            Point::new(110.0, 60.0),
+            Modifiers::NONE,
+        );
+        let id = e.core.annotations()[0].id;
+        let saved = |e: &mut Editor| {
+            e.is_dirty = false;
+        };
+        e.select_tool(EditorTool::Select);
+        saved(&mut e);
+        set_selected_shape(&mut e, id);
+        assert!(!e.is_dirty, "selecting is not an edit");
+        drag(
+            &mut e,
+            Point::new(50.0, 30.0),
+            Point::new(70.0, 40.0),
+            Modifiers::NONE,
+        );
+        assert!(e.is_dirty, "moved");
+
+        saved(&mut e);
+        drag(
+            &mut e,
+            Point::new(130.0, 70.0),
+            Point::new(150.0, 90.0),
+            Modifiers::NONE,
+        );
+        assert!(e.is_dirty, "resized");
+
+        saved(&mut e);
+        move_selected(&mut e, 1.0, 0.0);
+        assert!(e.is_dirty, "nudged");
+
+        saved(&mut e);
+        e.set_selected_color("#FF00FF00");
+        assert!(e.is_dirty, "recoloured");
+
+        saved(&mut e);
+        e.request_close(false);
+        assert!(e.take_requests().contains(&Request::Close));
+
+        e.select_tool(EditorTool::Text);
+        pointer_pressed(
+            &mut e,
+            Point::new(200.0, 200.0),
+            Button::Left,
+            Modifiers::NONE,
+            1,
+        );
+        e.text_editing.as_mut().unwrap().text = "Hello".into();
+        commit_text_edit(&mut e);
+        let text = e.core.annotations().last().unwrap().id;
+        saved(&mut e);
+        show_text_editor(&mut e, text);
+        commit_text_edit(&mut e);
+        assert!(!e.is_dirty, "opened and closed unchanged");
+        show_text_editor(&mut e, text);
+        e.text_editing.as_mut().unwrap().text = "Hello world".into();
+        commit_text_edit(&mut e);
+        assert!(e.is_dirty, "retyped");
+        e.request_close(false);
+        assert_eq!(e.modal, Some(Modal::Confirmation));
     }
 
     /// A duplicate or a pasted copy is the same shape 20 pixels away: a bent line's

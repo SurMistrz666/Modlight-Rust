@@ -367,11 +367,13 @@ impl Editor {
         self.input.sel.selected
     }
 
-    /// Applies a change to the selected annotation (the view's `Apply*`).
+    /// Applies a change to the selected annotation (the view's `Apply*`). It leaves no
+    /// undo step, but it is an unsaved change (upstream did not mark it).
     pub(crate) fn with_selected(&mut self, f: impl FnOnce(&mut Annotation)) {
         if let Some(id) = self.input.sel.selected {
             if let Some(a) = self.core.annotation_mut(id) {
                 f(a);
+                self.is_dirty = true;
             } else if let Some(p) = self.input.pending.as_mut().filter(|p| p.id == id) {
                 f(p);
             }
