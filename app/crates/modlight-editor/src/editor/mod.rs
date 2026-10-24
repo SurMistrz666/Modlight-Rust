@@ -683,10 +683,10 @@ impl Editor {
         self.pump();
     }
 
+    /// The core reorders what the view shows as selected, and nothing when nothing is:
+    /// a memento restored by undo leaves the core with a selection the view cleared.
     fn sync_core_selection(&mut self) {
-        if let Some(id) = self.input.sel.selected {
-            self.core.select(Some(id));
-        }
+        self.core.select(self.input.sel.selected);
     }
 
     /// `OnCopyRequested`: the annotation goes to the editor's own clipboard; the system
@@ -1279,15 +1279,11 @@ pub enum InsertPlacement {
     CanvasExpandRight,
 }
 
-/// Paste and duplicate move only the start and end points and freehand points.
+/// Paste and duplicate put the copy 20 pixels down and right, all of it: upstream moved
+/// only the end points and freehand points, leaving a bent line's curve point and a
+/// step's or balloon's tail where the original's were.
 fn offset_clone(a: &mut Annotation, offset: f32) {
-    a.start = a.start.offset(offset, offset);
-    a.end = a.end.offset(offset, offset);
-    if let Some(points) = a.freehand_points_mut() {
-        for p in points.iter_mut() {
-            *p = p.offset(offset, offset);
-        }
-    }
+    a.translate(offset, offset);
 }
 
 /// `BuildImageSizeNotification`.

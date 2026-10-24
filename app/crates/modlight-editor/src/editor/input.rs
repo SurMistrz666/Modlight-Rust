@@ -2429,6 +2429,85 @@ mod tests {
         assert_eq!(e.selected(), Some(a.id));
     }
 
+    /// A duplicate or a pasted copy is the same shape 20 pixels away: a bent line's
+    /// curve point and a step's or balloon's tail move with it.
+    #[test]
+    fn duplicates_and_pastes_keep_curves_and_tails() {
+        let mut e = editor();
+        let mut line = Annotation::line();
+        line.start = Point::new(10.0, 100.0);
+        line.end = Point::new(200.0, 100.0);
+        model::set_curve_point(&mut line, Point::new(105.0, 150.0));
+        let id = line.id;
+        e.core.add_annotation(line);
+        set_selected_shape(&mut e, id);
+        e.duplicate_selected();
+        let copy = e.core.annotations().last().unwrap();
+        assert_ne!(copy.id, id);
+        assert_eq!(copy.curve().unwrap().point, Point::new(125.0, 170.0));
+
+        let mut step = Annotation::number();
+        step.start = Point::new(50.0, 50.0);
+        set_number_tail(&mut step, Point::new(90.0, 120.0));
+        let id = step.id;
+        e.core.add_annotation(step);
+        set_selected_shape(&mut e, id);
+        e.copy_annotation();
+        e.paste_annotation();
+        let pasted = e.core.annotations().last().unwrap();
+        assert_eq!(pasted.start, Point::new(70.0, 70.0));
+        assert_eq!(model::number_tail_handle(pasted), Point::new(110.0, 140.0));
+
+        let mut balloon = Annotation::speech_balloon();
+        balloon.start = Point::new(100.0, 100.0);
+        balloon.end = Point::new(200.0, 150.0);
+        set_balloon_tail(&mut balloon, Point::new(60.0, 220.0));
+        let id = balloon.id;
+        e.core.add_annotation(balloon);
+        set_selected_shape(&mut e, id);
+        commit_text_edit(&mut e);
+        e.duplicate_selected();
+        let copy = e.core.annotations().last().unwrap();
+        assert_eq!(balloon_effective_tail_point(copy), Point::new(80.0, 240.0));
+    }
+
+    /// Home, End, Page Up and Page Down move the selected annotation only. After an
+    /// undo the core still remembered the annotation selected when its memento was
+    /// made, while nothing showed as selected; the keys reordered that one.
+    #[test]
+    fn z_order_keys_need_a_selection() {
+        let mut e = editor();
+        e.select_tool(EditorTool::Rectangle);
+        drag(
+            &mut e,
+            Point::new(10.0, 10.0),
+            Point::new(60.0, 60.0),
+            Modifiers::NONE,
+        );
+        drag(
+            &mut e,
+            Point::new(100.0, 10.0),
+            Point::new(160.0, 60.0),
+            Modifiers::NONE,
+        );
+        let order: Vec<AnnotationId> = e.core.annotations().iter().map(|a| a.id).collect();
+        set_selected_shape(&mut e, order[0]);
+        e.delete_selected();
+        e.undo();
+        assert_eq!(e.selected(), None);
+        for key in [
+            egui::Key::Home,
+            egui::Key::End,
+            egui::Key::PageUp,
+            egui::Key::PageDown,
+        ] {
+            key_down(&mut e, key, egui::Modifiers::NONE);
+            let now: Vec<AnnotationId> = e.core.annotations().iter().map(|a| a.id).collect();
+            assert_eq!(now, order, "{key:?} reordered an unselected annotation");
+        }
+        assert!(e.core.can_redo(), "the undo was replaced by a reorder");
+    }
+
     #[test]
     fn auto_copy_asks_for_one_plain_copy_per_change() {
         let mut e = editor();
