@@ -288,16 +288,19 @@ fn main() -> ExitCode {
     {
         viewport = viewport.with_decorations(false);
     }
-    let remembered_size = bounds
-        .size
-        .filter(|_| bounds.remember_size)
-        .map(|(w, h)| vec2(w as f32, h as f32).max(MAIN_MIN_SIZE));
+    // `RestoreWindowBounds`: the remembered size and place, on a screen that exists.
+    let (remembered_size, remembered) = modlight_core::config::restore_main_window(
+        &bounds,
+        (MAIN_SIZE.x, MAIN_SIZE.y),
+        (MAIN_MIN_SIZE.x, MAIN_MIN_SIZE.y),
+        &platform::system::visible_frames(),
+    );
+    let remembered_size = remembered_size.map(|(w, h)| vec2(w, h));
     if let Some(size) = remembered_size {
         viewport = viewport.with_inner_size(size);
     }
-    let remembered = bounds.position.filter(|_| bounds.remember_position);
     if let Some((x, y)) = remembered {
-        viewport = viewport.with_position(egui::pos2(x as f32, y as f32));
+        viewport = viewport.with_position(egui::pos2(x, y));
     }
     // `WindowStartupLocation="CenterScreen"`.
     #[cfg(windows)]

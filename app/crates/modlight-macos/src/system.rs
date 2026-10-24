@@ -1,6 +1,8 @@
 //! What the system says, and the few things the app asks it to do.
 
-pub use crate::windows::{active_window_fullscreen, show_app_windows, visible_frame};
+pub use crate::windows::{
+    active_window_fullscreen, show_app_windows, visible_frame, visible_frames,
+};
 
 use std::path::Path;
 use std::process::{Command, Stdio};

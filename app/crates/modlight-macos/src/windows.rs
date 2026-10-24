@@ -51,6 +51,41 @@ pub fn visible_frame() -> Option<(f32, f32, f32, f32)> {
     None
 }
 
+/// Every screen's area free of the menu bar and the Dock, in points, origin at the top
+/// left of the primary screen (the one with the menu bar, where winit's window positions
+/// start too): (x, y, width, height), the primary screen first. Empty off the main thread.
+#[cfg(target_os = "macos")]
+pub fn visible_frames() -> Vec<(f32, f32, f32, f32)> {
+    use objc2_app_kit::NSScreen;
+    use objc2_foundation::MainThreadMarker;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return Vec::new();
+    };
+    let screens = NSScreen::screens(mtm);
+    // AppKit's origin is the bottom left of the primary screen, y up.
+    let Some(primary_height) = screens.iter().next().map(|s| s.frame().size.height) else {
+        return Vec::new();
+    };
+    screens
+        .iter()
+        .map(|screen| {
+            let visible = screen.visibleFrame();
+            (
+                visible.origin.x as f32,
+                (primary_height - (visible.origin.y + visible.size.height)) as f32,
+                visible.size.width as f32,
+                visible.size.height as f32,
+            )
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn visible_frames() -> Vec<(f32, f32, f32, f32)> {
+    Vec::new()
+}
+
 /// Whether the active app shows a window in full screen
 /// (`CaptureHelpers.IsActiveWindowFullscreen`): the presentation options the active
 /// app put into effect include full screen. `false` off the main thread.

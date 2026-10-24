@@ -46,6 +46,22 @@ pub struct ModlightApp {
     /// Windows: the taskbar button's progress (`TaskbarManager`).
     #[cfg(windows)]
     taskbar: Option<crate::win32::TaskbarProgress>,
+    /// When the main window's bounds last changed and are not on disk yet (UI seconds).
+    bounds_changed_at: Option<f64>,
+}
+
+/// How long the main window's bounds must stay put before they are written to disk.
+const BOUNDS_SAVE_DELAY: f64 = 1.0;
+
+/// What a frame says about the main window (`WindowState`, `Position`, `ClientSize`).
+pub fn window_snapshot(info: &egui::ViewportInfo) -> modlight_core::config::WindowSnapshot {
+    modlight_core::config::WindowSnapshot {
+        minimized: info.minimized == Some(true),
+        maximized: info.maximized == Some(true),
+        fullscreen: info.fullscreen == Some(true),
+        position: info.outer_rect.map(|r| (r.min.x, r.min.y)),
+        size: info.inner_rect.map(|r| (r.width(), r.height())),
+    }
 }
 
 /// The app icon (`ShareX/Modlight_Icon.ico`), decoded at its largest.
@@ -91,6 +107,7 @@ impl ModlightApp {
             start_hidden: false,
             #[cfg(windows)]
             taskbar: None,
+            bounds_changed_at: None,
         };
         if mode != Mode::Shot {
             app.start(ctx);
@@ -914,12 +931,41 @@ impl ModlightApp {
         }
     }
 
+    /// `QueueWindowBoundsSave`: the main window's bounds go into the settings as they
+    /// change, and to disk once they have stayed put for a moment (a drag changes them
+    /// every frame), so an exit that never reaches `on_exit` (the menu bar's Exit on a
+    /// Mac) keeps them too. Only a window a person sees.
+    fn track_window_bounds(&mut self, ctx: &egui::Context) {
+        if !matches!(self.mode, Mode::Normal | Mode::Qa) {
+            return;
+        }
+        let (snapshot, now) = ctx.input(|i| (window_snapshot(i.viewport()), i.time));
+        if self.state.config.record_main_window(&snapshot) {
+            self.bounds_changed_at = Some(now);
+        }
+        let Some(changed_at) = self.bounds_changed_at else {
+            return;
+        };
+        let waited = now - changed_at;
+        if waited >= BOUNDS_SAVE_DELAY {
+            self.bounds_changed_at = None;
+            if let Err(error) = self.state.config.save() {
+                log::warn!("Modlight: settings could not be saved: {error}");
+            }
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                BOUNDS_SAVE_DELAY - waited,
+            ));
+        }
+    }
+
     /// One frame of the whole app, drawn into `ui` (the main window).
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         if std::mem::take(&mut self.start_hidden) && self.tray.is_some() {
             ctx.send_viewport_cmd(ViewportCommand::Visible(false));
         }
+        self.track_window_bounds(&ctx);
         self.before(&ctx);
         self.handle_close(&ctx);
         crate::shell::ui(ui, &mut self.state, self.logo.as_ref());
@@ -1065,4 +1111,38 @@ pub(crate) fn dialog_resizable<R>(
         let close = ui.ctx().input(|i| i.viewport().close_requested());
         (add(ui), close)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The main window's frame report becomes what `SaveWindowBounds` records: the
+    /// frame's top left corner and the client area's size, with the window's state.
+    #[test]
+    fn a_frame_reports_the_main_window_as_upstream_reads_it() {
+        let info = egui::ViewportInfo {
+            outer_rect: Some(Rect::from_min_size(pos2(120.0, 80.0), vec2(1040.0, 748.0))),
+            inner_rect: Some(Rect::from_min_size(pos2(120.0, 108.0), vec2(1040.0, 720.0))),
+            minimized: Some(false),
+            maximized: Some(false),
+            fullscreen: Some(false),
+            ..Default::default()
+        };
+        let snapshot = window_snapshot(&info);
+        assert_eq!(snapshot.position, Some((120.0, 80.0)));
+        assert_eq!(snapshot.size, Some((1040.0, 720.0)));
+        let mut config = modlight_core::config::AppConfig::in_memory();
+        assert!(config.record_main_window(&snapshot));
+        let bounds = config.main_window();
+        assert_eq!(bounds.size, Some((1040, 720)));
+        assert_eq!(bounds.position, Some((120, 80)));
+        // A minimised window reports no rectangles and records nothing.
+        let minimized = window_snapshot(&egui::ViewportInfo {
+            minimized: Some(true),
+            ..Default::default()
+        });
+        assert!(minimized.minimized && minimized.size.is_none());
+        assert!(!config.record_main_window(&minimized));
+    }
 }
