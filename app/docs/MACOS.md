@@ -181,6 +181,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
   size a file claimed.
 - **Deleting the folder you stand in** reloads the folder list; upstream loses that
   refresh and keeps showing the deleted folder until the next reload.
+- **A page emptied by trashing, restoring, deleting or moving its files** is listed
+  again, at the same page or the last one that still exists, when the listing has other
+  files. Upstream leaves an empty grid under a bar that has already clamped itself to the
+  new last page, so that page's button does nothing until Refresh.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
   server's origin, and a request with the wrong `state` is answered and ignored instead
   of ending the sign-in. `Access-Control-Allow-Private-Network: true` is granted, but only
