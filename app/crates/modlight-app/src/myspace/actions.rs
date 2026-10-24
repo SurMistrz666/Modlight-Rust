@@ -119,6 +119,7 @@ impl AppState {
     fn start_listing(&mut self, credential: Credential, reload_folders: bool, target: i64) {
         self.space.generation += 1;
         self.clear_listing();
+        self.media.serve_host(&credential.host);
         self.space.identity = identity_of(&credential);
         self.space.total = 0;
         self.space.page = target.max(1);
@@ -1724,6 +1725,42 @@ pub(crate) mod tests {
         state.space.loaded_once = true;
         state.space_select_view(1);
         assert_eq!(state.config.last_folder_id(), "", "a kind is no folder");
+    }
+
+    /// Codes are unique on one server only: another deployment can have a file called
+    /// "logo" too. The session's preview caches do not carry one server's pictures over
+    /// to another's files.
+    #[test]
+    fn another_server_does_not_see_this_ones_cached_previews() {
+        let mut state = state_on("http://127.0.0.1:1");
+        state.space_refresh_account();
+        state
+            .media
+            .bytes
+            .put("logo", std::sync::Arc::new(b"one".to_vec()));
+        state
+            .media
+            .motion_bytes
+            .put("logo", std::sync::Arc::new(b"one".to_vec()));
+        state.media.motion_bytes.refuse("clip");
+
+        // The same server again (signed out and back in): its pictures stay.
+        state.space_signed_out();
+        state.space_refresh_account();
+        assert!(state.media.bytes.get("logo").is_some());
+
+        state.account = AccountStore::in_memory(
+            StoredAccount {
+                host: "http://127.0.0.2:1".into(),
+                tag: "sam".into(),
+                ..StoredAccount::default()
+            },
+            "another-token",
+        );
+        state.space_refresh_account();
+        assert!(state.media.bytes.get("logo").is_none());
+        assert!(state.media.motion_bytes.get("logo").is_none());
+        assert!(!state.media.motion_bytes.is_refused("clip"));
     }
 
     /// The preview caches are keyed by code, and a custom URL frees the old code for any

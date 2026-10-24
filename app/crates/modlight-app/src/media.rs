@@ -206,6 +206,9 @@ pub struct Media {
     /// The listing's token (`MySpaceViewModel.listing`): every preview fetch for the
     /// grid on screen carries it, and a new listing cancels it.
     pub listing: tokio_util::sync::CancellationToken,
+    /// The server whose files `bytes` and `motion_bytes` hold: codes are unique on one
+    /// server only.
+    pub cache_host: String,
 }
 
 impl Default for Media {
@@ -221,6 +224,7 @@ impl Default for Media {
             preview: None,
             preview_generation: 0,
             listing: tokio_util::sync::CancellationToken::new(),
+            cache_host: String::new(),
         }
     }
 }
@@ -236,6 +240,16 @@ impl Media {
         self.budget.clear();
         self.queue.reset();
         self.motion = MotionPlayer::default();
+    }
+
+    /// The grid now lists `host`'s files: what the session cached for another server's
+    /// codes is not theirs.
+    pub fn serve_host(&mut self, host: &str) {
+        if self.cache_host != host {
+            self.bytes.clear();
+            self.motion_bytes.clear();
+            self.cache_host = host.to_string();
+        }
     }
 
     pub fn forget(&mut self, id: &str) {
