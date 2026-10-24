@@ -6,7 +6,7 @@
 //! their header and description, and are filled in the phases that bring their
 //! features (see `docs/STATUS.md`).
 
-use egui::{Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Id, Rect, Sense, Stroke, Ui, pos2, vec2};
 use modlight_api::AccountInfo;
 use modlight_core::format::cloud_size;
 use modlight_core::icons;
@@ -1904,25 +1904,35 @@ fn theme_page(ui: &mut Ui, state: &mut AppState, colors: &Colors) {
                 colors,
                 t(s::ApplicationSettingsWindow_AccentColorLabel),
                 |ui| {
-                    let accent = crate::theme::rgba(state.options.accent_color());
+                    // `ColorPickerDropdown` bound to `AccentColor` (MinWidth 130).
+                    let accent = state.options.accent_color();
                     let (r, _) = ui.allocate_exact_size(vec2(130.0, 32.0), Sense::hover());
-                    ui.painter()
-                        .rect_filled(r, 6.0, colors.control_background());
-                    ui.painter().rect_stroke(
-                        r,
-                        6.0,
-                        Stroke::new(1.0, colors.border()),
-                        StrokeKind::Inside,
+                    let editor_colors = modlight_editor::ui::style::Colors {
+                        dark: colors.dark,
+                        palette: colors.palette,
+                    };
+                    let current = modlight_editor::color::Color::argb(
+                        accent.a(),
+                        accent.r(),
+                        accent.g(),
+                        accent.b(),
                     );
-                    let swatch = Rect::from_min_size(r.min + vec2(6.0, 6.0), vec2(20.0, 20.0));
-                    ui.painter().rect_filled(swatch, 4.0, accent);
-                    let hex = state.options.accent_color_hex.clone();
-                    let g = layout(ui, job(&hex, 13.0, Weight::Normal, colors.text()));
-                    ui.painter().galley(
-                        pos2(swatch.right() + 8.0, r.center().y - g.size().y / 2.0),
-                        g,
-                        colors.text(),
-                    );
+                    if let Some(modlight_editor::ui::pickers::ColorEvent::Picked(c)) =
+                        modlight_editor::ui::pickers::color_dropdown(
+                            ui,
+                            &editor_colors,
+                            Id::new("accent-color"),
+                            r,
+                            current,
+                            false,
+                            false,
+                            true,
+                            "",
+                        )
+                    {
+                        set_accent_color(&mut state.options, c);
+                        changed = true;
+                    }
                 },
             );
         }
@@ -1931,6 +1941,15 @@ fn theme_page(ui: &mut Ui, state: &mut AppState, colors: &Colors) {
         state.refresh_theme(Some(ui.ctx()));
         state.save_config();
     }
+}
+
+/// `ApplicationThemeOptions.AccentColor`'s setter: the picked colour as `#AARRGGBB`.
+fn set_accent_color(
+    options: &mut modlight_core::theme::ThemeOptions,
+    color: modlight_editor::color::Color,
+) {
+    options.accent_color_hex =
+        modlight_core::theme::Rgba([color.r, color.g, color.b, color.a]).to_hex_argb();
 }
 
 /// Carry out what the window asked for.
@@ -1988,5 +2007,35 @@ pub fn task_page_ask(
         | A::EditAction(_)
         | A::EditWatchFolder(_)
         | A::PickScreenshotsFolder => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The accent colour picked on the Theme page is stored as upstream's `AccentColor`
+    /// setter writes it (`#AARRGGBB`) and read back as that colour; a transparent pick
+    /// reads as the brand default, as upstream's getter does.
+    #[test]
+    fn a_picked_accent_colour_is_stored_like_upstream_stores_it() {
+        let mut options = modlight_core::theme::ThemeOptions::default();
+        set_accent_color(
+            &mut options,
+            modlight_editor::color::Color::argb(255, 0x10, 0x89, 0x3E),
+        );
+        assert_eq!(options.accent_color_hex, "#FF10893E");
+        assert_eq!(
+            options.accent_color(),
+            modlight_core::theme::Rgba([0x10, 0x89, 0x3E, 255])
+        );
+        assert!(!options.is_accent_default());
+        set_accent_color(&mut options, modlight_editor::color::Color::TRANSPARENT);
+        assert_eq!(options.accent_color_hex, "#00000000");
+        assert_eq!(
+            options.accent_color(),
+            modlight_core::theme::Rgba::parse(modlight_core::theme::DEFAULT_ACCENT_COLOR_HEX)
+                .unwrap()
+        );
     }
 }
