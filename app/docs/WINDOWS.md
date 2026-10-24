@@ -79,7 +79,7 @@ what it did.
 | Pictures the `image` crate cannot read | WIC, refused above the app's size limits before any pixel is decoded | |
 | YouTube sign-in (WebView2) | WebView2 (`webview2-com`, static loader) in a window of its own, an InPrivate profile in a temporary folder deleted afterwards, upstream's done-rule | Needs the WebView2 runtime (part of Windows 11 and updated Windows 10). Not yet tried with a real Google account. |
 | Components (`ModlightComponent`) | Upstream's pins for FFmpeg 8.1 and yt-dlp, by architecture; ExifTool 13.59 win64 from exiftool.org (upstream's 13.29 download no longer exists), its `exiftool(-k).exe` renamed `exiftool.exe` | Sizes and SHA-256 in `docs/handoff/win-core.md`. Tools are found beside the exe, in `<profile>\Tools`, then on PATH. |
-| App updates | A verified `.exe` or `.zip` is downloaded and shown in Explorer, never run by the port | As the macOS port does with its `.dmg`. |
+| App updates (`DownloaderWindow`) | Upstream's for an installer: the verified `.exe` starts with `/UPDATE` through the shell (Install starts it again after a declined elevation), then Modlight quits to make way for it. A verified `.zip` (the folder `build-app.ps1` makes) has nothing to run: the question is upstream's portable one and the file is shown in Explorer | The `.zip` is handled as the macOS port handles its `.dmg`/`.zip`. |
 
 ## Texts
 
