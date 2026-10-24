@@ -256,7 +256,10 @@ Everything not listed behaves as upstream does. The per-screen state is in
   default tail once with its body (upstream took the tail after moving the body and moved
   it again; it hid this by fixing the tail on first selection). A cut-out through an
   annotation keeps the part before the strip and closes up the rest; upstream moved the
-  whole annotation back by the strip's width.
+  whole annotation back by the strip's width. Duplicate and paste move the whole copy
+  20 pixels, curve point and tails included (upstream moved only the ends). Home, End,
+  Page Up and Page Down reorder only the annotation shown as selected; upstream's keys
+  reordered the one the core still remembered from an undone step.
 
 ## Image editor
 
