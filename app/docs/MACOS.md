@@ -210,6 +210,11 @@ Everything not listed behaves as upstream does. The per-screen state is in
   followed them in the library client). A stored tus session URL is moved onto the
   account's current origin before every request, so the token can never follow a
   `Location` to another host.
+- **A stored resumable session is kept when asking about it gets no real answer.** A `HEAD`
+  of the session answered 408, 429, 502, 503 or 504 (the queue's "never reached the
+  application") ends the attempt as that server error and the next attempt asks again;
+  upstream took any refusal of that `HEAD` for a forgotten session and sent the whole
+  file again from zero (`modlight_api::tus`, test `a_busy_server_does_not_cost_a_stored_session`).
 - **Live upload refusals** are read as soon as the server answers, without sending the
   rest of the body (upstream wrote the whole file first). A file name containing `"`,
   CR or LF goes out percent-encoded in the multipart header.
