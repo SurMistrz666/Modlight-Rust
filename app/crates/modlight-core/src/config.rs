@@ -188,12 +188,26 @@ impl AppConfig {
     /// Load (or start) the settings in `profile`, falling back to what the last saves
     /// left when a file does not read (`SettingsBase.Load`).
     pub fn load(profile: &Path) -> AppConfig {
+        AppConfig::load_with(profile, true)
+    }
+
+    /// `Load(filePath, backupFolder, fallbackSupport)`: without fallback support (what
+    /// `ResetSettings` asks for) a file that does not read starts from the defaults, and
+    /// the copies in `Backup` are left alone.
+    pub fn load_with(profile: &Path, fallback: bool) -> AppConfig {
         let path = profile.join(APPLICATION_CONFIG_FILE);
         let hotkeys_path = profile.join(HOTKEYS_CONFIG_FILE);
         let backup = profile.join(BACKUP_FOLDER);
+        let read = |file: &Path| {
+            if fallback {
+                load_settings_file(file, &backup)
+            } else {
+                read_object(file)
+            }
+        };
         AppConfig {
-            values: load_settings_file(&path, &backup).unwrap_or_default(),
-            hotkeys: load_settings_file(&hotkeys_path, &backup),
+            values: read(&path).unwrap_or_default(),
+            hotkeys: read(&hotkeys_path),
             path: Some(path),
             hotkeys_path: Some(hotkeys_path),
         }
