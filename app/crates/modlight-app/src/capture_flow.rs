@@ -156,6 +156,7 @@ impl AppState {
 
     /// Hotkeys pressed since the last frame, and those QA pressed. Whether any ran.
     pub fn pump_hotkeys(&mut self) -> bool {
+        self.end_orphaned_hotkey_capture();
         let mut pressed: Vec<HotkeySettings> = Vec::new();
         if self.mode == Mode::Normal && !self.env.qa {
             for id in crate::platform::hotkeys::SystemHotkeys::pressed() {
