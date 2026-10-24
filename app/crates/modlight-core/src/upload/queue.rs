@@ -293,6 +293,9 @@ struct Shared {
     network: Arc<dyn Fn() -> bool + Send + Sync>,
     clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
     started: Mutex<bool>,
+    /// The runtime the worker runs on, for work started from other threads (the
+    /// window's Cancel abandons a session from the UI thread, which has none).
+    runtime: Mutex<Option<tokio::runtime::Handle>>,
 }
 
 /// The offline queue. Cheap to clone; every clone is the same queue.
@@ -329,8 +332,34 @@ impl UploadQueue {
                 network,
                 clock: Arc::new(Utc::now),
                 started: Mutex::new(false),
+                runtime: Mutex::new(None),
             }),
         }
+    }
+
+    /// Remember the runtime the worker runs on.
+    fn remember_runtime(&self, runtime: Option<tokio::runtime::Handle>) {
+        if let Some(runtime) = runtime {
+            let mut slot = self
+                .shared
+                .runtime
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                *slot = Some(runtime);
+            }
+        }
+    }
+
+    /// A runtime to start background work on: this thread's, else the worker's.
+    fn runtime(&self) -> Option<tokio::runtime::Handle> {
+        tokio::runtime::Handle::try_current().ok().or_else(|| {
+            self.shared
+                .runtime
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        })
     }
 
     /// A queue whose clock is `clock` (tests).
@@ -378,14 +407,20 @@ impl UploadQueue {
             }
             *started = true;
         }
+        self.remember_runtime(Some(runtime.clone()));
         let queue = self.clone();
         runtime.spawn(async move { queue.run().await });
     }
 
     /// Read the file back without starting the worker (tests, and the first pump).
     pub fn restore(&self) {
-        let restored = self.shared.store.load(self.now());
-        self.shared.store.sweep_spool(&restored);
+        let loaded = self.shared.store.load_checked(self.now());
+        // A file that could not be read has been set aside with the uploads it describes;
+        // which spooled files they need is unknown, so none is removed this run.
+        if loaded.readable {
+            self.shared.store.sweep_spool(&loaded.items);
+        }
+        let restored = loaded.items;
         let count = restored.len();
         self.lock().items.extend(restored);
         if count > 0 {
@@ -574,6 +609,7 @@ impl UploadQueue {
 
     /// One pass of the worker (`Pump`), public for tests.
     pub async fn pump(&self) {
+        self.remember_runtime(tokio::runtime::Handle::try_current().ok());
         if self.count() == 0 {
             return;
         }
@@ -1033,8 +1069,13 @@ impl UploadQueue {
             return;
         };
         let transport = self.shared.transport.clone();
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move { transport.abandon(account, url).await });
+        // Off this thread, so a cancellation is instant (`ThreadPool.QueueUserWorkItem`).
+        // The window's Cancel arrives on a thread outside the runtime.
+        match self.runtime() {
+            Some(runtime) => {
+                runtime.spawn(async move { transport.abandon(account, url).await });
+            }
+            None => log::warn!("Modlight queue: no runtime to abandon a session on."),
         }
     }
 }

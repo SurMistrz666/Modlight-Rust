@@ -89,7 +89,18 @@ pub struct Uploads {
     /// The watched folders and the channel their files arrive on.
     pub watchers: Vec<modlight_core::watch::WatchFolder>,
     pub watch_events: Option<std::sync::mpsc::Receiver<(PathBuf, usize)>>,
-    pub watch_settings: Vec<modlight_core::watch::WatchFolderSettings>,
+    /// Each watched folder, by its index in the channel, and whose settings it runs with.
+    pub watch_settings: Vec<(modlight_core::watch::WatchFolderSettings, WatchSource)>,
+}
+
+/// Whose task settings a watched folder uploads with (`WatchFolder.TaskSettings`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum WatchSource {
+    /// `Program.DefaultTaskSettings`.
+    Defaults,
+    /// A hotkey's own `TaskSettings`, as stored; resolved against the defaults when a
+    /// file arrives (`GetSafeTaskSettings`).
+    Hotkey(serde_json::Value),
 }
 
 impl Uploads {
@@ -1101,6 +1112,19 @@ impl AppState {
     fn run_clipboard_content(&mut self, content: ClipboardContent, settings: TaskSettings) {
         match content {
             ClipboardContent::Files(files) => self.upload_files_with(files, settings),
+            // `ProcessImageUpload` -> `RunImageTask`: the quick task menu and the
+            // after-capture window first, when the task asks for them.
+            ClipboardContent::Image(image) => {
+                self.run_image_task(crate::capture_flow::PendingImage {
+                    metadata: modlight_core::tasks::info::TaskMetadata {
+                        image: Some(Arc::new(image)),
+                        ..Default::default()
+                    },
+                    settings: upload_manager::clipboard_image_settings(&settings),
+                    file: None,
+                    skip_quick_menu: false,
+                });
+            }
             other => {
                 let ctx = self.uploads.ctx.clone();
                 upload_manager::clipboard_upload(&mut self.uploads.tasks, other, &settings, &ctx);
@@ -1302,20 +1326,77 @@ impl AppState {
 
     // ------------------------------------------------------------------ watch folders
 
-    /// `WatchFolderManager.UpdateWatchFolders`: the default task settings' folders.
+    /// `WatchFolderManager.UpdateWatchFolders`: the folders to watch, and whose
+    /// settings each one runs with: the default task settings' folders, then every
+    /// hotkey's own (its settings window has a watch folders page). A list is watched
+    /// when its own `WatchFolderEnabled` is on (`watchFolder.Enable()`).
+    pub fn watch_folder_entries(
+        &self,
+    ) -> Vec<(modlight_core::watch::WatchFolderSettings, WatchSource)> {
+        let mut entries = Vec::new();
+        let settings = self.default_task_settings();
+        if settings.watch_folder_enabled {
+            entries.extend(
+                settings
+                    .watch_folder_list
+                    .into_iter()
+                    .map(|folder| (folder, WatchSource::Defaults)),
+            );
+        }
+        for hotkey in modlight_core::hotkeys::load(&self.config) {
+            let enabled = hotkey
+                .task
+                .get("WatchFolderEnabled")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
+            if !enabled {
+                continue;
+            }
+            let list: Vec<modlight_core::watch::WatchFolderSettings> = hotkey
+                .task
+                .get("WatchFolderList")
+                .and_then(|list| serde_json::from_value(list.clone()).ok())
+                .unwrap_or_default();
+            entries.extend(
+                list.into_iter()
+                    .map(|folder| (folder, WatchSource::Hotkey(hotkey.task.clone()))),
+            );
+        }
+        entries
+    }
+
+    /// The settings a file from a watched folder is uploaded with
+    /// (`TaskSettings.GetSafeTaskSettings(taskSettings)`).
+    pub fn watch_task_settings(&self, source: &WatchSource) -> TaskSettings {
+        match source {
+            WatchSource::Defaults => self.default_task_settings(),
+            WatchSource::Hotkey(task) => {
+                let defaults = self
+                    .config
+                    .get("DefaultTaskSettings")
+                    .cloned()
+                    .unwrap_or_default();
+                modlight_core::hotkeys::resolve_task_settings(task, &defaults)
+            }
+        }
+    }
+
+    /// `WatchFolderManager.UpdateWatchFolders`: start watching (never in QA or headless
+    /// runs, which must not read the person's folders).
     pub fn update_watch_folders(&mut self) {
         self.uploads.watchers.clear();
         self.uploads.watch_events = None;
+        self.uploads.watch_settings.clear();
         if self.env.qa || self.mode != crate::app::Mode::Normal {
             return;
         }
-        let settings = self.default_task_settings();
-        if !settings.watch_folder_enabled {
+        let entries = self.watch_folder_entries();
+        if entries.is_empty() {
             return;
         }
         let (sender, receiver) = std::sync::mpsc::channel();
         let waker = self.uploads.ctx.channel.clone();
-        for (index, folder) in settings.watch_folder_list.iter().enumerate() {
+        for (index, (folder, _)) in entries.iter().enumerate() {
             let sender = sender.clone();
             let waker = waker.clone();
             let path = modlight_core::tasks::naming::expand_folder_variables(
@@ -1333,7 +1414,7 @@ impl AppState {
                 Err(error) => log::warn!("Modlight: a watch folder could not be started: {error}"),
             }
         }
-        self.uploads.watch_settings = settings.watch_folder_list.clone();
+        self.uploads.watch_settings = entries;
         self.uploads.watch_events = Some(receiver);
     }
 
@@ -1343,10 +1424,10 @@ impl AppState {
         };
         let arrived: Vec<(PathBuf, usize)> = receiver.try_iter().collect();
         for (path, index) in arrived {
-            let Some(folder) = self.uploads.watch_settings.get(index).cloned() else {
+            let Some((folder, source)) = self.uploads.watch_settings.get(index).cloned() else {
                 continue;
             };
-            let settings = self.default_task_settings();
+            let settings = self.watch_task_settings(&source);
             let mut destination = path.clone();
             if folder.move_files_to_screenshots_folder {
                 let ctx = self.uploads.ctx.clone();
@@ -1653,5 +1734,102 @@ impl AppState {
         let folder = self.uploads.ctx.screenshots_folder(&settings, None);
         let _ = std::fs::create_dir_all(&folder);
         self.effects.push(Effect::OpenFile(folder));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use modlight_core::hotkeys::{HotkeySettings, HotkeyType};
+    use serde_json::json;
+
+    /// `UpdateWatchFolders` watches the default task settings' folders AND every
+    /// hotkey's own, each with that hotkey's settings: the hotkey settings window has a
+    /// watch folders page of its own.
+    #[test]
+    fn hotkeys_watch_their_own_folders_with_their_own_settings() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        state.config.set(
+            "DefaultTaskSettings",
+            json!({
+                "WatchFolderEnabled": true,
+                "WatchFolderList": [{"FolderPath": "/watched/defaults", "Filter": "*.png"}],
+                "UploadSettings": {"NameFormatPattern": "defaults-%i"}
+            }),
+        );
+        let mut on = HotkeySettings::new(HotkeyType::ClipboardUpload, 0);
+        on.task["WatchFolderEnabled"] = json!(true);
+        on.task["WatchFolderList"] = json!([
+            {"FolderPath": "/watched/hotkey", "MoveFilesToScreenshotsFolder": true}
+        ]);
+        on.task["UseDefaultUploadSettings"] = json!(false);
+        on.task["UploadSettings"] = json!({"NameFormatPattern": "hotkey-%i"});
+        let mut off = HotkeySettings::new(HotkeyType::ClipboardUpload, 0);
+        off.task["WatchFolderEnabled"] = json!(false);
+        off.task["WatchFolderList"] = json!([{"FolderPath": "/watched/off"}]);
+        modlight_core::hotkeys::save(&mut state.config, &[on, off]);
+
+        let entries = state.watch_folder_entries();
+        let folders: Vec<&str> = entries
+            .iter()
+            .map(|(folder, _)| folder.folder_path.as_deref().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            folders,
+            ["/watched/defaults", "/watched/hotkey"],
+            "a hotkey's switched-off folders are not watched"
+        );
+        assert_eq!(entries[0].1, WatchSource::Defaults);
+        assert!(entries[1].0.move_files_to_screenshots_folder);
+        let defaults = state.watch_task_settings(&entries[0].1);
+        assert_eq!(defaults.upload_settings.name_format_pattern, "defaults-%i");
+        let hotkey = state.watch_task_settings(&entries[1].1);
+        assert_eq!(
+            hotkey.upload_settings.name_format_pattern, "hotkey-%i",
+            "a file from the hotkey's folder goes up with the hotkey's settings"
+        );
+
+        // Watching is off in the defaults: the hotkey's folder is still watched.
+        state.config.set(
+            "DefaultTaskSettings",
+            json!({"WatchFolderEnabled": false, "WatchFolderList": [{"FolderPath": "/watched/defaults"}]}),
+        );
+        let folders: Vec<String> = state
+            .watch_folder_entries()
+            .into_iter()
+            .filter_map(|(folder, _)| folder.folder_path)
+            .collect();
+        assert_eq!(folders, ["/watched/hotkey"]);
+    }
+
+    /// A clipboard picture goes through `RunImageTask` (`ProcessImageUpload`): when the
+    /// task processes clipboard pictures, its quick task menu and after-capture window
+    /// come first, as they do for a capture.
+    #[test]
+    fn a_clipboard_picture_asks_what_the_task_asks_first() {
+        let picture = || ClipboardContent::Image(image::RgbaImage::new(8, 8));
+        let mut settings = TaskSettings::default();
+        settings
+            .advanced_settings
+            .process_images_during_clipboard_upload = true;
+
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        settings.after_capture_job = AfterCaptureTasks::ShowAfterCaptureWindow;
+        state.run_clipboard_content(picture(), settings.clone());
+        assert_eq!(
+            state.captures.after_capture.len(),
+            1,
+            "the after-capture window"
+        );
+        assert!(
+            state.uploads.tasks.tasks.is_empty(),
+            "no task before it is answered"
+        );
+
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        settings.after_capture_job = AfterCaptureTasks::ShowQuickTaskMenu;
+        state.run_clipboard_content(picture(), settings);
+        assert!(state.captures.quick_menu.is_some(), "the quick task menu");
+        assert!(state.uploads.tasks.tasks.is_empty());
     }
 }

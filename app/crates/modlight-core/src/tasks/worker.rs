@@ -435,10 +435,11 @@ impl WorkerTask {
             ctx.channel.event(self.id, TaskEvent::ImageReady);
         }
 
+        let mut uploaded = false;
         if !self.stop_requested() {
             let is_upload_job = self.lock().info.is_upload_job();
             if is_upload_job && ctx.is_upload_allowed() {
-                self.do_upload_job(ctx).await;
+                uploaded = self.do_upload_job(ctx).await;
             } else {
                 self.with(|s| s.info.result.is_url_expected = false);
             }
@@ -461,6 +462,12 @@ impl WorkerTask {
                 && settings
                     .after_capture_job
                     .has(AfterCaptureTasks::DeleteFile)
+                // Not upstream: "Delete file locally" waits for the file to be safely up
+                // (what `KeepLocally` and `TryTakeOver` say the flag means). A task meant
+                // to upload that did not (failed, refused, stopped, cancelled, uploads
+                // switched off) keeps its file to try again; one with no upload step
+                // deletes it as before.
+                && (!s.info.is_upload_job() || uploaded)
                 && !s.info.file_path().is_empty()
                 && Path::new(s.info.file_path()).is_file();
             (
@@ -984,7 +991,9 @@ impl WorkerTask {
         }
     }
 
-    async fn do_upload_job(&self, ctx: &TaskContext) {
+    /// `DoUploadJob`. Returns whether the file went up: an upload that ended without an
+    /// error and with a link, not stopped, cancelled or handed to the queue.
+    async fn do_upload_job(&self, ctx: &TaskContext) -> bool {
         let app = ctx.app_settings();
         if app.show_large_file_size_warning > 0 {
             let (size, name) = self.with(|s| {
@@ -1021,7 +1030,7 @@ impl WorkerTask {
         }
 
         if self.stop_requested() {
-            return;
+            return false;
         }
         self.with(|s| {
             s.status = TaskStatus::Working;
@@ -1055,7 +1064,7 @@ impl WorkerTask {
 
         if cancel_upload {
             self.with(|s| s.info.result.is_url_expected = false);
-            return;
+            return false;
         }
 
         ctx.channel.event(self.id, TaskEvent::UploadStarted);
@@ -1100,6 +1109,8 @@ impl WorkerTask {
                 }
             }
         }
+        // A hand-over to the queue cleared the error and stopped the task: not up yet.
+        !is_error && self.with(|s| !s.stop_requested && !s.info.result.url.is_empty())
     }
 
     /// Give this upload to the offline queue, if it will have it (`HandOverToQueue`).
@@ -1311,7 +1322,11 @@ impl WorkerTask {
         self.with(|s| {
             s.data = None;
             if !s.keep_image {
+                // `Dispose`: the picture goes, and with it the metadata's reference to
+                // the same picture (upstream's `Metadata.Image` is that disposed bitmap).
+                // The finished task stays on the list for the whole session.
                 s.image = None;
+                s.info.metadata.image = None;
             }
         });
     }
@@ -1321,6 +1336,7 @@ impl WorkerTask {
         self.with(|s| {
             s.keep_image = false;
             s.image = None;
+            s.info.metadata.image = None;
         });
     }
 }
@@ -1330,4 +1346,280 @@ fn write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::RwLock;
+    use std::sync::atomic::{AtomicBool, AtomicI64};
+    use std::sync::mpsc::Receiver;
+
+    use super::*;
+    use crate::tasks::host::{TaskChannel, TaskMessage};
+    use crate::tasks::settings::AppUploadSettings;
+    use crate::upload::queue::{AccountSlot, UploadQueue};
+    use crate::upload::store::QueueStore;
+    use crate::upload::transport::ApiTransport;
+
+    /// The task machinery over `profile` with nobody signed in, and the window's end of
+    /// the channel. Nothing here talks to a server.
+    fn context(
+        runtime: &tokio::runtime::Runtime,
+        profile: &Path,
+    ) -> (TaskContext, Receiver<TaskMessage>) {
+        context_at(runtime, profile, None)
+    }
+
+    /// The same, signed in at `host` when one is given.
+    fn context_at(
+        runtime: &tokio::runtime::Runtime,
+        profile: &Path,
+        host: Option<&str>,
+    ) -> (TaskContext, Receiver<TaskMessage>) {
+        let api = modlight_api::Api::new("0.0.0").unwrap();
+        let tus = modlight_api::TusClient::new("0.0.0").unwrap();
+        let account: AccountSlot = Arc::new(RwLock::new(host.map(|host| {
+            crate::upload::queue::QueueAccount {
+                host: host.to_string(),
+                token: "stand-in-token".into(),
+                tag: String::new(),
+                display_name: "QA".into(),
+            }
+        })));
+        let queue = UploadQueue::new(
+            QueueStore::new(profile),
+            account.clone(),
+            Arc::new(ApiTransport::with_tus(api.clone(), tus.clone())),
+            Arc::new(|| true),
+        );
+        let (channel, receiver) = TaskChannel::new(Arc::new(|| {}));
+        let ctx = TaskContext {
+            api,
+            tus,
+            account,
+            queue,
+            channel,
+            runtime: runtime.handle().clone(),
+            settings: Arc::new(RwLock::new(AppUploadSettings::default())),
+            personal_folder: profile.to_path_buf(),
+            auto_increment: Arc::new(AtomicI64::new(0)),
+            strip_png_color_space: Arc::new(AtomicBool::new(false)),
+        };
+        (ctx, receiver)
+    }
+
+    /// Play the window until the task ends; the before-upload window is answered Cancel.
+    fn wait_for_end(receiver: &Receiver<TaskMessage>, id: u64) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match receiver.recv_timeout(left) {
+                Ok(TaskMessage::Event {
+                    task,
+                    event: TaskEvent::TaskCompleted,
+                }) if task == id => return,
+                Ok(TaskMessage::Ask {
+                    question: TaskQuestion::BeforeUpload(info),
+                    reply,
+                    ..
+                }) => {
+                    let _ = reply.send(TaskAnswer::BeforeUpload {
+                        accepted: false,
+                        settings: Box::new(info.settings),
+                    });
+                }
+                Ok(TaskMessage::Ask { question, .. }) => panic!("not expected: {question:?}"),
+                Ok(_) => {}
+                Err(error) => panic!("the task did not end: {error}"),
+            }
+        }
+    }
+
+    /// A stand-in for the server on 127.0.0.1: every request is read whole and answered
+    /// with `status` and `body`. Answers its origin.
+    fn stand_in(runtime: &tokio::runtime::Runtime, status: u16, body: &'static str) -> String {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))
+            .unwrap();
+        let origin = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        runtime.spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut stream = BufReader::new(stream);
+                    loop {
+                        let mut length = 0usize;
+                        let mut line = String::new();
+                        loop {
+                            line.clear();
+                            if stream.read_line(&mut line).await.unwrap_or(0) == 0 {
+                                return;
+                            }
+                            let line = line.trim_end();
+                            if line.is_empty() {
+                                break;
+                            }
+                            if let Some((name, value)) = line.split_once(':')
+                                && name.eq_ignore_ascii_case("content-length")
+                            {
+                                length = value.trim().parse().unwrap_or(0);
+                            }
+                        }
+                        let mut request = vec![0; length];
+                        if stream.read_exact(&mut request).await.is_err() {
+                            return;
+                        }
+                        let reply = format!(
+                            "HTTP/1.1 {status} Stand-in\r\nContent-Type: application/json\r\n\
+                             Content-Length: {}\r\n\r\n{body}",
+                            body.len()
+                        );
+                        if stream.get_mut().write_all(reply.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        origin
+    }
+
+    /// "Delete file locally" removes the capture once it is safely up, and only then: an
+    /// upload that failed, was refused or was cancelled leaves the file to retry. A task
+    /// with no upload step deletes it as before.
+    #[test]
+    fn delete_file_locally_waits_for_the_upload_to_succeed() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let save_upload_delete = AfterCaptureTasks::SaveImageToFile
+            .with(AfterCaptureTasks::UploadImageToHost)
+            .with(AfterCaptureTasks::DeleteFile);
+        let refused = stand_in(&runtime, 507, r#"{"message":"No room."}"#);
+        let failed = stand_in(&runtime, 500, r#"{"message":"Oops."}"#);
+        let stored = stand_in(&runtime, 200, r#"{"url":"http://127.0.0.1/u/abc"}"#);
+        let cases = [
+            (
+                "refused",
+                Some(refused.as_str()),
+                save_upload_delete,
+                TaskStatus::Failed,
+                true,
+            ),
+            (
+                "failed",
+                Some(failed.as_str()),
+                save_upload_delete,
+                TaskStatus::Failed,
+                true,
+            ),
+            (
+                "cancelled",
+                Some(stored.as_str()),
+                save_upload_delete.with(AfterCaptureTasks::ShowBeforeUploadWindow),
+                TaskStatus::Completed,
+                true,
+            ),
+            (
+                "succeeded",
+                Some(stored.as_str()),
+                save_upload_delete,
+                TaskStatus::Completed,
+                false,
+            ),
+            (
+                "no upload step",
+                None,
+                AfterCaptureTasks::SaveImageToFile.with(AfterCaptureTasks::DeleteFile),
+                TaskStatus::Completed,
+                false,
+            ),
+        ];
+        for (case, host, job, status, kept) in cases {
+            let profile = tempfile::tempdir().unwrap();
+            let (ctx, receiver) = context_at(&runtime, profile.path(), host);
+            if let Ok(mut settings) = ctx.settings.write() {
+                settings.max_upload_fail_retry = 0;
+            }
+            let mut settings = TaskSettings {
+                after_capture_job: job,
+                ..TaskSettings::default()
+            };
+            settings
+                .general_settings
+                .show_toast_notification_after_task_completed = false;
+            let metadata = TaskMetadata {
+                image: Some(Arc::new(image::RgbaImage::new(16, 8))),
+                ..TaskMetadata::default()
+            };
+            let task = WorkerTask::image_upload(metadata, settings, None, &ctx);
+            task.start(&ctx);
+            wait_for_end(&receiver, task.id);
+            assert_eq!(task.status(), status, "{case}");
+            let path = task.info().file_path().to_string();
+            assert!(!path.is_empty(), "{case}: the capture was saved");
+            assert_eq!(
+                Path::new(&path).is_file(),
+                kept,
+                "{case}: the saved capture {}",
+                if kept { "stays" } else { "goes" }
+            );
+            assert_eq!(ctx.queue.count(), 0, "{case}: nothing was queued");
+        }
+    }
+
+    /// A finished task stays on the task list for the rest of the session, so it must
+    /// not hold on to the decoded capture (tens of megabytes for a large screen) once
+    /// nothing needs it: neither in `image` nor in `info.metadata.image`.
+    #[test]
+    fn a_finished_image_task_lets_go_of_its_picture() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let profile = tempfile::tempdir().unwrap();
+        let (ctx, receiver) = context(&runtime, profile.path());
+        for toast in [false, true] {
+            let mut settings = TaskSettings {
+                after_capture_job: AfterCaptureTasks::None,
+                ..TaskSettings::default()
+            };
+            settings
+                .general_settings
+                .show_toast_notification_after_task_completed = toast;
+            let picture = Arc::new(image::RgbaImage::new(64, 32));
+            let metadata = TaskMetadata {
+                image: Some(picture.clone()),
+                ..TaskMetadata::default()
+            };
+            let task = WorkerTask::image_upload(metadata, settings, None, &ctx);
+            task.start(&ctx);
+            wait_for_end(&receiver, task.id);
+            // The worker's last step runs just after the event; give it a moment.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while task.with(|s| s.data.is_some() || (!toast && s.image.is_some()))
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(task.status(), TaskStatus::Completed);
+            if toast {
+                // The notice is built from the task after it ended, so the picture is
+                // still there until the task list lets go of it.
+                assert!(task.with(|s| s.image.is_some()));
+                task.release_image();
+            }
+            task.with(|s| {
+                assert!(s.image.is_none(), "toast {toast}: the task's picture");
+                assert!(
+                    s.info.metadata.image.is_none(),
+                    "toast {toast}: the picture kept in the task's metadata"
+                );
+            });
+            assert_eq!(Arc::strong_count(&picture), 1, "toast {toast}");
+        }
+    }
 }

@@ -801,14 +801,16 @@ impl AppUploadSettings {
         1024usize << self.buffer_size_power.clamp(0, 14)
     }
 
-    /// `ShowLargeFileSizeWarning` in bytes, with the units the person chose.
+    /// `ShowLargeFileSizeWarning` in bytes, with the units the person chose. The value
+    /// comes from the settings file, so a huge one saturates rather than overflows.
     pub fn large_file_bytes(&self) -> u64 {
         let size = self.show_large_file_size_warning.max(0) as u64;
-        if self.binary_units {
-            size * 1024 * 1024
+        let unit: u64 = if self.binary_units {
+            1024 * 1024
         } else {
-            size * 1000 * 1000
-        }
+            1000 * 1000
+        };
+        size.saturating_mul(unit)
     }
 }
 
@@ -904,5 +906,26 @@ mod tests {
         );
         let settings = TaskSettings::defaults_from(&config);
         assert_eq!(settings.image_settings.image_format, ImageFormat::PNG);
+    }
+
+    /// `ShowLargeFileSizeWarning` comes from the settings file: a huge value is a
+    /// threshold nothing reaches, never an overflow (a panic in a debug build, a tiny
+    /// wrapped threshold in a release one).
+    #[test]
+    fn a_huge_large_file_threshold_does_not_overflow() {
+        for binary in [false, true] {
+            let app = AppUploadSettings {
+                show_large_file_size_warning: i64::MAX,
+                binary_units: binary,
+                ..AppUploadSettings::default()
+            };
+            assert_eq!(app.large_file_bytes(), u64::MAX, "binary {binary}");
+        }
+        let app = AppUploadSettings {
+            show_large_file_size_warning: 2,
+            binary_units: true,
+            ..AppUploadSettings::default()
+        };
+        assert_eq!(app.large_file_bytes(), 2 * 1024 * 1024);
     }
 }
