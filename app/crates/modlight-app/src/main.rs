@@ -237,20 +237,8 @@ fn main() -> ExitCode {
         .join(modlight_core::config::APPLICATION_CONFIG_FILE)
         .exists();
     let config = AppConfig::load(&profile);
-    // `CleanupManager`: old log files, when asked for.
-    if config.get("AutoCleanupLogFiles").and_then(|v| v.as_bool()) == Some(true) {
-        let keep = config
-            .get("CleanupKeepFileCount")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(10)
-            .max(0) as usize;
-        modlight_core::debug_log::cleanup_folder(
-            &profile.join(modlight_core::debug_log::LOGS_FOLDER),
-            "Modlight-Log-",
-            ".txt",
-            keep,
-        );
-    }
+    // `CleanupManager`: old settings backups and log files, when asked for.
+    modlight_core::debug_log::cleanup(&profile, &config);
     let credentials: Box<dyn CredentialStore> = if qa_mode {
         Box::new(FileCredentialStore::new(profile.join("credentials")))
     } else {
