@@ -70,13 +70,32 @@ impl MacSource {
             let Some(mtm) = MainThreadMarker::new() else {
                 return;
             };
-            let screens = NSScreen::screens(mtm);
-            let main_height = NSScreen::mainScreen(mtm)
-                .map(|s| s.frame().size.height)
-                .unwrap_or(0.0);
+            // Cocoa's y is turned around by the primary display's height
+            // (`crate::windows::visible_in_desktop`), not by `mainScreen`'s: that is the
+            // screen with the key window, and any display of another height put every
+            // working area off by the difference.
+            let (screens, _) = crate::windows::cocoa_screens(mtm);
+            let frames: Vec<crate::windows::CocoaScreen> =
+                screens.iter().map(|(_, s)| *s).collect();
             let mut areas = self.working_areas.lock().unwrap();
+            for (index, (id, _)) in screens.iter().enumerate() {
+                if *id == 0 {
+                    continue;
+                }
+                if let Some((x, y, w, h)) = crate::windows::visible_in_desktop(&frames, index) {
+                    areas.insert(
+                        *id,
+                        IRect::new(
+                            x.round() as i32,
+                            y.round() as i32,
+                            w.round() as i32,
+                            h.round() as i32,
+                        ),
+                    );
+                }
+            }
             let mut names = self.names.lock().unwrap();
-            for screen in screens.iter() {
+            for screen in NSScreen::screens(mtm).iter() {
                 let description = screen.deviceDescription();
                 let key = NSString::from_str("NSScreenNumber");
                 let Some(number) = description.objectForKey(&key) else {
@@ -85,19 +104,10 @@ impl MacSource {
                 let Ok(number) = number.downcast::<NSNumber>() else {
                     continue;
                 };
-                let id = number.unsignedIntValue();
-                let visible = screen.visibleFrame();
-                let top = main_height - (visible.origin.y + visible.size.height);
-                areas.insert(
-                    id,
-                    IRect::new(
-                        visible.origin.x.round() as i32,
-                        top.round() as i32,
-                        visible.size.width.round() as i32,
-                        visible.size.height.round() as i32,
-                    ),
+                names.insert(
+                    number.unsignedIntValue(),
+                    screen.localizedName().to_string(),
                 );
-                names.insert(id, screen.localizedName().to_string());
             }
         }
     }
