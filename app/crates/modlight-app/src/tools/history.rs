@@ -1030,13 +1030,16 @@ pub fn key_act(ui: &Ui) -> Option<Act> {
     ui.input(|i| {
         let m = i.modifiers;
         let pressed = |k: Key| i.key_pressed(k);
+        // egui-winit hands Cmd+C (and Cmd+Shift+C) over as `Event::Copy`, without a key
+        // press of C.
+        let copy = pressed(Key::C) || i.events.iter().any(|e| matches!(e, egui::Event::Copy));
         if pressed(Key::Enter) && m.command {
             Some(Act::OpenFile)
         } else if pressed(Key::Enter) && m.shift {
             Some(Act::OpenFolder)
-        } else if pressed(Key::C) && m.command && m.shift {
+        } else if copy && m.command && m.shift {
             Some(Act::Copy(CopyFormat::FilePath))
-        } else if pressed(Key::C) && m.command && !m.shift && !m.alt {
+        } else if copy && m.command && !m.shift && !m.alt {
             Some(Act::Copy(CopyFormat::Url))
         } else if pressed(Key::C) && m.shift && !m.command {
             Some(Act::CopyFile)
@@ -1678,6 +1681,43 @@ mod tests {
         let item = window.data.find(7).unwrap();
         assert_eq!(item.file_path, c.to_string_lossy().into_owned());
         assert_eq!(item.file_name, "c.png");
+    }
+
+    /// What `key_act` makes of one frame's events.
+    fn act_for(modifiers: egui::Modifiers, event: egui::Event) -> Option<Act> {
+        let ctx = egui::Context::default();
+        let mut act = None;
+        let input = egui::RawInput {
+            events: vec![egui::Event::ModifiersChanged(modifiers), event],
+            ..egui::RawInput::default()
+        };
+        ctx.run_ui(input, |ui| act = key_act(ui))
+            .drop_without_applying_deltas();
+        act
+    }
+
+    /// `OnHistoryListKeyDown`'s Ctrl+C and Ctrl+Shift+C (Cmd here). egui-winit hands
+    /// both to the window as `Event::Copy`, never as a key press of C.
+    #[test]
+    fn the_copy_keys_arrive_as_copy_events() {
+        use egui::Modifiers as M;
+        assert_eq!(
+            act_for(M::COMMAND, egui::Event::Copy),
+            Some(Act::Copy(CopyFormat::Url))
+        );
+        assert_eq!(
+            act_for(M::COMMAND | M::SHIFT, egui::Event::Copy),
+            Some(Act::Copy(CopyFormat::FilePath))
+        );
+        let key = |modifiers| egui::Event::Key {
+            key: egui::Key::C,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        assert_eq!(act_for(M::SHIFT, key(M::SHIFT)), Some(Act::CopyFile));
+        assert_eq!(act_for(M::ALT, key(M::ALT)), Some(Act::CopyImage));
     }
 
     #[test]
