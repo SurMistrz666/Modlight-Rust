@@ -288,12 +288,18 @@ fn main() -> ExitCode {
     {
         viewport = viewport.with_decorations(false);
     }
-    // `RestoreWindowBounds`: the remembered size and place, on a screen that exists.
+    // `RestoreWindowBounds`: the remembered size and place, on a screen that exists (the
+    // screens are asked for only when there is something to put on one).
+    let screens = if bounds.size.is_some() || bounds.position.is_some() {
+        platform::system::visible_frames()
+    } else {
+        Vec::new()
+    };
     let (remembered_size, remembered) = modlight_core::config::restore_main_window(
         &bounds,
         (MAIN_SIZE.x, MAIN_SIZE.y),
         (MAIN_MIN_SIZE.x, MAIN_MIN_SIZE.y),
-        &platform::system::visible_frames(),
+        &screens,
     );
     let remembered_size = remembered_size.map(|(w, h)| vec2(w, h));
     if let Some(size) = remembered_size {
