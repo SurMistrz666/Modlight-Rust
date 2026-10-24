@@ -574,12 +574,18 @@ impl CloudFile {
         }
     }
 
-    /// The name without its extension (for "Download as").
+    /// The name without its extension (for "Download as"), as .NET's
+    /// `Path.GetFileNameWithoutExtension` gives it on Windows: the part after the last
+    /// path separator, cut at its last dot, so a name that is all extension (".bashrc")
+    /// has an empty stem and the caller falls back to the code.
     pub fn stem(&self) -> String {
-        let name = &self.name;
+        let name = match self.name.rfind(['/', '\\']) {
+            Some(slash) => &self.name[slash + 1..],
+            None => self.name.as_str(),
+        };
         match name.rfind('.') {
-            Some(dot) if dot > 0 => name[..dot].to_string(),
-            _ => name.clone(),
+            Some(dot) => name[..dot].to_string(),
+            None => name.to_string(),
         }
     }
 }
@@ -715,5 +721,22 @@ mod tests {
         let mut row = upload("image", "image/jpeg", "jpeg");
         row.url = Some("https://h.example/T/ąąę".into());
         assert_eq!(CloudFile::new(row).media_base, "https://h.example/T/ąąę");
+    }
+
+    /// "Download as" names the file `Path.GetFileNameWithoutExtension(name)`, and the
+    /// code when that is empty: a name that is all extension is not a stem.
+    #[test]
+    fn the_stem_is_what_dotnet_calls_the_name_without_extension() {
+        let named = |name: &str| {
+            let mut row = upload("document", "text/plain", "txt");
+            row.filename = Some(name.into());
+            CloudFile::new(row)
+        };
+        assert_eq!(named("archive.tar.gz").stem(), "archive.tar");
+        assert_eq!(named("README").stem(), "README");
+        assert_eq!(named(".bashrc").stem(), "");
+        assert_eq!(named("notes.").stem(), "notes");
+        assert_eq!(named("folder/inner.txt").stem(), "inner");
+        assert_eq!(named(r"C:\temp\shot.png").stem(), "shot");
     }
 }
