@@ -59,7 +59,7 @@ what it did.
 
 | Upstream | Windows port | Notes |
 |---|---|---|
-| Monitors, pointer, windows (`CaptureHelpers`, `WindowsList`) | `EnumDisplayMonitors`/`GetMonitorInfoW` (friendly names), `GetCursorPos`, `EnumWindows` filtered as upstream (cloaked, tool and minimised windows), DWM frame bounds | Coordinates are the app's screen points: physical pixels divided by the primary monitor's scale. With monitors at different scales, overlays on the others are sized for the primary's scale. |
+| Monitors, pointer, windows (`CaptureHelpers`, `WindowsList`) | `EnumDisplayMonitors`/`GetMonitorInfoW` (friendly names), `GetCursorPos`, `EnumWindows` filtered as upstream (cloaked, tool and minimised windows), DWM frame bounds | Coordinates are the app's screen points: physical pixels divided by the primary monitor's scale. With monitors at different scales, overlays on the others are sized for the primary's scale. The capture menu's monitor list ("1. 1707x960") gives sizes in these points; upstream's (`BuildMonitorMenu`, a PerMonitorV2 process) gives pixels ("1. 2560x1440"): the menu would need the monitors' pixel sizes, which `ScreenInfo` does not carry. Monitor names are read once per device name (`\\.\DISPLAY2`) while the app runs. |
 | GDI capture (`Screenshot`) | `BitBlt(SRCCOPY | CAPTUREBLT)`, the pointer drawn at its hot spot | |
 | Window capture, client area, shadow, transparent (`ScreenshotTransparent`) | The same: the window's current rectangle; transparency by upstream's white, black, white backdrop | |
 | Active window borderless / top-most | Upstream's: styles removed and the window placed, the second press restores; `WS_EX_TOPMOST` toggled | Windows of programs running as administrator cannot be changed (UIPI); the toggle reports it. |
