@@ -527,6 +527,8 @@ impl AppState {
                 } = outcome
                 {
                     crate::scrolling::region_chosen(self, screen_rect, window);
+                } else {
+                    crate::scrolling::selection_cancelled(self);
                 }
             }
             OverlayPurpose::Recording(output) => {
@@ -1470,6 +1472,34 @@ mod tests {
             .surface_options;
         assert_eq!(options.magnifier_pixel_count, 19);
         assert!(options.show_magnifier);
+    }
+
+    /// `SelectWindowAsync`: a cancelled selection says so and brings the scrolling
+    /// capture window back (`RestoreAndActivate`); it stayed hidden for good.
+    #[test]
+    fn a_cancelled_scrolling_selection_brings_the_window_back() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let settings = state.default_task_settings();
+        let mut window = crate::scrolling::ScrollingWindow::new(settings.clone());
+        window.minimized = true;
+        state.scrolling = Some(window);
+        let request = capture::region_request(
+            RegionKind::Default,
+            &settings,
+            state.captures.source.as_ref(),
+        )
+        .unwrap();
+        let mut session = RegionSession::new(request);
+        session.cancel();
+        let overlay = RegionOverlay::new(session, OverlayPurpose::ScrollingRegion, settings, 0.0);
+        state.overlay_closed(overlay, &egui::Context::default());
+        let window = state.scrolling.as_ref().unwrap();
+        assert!(!window.minimized);
+        assert!(!window.capturing);
+        assert_eq!(
+            window.status_text,
+            t(modlight_core::l10n::capture::ScrollingCaptureWindow_Selection_cancelled)
+        );
     }
 
     /// `selectedWindow.Text.Truncate(50, "...")`: at most 50 characters with the dots.
