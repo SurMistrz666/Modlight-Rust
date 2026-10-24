@@ -111,10 +111,21 @@ impl fmt::Display for ApiError {
                 }
             }
             ApiError::Status(status) => {
-                write!(
-                    f,
-                    "Response status code does not indicate success: {status}."
-                )
+                // .NET's two sentences: with the standard reason phrase, or without one
+                // when the status has none.
+                match reqwest::StatusCode::from_u16(*status)
+                    .ok()
+                    .and_then(|code| code.canonical_reason())
+                {
+                    Some(reason) => write!(
+                        f,
+                        "Response status code does not indicate success: {status} ({reason})."
+                    ),
+                    None => write!(
+                        f,
+                        "Response status code does not indicate success: {status}."
+                    ),
+                }
             }
             ApiError::Timeout => write!(f, "The request timed out."),
             ApiError::Transport(text) => write!(f, "{text}"),
@@ -132,3 +143,27 @@ impl fmt::Display for ApiError {
 impl std::error::Error for ApiError {}
 
 pub type ApiResult<T> = Result<T, ApiError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `HttpResponseMessage.EnsureSuccessStatusCode`'s sentence, which the library's
+    /// "could not reach" line quotes: the status with its standard reason phrase.
+    #[test]
+    fn a_failed_read_says_its_status_as_dotnet_does() {
+        assert_eq!(
+            ApiError::Status(500).to_string(),
+            "Response status code does not indicate success: 500 (Internal Server Error)."
+        );
+        assert_eq!(
+            ApiError::Status(404).to_string(),
+            "Response status code does not indicate success: 404 (Not Found)."
+        );
+        // A status with no reason phrase is said without one, as .NET says it.
+        assert_eq!(
+            ApiError::Status(599).to_string(),
+            "Response status code does not indicate success: 599."
+        );
+    }
+}
