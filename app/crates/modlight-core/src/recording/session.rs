@@ -6,7 +6,7 @@
 //! reads it, exactly as upstream's form and its `RecordResetEvent` do.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -96,8 +96,9 @@ pub struct RecorderControl {
     /// `RecordResetEvent`.
     reset: Mutex<bool>,
     signal: Condvar,
-    /// Set while ffmpeg runs: asks it to finish (`StopRequested`).
-    stop: AtomicBool,
+    /// How often ffmpeg has been asked to finish (`StopRequested`) since the current part
+    /// began: each request is one `FFmpegCLIManager.Close`, and the third kills it.
+    stop: AtomicU32,
 }
 
 impl RecorderControl {
@@ -117,7 +118,7 @@ impl RecorderControl {
             }),
             reset: Mutex::new(false),
             signal: Condvar::new(),
-            stop: AtomicBool::new(false),
+            stop: AtomicU32::new(0),
         })
     }
 
@@ -167,10 +168,15 @@ impl RecorderControl {
     }
 
     fn request_stop(&self) {
-        self.stop.store(true, Ordering::SeqCst);
+        self.stop.fetch_add(1, Ordering::SeqCst);
     }
 
     pub fn stop_requested(&self) -> bool {
+        self.stop_requests() > 0
+    }
+
+    /// How often ffmpeg was asked to finish since the current part began.
+    pub fn stop_requests(&self) -> u32 {
         self.stop.load(Ordering::SeqCst)
     }
 
@@ -444,9 +450,15 @@ fn record_once(
         drop(stdin);
         source.stop();
     } else {
+        // One `Close` per request to stop, as upstream's: `q`, `q` again, then a kill.
+        // Not more: after the `q` ffmpeg still writes the end of the file, which for an
+        // MP4 moves its index to the front and takes a while for a long recording.
+        let mut closed = 0;
         while ffmpeg.is_running() {
-            if control.stop_requested() {
+            let requests = control.stop_requests();
+            while closed < requests {
                 ffmpeg.close();
+                closed += 1;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -502,7 +514,7 @@ pub fn run_session(params: SessionParams, control: Arc<RecorderControl>) -> Sess
                 let _ = std::fs::rename(&path, &concat_path);
             }
             control.change_state(RecordState::AfterStart);
-            control.stop.store(false, Ordering::SeqCst);
+            control.stop.store(0, Ordering::SeqCst);
             let region = control.snapshot().region;
             let options = ScreenRecordingOptions {
                 is_recording: true,
