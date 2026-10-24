@@ -450,6 +450,10 @@ fn record_once(
         drop(stdin);
         source.stop();
     } else {
+        // ffmpeg's own camera and microphone input: it stops when `q` is typed, and only
+        // then (the end of its standard input does not stop it). If the app exits first,
+        // it is asked to finish then.
+        ffmpeg.stop_at_exit();
         // One `Close` per request to stop, as upstream's: `q`, `q` again, then a kill.
         // Not more: after the `q` ffmpeg still writes the end of the file, which for an
         // MP4 moves its index to the front and takes a while for a long recording.
