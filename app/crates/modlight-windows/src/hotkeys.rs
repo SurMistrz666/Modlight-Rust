@@ -279,6 +279,16 @@ impl SystemHotkeys {
         ids
     }
 
+    /// Whether a press waits for [`pressed`](Self::pressed), of either kind: the app's
+    /// wake-up thread asks this, so an idle or hidden window takes the hotkey at once.
+    pub fn waiting() -> bool {
+        !global_hotkey::GlobalHotKeyEvent::receiver().is_empty()
+            || !RAW_PRESSED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+    }
+
     /// Register a key `global-hotkey` has no `Code` for, by its virtual-key code.
     fn register_raw(&mut self, info: HotkeyInfo) -> Result<u32, String> {
         if self.raw_window.is_none() {
@@ -395,6 +405,21 @@ mod tests {
             }),
             MOD_NOREPEAT | MOD_CONTROL | MOD_ALT | MOD_WIN
         );
+    }
+
+    /// A key registered by its virtual-key code is pressed while the window is idle: the
+    /// wake-up thread must see it, as it sees `global-hotkey`'s, or the hotkey waits for
+    /// the next repaint (with the window in the tray, for ever).
+    #[test]
+    fn a_key_registered_by_its_code_wakes_the_window() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW;
+        let window = RawWindow::new().expect("a message-only window");
+        let id = 0xBFF0;
+        // What the system posts when the key is pressed.
+        // SAFETY: a window of this thread; the message carries no pointers.
+        unsafe { SendMessageW(window.hwnd, WM_HOTKEY, id as WPARAM, 0) };
+        assert!(SystemHotkeys::waiting());
+        assert!(SystemHotkeys::pressed().contains(&id));
     }
 
     #[test]
