@@ -15,7 +15,7 @@ use std::sync::Arc;
 use egui::{Align2, Id, Rect, Sense, Ui, pos2, vec2};
 use modlight_core::history::{HistoryItem, HistoryStore};
 use modlight_core::icons;
-use modlight_core::l10n::{Arg, format, history as hl, t};
+use modlight_core::l10n::{Arg, format, helpers as hp, history as hl, t};
 use modlight_core::names::file_helpers;
 use modlight_tools::history::{self as logic, CopyFormat, MenuState};
 
@@ -462,9 +462,26 @@ fn confirm<W: HistoryHost>(window: &mut W, state: &mut AppState, prompt: Prompt)
             else {
                 return;
             };
-            // `FileHelpers.RenameFile`: the path changes only when the file moved.
-            let moved = Path::new(&item.file_path).is_file()
-                && std::fs::rename(&item.file_path, &new_path).is_ok();
+            // `FileHelpers.RenameFile`: the path changes only when the file moved. Its
+            // `File.Move` refuses a name another file has; `rename` would replace that
+            // file, so a taken name is refused here first. A failure is said, as upstream.
+            let moved = Path::new(&item.file_path).is_file() && {
+                let result = if std::fs::symlink_metadata(&new_path).is_ok() {
+                    Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+                } else {
+                    std::fs::rename(&item.file_path, &new_path)
+                };
+                if let Err(error) = &result {
+                    state.uploads.windows.messages.push_back(
+                        crate::dialogs::message::MessageBox::new(
+                            &format!("Modlight - {}", t(hp::Error)),
+                            &format!("{}\n{error}", t(hp::FileHelpers_Rename_file_error)),
+                            modlight_core::tasks::host::MessageIcon::Error,
+                        ),
+                    );
+                }
+                result.is_ok()
+            };
             if let Some(entry) = window.data().find_mut(id) {
                 entry.file_name = name;
                 if moved {
@@ -1607,6 +1624,60 @@ mod tests {
         assert_eq!(parse_pair(Some("0, 0")), None);
         assert_eq!(parse_pair(Some("x")), None);
         assert_eq!(parse_pair(None), None);
+    }
+
+    fn rename_prompt(id: i64, name: &str) -> Prompt {
+        Prompt {
+            title: String::new(),
+            message: String::new(),
+            confirm: String::new(),
+            input: Some(name.into()),
+            action: PromptAction::Rename(id),
+        }
+    }
+
+    /// `FileHelpers.RenameFile` moves with `File.Move`, which refuses a name that is
+    /// taken: the other file stays, the item keeps its path, and the error is said.
+    #[test]
+    fn renaming_never_replaces_another_file() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.png");
+        let b = dir.path().join("b.png");
+        std::fs::write(&a, "first").unwrap();
+        std::fs::write(&b, "second").unwrap();
+        let mut window = super::super::history_list::HistoryWindow::new(
+            1,
+            None,
+            modlight_tools::settings::HistorySettings::default(),
+        );
+        window.qa_load(
+            &mut state,
+            vec![HistoryItem {
+                id: 7,
+                file_name: "a.png".into(),
+                file_path: a.to_string_lossy().into_owned(),
+                ..HistoryItem::default()
+            }],
+        );
+        let messages = state.uploads.windows.messages.len();
+        confirm(&mut window, &mut state, rename_prompt(7, "b"));
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "second");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "first");
+        assert_eq!(
+            window.data.find(7).unwrap().file_path,
+            a.to_string_lossy().into_owned()
+        );
+        assert_eq!(state.uploads.windows.messages.len(), messages + 1);
+
+        // A free name moves the file.
+        confirm(&mut window, &mut state, rename_prompt(7, "c"));
+        let c = dir.path().join("c.png");
+        assert_eq!(std::fs::read_to_string(&c).unwrap(), "first");
+        assert!(!a.exists());
+        let item = window.data.find(7).unwrap();
+        assert_eq!(item.file_path, c.to_string_lossy().into_owned());
+        assert_eq!(item.file_name, "c.png");
     }
 
     #[test]
