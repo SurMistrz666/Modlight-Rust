@@ -1409,8 +1409,10 @@ mod tests {
         let profile = tempfile::tempdir().unwrap();
         let (ctx, receiver) = context(&runtime, profile.path());
         for toast in [false, true] {
-            let mut settings = TaskSettings::default();
-            settings.after_capture_job = AfterCaptureTasks::None;
+            let mut settings = TaskSettings {
+                after_capture_job: AfterCaptureTasks::None,
+                ..TaskSettings::default()
+            };
             settings
                 .general_settings
                 .show_toast_notification_after_task_completed = toast;
