@@ -329,8 +329,12 @@ impl Api {
 
     /// Pull one file down to disk, streaming rather than buffering it.
     ///
-    /// The caller owns the part-written file if this fails: a truncated download left
-    /// lying about with a plausible name is worse than no download.
+    /// The bytes go to a hidden file beside `path` that takes its name only once the
+    /// whole body has arrived, and is removed when it does not: a truncated download
+    /// left lying about with a plausible name is worse than no download, and a file the
+    /// person agreed to replace stays as it was until there is something to replace it
+    /// with. (Upstream wrote straight into `path` and deleted it on any failure, which
+    /// took the old file with it even when nothing had been received.)
     pub async fn download_to_file(
         &self,
         credential: &Credential,
@@ -363,21 +367,49 @@ impl Api {
             });
         }
 
-        let mut file = tokio::fs::File::create(path)
-            .await
-            .map_err(|e| ApiError::Transport(e.to_string()))?;
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(ApiError::from_reqwest)?;
-            file.write_all(&chunk)
+        let part = part_path(path);
+        let written = async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&part)
                 .await
                 .map_err(|e| ApiError::Transport(e.to_string()))?;
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(ApiError::from_reqwest)?;
+                file.write_all(&chunk)
+                    .await
+                    .map_err(|e| ApiError::Transport(e.to_string()))?;
+            }
+            file.flush()
+                .await
+                .map_err(|e| ApiError::Transport(e.to_string()))?;
+            file.sync_all()
+                .await
+                .map_err(|e| ApiError::Transport(e.to_string()))?;
+            drop(file);
+            tokio::fs::rename(&part, path)
+                .await
+                .map_err(|e| ApiError::Transport(e.to_string()))
         }
-        file.flush()
-            .await
-            .map_err(|e| ApiError::Transport(e.to_string()))?;
-        Ok(())
+        .await;
+        if written.is_err() {
+            let _ = tokio::fs::remove_file(&part).await;
+        }
+        written
     }
+}
+
+/// Where a download is written until it is whole: a hidden name beside `path`, unique to
+/// this download, so a rename moves it into place on the same volume.
+fn part_path(path: &Path) -> std::path::PathBuf {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let tag: u64 = rand::random();
+    path.with_file_name(format!(".{name}.{tag:016x}.part"))
 }
 
 /// The reason a conversion was refused (`X-Convert-Refused`), or `None` when unnamed.
@@ -416,5 +448,88 @@ mod tests {
             .to_path(),
             "/api/uploads?page=3&perPage=30"
         );
+    }
+
+    /// A one-shot server on 127.0.0.1 that answers the first request with `reply`
+    /// (written as is, so it can promise more body than it sends) and hangs up.
+    async fn answer_once(reply: Vec<u8>) -> String {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut head = Vec::new();
+            let mut buffer = [0u8; 4096];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => head.extend_from_slice(&buffer[..n]),
+                }
+            }
+            let _ = stream.write_all(&reply).await;
+            let _ = stream.shutdown().await;
+        });
+        host
+    }
+
+    fn leftovers(folder: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The person agreed to replace a file of the same name; a download that does not
+    /// finish must leave that file as it was, not truncated and not deleted.
+    #[tokio::test]
+    async fn a_download_that_does_not_finish_leaves_the_old_file_alone() {
+        let api = Api::new("test").unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("report.pdf");
+        std::fs::write(&path, b"the old report").unwrap();
+
+        // Promised 100 bytes, sent 10, hung up.
+        let host = answer_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n0123456789"
+                .to_vec(),
+        )
+        .await;
+        let credential = Credential::new(host.as_str(), "token");
+        let cut = api
+            .download_to_file(&credential, &format!("{host}/a/report/download"), &path)
+            .await;
+        assert!(cut.is_err(), "a short body is a failure: {cut:?}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"the old report");
+        assert_eq!(leftovers(folder.path()), vec!["report.pdf"]);
+
+        // Refused before a byte arrived.
+        let host = answer_once(
+            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+        )
+        .await;
+        let credential = Credential::new(host.as_str(), "token");
+        let refused = api
+            .download_to_file(&credential, &format!("{host}/a/report/download"), &path)
+            .await;
+        assert_eq!(refused.unwrap_err().status(), Some(404));
+        assert_eq!(std::fs::read(&path).unwrap(), b"the old report");
+        assert_eq!(leftovers(folder.path()), vec!["report.pdf"]);
+
+        // A whole download replaces it.
+        let host = answer_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nnew report"
+                .to_vec(),
+        )
+        .await;
+        let credential = Credential::new(host.as_str(), "token");
+        api.download_to_file(&credential, &format!("{host}/a/report/download"), &path)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new report");
+        assert_eq!(leftovers(folder.path()), vec!["report.pdf"]);
     }
 }

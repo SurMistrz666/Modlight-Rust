@@ -292,5 +292,50 @@ pub fn ui(ui: &mut Ui, state: &mut AppState, rect: Rect) {
         {
             state.push(Command::GoToPage(target));
         }
+        // Escape gives up on the typed page (`OnJumpKeyDown`).
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            state.space.pager.jump_text.clear();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `OnJumpKeyDown`: Enter takes the typed page, Escape gives up on it and empties
+    /// the box. Escape used to leave the number standing in it.
+    #[test]
+    fn escape_gives_up_on_the_typed_page() {
+        let mut state = crate::myspace::actions::tests::offline_state();
+        crate::myspace::actions::tests::listing(&mut state, 1, 30, 1000, &["a"]);
+        assert!(state.space.pager.show_jump());
+        // The first pass runs while the harness is built, before the app's fonts are in.
+        let fonts_in = std::rc::Rc::new(std::cell::Cell::new(false));
+        let ready = fonts_in.clone();
+        let mut harness = egui_kittest::Harness::new_ui_state(
+            move |ui, state: &mut AppState| {
+                if ready.get() {
+                    let rect = ui.max_rect();
+                    super::ui(ui, state, rect);
+                }
+            },
+            state,
+        );
+        harness.ctx.set_fonts(crate::theme::fonts());
+        harness.step();
+        fonts_in.set(true);
+        harness.step();
+        harness
+            .ctx
+            .memory_mut(|m| m.request_focus(Id::new("pager-jump")));
+        harness.step();
+        harness.event(egui::Event::Text("7".into()));
+        harness.step();
+        assert_eq!(harness.state().space.pager.jump_text, "7");
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert_eq!(harness.state().space.pager.jump_text, "");
+        assert!(harness.state().pending.is_empty(), "no page was asked for");
     }
 }

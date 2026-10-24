@@ -335,7 +335,10 @@ impl LinkSettings {
         {
             outcome = Some(LinkSettingsOutcome::Cancel);
         }
-        if button_at(ui, colors, &primary, Content::label(save), true, save_rect).clicked() {
+        // Save is the default button (`IsDefault`): Enter presses it.
+        if button_at(ui, colors, &primary, Content::label(save), true, save_rect).clicked()
+            || ui.input(|i| i.key_pressed(egui::Key::Enter))
+        {
             outcome = Some(match self.edit() {
                 Some(edit) => LinkSettingsOutcome::Save(edit),
                 None => LinkSettingsOutcome::Cancel,
@@ -464,6 +467,47 @@ mod tests {
         assert_eq!(
             edit.fields()[1],
             ("password".to_string(), serde_json::Value::Null)
+        );
+    }
+
+    /// Save is the window's default button (`IsDefault="True"`): Enter saves what was
+    /// changed, as Escape cancels (`IsCancel`).
+    #[test]
+    fn enter_saves_as_the_default_button_does() {
+        let colors = crate::qa::state(&crate::qa::Look::default(), true)
+            .colors
+            .clone();
+        let now = crate::qa::frozen_now();
+        let mut dialog = LinkSettings::new(&file(false));
+        dialog.wants_view_limit = true;
+        dialog.view_limit = Some(3);
+        let outcome: Option<LinkSettingsOutcome> = None;
+        // The first pass runs while the harness is built, before the app's fonts are in.
+        let fonts_in = std::rc::Rc::new(std::cell::Cell::new(false));
+        let ready = fonts_in.clone();
+        let mut harness = egui_kittest::Harness::new_ui_state(
+            move |ui, (dialog, outcome): &mut (LinkSettings, Option<LinkSettingsOutcome>)| {
+                if ready.get()
+                    && let Some(answer) = dialog.ui(ui, &colors, now)
+                {
+                    *outcome = Some(answer);
+                }
+            },
+            (dialog, outcome),
+        );
+        harness.ctx.set_fonts(crate::theme::fonts());
+        harness.step();
+        fonts_in.set(true);
+        harness.step();
+        assert_eq!(harness.state().1, None, "nothing yet");
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        let Some(LinkSettingsOutcome::Save(edit)) = harness.state().1.clone() else {
+            panic!("Enter did not save: {:?}", harness.state().1);
+        };
+        assert_eq!(
+            edit.fields(),
+            &[("maxViews".to_string(), serde_json::json!(3))]
         );
     }
 }

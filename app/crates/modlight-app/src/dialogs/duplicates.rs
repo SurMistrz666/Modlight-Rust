@@ -160,13 +160,13 @@ impl Duplicates {
             .count()
     }
 
+    /// The server's sizes, summed without overflowing.
     pub fn selected_bytes(&self) -> i64 {
         self.sets
             .iter()
             .flat_map(|s| &s.files)
             .filter(|f| f.selected)
-            .map(|f| f.size)
-            .sum()
+            .fold(0i64, |total, f| total.saturating_add(f.size.max(0)))
     }
 
     /// The ids to trash, each once.
@@ -733,5 +733,19 @@ mod tests {
         }
         assert!(!model.can_trash());
         assert_eq!(model.trash_label(), t(s::MySpace_DuplicatesTrashNone));
+    }
+
+    /// The sizes are the server's numbers; the total of a selection saturates instead
+    /// of overflowing (a panic while drawing the button, in a debug build).
+    #[test]
+    fn absurd_sizes_do_not_overflow_the_selection() {
+        let mut scan = scan();
+        for file in scan.groups.as_mut().unwrap()[0].files.as_mut().unwrap() {
+            file.size = i64::MAX;
+        }
+        let mut model = Duplicates::default();
+        model.apply_scan(scan, false);
+        assert_eq!(model.selected_bytes(), i64::MAX);
+        assert!(!model.trash_label().is_empty());
     }
 }

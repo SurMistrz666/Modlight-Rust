@@ -155,6 +155,10 @@ pub struct MotionPlayer {
     pub playing: Option<(String, Reel)>,
     pub fetching: Option<String>,
     pub decoding: Option<String>,
+    /// The hovered card this hover has already made its one attempt for (a fetch or a
+    /// decode started): `BeginAsync` runs once per dwell, and an answer that is not a
+    /// preview (503, a dropped connection) is not asked again until the next hover.
+    pub attempted: Option<String>,
 }
 
 /// The account's picture: a still, frames of an animation, or nothing yet.
@@ -199,6 +203,12 @@ pub struct Media {
     /// The details drawer's preview: which file, and the picture.
     pub preview: Option<(String, TextureHandle)>,
     pub preview_generation: u64,
+    /// The listing's token (`MySpaceViewModel.listing`): every preview fetch for the
+    /// grid on screen carries it, and a new listing cancels it.
+    pub listing: tokio_util::sync::CancellationToken,
+    /// The server whose files `bytes` and `motion_bytes` hold: codes are unique on one
+    /// server only.
+    pub cache_host: String,
 }
 
 impl Default for Media {
@@ -213,6 +223,8 @@ impl Default for Media {
             avatar: Avatar::default(),
             preview: None,
             preview_generation: 0,
+            listing: tokio_util::sync::CancellationToken::new(),
+            cache_host: String::new(),
         }
     }
 }
@@ -220,10 +232,24 @@ impl Default for Media {
 impl Media {
     /// Forget the pictures of the grid (a new listing replaces it).
     pub fn clear_grid(&mut self) {
+        // What is in flight for the grid being left stops here (`Cancel`), so it neither
+        // keeps a request open beside the new page's nor holds one of its slots.
+        self.listing.cancel();
+        self.listing = tokio_util::sync::CancellationToken::new();
         self.thumbs.clear();
         self.budget.clear();
         self.queue.reset();
         self.motion = MotionPlayer::default();
+    }
+
+    /// The grid now lists `host`'s files: what the session cached for another server's
+    /// codes is not theirs.
+    pub fn serve_host(&mut self, host: &str) {
+        if self.cache_host != host {
+            self.bytes.clear();
+            self.motion_bytes.clear();
+            self.cache_host = host.to_string();
+        }
     }
 
     pub fn forget(&mut self, id: &str) {
@@ -234,6 +260,7 @@ impl Media {
         }
         if self.motion.hovered.as_ref().is_some_and(|(h, _)| h == id) {
             self.motion.hovered = None;
+            self.motion.attempted = None;
         }
     }
 }
@@ -305,22 +332,36 @@ impl AppState {
         let generation = self.space.generation;
         let api = self.api.clone();
         let cache = self.media.bytes.clone();
+        let listing = self.media.listing.clone();
         self.rt.spawn(async move {
             let bytes = match cache.get(&file.code) {
                 Some(bytes) => Some(bytes),
-                None => match api.get_thumbnail(&credential, &file.thumbnail_url).await {
-                    Ok(Some(bytes)) => {
-                        let bytes = Arc::new(bytes);
-                        cache.put(&file.code, bytes.clone());
-                        Some(bytes)
+                None => {
+                    let fetched = tokio::select! {
+                        _ = listing.cancelled() => None,
+                        answer = api.get_thumbnail(&credential, &file.thumbnail_url) => Some(answer),
+                    };
+                    match fetched {
+                        Some(Ok(Some(bytes))) => {
+                            let bytes = Arc::new(bytes);
+                            cache.put(&file.code, bytes.clone());
+                            Some(bytes)
+                        }
+                        _ => None,
                     }
-                    _ => None,
-                },
+                }
             };
-            let decoded = bytes.and_then(|b| decode_still(&b, THUMBNAIL_DECODE_WIDTH));
+            let decoded = if listing.is_cancelled() {
+                None
+            } else {
+                bytes.and_then(|b| decode_still(&b, THUMBNAIL_DECODE_WIDTH))
+            };
             Box::new(move |state: &mut AppState, ctx: &egui::Context| {
-                if state.space.generation == generation
-                    && let Some(image) = decoded
+                // A new listing reset the queue: this fetch holds none of its slots.
+                if state.space.generation != generation {
+                    return;
+                }
+                if let Some(image) = decoded
                     && state.space.file(&id).is_some()
                 {
                     let cost = (image.size[0] * image.size[1] * 4) as u64;
@@ -359,6 +400,7 @@ impl AppState {
         }
         self.media.motion.playing = None;
         self.media.motion.hovered = Some((id.to_string(), self.time));
+        self.media.motion.attempted = None;
     }
 
     /// The pointer left a card (`UnhoverFile`).
@@ -372,11 +414,18 @@ impl AppState {
         {
             self.media.motion.hovered = None;
             self.media.motion.playing = None;
+            self.media.motion.attempted = None;
         }
     }
 
     /// Per frame: start the dwell-delayed fetch, advance the playing reel.
     pub fn tick_motion(&mut self, ctx: &egui::Context) {
+        // Behind another tab no card is under the pointer, whatever was last hovered.
+        if self.tab != crate::state::Tab::MySpace
+            && let Some((hovered, _)) = self.media.motion.hovered.clone()
+        {
+            self.unhover_file(&hovered);
+        }
         let dwell = modlight_core::library::MOTION_DWELL_MILLIS as f64 / 1000.0;
         if let Some((id, since)) = self.media.motion.hovered.clone() {
             let playing_this = self
@@ -386,7 +435,11 @@ impl AppState {
                 .as_ref()
                 .is_some_and(|(p, _)| *p == id);
             if !playing_this && self.time - since >= dwell {
-                self.begin_motion(&id);
+                // One attempt per hover: whatever it ends in, the frames that follow do
+                // not ask again (the slots it may wait for are retried until it starts).
+                if self.media.motion.attempted.as_deref() != Some(id.as_str()) {
+                    self.begin_motion(&id);
+                }
             } else if !playing_this {
                 ctx.request_repaint_after(std::time::Duration::from_secs_f64(
                     (since + dwell - self.time).max(0.01),
@@ -405,8 +458,17 @@ impl AppState {
         let Some(file) = self.space.file(id).cloned() else {
             return;
         };
+        // Refused by the server, or bytes already known not to animate: nothing to ask.
+        if self.media.motion_bytes.is_refused(&file.code) {
+            self.media.motion.attempted = Some(id.to_string());
+            return;
+        }
         if let Some(bytes) = self.media.motion_bytes.get(&file.code) {
-            self.decode_motion(id.to_string(), bytes);
+            // One decode at a time; while another runs, this card waits its turn.
+            if self.media.motion.decoding.is_none() {
+                self.media.motion.attempted = Some(id.to_string());
+                self.decode_motion(id.to_string(), bytes);
+            }
             return;
         }
         if self.media.motion.fetching.is_some() {
@@ -415,14 +477,25 @@ impl AppState {
         let Some(credential) = self.credential() else {
             return;
         };
+        self.media.motion.attempted = Some(id.to_string());
         self.media.motion.fetching = Some(id.to_string());
         let api = self.api.clone();
         let id = id.to_string();
+        let generation = self.space.generation;
+        let listing = self.media.listing.clone();
         self.rt.spawn(async move {
-            let preview = api
-                .get_motion_thumbnail(&credential, &file.motion_url)
-                .await;
+            // The listing's token comes along (`CloudMotionPlayer.Enter`): changing
+            // folder or page abandons the fetch as it abandons everything else.
+            let preview = tokio::select! {
+                _ = listing.cancelled() => return Box::new(|_: &mut AppState, _: &egui::Context| {})
+                    as crate::runtime::Completion,
+                preview = api.get_motion_thumbnail(&credential, &file.motion_url) => preview,
+            };
             Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
+                // A new listing started its own player; this one's slot is not its.
+                if state.space.generation != generation {
+                    return;
+                }
                 state.media.motion.fetching = None;
                 match preview {
                     Ok(MotionPreview::Refused) => state.media.motion_bytes.refuse(&file.code),
@@ -436,12 +509,20 @@ impl AppState {
                             .as_ref()
                             .is_some_and(|(h, _)| *h == id)
                         {
-                            state.decode_motion(id, bytes);
+                            if state.media.motion.decoding.is_none() {
+                                state.decode_motion(id, bytes);
+                            } else {
+                                // The decode slot is taken: the tick takes these bytes
+                                // from the cache once it is free.
+                                state.media.motion.attempted = None;
+                            }
                         }
                     }
+                    // Busy, timed out or cut off: about this moment, not the file, and
+                    // not asked again until the next hover (no retry loop).
                     _ => {}
                 }
-            })
+            }) as crate::runtime::Completion
         });
     }
 
@@ -661,5 +742,276 @@ mod tests {
         assert_eq!(decode_still(&png, 1024).unwrap().size, [600, 300]);
         assert_eq!(initials_of(" alex rivera"), "AL");
         assert_eq!(initials_of(""), "");
+    }
+
+    /// A signed-in state on `host`, motion allowed, with one video card ("v1", code
+    /// "cv1") whose moving preview lives on that host.
+    fn state_with_video(host: &str) -> AppState {
+        use modlight_core::account::{AccountStore, StoredAccount};
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        state.account = AccountStore::in_memory(
+            StoredAccount {
+                host: host.into(),
+                tag: "alex".into(),
+                ..StoredAccount::default()
+            },
+            "qa-token-not-a-secret",
+        );
+        state.space.has_account = true;
+        state.env.reduce_motion = false;
+        let row = modlight_api::Upload {
+            id: Some("v1".into()),
+            code: Some("cv1".into()),
+            filename: Some("clip.mp4".into()),
+            kind: Some("video".into()),
+            motion_thumb_url: Some(format!("{host}/alex/cv1/motion?w=480&h=480")),
+            ..modlight_api::Upload::default()
+        };
+        state.space.files.push(crate::myspace::model::FileEntry {
+            file: modlight_core::library::CloudFile::new(row),
+            selected: false,
+        });
+        state
+    }
+
+    /// Frames for `seconds` of wall time, the clock moving 50 ms a frame: completions
+    /// first, then the motion tick, as the window runs them. `watch` sees the state
+    /// after the completions and after the tick.
+    fn run_frames(
+        state: &mut AppState,
+        ctx: &egui::Context,
+        seconds: f64,
+        mut watch: impl FnMut(&AppState, bool),
+    ) {
+        let started = std::time::Instant::now();
+        while started.elapsed().as_secs_f64() < seconds {
+            state.time += 0.05;
+            for completion in state.rt.drain() {
+                completion(state, ctx);
+            }
+            watch(state, false);
+            state.tick_motion(ctx);
+            watch(state, true);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// A server on 127.0.0.1 answering every request with `status` and `body`, counting
+    /// the requests.
+    fn server(
+        status: &'static str,
+        body: Vec<u8>,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let count = Arc::new(AtomicUsize::new(0));
+        let seen = count.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut head = Vec::new();
+                let mut buffer = [0u8; 4096];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&buffer[..n]),
+                    }
+                }
+                seen.fetch_add(1, Ordering::SeqCst);
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(&body);
+            }
+        });
+        (host, count)
+    }
+
+    fn busy_server() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        server("503 Service Unavailable", Vec::new())
+    }
+
+    /// The working path: after the dwell the preview is fetched once, decoded and played.
+    #[test]
+    fn a_moving_preview_plays_after_the_dwell() {
+        use std::sync::atomic::Ordering;
+        let (host, requests) = server("200 OK", animated_gif(4, 48, 48));
+        let mut state = state_with_video(&host);
+        let ctx = egui::Context::default();
+        state.time = 100.0;
+        state.hover_file("v1");
+        let started = std::time::Instant::now();
+        while state.media.motion.playing.is_none() && started.elapsed().as_secs() < 10 {
+            run_frames(&mut state, &ctx, 0.05, |_, _| {});
+        }
+        assert!(
+            state
+                .media
+                .motion
+                .playing
+                .as_ref()
+                .is_some_and(|(id, reel)| id == "v1" && reel.frames.len() == 4)
+        );
+        run_frames(&mut state, &ctx, 0.3, |_, _| {});
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert!(
+            state.media.motion_bytes.get("cv1").is_some(),
+            "kept for the next hover"
+        );
+    }
+
+    /// `CloudMotionPlayer.BeginAsync`: a moving preview the server cannot give right now
+    /// (503 from its transform limiter) is asked for once per hover. The tick used to
+    /// start a new request on every frame after each answer, for as long as the pointer
+    /// rested on the card.
+    #[test]
+    fn a_busy_server_is_asked_once_per_hover() {
+        use std::sync::atomic::Ordering;
+        let (host, requests) = busy_server();
+        let mut state = state_with_video(&host);
+        let ctx = egui::Context::default();
+        state.time = 100.0;
+        state.hover_file("v1");
+        run_frames(&mut state, &ctx, 1.5, |_, _| {});
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "one request for one hover, however long the pointer rests"
+        );
+        assert!(
+            !state.media.motion_bytes.is_refused("cv1"),
+            "a 503 is not a refusal"
+        );
+
+        // Leaving and coming back is a new hover, which may ask again.
+        state.unhover_file("v1");
+        state.hover_file("v1");
+        run_frames(&mut state, &ctx, 1.0, |_, _| {});
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+    }
+
+    /// `AnimatedThumbnail.Decode` answering null files the bytes with the refusals; the
+    /// same hover must not decode them again on every frame.
+    #[test]
+    fn bytes_that_do_not_animate_are_decoded_once() {
+        let mut state = state_with_video("http://127.0.0.1:1");
+        state
+            .media
+            .motion_bytes
+            .put("cv1", Arc::new(animated_gif(1, 16, 16)));
+        let ctx = egui::Context::default();
+        state.time = 100.0;
+        state.hover_file("v1");
+        let mut decodes = 0;
+        let mut was_decoding = false;
+        run_frames(&mut state, &ctx, 1.0, |state, after_tick| {
+            let decoding = state.media.motion.decoding.is_some();
+            if after_tick && decoding && !was_decoding {
+                decodes += 1;
+            }
+            was_decoding = decoding;
+        });
+        assert_eq!(decodes, 1, "decoded once, then known not to move");
+        assert!(state.media.motion_bytes.is_refused("cv1"));
+        assert!(state.media.motion.playing.is_none());
+    }
+
+    /// A server on 127.0.0.1 that takes requests and never answers, counting the
+    /// connections still open (a client that gives up closes its own).
+    fn silent_server() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::Read;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let open = Arc::new(AtomicUsize::new(0));
+        let count = open.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let count = count.clone();
+                count.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut buffer = [0u8; 4096];
+                    while let Ok(n) = stream.read(&mut buffer) {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                    count.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+        (host, open)
+    }
+
+    fn wait_for(what: &str, done: impl Fn() -> bool) {
+        let started = std::time::Instant::now();
+        while !done() {
+            assert!(started.elapsed().as_secs() < 10, "timed out: {what}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// `StartListing` cancels the listing's token, and every preview fetch in flight for
+    /// the page being left carries it. Here they ran on to their 45 s deadline while the
+    /// new page started its own, so turning pages quickly piled up requests (each one a
+    /// render on the server) far past the four slots.
+    #[test]
+    fn turning_the_page_stops_the_old_pages_previews() {
+        use modlight_core::account::{AccountStore, StoredAccount};
+        use std::sync::atomic::Ordering;
+        let (host, open) = silent_server();
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        state.account = AccountStore::in_memory(
+            StoredAccount {
+                host: host.clone(),
+                tag: "alex".into(),
+                ..StoredAccount::default()
+            },
+            "qa-token-not-a-secret",
+        );
+        state.space.has_account = true;
+        let page = |first: usize| {
+            let items = (first..first + 30)
+                .map(|i| modlight_api::Upload {
+                    id: Some(format!("f{i}")),
+                    code: Some(format!("c{i}")),
+                    kind: Some("image".into()),
+                    thumb_url: Some(format!("{host}/alex/c{i}/raw?w=480&h=480")),
+                    ..modlight_api::Upload::default()
+                })
+                .collect();
+            modlight_api::UploadPage {
+                page: 1,
+                per_page: 30,
+                total: 60,
+                items: Some(items),
+                ..modlight_api::UploadPage::default()
+            }
+        };
+        state.space.page_size = 30;
+        let arrived = state.space.apply_page(page(0), 1);
+        state.load_thumbnails(&arrived);
+        wait_for("four previews asked for", || {
+            open.load(Ordering::SeqCst) == THUMBNAIL_SLOTS
+        });
+
+        // Page 2: the listing request itself, then the page's own previews.
+        state.space_go_to_page(2);
+        let arrived = state.space.apply_page(page(30), 2);
+        state.load_thumbnails(&arrived);
+        wait_for("the new page's previews and listing", || {
+            open.load(Ordering::SeqCst) > THUMBNAIL_SLOTS
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(
+            open.load(Ordering::SeqCst),
+            THUMBNAIL_SLOTS + 1,
+            "the old page's fetches were dropped, not left running beside the new ones"
+        );
     }
 }
