@@ -521,7 +521,8 @@ mod tests {
 
         // A whole download replaces it.
         let host = answer_once(
-            b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nnew report".to_vec(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nnew report"
+                .to_vec(),
         )
         .await;
         let credential = Credential::new(host.as_str(), "token");

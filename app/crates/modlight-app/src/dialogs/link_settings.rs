@@ -474,7 +474,9 @@ mod tests {
     /// changed, as Escape cancels (`IsCancel`).
     #[test]
     fn enter_saves_as_the_default_button_does() {
-        let colors = crate::qa::state(&crate::qa::Look::default(), true).colors.clone();
+        let colors = crate::qa::state(&crate::qa::Look::default(), true)
+            .colors
+            .clone();
         let now = crate::qa::frozen_now();
         let mut dialog = LinkSettings::new(&file(false));
         dialog.wants_view_limit = true;

@@ -1208,7 +1208,13 @@ impl AppState {
 
     /// Ask where, then pull `link` down there. The destination is replaced only by a
     /// whole download (`Api::download_to_file`): a failure leaves it as it was.
-    fn save_download(&mut self, credential: Credential, name: String, link: String, suggested: String) {
+    fn save_download(
+        &mut self,
+        credential: Credential,
+        name: String,
+        link: String,
+        suggested: String,
+    ) {
         let Some(path) = self.choose_save_path(&suggested) else {
             return;
         };
@@ -1217,17 +1223,19 @@ impl AppState {
         let api = self.api.clone();
         self.rt.spawn(async move {
             let result = api.download_to_file(&credential, &link, &path).await;
-            Box::new(move |state: &mut AppState, _ctx: &egui::Context| match result {
-                Ok(()) => {
-                    let saved = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    let text = format(t(s::MySpace_DownloadSaved), &[Arg::from(saved)]);
-                    state.notice(icons::CIRCLE_CHECK, &text, "", false);
-                }
-                Err(error) => state.report_failure(&error, &credential.host),
-            })
+            Box::new(
+                move |state: &mut AppState, _ctx: &egui::Context| match result {
+                    Ok(()) => {
+                        let saved = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let text = format(t(s::MySpace_DownloadSaved), &[Arg::from(saved)]);
+                        state.notice(icons::CIRCLE_CHECK, &text, "", false);
+                    }
+                    Err(error) => state.report_failure(&error, &credential.host),
+                },
+            )
         });
     }
 
@@ -1558,7 +1566,13 @@ pub(crate) mod tests {
     }
 
     /// Page `page` of a listing of `total` files, `per_page` a page, holding `ids`.
-    pub(crate) fn listing(state: &mut AppState, page: i64, per_page: i64, total: i64, ids: &[&str]) {
+    pub(crate) fn listing(
+        state: &mut AppState,
+        page: i64,
+        per_page: i64,
+        total: i64,
+        ids: &[&str],
+    ) {
         state.space.page_size = per_page;
         state.space.generation += 1;
         let items = ids.iter().map(|id| row(id, None)).collect();
@@ -1628,7 +1642,8 @@ pub(crate) mod tests {
     /// agreed to replace is still theirs. It used to be deleted as a "part-written" file.
     #[test]
     fn a_refused_download_keeps_the_file_it_would_have_replaced() {
-        let host = server(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let host =
+            server(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         let mut state = state_on(&host);
         let profile = tempfile::tempdir().unwrap();
         state.env.profile = profile.path().to_path_buf();
@@ -1728,7 +1743,10 @@ pub(crate) mod tests {
         renamed.code = Some("logo".into());
         state.edit_done(EditDone::CustomUrl { id: "a".into() }, &[renamed]);
         assert_eq!(state.space.file("a").unwrap().code, "logo");
-        assert!(state.media.bytes.get("ca").is_none(), "the old code is free");
+        assert!(
+            state.media.bytes.get("ca").is_none(),
+            "the old code is free"
+        );
         assert!(state.media.motion_bytes.get("ca").is_none());
         assert_eq!(state.media.bytes.get("logo"), Some(picture));
         assert_eq!(state.media.motion_bytes.get("logo"), Some(reel));
@@ -1857,7 +1875,8 @@ pub(crate) mod tests {
     /// extension, and said so.
     #[test]
     fn an_accepted_conversion_is_saved() {
-        let host = server(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nconverted");
+        let host =
+            server(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nconverted");
         let mut state = state_on(&host);
         let profile = tempfile::tempdir().unwrap();
         state.env.profile = profile.path().to_path_buf();
