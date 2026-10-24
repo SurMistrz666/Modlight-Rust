@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use image::{Rgba, RgbaImage};
 use modlight_core::capture::geometry::IRect;
-use modlight_core::recording::options::{FFmpegOptions, FFmpegVideoCodec};
+use modlight_core::recording::options::{FFmpegOptions, FFmpegPaletteUseDither, FFmpegVideoCodec};
 use modlight_core::recording::session::{
     FrameSource, FrameSourceFactory, RecorderControl, RecordingStatus, SessionParams, StillFrames,
     run_session,
@@ -207,6 +207,10 @@ fn script(dir: &std::path::Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
 /// A camera or a microphone alone is ffmpeg's own avfoundation input, stopped by typing
 /// `q`. ffmpeg then still has to finish the file (an MP4 has its index moved to the
 /// front, which takes a while for a long recording): this stand-in needs 600 ms after
@@ -274,4 +278,57 @@ fn a_camera_recording_that_will_not_stop_is_killed_on_the_third_request() {
     let outcome = worker.join().unwrap();
     assert!(outcome.aborted);
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+/// A second pass that fails says why, in the output box, as upstream's
+/// `FFmpegCLIManager.ShowError`; the recording does not just disappear.
+#[test]
+fn a_second_pass_that_fails_says_why() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut p = params(dir.path(), FFmpegVideoCodec::gif, true);
+    // A value from a settings file: the options window offers 0 to 5.
+    p.ffmpeg.GIFDither = FFmpegPaletteUseDither::bayer;
+    p.ffmpeg.GIFBayerScale = 99;
+    let control = RecorderControl::new(IRect::new(0, 0, 40, 30), 1.0);
+    let outcome = run_session(p, control);
+    let error = outcome.error.expect("ffmpeg's output");
+    assert!(error.contains("bayer_scale"), "{error}");
+    assert_eq!(outcome.path, None);
+    assert!(!outcome.aborted);
+}
+
+/// With a name pattern that gives the same name twice (no random part) and a codec whose
+/// container is MP4, the first pass and the finished file have the same name. ffmpeg
+/// cannot write over the file it reads, so the second pass must not be asked to: the
+/// finished file is the encoded one (x264 writes its settings into the stream: CRF for
+/// the second pass, lossless for the first), under the pattern's name.
+#[test]
+fn a_second_pass_never_writes_over_its_own_input() {
+    if ffmpeg().is_none() {
+        eprintln!("no ffmpeg on this computer: skipped");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let p = params(dir.path(), FFmpegVideoCodec::libx264, true);
+    assert_eq!(p.path, p.two_pass_output);
+    let control = RecorderControl::new(IRect::new(0, 0, 40, 30), 1.0);
+    let outcome = run_session(p, control);
+    assert_eq!(outcome.error, None);
+    let path = outcome.path.expect("the encoded file");
+    assert_eq!(path, dir.path().join("clip.mp4"));
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(
+        contains(&bytes, b"crf=28.0"),
+        "the lossless first pass was delivered"
+    );
+    let left: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(left.len(), 1, "{left:?}");
 }
