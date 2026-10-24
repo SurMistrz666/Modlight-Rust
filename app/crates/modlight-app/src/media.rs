@@ -203,6 +203,9 @@ pub struct Media {
     /// The details drawer's preview: which file, and the picture.
     pub preview: Option<(String, TextureHandle)>,
     pub preview_generation: u64,
+    /// The listing's token (`MySpaceViewModel.listing`): every preview fetch for the
+    /// grid on screen carries it, and a new listing cancels it.
+    pub listing: tokio_util::sync::CancellationToken,
 }
 
 impl Default for Media {
@@ -217,6 +220,7 @@ impl Default for Media {
             avatar: Avatar::default(),
             preview: None,
             preview_generation: 0,
+            listing: tokio_util::sync::CancellationToken::new(),
         }
     }
 }
@@ -224,6 +228,10 @@ impl Default for Media {
 impl Media {
     /// Forget the pictures of the grid (a new listing replaces it).
     pub fn clear_grid(&mut self) {
+        // What is in flight for the grid being left stops here (`Cancel`), so it neither
+        // keeps a request open beside the new page's nor holds one of its slots.
+        self.listing.cancel();
+        self.listing = tokio_util::sync::CancellationToken::new();
         self.thumbs.clear();
         self.budget.clear();
         self.queue.reset();
@@ -310,22 +318,36 @@ impl AppState {
         let generation = self.space.generation;
         let api = self.api.clone();
         let cache = self.media.bytes.clone();
+        let listing = self.media.listing.clone();
         self.rt.spawn(async move {
             let bytes = match cache.get(&file.code) {
                 Some(bytes) => Some(bytes),
-                None => match api.get_thumbnail(&credential, &file.thumbnail_url).await {
-                    Ok(Some(bytes)) => {
-                        let bytes = Arc::new(bytes);
-                        cache.put(&file.code, bytes.clone());
-                        Some(bytes)
+                None => {
+                    let fetched = tokio::select! {
+                        _ = listing.cancelled() => None,
+                        answer = api.get_thumbnail(&credential, &file.thumbnail_url) => Some(answer),
+                    };
+                    match fetched {
+                        Some(Ok(Some(bytes))) => {
+                            let bytes = Arc::new(bytes);
+                            cache.put(&file.code, bytes.clone());
+                            Some(bytes)
+                        }
+                        _ => None,
                     }
-                    _ => None,
-                },
+                }
             };
-            let decoded = bytes.and_then(|b| decode_still(&b, THUMBNAIL_DECODE_WIDTH));
+            let decoded = if listing.is_cancelled() {
+                None
+            } else {
+                bytes.and_then(|b| decode_still(&b, THUMBNAIL_DECODE_WIDTH))
+            };
             Box::new(move |state: &mut AppState, ctx: &egui::Context| {
-                if state.space.generation == generation
-                    && let Some(image) = decoded
+                // A new listing reset the queue: this fetch holds none of its slots.
+                if state.space.generation != generation {
+                    return;
+                }
+                if let Some(image) = decoded
                     && state.space.file(&id).is_some()
                 {
                     let cost = (image.size[0] * image.size[1] * 4) as u64;
@@ -445,11 +467,21 @@ impl AppState {
         self.media.motion.fetching = Some(id.to_string());
         let api = self.api.clone();
         let id = id.to_string();
+        let generation = self.space.generation;
+        let listing = self.media.listing.clone();
         self.rt.spawn(async move {
-            let preview = api
-                .get_motion_thumbnail(&credential, &file.motion_url)
-                .await;
+            // The listing's token comes along (`CloudMotionPlayer.Enter`): changing
+            // folder or page abandons the fetch as it abandons everything else.
+            let preview = tokio::select! {
+                _ = listing.cancelled() => return Box::new(|_: &mut AppState, _: &egui::Context| {})
+                    as crate::runtime::Completion,
+                preview = api.get_motion_thumbnail(&credential, &file.motion_url) => preview,
+            };
             Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
+                // A new listing started its own player; this one's slot is not its.
+                if state.space.generation != generation {
+                    return;
+                }
                 state.media.motion.fetching = None;
                 match preview {
                     Ok(MotionPreview::Refused) => state.media.motion_bytes.refuse(&file.code),
@@ -476,7 +508,7 @@ impl AppState {
                     // not asked again until the next hover (no retry loop).
                     _ => {}
                 }
-            })
+            }) as crate::runtime::Completion
         });
     }
 
@@ -872,5 +904,100 @@ mod tests {
         assert_eq!(decodes, 1, "decoded once, then known not to move");
         assert!(state.media.motion_bytes.is_refused("cv1"));
         assert!(state.media.motion.playing.is_none());
+    }
+
+    /// A server on 127.0.0.1 that takes requests and never answers, counting the
+    /// connections still open (a client that gives up closes its own).
+    fn silent_server() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::Read;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let open = Arc::new(AtomicUsize::new(0));
+        let count = open.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let count = count.clone();
+                count.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut buffer = [0u8; 4096];
+                    while let Ok(n) = stream.read(&mut buffer) {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                    count.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+        (host, open)
+    }
+
+    fn wait_for(what: &str, done: impl Fn() -> bool) {
+        let started = std::time::Instant::now();
+        while !done() {
+            assert!(started.elapsed().as_secs() < 10, "timed out: {what}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// `StartListing` cancels the listing's token, and every preview fetch in flight for
+    /// the page being left carries it. Here they ran on to their 45 s deadline while the
+    /// new page started its own, so turning pages quickly piled up requests (each one a
+    /// render on the server) far past the four slots.
+    #[test]
+    fn turning_the_page_stops_the_old_pages_previews() {
+        use modlight_core::account::{AccountStore, StoredAccount};
+        use std::sync::atomic::Ordering;
+        let (host, open) = silent_server();
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        state.account = AccountStore::in_memory(
+            StoredAccount {
+                host: host.clone(),
+                tag: "alex".into(),
+                ..StoredAccount::default()
+            },
+            "qa-token-not-a-secret",
+        );
+        state.space.has_account = true;
+        let page = |first: usize| {
+            let items = (first..first + 30)
+                .map(|i| modlight_api::Upload {
+                    id: Some(format!("f{i}")),
+                    code: Some(format!("c{i}")),
+                    kind: Some("image".into()),
+                    thumb_url: Some(format!("{host}/alex/c{i}/raw?w=480&h=480")),
+                    ..modlight_api::Upload::default()
+                })
+                .collect();
+            modlight_api::UploadPage {
+                page: 1,
+                per_page: 30,
+                total: 60,
+                items: Some(items),
+                ..modlight_api::UploadPage::default()
+            }
+        };
+        state.space.page_size = 30;
+        let arrived = state.space.apply_page(page(0), 1);
+        state.load_thumbnails(&arrived);
+        wait_for("four previews asked for", || {
+            open.load(Ordering::SeqCst) == THUMBNAIL_SLOTS
+        });
+
+        // Page 2: the listing request itself, then the page's own previews.
+        state.space_go_to_page(2);
+        let arrived = state.space.apply_page(page(30), 2);
+        state.load_thumbnails(&arrived);
+        wait_for("the new page's previews and listing", || {
+            open.load(Ordering::SeqCst) >= THUMBNAIL_SLOTS + 1
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(
+            open.load(Ordering::SeqCst),
+            THUMBNAIL_SLOTS + 1,
+            "the old page's fetches were dropped, not left running beside the new ones"
+        );
     }
 }
