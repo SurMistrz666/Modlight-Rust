@@ -370,8 +370,14 @@ pub fn base_of(url: Option<&str>, ext: Option<&str>) -> String {
         return url.to_string();
     };
     let suffix = format!(".{ext}");
-    if url.len() >= suffix.len() && url[url.len() - suffix.len()..].eq_ignore_ascii_case(&suffix) {
-        url[..url.len() - suffix.len()].to_string()
+    // Compared as bytes: in a link that does not end in its extension the cut can fall
+    // inside a character, and slicing the text there panics. A match begins with the
+    // ASCII dot, so wherever the bytes match the cut is a character boundary.
+    let Some(cut) = url.len().checked_sub(suffix.len()) else {
+        return url.to_string();
+    };
+    if url.as_bytes()[cut..].eq_ignore_ascii_case(suffix.as_bytes()) {
+        url[..cut].to_string()
     } else {
         url.to_string()
     }
@@ -568,12 +574,18 @@ impl CloudFile {
         }
     }
 
-    /// The name without its extension (for "Download as").
+    /// The name without its extension (for "Download as"), as .NET's
+    /// `Path.GetFileNameWithoutExtension` gives it on Windows: the part after the last
+    /// path separator, cut at its last dot, so a name that is all extension (".bashrc")
+    /// has an empty stem and the caller falls back to the code.
     pub fn stem(&self) -> String {
-        let name = &self.name;
+        let name = match self.name.rfind(['/', '\\']) {
+            Some(slash) => &self.name[slash + 1..],
+            None => self.name.as_str(),
+        };
         match name.rfind('.') {
-            Some(dot) if dot > 0 => name[..dot].to_string(),
-            _ => name.clone(),
+            Some(dot) => name[..dot].to_string(),
+            None => name.to_string(),
         }
     }
 }
@@ -692,5 +704,39 @@ mod tests {
         assert!(trashed.is_trashed);
         assert!(!trashed.has_link());
         assert!(!trashed.has_media_base());
+    }
+
+    /// The listing row's link is the server's string: one that does not end in its
+    /// extension may end in characters the extension's length cuts in half.
+    #[test]
+    fn a_link_cut_inside_a_character_is_not_a_panic() {
+        assert_eq!(
+            base_of(Some("https://h.example/T/ąąę"), Some("jpeg")),
+            "https://h.example/T/ąąę"
+        );
+        assert_eq!(
+            base_of(Some("https://h.example/T/zdjęcie.JPEG"), Some("jpeg")),
+            "https://h.example/T/zdjęcie"
+        );
+        let mut row = upload("image", "image/jpeg", "jpeg");
+        row.url = Some("https://h.example/T/ąąę".into());
+        assert_eq!(CloudFile::new(row).media_base, "https://h.example/T/ąąę");
+    }
+
+    /// "Download as" names the file `Path.GetFileNameWithoutExtension(name)`, and the
+    /// code when that is empty: a name that is all extension is not a stem.
+    #[test]
+    fn the_stem_is_what_dotnet_calls_the_name_without_extension() {
+        let named = |name: &str| {
+            let mut row = upload("document", "text/plain", "txt");
+            row.filename = Some(name.into());
+            CloudFile::new(row)
+        };
+        assert_eq!(named("archive.tar.gz").stem(), "archive.tar");
+        assert_eq!(named("README").stem(), "README");
+        assert_eq!(named(".bashrc").stem(), "");
+        assert_eq!(named("notes.").stem(), "notes");
+        assert_eq!(named("folder/inner.txt").stem(), "inner");
+        assert_eq!(named(r"C:\temp\shot.png").stem(), "shot");
     }
 }

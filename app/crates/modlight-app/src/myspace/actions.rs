@@ -119,6 +119,7 @@ impl AppState {
     fn start_listing(&mut self, credential: Credential, reload_folders: bool, target: i64) {
         self.space.generation += 1;
         self.clear_listing();
+        self.media.serve_host(&credential.host);
         self.space.identity = identity_of(&credential);
         self.space.total = 0;
         self.space.page = target.max(1);
@@ -252,16 +253,34 @@ impl AppState {
                 }
                 state.space.merging = false;
                 if let Ok(page) = answer {
-                    let arrived = state.space.merge_newest(page);
-                    if !arrived.is_empty() {
-                        state.load_thumbnails(&arrived);
-                    }
+                    state.merged(page);
                 }
                 if state.space.merge_queued {
                     state.merge_newest();
                 }
             })
         });
+    }
+
+    /// The first page asked for again after an upload: new rows on top (`Merge`).
+    pub(crate) fn merged(&mut self, page: modlight_api::UploadPage) {
+        let before: Vec<String> = self.space.files.iter().map(|f| f.file.id.clone()).collect();
+        let arrived = self.space.merge_newest(page);
+        // What the new rows pushed off the bottom gives its picture back.
+        self.forget_cards_gone(&before);
+        if !arrived.is_empty() {
+            self.load_thumbnails(&arrived);
+        }
+    }
+
+    /// Cards of `ids` no longer on the grid let go of their pictures and their moving
+    /// preview (`pictures.Forget`, `motion.Forget`).
+    fn forget_cards_gone(&mut self, ids: &[String]) {
+        for id in ids {
+            if self.space.file(id).is_none() {
+                self.media.forget(id);
+            }
+        }
     }
 
     // ------------------------------------------------------------------ getting about
@@ -334,6 +353,8 @@ impl AppState {
         }
         let anchor = pager::anchor(pager::first(self.space.page, self.space.page_size), wanted);
         self.space.page_size = wanted;
+        // `RememberPageSize`, before the request: a preference, not a result.
+        self.config.set_page_size(wanted);
         self.save_config();
         let Some(credential) = self.credential() else {
             self.space_signed_out();
@@ -474,12 +495,26 @@ impl AppState {
     }
 
     fn edit_done(&mut self, done: EditDone, rows: &[modlight_api::Upload]) {
+        // A row whose code changed (a custom URL) takes the previews cached under its
+        // old code along, before anything else can be fetched under either code.
+        for row in rows {
+            let (Some(id), Some(new)) = (row.id.as_deref(), row.code.as_deref()) else {
+                continue;
+            };
+            if let Some(old) = self.space.file(id).map(|f| f.code.clone())
+                && old != new
+            {
+                self.media.bytes.rename(&old, new);
+                self.media.motion_bytes.rename(&old, new);
+            }
+        }
         match done {
             EditDone::Moved { ids, target } => {
                 let count = ids.len();
                 let now = self.time;
                 self.space
                     .note_files_moved(&ids, target.as_deref(), rows, now);
+                self.forget_cards_gone(&ids);
                 let place = match &target {
                     None => t(s::MySpace_Unfiled).to_string(),
                     Some(id) => self.space.folder_name_for(Some(id)),
@@ -489,6 +524,7 @@ impl AppState {
                     &[Arg::from(count), Arg::from(place)],
                 );
                 self.notice(icons::FOLDER_INPUT, &text, "", false);
+                self.refill_emptied_page();
             }
             EditDone::Published { published, count } => {
                 self.space.apply_rows(rows);
@@ -663,28 +699,43 @@ impl AppState {
                             true,
                         );
                     }
-                    Ok(result) => {
-                        for id in &ids {
-                            if mode == "restore" {
-                                state.space.note_file_restored(id);
-                            } else {
-                                state.space.note_file_removed(id);
-                            }
-                            state.media.forget(id);
-                        }
-                        state.refresh_account_strip();
-                        let (icon, key) = match mode {
-                            "restore" => (icons::UNDO_2, s::MySpace_RestoredToast),
-                            "permanent" => (icons::TRASH_2, s::MySpace_DeletedForeverToast),
-                            _ => (icons::TRASH_2, s::MySpace_TrashedToast),
-                        };
-                        let text = format(t(key), &[Arg::Int(result.affected)]);
-                        state.notice(icon, &text, "", false);
-                    }
+                    Ok(result) => state.files_removed(&ids, mode, result.affected),
                     Err(error) => state.report_failure(&error, &credential.host),
                 },
             )
         });
+    }
+
+    /// The server trashed, restored or deleted `ids` for good: off the grid, the folder
+    /// tallies corrected, said in the corner.
+    pub(crate) fn files_removed(&mut self, ids: &[String], mode: &str, affected: i64) {
+        for id in ids {
+            if mode == "restore" {
+                self.space.note_file_restored(id);
+            } else {
+                self.space.note_file_removed(id);
+            }
+            self.media.forget(id);
+        }
+        self.refresh_account_strip();
+        let (icon, key) = match mode {
+            "restore" => (icons::UNDO_2, s::MySpace_RestoredToast),
+            "permanent" => (icons::TRASH_2, s::MySpace_DeletedForeverToast),
+            _ => (icons::TRASH_2, s::MySpace_TrashedToast),
+        };
+        let text = format(t(key), &[Arg::Int(affected)]);
+        self.notice(icon, &text, "", false);
+        self.refill_emptied_page();
+    }
+
+    /// Files left the page on screen and took all of it with them while the listing
+    /// still has others: list the page that holds them now (`MySpace::refill_page`).
+    fn refill_emptied_page(&mut self) {
+        if let Some(page) = self.space.refill_page()
+            && let Some(credential) = self.credential()
+        {
+            self.start_listing(credential, false, page);
+        }
     }
 
     pub fn restore_files(&mut self, ids: &[String]) {
@@ -776,7 +827,7 @@ impl AppState {
                         continue;
                     }
                     ids.push(id);
-                    bytes += row.size.max(0);
+                    bytes = bytes.saturating_add(row.size.max(0));
                     added += 1;
                 }
                 if added == 0 {
@@ -807,6 +858,10 @@ impl AppState {
                     t(s::MySpace_EmptyTrashConfirm),
                     &[Arg::from(ids.len()), Arg::from(cloud_size(bytes))],
                 );
+                // Not "busy" while the question is up: it is modal over the window, and
+                // the one confirmation window can be taken by a question asked elsewhere,
+                // which would otherwise leave the button disabled for good.
+                state.emptying_trash = false;
                 state.windows.confirm = Some(Confirm::new(
                     t(s::MySpace_EmptyTrashTitle),
                     &question,
@@ -821,6 +876,7 @@ impl AppState {
             self.emptying_trash = false;
             return;
         };
+        self.emptying_trash = true;
         let api = self.api.clone();
         self.rt.spawn(async move {
             let mut affected = 0;
@@ -1127,37 +1183,54 @@ impl AppState {
         if link.is_empty() {
             return;
         }
+        let Some(to) = convert_to else {
+            self.save_download(credential, file.name, link, suggested);
+            return;
+        };
+        // The dry run first (`checkFirst`): a refusal arrives as a header on a response
+        // already taken for a download, so it is asked for before anything else, and a
+        // refused conversion never gets as far as the save panel.
+        let api = self.api.clone();
+        self.rt.spawn(async move {
+            let verdict = api.check_conversion(&credential, &link).await;
+            Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
+                if verdict.ok {
+                    state.save_download(credential, file.name, link, suggested);
+                    return;
+                }
+                let title = format(
+                    t(s::MySpace_ConvertRefusedTitle),
+                    &[Arg::from(to.to_uppercase())],
+                );
+                state.notice(
+                    icons::TRIANGLE_ALERT,
+                    &title,
+                    convert::refusal_text(&verdict.reason),
+                    true,
+                );
+            })
+        });
+    }
+
+    /// Ask where, then pull `link` down there. The destination is replaced only by a
+    /// whole download (`Api::download_to_file`): a failure leaves it as it was.
+    fn save_download(
+        &mut self,
+        credential: Credential,
+        name: String,
+        link: String,
+        suggested: String,
+    ) {
         let Some(path) = self.choose_save_path(&suggested) else {
             return;
         };
-        let check_first = convert_to.is_some();
+        let text = format(t(s::MySpace_DownloadStarted), &[Arg::from(name.as_str())]);
+        self.notice(icons::DOWNLOAD, &text, "", false);
         let api = self.api.clone();
-        let name = file.name.clone();
-        let extension = convert_to.clone().unwrap_or_default().to_uppercase();
         self.rt.spawn(async move {
-            if check_first {
-                let verdict = api.check_conversion(&credential, &link).await;
-                if !verdict.ok {
-                    return Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
-                        let title =
-                            format(t(s::MySpace_ConvertRefusedTitle), &[Arg::from(extension)]);
-                        state.notice(
-                            icons::TRIANGLE_ALERT,
-                            &title,
-                            convert::refusal_text(&verdict.reason),
-                            true,
-                        );
-                    }) as crate::runtime::Completion;
-                }
-            }
-            let started = name.clone();
             let result = api.download_to_file(&credential, &link, &path).await;
-            if result.is_err() {
-                let _ = tokio::fs::remove_file(&path).await;
-            }
-            Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
-                let _ = started;
-                match result {
+            Box::new(
+                move |state: &mut AppState, _ctx: &egui::Context| match result {
                     Ok(()) => {
                         let saved = path
                             .file_name()
@@ -1167,14 +1240,9 @@ impl AppState {
                         state.notice(icons::CIRCLE_CHECK, &text, "", false);
                     }
                     Err(error) => state.report_failure(&error, &credential.host),
-                }
-            }) as crate::runtime::Completion
+                },
+            )
         });
-        let text = format(
-            t(s::MySpace_DownloadStarted),
-            &[Arg::from(file.name.as_str())],
-        );
-        self.notice(icons::DOWNLOAD, &text, "", false);
     }
 
     /// Where a download goes: the save panel, or (QA) the profile's Downloads folder,
@@ -1422,12 +1490,512 @@ fn sanitize_file_name(name: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use modlight_api::{Upload, UploadPage};
+    use modlight_core::account::{AccountStore, StoredAccount};
 
     #[test]
     fn saved_names_cannot_climb_out_of_the_folder() {
         assert_eq!(sanitize_file_name("../a/b:c.png"), ".._a_b_c.png");
         assert_eq!(sanitize_file_name("  "), "download");
+    }
+
+    /// A signed-in state whose server refuses connections at once (nothing listens on
+    /// port 1), so a listing the test starts never reaches anything.
+    pub(crate) fn offline_state() -> AppState {
+        state_on("http://127.0.0.1:1")
+    }
+
+    /// A signed-in QA state whose account lives on `host`.
+    pub(crate) fn state_on(host: &str) -> AppState {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        state.account = AccountStore::in_memory(
+            StoredAccount {
+                host: host.into(),
+                tag: "alex".into(),
+                ..StoredAccount::default()
+            },
+            "qa-token-not-a-secret",
+        );
+        state.space.has_account = true;
+        state
+    }
+
+    /// A server on 127.0.0.1 answering every request with `reply` as is.
+    fn server(reply: &'static [u8]) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut head = Vec::new();
+                let mut buffer = [0u8; 4096];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&buffer[..n]),
+                    }
+                }
+                let _ = stream.write_all(reply);
+            }
+        });
+        host
+    }
+
+    /// Run completions until `done` or ten seconds.
+    fn settle(state: &mut AppState, done: impl Fn(&AppState) -> bool) {
+        let ctx = egui::Context::default();
+        let started = std::time::Instant::now();
+        while !done(state) && started.elapsed().as_secs() < 10 {
+            for completion in state.rt.drain() {
+                completion(state, &ctx);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    pub(crate) fn row(id: &str, folder: Option<&str>) -> Upload {
+        Upload {
+            id: Some(id.into()),
+            code: Some(format!("c{id}")),
+            filename: Some(format!("{id}.png")),
+            ext: Some("png".into()),
+            kind: Some("image".into()),
+            size: 100,
+            folder_id: folder.map(str::to_string),
+            url: Some(format!("http://127.0.0.1:1/alex/c{id}.png")),
+            raw_url: Some(format!("http://127.0.0.1:1/alex/c{id}/raw.png")),
+            ..Upload::default()
+        }
+    }
+
+    /// Page `page` of a listing of `total` files, `per_page` a page, holding `ids`.
+    pub(crate) fn listing(
+        state: &mut AppState,
+        page: i64,
+        per_page: i64,
+        total: i64,
+        ids: &[&str],
+    ) {
+        state.space.page_size = per_page;
+        state.space.generation += 1;
+        let items = ids.iter().map(|id| row(id, None)).collect();
+        let page_rows = UploadPage {
+            page,
+            per_page,
+            total,
+            items: Some(items),
+            ..UploadPage::default()
+        };
+        state.space.apply_page(page_rows, page);
+    }
+
+    /// Trashing the last file of the last page used to leave an empty grid under a bar
+    /// saying "31-60 of 60", whose page 2 button did nothing (the bar had clamped itself
+    /// to page 2 already): the emptied page is listed again, at the page that now exists.
+    #[test]
+    fn emptying_a_page_lists_the_page_that_now_holds_the_files() {
+        let mut state = offline_state();
+        listing(&mut state, 3, 30, 61, &["last"]);
+        state.files_removed(&["last".into()], "trash", 1);
+        assert!(state.space.is_busy, "the page is asked for again");
+        assert_eq!(state.space.page, 2);
+        assert_eq!(state.space.total, 0, "the new listing starts from nothing");
+
+        // Selecting every file on page 1 of 2 and trashing them: page 1 again, which now
+        // holds what was page 2.
+        let mut state = offline_state();
+        let ids: Vec<String> = (0..30).map(|i| format!("f{i}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        listing(&mut state, 1, 30, 40, &refs);
+        state.files_removed(&ids, "trash", 30);
+        assert!(state.space.is_busy);
+        assert_eq!(state.space.page, 1);
+
+        // A page that still shows files is left as it is (upstream does not refill it).
+        let mut state = offline_state();
+        listing(&mut state, 1, 30, 40, &["a", "b"]);
+        state.files_removed(&["a".into()], "trash", 1);
+        assert!(!state.space.is_busy);
+        assert_eq!(state.space.files.len(), 1);
+
+        // The last file of the whole listing: nothing to list again.
+        let mut state = offline_state();
+        listing(&mut state, 1, 30, 1, &["only"]);
+        state.files_removed(&["only".into()], "permanent", 1);
+        assert!(!state.space.is_busy);
+        assert!(state.space.show_empty_panel());
+
+        // Moving every file of the open folder's last page elsewhere empties it too.
+        let mut state = offline_state();
+        listing(&mut state, 2, 30, 31, &["moved"]);
+        state.space.current_folder = Some("f1".into());
+        state.space.files[0].file.folder_id = Some("f1".into());
+        state.edit_done(
+            EditDone::Moved {
+                ids: vec!["moved".into()],
+                target: None,
+            },
+            &[row("moved", None)],
+        );
+        assert!(state.space.is_busy, "the folder's page is asked for again");
+        assert_eq!(state.space.page, 1);
+    }
+
+    /// A download the server refuses (404) never wrote a byte: the file the person
+    /// agreed to replace is still theirs. It used to be deleted as a "part-written" file.
+    #[test]
+    fn a_refused_download_keeps_the_file_it_would_have_replaced() {
+        let host =
+            server(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let mut state = state_on(&host);
+        let profile = tempfile::tempdir().unwrap();
+        state.env.profile = profile.path().to_path_buf();
+        listing(&mut state, 1, 30, 1, &["a"]);
+        let downloads = profile.path().join("Downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        std::fs::write(downloads.join("a.png"), b"my older a.png").unwrap();
+
+        state.download("a", None);
+        settle(&mut state, |s| s.toasts.iter().any(|t| t.failed));
+        assert!(state.toasts.iter().any(|t| t.failed), "the refusal is said");
+        assert_eq!(
+            std::fs::read(downloads.join("a.png")).unwrap(),
+            b"my older a.png"
+        );
+    }
+
+    /// `SaveAsync(checkFirst: true)`: the conversion is asked about BEFORE the save
+    /// panel, so a refusal never gets as far as asking where to put the file, and no
+    /// "download started" is said for a download that does not start.
+    #[test]
+    fn a_refused_conversion_never_asks_where_to_save() {
+        let host = server(
+            b"HTTP/1.1 415 Unsupported Media Type\r\nX-Convert-Refused: no-audio\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        let mut state = state_on(&host);
+        let profile = tempfile::tempdir().unwrap();
+        state.env.profile = profile.path().to_path_buf();
+        listing(&mut state, 1, 30, 1, &["a"]);
+        state.space.files[0].file.row.kind = Some("video".into());
+
+        state.download("a", Some("mp3".into()));
+        let started = format(t(s::MySpace_DownloadStarted), &[Arg::from("a.png")]);
+        assert!(
+            state.toasts.iter().all(|t| t.title != started),
+            "nothing has started yet"
+        );
+        settle(&mut state, |s| s.toasts.iter().any(|t| t.failed));
+        let refusal = state.toasts.iter().find(|t| t.failed).expect("the refusal");
+        assert_eq!(
+            refusal.title,
+            format(t(s::MySpace_ConvertRefusedTitle), &[Arg::from("MP3")])
+        );
+        assert_eq!(refusal.detail, convert::refusal_text("no-audio"));
+        assert!(state.toasts.iter().all(|t| t.title != started));
+        assert!(
+            !profile.path().join("Downloads").exists(),
+            "no destination was asked for"
+        );
+    }
+
+    /// `RememberPageSize` and `RememberFolder` write the two settings when the person
+    /// changes them; every other save leaves them alone. A session that starts signed
+    /// out never takes up the remembered folder, and saving anything (a theme, the
+    /// panel, quitting) wrote "no folder" over it.
+    #[test]
+    fn an_unrelated_save_keeps_the_remembered_page_size_and_folder() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.config.set_page_size(30);
+        state.config.set_last_folder_id(Some("f-design"));
+        // What `AppState::new` reads from the settings file.
+        state.space.page_size = 30;
+        state.space_refresh_account();
+        state.toggle_library_panel();
+        state.save_config();
+        assert_eq!(state.config.page_size(), 30);
+        assert_eq!(state.config.last_folder_id(), "f-design");
+
+        // Signed in, the library writes them when they change.
+        let mut state = offline_state();
+        state.config.set_page_size(30);
+        state.config.set_last_folder_id(Some("f-design"));
+        state.space_refresh_account();
+        assert_eq!(state.space.page_size, 30, "taken up at the first listing");
+        assert_eq!(state.space.current_folder.as_deref(), Some("f-design"));
+        state.space_set_page_size(60);
+        assert_eq!(state.config.page_size(), 60);
+        state.space.loaded_once = true;
+        state.space_select_view(1);
+        assert_eq!(state.config.last_folder_id(), "", "a kind is no folder");
+    }
+
+    /// Emptying the trash counts its bytes from the listing: sizes are the server's
+    /// numbers, and a sum past `i64::MAX` panicked the counting task, so the question
+    /// never came and the Empty trash button stayed disabled for the rest of the session.
+    #[test]
+    fn an_absurd_trash_still_asks_before_emptying() {
+        let big = i64::MAX / 2 + 1;
+        let body = format!(
+            r#"{{"page":1,"perPage":120,"total":2,"items":[{{"id":"a","size":{big}}},{{"id":"b","size":{big}}}]}}"#
+        );
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let host = server(Box::leak(reply.into_bytes().into_boxed_slice()));
+        let mut state = state_on(&host);
+        state.empty_trash();
+        settle(&mut state, |s| s.windows.confirm.is_some());
+        let Some(confirm) = state.windows.confirm.as_ref() else {
+            panic!("no question was asked");
+        };
+        assert!(matches!(
+            &confirm.action,
+            ConfirmAction::EmptyTrash { ids, bytes } if ids.len() == 2 && *bytes == i64::MAX
+        ));
+        state.confirm_finished(ConfirmOutcome::No);
+        assert!(!state.emptying_trash);
+    }
+
+    /// The question about emptying the trash shares the one confirmation window with the
+    /// rest of the app; one asked elsewhere (a notice's "Delete file", the components
+    /// window) replaces it. That used to leave the trash "being emptied" for good, so its
+    /// button did nothing until the app was restarted.
+    #[test]
+    fn a_replaced_empty_trash_question_does_not_disable_the_button() {
+        let body = r#"{"page":1,"perPage":120,"total":1,"items":[{"id":"a","size":5}]}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let host = server(Box::leak(reply.into_bytes().into_boxed_slice()));
+        let mut state = state_on(&host);
+        state.empty_trash();
+        settle(&mut state, |s| s.windows.confirm.is_some());
+        assert!(matches!(
+            state.windows.confirm.as_ref().map(|c| &c.action),
+            Some(ConfirmAction::EmptyTrash { .. })
+        ));
+
+        // Another question takes the window, and is answered.
+        state.windows.confirm = Some(Confirm::new(
+            "Delete",
+            "Delete this file?",
+            ConfirmAction::DeleteLocalFile(std::path::PathBuf::from("/nonexistent/x.png")),
+        ));
+        state.confirm_finished(ConfirmOutcome::No);
+
+        // The trash can be emptied again: it counts and asks again.
+        state.empty_trash();
+        settle(&mut state, |s| s.windows.confirm.is_some());
+        assert!(matches!(
+            state.windows.confirm.as_ref().map(|c| &c.action),
+            Some(ConfirmAction::EmptyTrash { .. })
+        ));
+    }
+
+    /// Codes are unique on one server only: another deployment can have a file called
+    /// "logo" too. The session's preview caches do not carry one server's pictures over
+    /// to another's files.
+    #[test]
+    fn another_server_does_not_see_this_ones_cached_previews() {
+        let mut state = state_on("http://127.0.0.1:1");
+        state.space_refresh_account();
+        state
+            .media
+            .bytes
+            .put("logo", std::sync::Arc::new(b"one".to_vec()));
+        state
+            .media
+            .motion_bytes
+            .put("logo", std::sync::Arc::new(b"one".to_vec()));
+        state.media.motion_bytes.refuse("clip");
+
+        // The same server again (signed out and back in): its pictures stay.
+        state.space_signed_out();
+        state.space_refresh_account();
+        assert!(state.media.bytes.get("logo").is_some());
+
+        state.account = AccountStore::in_memory(
+            StoredAccount {
+                host: "http://127.0.0.2:1".into(),
+                tag: "sam".into(),
+                ..StoredAccount::default()
+            },
+            "another-token",
+        );
+        state.space_refresh_account();
+        assert!(state.media.bytes.get("logo").is_none());
+        assert!(state.media.motion_bytes.get("logo").is_none());
+        assert!(!state.media.motion_bytes.is_refused("clip"));
+    }
+
+    /// The preview caches are keyed by code, and a custom URL frees the old code for any
+    /// other file to take. What was cached under it must follow the file it belongs to,
+    /// or the next file given that code is drawn with this one's picture.
+    #[test]
+    fn a_new_custom_url_takes_the_cached_previews_with_it() {
+        let mut state = offline_state();
+        listing(&mut state, 1, 30, 2, &["a", "b"]);
+        let picture = std::sync::Arc::new(b"a's picture".to_vec());
+        let reel = std::sync::Arc::new(b"a's reel".to_vec());
+        state.media.bytes.put("ca", picture.clone());
+        state.media.motion_bytes.put("ca", reel.clone());
+        state.media.motion_bytes.refuse("cb");
+
+        let mut renamed = row("a", None);
+        renamed.code = Some("logo".into());
+        state.edit_done(EditDone::CustomUrl { id: "a".into() }, &[renamed]);
+        assert_eq!(state.space.file("a").unwrap().code, "logo");
+        assert!(
+            state.media.bytes.get("ca").is_none(),
+            "the old code is free"
+        );
+        assert!(state.media.motion_bytes.get("ca").is_none());
+        assert_eq!(state.media.bytes.get("logo"), Some(picture));
+        assert_eq!(state.media.motion_bytes.get("logo"), Some(reel));
+
+        // b takes a's old code: nothing of a's is found under it, and b's own refusal
+        // goes with b.
+        let mut taken = row("b", None);
+        taken.code = Some("ca".into());
+        state.edit_done(EditDone::CustomUrl { id: "b".into() }, &[taken]);
+        assert!(state.media.bytes.get("ca").is_none());
+        assert!(!state.media.motion_bytes.is_refused("cb"));
+        assert!(state.media.motion_bytes.is_refused("ca"));
+    }
+
+    /// `ShowAndActivate`: bringing the window back (the menu bar's "Show Modlight") asks
+    /// for the folder list again, because folders are made and deleted in the web panel
+    /// while the window sits hidden.
+    #[test]
+    fn showing_the_window_reads_the_folders_again() {
+        use std::io::{Read, Write};
+        use std::sync::{Arc, Mutex};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut head = Vec::new();
+                let mut buffer = [0u8; 4096];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&buffer[..n]),
+                    }
+                }
+                let line = String::from_utf8_lossy(&head)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                log.lock().unwrap().push(line);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                );
+            }
+        });
+        let mut state = state_on(&host);
+        listing(&mut state, 1, 30, 1, &["a"]);
+        state.space.identity = format!("{host}\nqa-token-not-a-secret");
+        let ctx = egui::Context::default();
+        state.run(crate::commands::Command::ShowMainWindow, &ctx);
+        let asked = || {
+            seen.lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.starts_with("GET /api/folders "))
+        };
+        let started = std::time::Instant::now();
+        while !asked() && started.elapsed().as_secs() < 3 {
+            for completion in state.rt.drain() {
+                completion(&mut state, &ctx);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(asked(), "requests: {:?}", seen.lock().unwrap());
+    }
+
+    /// Cards that leave the grid without a new listing (pushed off the bottom of page 1
+    /// by new uploads, moved out of the open folder) give their pictures back to the
+    /// budget, as upstream's `Remove` and `Merge` do (`pictures.Forget`).
+    #[test]
+    fn cards_that_leave_the_grid_give_their_pictures_back() {
+        let ctx = egui::Context::default();
+        let picture = |state: &mut AppState, id: &str| {
+            let image = egui::ColorImage::filled([4, 4], egui::Color32::RED);
+            let texture = ctx.load_texture(id, image, egui::TextureOptions::LINEAR);
+            state.media.thumbs.insert(id.to_string(), texture);
+            state.media.budget.add(id.to_string(), 64);
+        };
+
+        // Page 1 of 30, full; one upload lands and pushes "f29" off the bottom.
+        let mut state = offline_state();
+        let ids: Vec<String> = (0..30).map(|i| format!("f{i}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        listing(&mut state, 1, 30, 30, &refs);
+        for id in &ids {
+            picture(&mut state, id);
+        }
+        let mut items = vec![row("new", None)];
+        items.extend(ids.iter().map(|id| row(id, None)));
+        state.merged(UploadPage {
+            page: 1,
+            per_page: 30,
+            total: 31,
+            items: Some(items),
+            ..UploadPage::default()
+        });
+        assert!(state.space.file("f29").is_none(), "pushed off the page");
+        assert!(!state.media.thumbs.contains_key("f29"));
+        assert_eq!(state.media.budget.count(), 29);
+
+        // A file moved out of the folder on screen.
+        let mut state = offline_state();
+        listing(&mut state, 1, 30, 2, &["stay", "go"]);
+        state.space.current_folder = Some("f1".into());
+        for entry in &mut state.space.files {
+            entry.file.folder_id = Some("f1".into());
+        }
+        picture(&mut state, "stay");
+        picture(&mut state, "go");
+        state.edit_done(
+            EditDone::Moved {
+                ids: vec!["go".into()],
+                target: None,
+            },
+            &[row("go", None)],
+        );
+        assert!(state.space.file("go").is_none());
+        assert!(!state.media.thumbs.contains_key("go"));
+        assert!(state.media.thumbs.contains_key("stay"));
+        assert_eq!(state.media.budget.count(), 1);
+    }
+
+    /// The conversion the server would make is then saved under the stem and the new
+    /// extension, and said so.
+    #[test]
+    fn an_accepted_conversion_is_saved() {
+        let host =
+            server(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nconverted");
+        let mut state = state_on(&host);
+        let profile = tempfile::tempdir().unwrap();
+        state.env.profile = profile.path().to_path_buf();
+        listing(&mut state, 1, 30, 1, &["a"]);
+
+        state.download("a", Some("jpg".into()));
+        let saved = format(t(s::MySpace_DownloadSaved), &[Arg::from("a.jpg")]);
+        settle(&mut state, |s| s.toasts.iter().any(|t| t.title == saved));
+        assert!(state.toasts.iter().all(|t| !t.failed));
+        assert_eq!(
+            std::fs::read(profile.path().join("Downloads").join("a.jpg")).unwrap(),
+            b"converted"
+        );
     }
 }

@@ -185,6 +185,23 @@ Everything not listed behaves as upstream does. The per-screen state is in
   the picture itself is untouched. Uploading it whole fails, which wgpu treats as fatal.
 - **Deleting the folder you stand in** reloads the folder list; upstream loses that
   refresh and keeps showing the deleted folder until the next reload.
+- **A page emptied by trashing, restoring, deleting or moving its files** is listed
+  again, at the same page or the last one that still exists, when the listing has other
+  files. Upstream leaves an empty grid under a bar that has already clamped itself to the
+  new last page, so that page's button does nothing until Refresh.
+- **Downloads from My space** are written to a hidden `.<name>.<random>.part` file beside
+  the destination and renamed over it only when the whole body has arrived. Upstream
+  wrote straight into the destination and deleted it on any failure, so a file the
+  person had agreed to replace was lost even when the server refused before sending a
+  byte.
+- **The loose-files shelf's count** follows files in no folder that are moved, trashed,
+  deleted or restored, as every folder's count does. Upstream skipped files whose folder
+  is null, so the shelf kept its old count until the next reload.
+- **A custom URL** moves the file's cached previews (and a "no moving preview" answer)
+  from its old code to the new one. Upstream's caches are keyed by code and kept the old
+  entries, so a file that later took the freed code was drawn with the other file's
+  picture. The caches also belong to one server and are emptied when the library lists
+  another: a code is unique on one deployment only.
 - **Sign-in loopback** follows the audit (PORT.md section 5): CORS limited to the
   server's origin, and a request with the wrong `state` is answered and ignored instead
   of ending the sign-in. `Access-Control-Allow-Private-Network: true` is granted, but only

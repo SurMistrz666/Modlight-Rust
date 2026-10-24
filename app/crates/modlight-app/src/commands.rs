@@ -118,6 +118,12 @@ impl AppState {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                // `ShowAndActivate`: the moment somebody looks again is when the storage
+                // figure, the account and the folders (made and deleted in the web panel
+                // meanwhile) have to be true.
+                self.refresh_account_strip();
+                self.space_refresh_account();
+                self.refresh_folders();
             }
             Command::Quit => self.quit_requested = true,
             Command::NotYet => {
