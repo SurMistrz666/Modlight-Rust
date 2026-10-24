@@ -93,10 +93,13 @@ impl AppState {
                     Err(ApiError::Unauthorized) => AdminState::Unauthorized,
                     Err(ApiError::AdminForbidden) => AdminState::Refused,
                     Err(ApiError::NotSupported) => match diagnosis {
-                        Some(Ok(None)) => AdminState::Unauthorized,
+                        Some(Ok(None)) => {
+                            state.note_token_refused(&credential);
+                            AdminState::Unauthorized
+                        }
                         Some(Ok(Some(info))) => {
                             let admin = info.role.as_deref() == Some("admin");
-                            state.note_account(&credential.host, &info);
+                            state.note_account(&credential, &info);
                             if admin {
                                 AdminState::Unsupported
                             } else {

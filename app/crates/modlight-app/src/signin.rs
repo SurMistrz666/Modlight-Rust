@@ -251,11 +251,11 @@ impl AppState {
                         window.show_account(&info, &credential.host);
                         let name = signin::display_name(&info);
                         window.set_status(&messages::signed_in_as(&name), Tone::Success);
-                        state.note_account(&credential.host, &info);
+                        state.note_account(&credential, &info);
                     }
                     Ok(None) => {
                         window.set_status(t(s::ModlightSignIn_TokenRejected), Tone::Error);
-                        state.note_token_refused();
+                        state.note_token_refused(&credential);
                     }
                     Err(error) => window.set_status(&error.to_string(), Tone::Error),
                 }
@@ -364,7 +364,10 @@ impl AppState {
                     }
                     return;
                 }
-                self.note_account(&signed.origin, &signed.account);
+                self.note_account(
+                    &Credential::new(signed.origin.clone(), signed.token.clone()),
+                    &signed.account,
+                );
                 let name = signin::display_name(&signed.account);
                 if let Some(window) = self.windows.sign_in.as_mut() {
                     window.set_status(&messages::signed_in_as(&name), Tone::Success);
@@ -945,5 +948,59 @@ pub fn paint_avatar(
             galley,
             colors.accent_start(),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use modlight_core::account::{AccountStore, StoredAccount};
+
+    use super::*;
+    use crate::qa::{Look, state};
+
+    fn admin_info(tag: &str) -> AccountInfo {
+        AccountInfo {
+            tag: Some(tag.into()),
+            name: Some("Alex Rivera".into()),
+            email: Some("alex@example.com".into()),
+            role: Some("admin".into()),
+            ..Default::default()
+        }
+    }
+
+    /// An `/api/me` answer that set out before somebody else signed in (the storage chip
+    /// refreshes when the window gets the focus back, which is what one does after
+    /// approving in the browser) must not rename the new account after the old one: its
+    /// tag decides which queued uploads go out with the new token, and whose settings
+    /// marker counts.
+    #[test]
+    fn an_answer_about_a_credential_that_went_away_is_not_kept() {
+        let mut app = state(&Look::default(), true);
+        let old = app.credential().unwrap();
+        app.account = AccountStore::in_memory(
+            StoredAccount {
+                host: old.host.clone(),
+                tag: "sam".into(),
+                name: "Sam".into(),
+                ..StoredAccount::default()
+            },
+            "another-token",
+        );
+
+        app.note_account(&old, &admin_info("alex"));
+        assert_eq!(app.account.account().tag, "sam");
+        assert_eq!(app.account.display_name(), "Sam");
+        assert!(!app.is_admin());
+
+        // The one signed in now is kept, role included; its refusal forgets the role,
+        // the old one's does not.
+        let current = app.credential().unwrap();
+        app.note_account(&current, &admin_info("sam"));
+        assert_eq!(app.account.account().tag, "sam");
+        assert!(app.is_admin());
+        app.note_token_refused(&old);
+        assert!(app.is_admin());
+        app.note_token_refused(&current);
+        assert!(!app.is_admin());
     }
 }

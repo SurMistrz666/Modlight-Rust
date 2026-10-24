@@ -19,6 +19,8 @@ pub struct AccountStrip {
     pub identity: String,
     pub read_at: Option<Instant>,
     pub in_flight: Option<u64>,
+    /// Whose reading the request in flight is asking for (host + token).
+    pub asking: String,
     pub generation: u64,
     pub has_storage: bool,
     pub has_storage_bar: bool,
@@ -115,6 +117,11 @@ impl AppState {
         if changed {
             self.strip.clear_storage();
         }
+        if self.strip.in_flight.is_some() && self.strip.asking != identity {
+            // The request still out is for the previous account: its answer is dropped
+            // (`AccountStripViewModel.Owns`) and this one's is asked for now.
+            self.strip.in_flight = None;
+        }
         if self.strip.in_flight.is_some() {
             return;
         }
@@ -130,6 +137,7 @@ impl AppState {
         self.strip.generation += 1;
         let generation = self.strip.generation;
         self.strip.in_flight = Some(generation);
+        self.strip.asking = identity.clone();
         let api = self.api.clone();
         self.rt.spawn(async move {
             let answer = api.get_account(&credential).await;
@@ -140,12 +148,12 @@ impl AppState {
                 state.strip.in_flight = None;
                 match answer {
                     Ok(Some(info)) => {
-                        state.note_account(&credential.host, &info);
+                        state.note_account(&credential, &info);
                         state.strip.show(identity, &info);
                         state.request_avatar(ctx);
                     }
                     Ok(None) => {
-                        state.note_token_refused();
+                        state.note_token_refused(&credential);
                         state
                             .strip
                             .show_problem(identity, t(s::ModlightSignIn_TokenRejected).to_string());
@@ -192,5 +200,74 @@ impl AppState {
         } else {
             format!("{signed}\n{host}")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use modlight_core::account::{AccountStore, StoredAccount};
+
+    use super::*;
+    use crate::qa::{Look, state};
+
+    /// An account whose server is a closed port on this machine: every request fails at
+    /// once and nothing leaves the machine.
+    fn account(tag: &str, token: &str) -> AccountStore {
+        AccountStore::in_memory(
+            StoredAccount {
+                host: "http://127.0.0.1:9".into(),
+                tag: tag.into(),
+                ..StoredAccount::default()
+            },
+            token,
+        )
+    }
+
+    /// Run what the background tasks handed back until `done` holds.
+    fn settle(app: &mut AppState, ctx: &egui::Context, done: impl Fn(&AppState) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !done(app) && Instant::now() < deadline {
+            for completion in app.rt.drain() {
+                completion(app, ctx);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Another account signs in while the chip's request for the previous one is out:
+    /// the new account's reading is asked for at once, and the old answer is not shown
+    /// under the new name (`AccountStripViewModel.Owns`).
+    #[test]
+    fn a_reading_for_the_previous_account_is_dropped() {
+        let ctx = egui::Context::default();
+        let mut app = state(&Look::default(), true);
+        app.account = account("first", "first-token");
+        app.refresh_account_strip();
+        let first = app.strip.in_flight;
+        assert!(first.is_some());
+        app.refresh_account_strip();
+        assert_eq!(
+            app.strip.in_flight, first,
+            "the same account's request is not asked twice"
+        );
+
+        app.account = account("second", "second-token");
+        let second = identity_of(&app.credential().unwrap());
+        app.refresh_account_strip();
+
+        settle(&mut app, &ctx, |app| {
+            app.strip.in_flight.is_none() && app.strip.identity == second
+        });
+        assert!(app.strip.in_flight.is_none());
+        assert_eq!(
+            app.strip.identity, second,
+            "the reading on screen is the signed-in account's"
+        );
+        assert!(
+            app.strip.has_storage_problem,
+            "the closed port answered nothing"
+        );
     }
 }
