@@ -150,10 +150,14 @@ pub struct BackgroundSettings {
     pub gradient1: String,
     pub gradient2: String,
     pub image_path: Option<String>,
-    image: Option<(String, ImageLayout, Arc<RgbaImage>)>,
+    /// The decoded picture of an Image or Wallpaper background. Shared by the copies
+    /// `state` makes, so a picture is read from disk once, not on every frame.
+    image: Arc<std::sync::Mutex<Option<CachedImage>>>,
     insets: (u32, u32, u32, u32),
     insets_valid: bool,
 }
+
+type CachedImage = (String, ImageLayout, Arc<RgbaImage>);
 
 impl Default for BackgroundSettings {
     fn default() -> Self {
@@ -169,7 +173,7 @@ impl Default for BackgroundSettings {
             gradient1: "#FFFF7E5F".into(),
             gradient2: "#FFFEB47B".into(),
             image_path: None,
-            image: None,
+            image: Arc::default(),
             insets: (0, 0, 0, 0),
             insets_valid: false,
         }
@@ -274,7 +278,7 @@ impl BackgroundSettings {
         (w > 0.0 && h > 0.0).then_some(w / h)
     }
 
-    fn brush(&mut self) -> BackgroundBrush {
+    fn brush(&self) -> BackgroundBrush {
         match self.mode {
             BackgroundMode::Transparent => BackgroundBrush::Transparent,
             BackgroundMode::Color => {
@@ -295,8 +299,9 @@ impl BackgroundSettings {
         }
     }
 
-    fn load_brush(&mut self, path: &str, layout: ImageLayout) -> BackgroundBrush {
-        if let Some((p, l, image)) = &self.image
+    fn load_brush(&self, path: &str, layout: ImageLayout) -> BackgroundBrush {
+        let mut cache = self.image.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((p, l, image)) = cache.as_ref()
             && p == path
             && *l == layout
         {
@@ -305,16 +310,16 @@ impl BackgroundSettings {
         match open_image(std::path::Path::new(path)) {
             Some(img) => {
                 let image = Arc::new(img);
-                self.image = Some((path.to_string(), layout, image.clone()));
+                *cache = Some((path.to_string(), layout, image.clone()));
                 BackgroundBrush::Image(image, layout)
             }
             None => BackgroundBrush::Transparent,
         }
     }
 
-    /// What the frame needs to draw (`UpdateCanvasProperties` and friends).
+    /// What the frame needs to draw (`UpdateCanvasProperties` and friends). The brush
+    /// is only made while the background is shown; the frame draws none otherwise.
     pub fn state(&self, active: bool, o: &ImageEditorOptions) -> BackgroundState {
-        let mut this = self.clone();
         BackgroundState {
             active,
             margin: self.margin,
@@ -323,7 +328,11 @@ impl BackgroundSettings {
             rounded_corner: self.rounded_corner,
             shadow_radius: self.shadow_radius,
             output_ratio: self.output_ratio(),
-            brush: this.brush(),
+            brush: if active {
+                self.brush()
+            } else {
+                BackgroundBrush::Transparent
+            },
             shadow_color: o.shadow_color(),
             smart_insets: self.insets,
         }
@@ -363,5 +372,81 @@ impl super::Editor {
             s.image_path = Some(path);
             s.mode = BackgroundMode::Image;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use image::Rgba;
+
+    use super::*;
+    use crate::editor::{Editor, EditorConfig};
+
+    /// Smart padding is found anew for every picture opened (`InvalidateSmartPaddingCache`
+    /// when the preview changes): the border found on the last picture would crop the
+    /// next one, or hide it altogether.
+    #[test]
+    fn a_new_picture_gets_its_own_smart_padding() {
+        let mut e = Editor::new(ImageEditorOptions::default(), EditorConfig::default());
+        // A 10 pixel white border round a dark middle.
+        let mut bordered = RgbaImage::from_pixel(100, 80, Rgba([255; 4]));
+        for y in 10..70 {
+            for x in 10..90 {
+                bordered.put_pixel(x, y, Rgba([0, 0, 0, 255]));
+            }
+        }
+        e.load_image(bordered, None);
+        e.set_settings_panel_open(true);
+        assert_eq!(e.background_state().smart_insets, (10, 10, 10, 10));
+        // A small picture with a 2 pixel border.
+        let mut small = RgbaImage::from_pixel(16, 12, Rgba([255; 4]));
+        for y in 2..10 {
+            for x in 2..14 {
+                small.put_pixel(x, y, Rgba([0, 0, 0, 255]));
+            }
+        }
+        e.load_image(small, None);
+        assert_eq!(e.background_state().smart_insets, (2, 2, 2, 2));
+        let layout = crate::frame::layout(&e.background_state(), e.core.canvas_size());
+        assert_eq!(layout.viewport, (12.0, 8.0));
+    }
+
+    /// An Image background remembered from the last session is read from disk once,
+    /// when the Background panel first shows it; not on every frame.
+    #[test]
+    fn a_remembered_background_picture_is_read_once() {
+        static READS: AtomicUsize = AtomicUsize::new(0);
+        let dir = tempfile::tempdir().unwrap();
+        // A format the image crate does not read, so the host's reader is asked.
+        let path = dir.path().join("background.heic");
+        std::fs::write(&path, b"not a picture the image crate reads").unwrap();
+        let wanted = path.clone();
+        set_image_loader(Some(Box::new(move |p| {
+            (p == wanted).then(|| {
+                READS.fetch_add(1, Ordering::SeqCst);
+                RgbaImage::from_pixel(4, 4, Rgba([1, 2, 3, 255]))
+            })
+        })));
+        let options = ImageEditorOptions {
+            background_type: "Image".into(),
+            background_image_path: path.to_string_lossy().into_owned(),
+            ..ImageEditorOptions::default()
+        };
+        let mut e = Editor::new(options, EditorConfig::default());
+        e.load_image(RgbaImage::from_pixel(20, 10, Rgba([255; 4])), None);
+        for _ in 0..3 {
+            let _ = e.background_state();
+        }
+        assert_eq!(READS.load(Ordering::SeqCst), 0, "not read while hidden");
+        e.set_settings_panel_open(true);
+        for _ in 0..3 {
+            let state = e.background_state();
+            assert!(matches!(state.brush, BackgroundBrush::Image(..)));
+        }
+        let _ = e.snapshot();
+        assert_eq!(READS.load(Ordering::SeqCst), 1);
+        set_image_loader(None);
     }
 }

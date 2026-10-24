@@ -250,6 +250,26 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **GIF bit depth 4** is written as a 256-colour GIF (the encoder has no 16-colour
   palette mode). A custom time zone other than UTC in file name patterns falls back to
   local time.
+- **Image editor operations and annotations** (logic review 2026-10-24): crop, cut out,
+  rotate, flip, resize and canvas size move a bent line's or arrow's curve point with its
+  ends (upstream left it behind, so the curve changed shape), and move a speech balloon's
+  default tail once with its body (upstream took the tail after moving the body and moved
+  it again; it hid this by fixing the tail on first selection). A cut-out through an
+  annotation keeps the part before the strip and closes up the rest; upstream moved the
+  whole annotation back by the strip's width. A crop area reaching past the image's
+  left or top edge (a Shift-square quick crop) crops the part of the image it covers;
+  upstream kept the area's full size from the edge. A picture, emoji or paste added
+  while the Crop tool is active is its own undo step; upstream's core skipped the step
+  for the crop annotation it drew, which the port's crop never adds to the document, so
+  the undo took the addition and the step before it. Duplicate and paste move the whole copy
+  20 pixels, curve point and tails included (upstream moved only the ends). Home, End,
+  Page Up and Page Down reorder only the annotation shown as selected; upstream's keys
+  reordered the one the core still remembered from an undone step. When the exit
+  confirmation's "Yes" cannot save the picture, the error is shown and the editor stays
+  open; upstream closed after the error and the picture was lost. Moving, resizing,
+  rotating, restyling or retyping an annotation leaves no undo step (as upstream) but
+  counts as an unsaved change: upstream marked only undoable steps, so these edits made
+  after a save were dropped on close without the exit confirmation.
 
 ## Image editor
 

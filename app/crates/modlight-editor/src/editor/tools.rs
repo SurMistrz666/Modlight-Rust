@@ -444,13 +444,16 @@ impl Editor {
         self.tools.step_type = step_type;
         self.options.step_type = step_type;
         let mut any = false;
+        let mut changed = false;
         for a in self.core.annotations_mut() {
             if let Kind::Number(n) = &mut a.kind {
+                changed |= n.step_type != step_type;
                 n.step_type = step_type;
                 any = true;
             }
         }
         if any {
+            self.is_dirty |= changed;
             self.invalidate();
         }
     }
@@ -903,6 +906,13 @@ impl Editor {
         let Some(a) = self.vm_selected_annotation().cloned() else {
             return;
         };
+        // The setters below hand the annotation its own values: not an edit.
+        let dirty = self.is_dirty;
+        self.sync_options_from(&a);
+        self.is_dirty = dirty;
+    }
+
+    fn sync_options_from(&mut self, a: &Annotation) {
         let skip_stroke = a.is_image() || a.is_effect() || matches!(a.kind, Kind::Spotlight(_));
         if !skip_stroke && !a.is_smart_eraser() {
             self.set_selected_color(&a.stroke_color.clone());
