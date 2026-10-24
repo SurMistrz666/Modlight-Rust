@@ -146,6 +146,39 @@ pub fn url_at(text: &str, index: usize) -> Option<String> {
     matches!(url.scheme(), "http" | "https").then(|| candidate.to_string())
 }
 
+/// `CleanupManager.Cleanup` at start: with "Automatically cleanup old backup files" the
+/// weekly settings copies in `Backup`, with "... old log files" the monthly logs, each
+/// down to the newest `CleanupKeepFileCount`. Returns how many files went.
+pub fn cleanup(personal_folder: &Path, config: &crate::config::AppConfig) -> usize {
+    let on = |member: &str| config.get(member).and_then(|v| v.as_bool()) == Some(true);
+    let keep = config
+        .get("CleanupKeepFileCount")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(10)
+        .max(0) as usize;
+    let mut removed = 0;
+    if on("AutoCleanupBackupFiles") {
+        let folder = personal_folder.join(crate::config::BACKUP_FOLDER);
+        for prefix in [
+            "ApplicationConfig-",
+            "HotkeysConfig-",
+            "UploadersConfig-",
+            "History-",
+        ] {
+            removed += cleanup_folder(&folder, prefix, ".json", keep);
+        }
+    }
+    if on("AutoCleanupLogFiles") {
+        removed += cleanup_folder(
+            &personal_folder.join(LOGS_FOLDER),
+            "Modlight-Log-",
+            ".txt",
+            keep,
+        );
+    }
+    removed
+}
+
 /// `CleanupManager.CleanupFolder`: keep the newest `keep` files of `folder` whose names
 /// start with `prefix` and end with `suffix`; the older ones go.
 pub fn cleanup_folder(folder: &Path, prefix: &str, suffix: &str, keep: usize) -> usize {
@@ -229,5 +262,57 @@ mod tests {
         assert_eq!(cleanup_folder(dir.path(), "Modlight-Log-", ".txt", 2), 1);
         assert!(!dir.path().join("Modlight-Log-2026-07.txt").exists());
         assert!(dir.path().join("other.txt").exists());
+    }
+
+    /// "Automatically cleanup old backup files" thins the weekly settings copies the
+    /// saves leave, never the copy of the previous file or anything else in `Backup`.
+    #[test]
+    fn the_start_cleans_the_weekly_backups_when_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let backup = dir.path().join(crate::config::BACKUP_FOLDER);
+        std::fs::create_dir_all(&backup).unwrap();
+        let names = [
+            "ApplicationConfig-2026-09-W39.json",
+            "ApplicationConfig-2026-10-W41.json",
+            "ApplicationConfig-2026-10-W43.json",
+            "HotkeysConfig-2026-09-W39.json",
+            "HotkeysConfig-2026-10-W43.json",
+            "ApplicationConfig.json",
+            "HotkeysConfig.json",
+            "CloudSettings-superseded-local.json",
+        ];
+        for (i, name) in names.iter().enumerate() {
+            let path = backup.join(name);
+            std::fs::write(&path, b"{}").unwrap();
+            let time =
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000 + i as u64);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
+        }
+        let mut config = crate::config::AppConfig::in_memory();
+        config.set("CleanupKeepFileCount", serde_json::json!(1));
+        assert_eq!(cleanup(dir.path(), &config), 0, "off by default");
+        config.set("AutoCleanupBackupFiles", serde_json::json!(true));
+        assert_eq!(cleanup(dir.path(), &config), 3);
+        let left: std::collections::BTreeSet<String> = std::fs::read_dir(&backup)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        let expected: std::collections::BTreeSet<String> = [
+            "ApplicationConfig-2026-10-W43.json",
+            "HotkeysConfig-2026-10-W43.json",
+            "ApplicationConfig.json",
+            "HotkeysConfig.json",
+            "CloudSettings-superseded-local.json",
+        ]
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+        assert_eq!(left, expected);
     }
 }

@@ -7,6 +7,11 @@
 //! does not understand: a member the port does not read is kept byte for byte.
 //!
 //! Members the port uses are read through typed accessors with upstream's defaults.
+//!
+//! Loading and saving follow `SettingsBase` as `SettingManager` sets it up: a save
+//! writes `<file>.temp`, keeps the file it replaces as `Backup/<file>` and once a week a
+//! dated copy (`Backup/<name>-yyyy-MM-Www.json`); a file that does not load falls back
+//! to those, in that order, before the defaults.
 
 use std::path::{Path, PathBuf};
 
@@ -60,24 +65,135 @@ fn read_object(path: &Path) -> Option<Map<String, Value>> {
     }
 }
 
-/// Write `value` to `path` atomically: a temporary file next to it, then a rename.
+/// Where a save writes before the rename (`SettingsBase`: `filePath + ".temp"`).
+fn temp_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".temp");
+    PathBuf::from(name)
+}
+
+/// Write `bytes` to `path` atomically: a temporary file next to it, then a rename.
 pub fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension("json.tmp");
+    let tmp = temp_path(path);
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)
 }
 
+/// `JsonHelpers.QuickVerifyJsonFile`: the text starts with `{` and ends with `}`.
+fn quick_verify_json(bytes: &[u8]) -> bool {
+    let text = bytes.trim_ascii();
+    text.len() > 1 && text.first() == Some(&b'{') && text.last() == Some(&b'}')
+}
+
+/// `SettingsBase.Load` with fallback support: the file itself, then what a save cut
+/// short left beside it (`<file>.temp`), then the copy the last save kept
+/// (`Backup/<file>`), then the newest weekly copy (`Backup/<name>-*`). A file that is
+/// missing, empty or not a JSON object is passed over; `None` when none of them loads.
+fn load_settings_file(path: &Path, backup_folder: &Path) -> Option<Map<String, Value>> {
+    let mut candidates = vec![path.to_path_buf(), temp_path(path)];
+    if backup_folder.is_dir()
+        && let Some(file_name) = path.file_name()
+    {
+        candidates.push(backup_folder.join(file_name));
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let prefix = format!("{stem}-");
+        let newest_weekly = std::fs::read_dir(backup_folder)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(&prefix))
+            .max();
+        if let Some(name) = newest_weekly {
+            candidates.push(backup_folder.join(name));
+        }
+    }
+    for (index, candidate) in candidates.iter().enumerate() {
+        if let Some(map) = read_object(candidate) {
+            if index > 0 {
+                log::warn!(
+                    "{} could not be read; the settings were loaded from {}",
+                    path.display(),
+                    candidate.display()
+                );
+            }
+            return Some(map);
+        }
+    }
+    None
+}
+
+/// `SettingsBase.SaveInternal` with `CreateBackup` and `CreateWeeklyBackup`, as
+/// `SettingManager` sets them for every settings file: the text goes to `<file>.temp`
+/// and is checked, the file it replaces is kept as `Backup/<file>` (a file that does not
+/// read as settings is not kept over a good copy), the new one takes its place, and the
+/// first save of a week leaves `Backup/<name>-yyyy-MM-Www.json` too.
+fn save_settings_file(path: &Path, bytes: &[u8], backup_folder: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temp = temp_path(path);
+    std::fs::write(&temp, bytes)?;
+    if !quick_verify_json(bytes) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("the settings file is corrupt: {}", temp.display()),
+        ));
+    }
+    if let Ok(previous) = std::fs::read(path)
+        && quick_verify_json(&previous)
+        && let Some(file_name) = path.file_name()
+    {
+        std::fs::create_dir_all(backup_folder)?;
+        std::fs::write(backup_folder.join(file_name), previous)?;
+    }
+    std::fs::rename(&temp, path)?;
+    if let Err(error) = backup_weekly(path, backup_folder, chrono::Local::now()) {
+        log::warn!("Weekly settings backup of {}: {error}", path.display());
+    }
+    Ok(())
+}
+
+/// `FileHelpers.BackupFileWeekly`: `<name>-yyyy-MM-Www<ext>` in `folder`, once a week.
+fn backup_weekly(
+    path: &Path,
+    folder: &Path,
+    now: chrono::DateTime<chrono::Local>,
+) -> std::io::Result<()> {
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    let extension = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let name = format!(
+        "{stem}-{}-W{:02}{extension}",
+        now.format("%Y-%m"),
+        crate::names::helpers::week_of_year(&now)
+    );
+    let weekly = folder.join(name);
+    if !weekly.exists() {
+        std::fs::create_dir_all(folder)?;
+        std::fs::copy(path, weekly)?;
+    }
+    Ok(())
+}
+
 impl AppConfig {
-    /// Load (or start) the settings in `profile`.
+    /// Load (or start) the settings in `profile`, falling back to what the last saves
+    /// left when a file does not read (`SettingsBase.Load`).
     pub fn load(profile: &Path) -> AppConfig {
         let path = profile.join(APPLICATION_CONFIG_FILE);
         let hotkeys_path = profile.join(HOTKEYS_CONFIG_FILE);
+        let backup = profile.join(BACKUP_FOLDER);
         AppConfig {
-            values: read_object(&path).unwrap_or_default(),
-            hotkeys: read_object(&hotkeys_path),
+            values: load_settings_file(&path, &backup).unwrap_or_default(),
+            hotkeys: load_settings_file(&hotkeys_path, &backup),
             path: Some(path),
             hotkeys_path: Some(hotkeys_path),
         }
@@ -89,18 +205,22 @@ impl AppConfig {
     }
 
     pub fn save(&self) -> std::io::Result<()> {
-        if let Some(path) = &self.path {
+        let backup = self.backup_folder();
+        if let (Some(path), Some(backup)) = (&self.path, &backup) {
             let text = serde_json::to_vec_pretty(&Value::Object(self.values.clone()))?;
-            write_atomically(path, &text)?;
+            save_settings_file(path, &text, backup)?;
         }
-        if let (Some(path), Some(hotkeys)) = (&self.hotkeys_path, &self.hotkeys) {
+        if let (Some(path), Some(hotkeys), Some(backup)) =
+            (&self.hotkeys_path, &self.hotkeys, &backup)
+        {
             let text = serde_json::to_vec_pretty(&Value::Object(hotkeys.clone()))?;
-            write_atomically(path, &text)?;
+            save_settings_file(path, &text, backup)?;
         }
         Ok(())
     }
 
-    /// The folder synced documents are backed up to before they are replaced.
+    /// `SettingManager.BackupFolder`: the copies the saves keep, and the synced documents
+    /// backed up before they are replaced.
     pub fn backup_folder(&self) -> Option<PathBuf> {
         self.path
             .as_ref()
@@ -395,6 +515,144 @@ mod tests {
         assert_eq!(again.get("SomethingWindowsOnly"), Some(&json!({"a":[1,2]})));
         assert_eq!(again.page_size(), 60);
         assert!(again.hotkeys().is_none());
+    }
+
+    /// `SettingsBase.Load` with fallback support: a settings file that does not read
+    /// (cut short by a crash, emptied, edited wrong) is not the end of the settings; the
+    /// temporary file of an unfinished save, the copy the last save kept and the newest
+    /// weekly copy are tried in that order.
+    #[test]
+    fn a_broken_settings_file_falls_back_to_what_the_saves_left() {
+        use crate::l10n::LanguageSetting;
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path();
+        let backup = profile.join(BACKUP_FOLDER);
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::write(
+            backup.join(APPLICATION_CONFIG_FILE),
+            r#"{"Language":"Polish","ModlightPageSize":30}"#,
+        )
+        .unwrap();
+        for broken in ["", "{\"Language\":\"Pol", "null", "[1,2]"] {
+            std::fs::write(profile.join(APPLICATION_CONFIG_FILE), broken).unwrap();
+            let config = AppConfig::load(profile);
+            assert_eq!(config.language(), LanguageSetting::Polish, "{broken:?}");
+            assert_eq!(config.page_size(), 30, "{broken:?}");
+        }
+        // What an unfinished save wrote comes before the backup.
+        let temp = profile.join("ApplicationConfig.json.temp");
+        std::fs::write(&temp, r#"{"Language":"English"}"#).unwrap();
+        assert_eq!(
+            AppConfig::load(profile).language(),
+            LanguageSetting::English
+        );
+        std::fs::remove_file(&temp).unwrap();
+        // No backup copy: the newest weekly one.
+        std::fs::remove_file(backup.join(APPLICATION_CONFIG_FILE)).unwrap();
+        std::fs::write(
+            backup.join("ApplicationConfig-2026-09-W39.json"),
+            r#"{"ModlightPageSize":60}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            backup.join("ApplicationConfig-2026-10-W43.json"),
+            r#"{"ModlightPageSize":120,"ModlightLibraryPanel":true}"#,
+        )
+        .unwrap();
+        let config = AppConfig::load(profile);
+        assert_eq!(config.page_size(), 120);
+        assert!(config.library_panel());
+        // The hotkeys file the same way.
+        std::fs::write(profile.join(HOTKEYS_CONFIG_FILE), "{\"Hotkeys\":[{").unwrap();
+        std::fs::write(
+            backup.join(HOTKEYS_CONFIG_FILE),
+            r#"{"Hotkeys":[{"HotkeyInfo":{"Hotkey":"F13"}}]}"#,
+        )
+        .unwrap();
+        let hotkeys = AppConfig::load(profile).hotkeys().cloned().unwrap();
+        assert_eq!(hotkeys["Hotkeys"][0]["HotkeyInfo"]["Hotkey"], json!("F13"));
+        // A file that reads is used as it is, whatever the backups hold.
+        std::fs::write(
+            profile.join(APPLICATION_CONFIG_FILE),
+            r#"{"ShowTray":false}"#,
+        )
+        .unwrap();
+        let config = AppConfig::load(profile);
+        assert!(!config.show_tray());
+        assert_eq!(config.page_size(), 120, "the default, not the backup's");
+        assert!(!config.library_panel());
+    }
+
+    /// `SettingsBase.SaveInternal` as `SettingManager` sets it up (`CreateBackup`,
+    /// `CreateWeeklyBackup`): each save keeps the file it replaces in `Backup`, and the
+    /// first save of a week leaves a dated copy there too.
+    #[test]
+    fn a_save_keeps_the_file_it_replaces_and_a_weekly_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path();
+        let backup = profile.join(BACKUP_FOLDER);
+        let mut config = AppConfig::load(profile);
+        config.set_page_size(30);
+        config.set_hotkeys(json!({"Hotkeys": []}).as_object().unwrap().clone());
+        config.save().unwrap();
+        config.set_page_size(60);
+        config.set_hotkeys(json!({"Hotkeys": [{}]}).as_object().unwrap().clone());
+        config.save().unwrap();
+        assert_eq!(
+            read_object(&backup.join(APPLICATION_CONFIG_FILE)).unwrap()["ModlightPageSize"],
+            json!(30)
+        );
+        assert_eq!(
+            read_object(&backup.join(HOTKEYS_CONFIG_FILE)).unwrap()["Hotkeys"],
+            json!([])
+        );
+        let names: Vec<String> = std::fs::read_dir(&backup)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        let weekly: Vec<&String> = names
+            .iter()
+            .filter(|n| n.starts_with("ApplicationConfig-"))
+            .collect();
+        assert_eq!(weekly.len(), 1, "{names:?}");
+        assert!(
+            names.iter().any(|n| n.starts_with("HotkeysConfig-")),
+            "{names:?}"
+        );
+        assert!(!profile.join("ApplicationConfig.json.temp").exists());
+        // A broken file is not kept over the good copy.
+        std::fs::write(profile.join(APPLICATION_CONFIG_FILE), "{\"Modl").unwrap();
+        config.set_page_size(120);
+        config.save().unwrap();
+        assert_eq!(
+            read_object(&backup.join(APPLICATION_CONFIG_FILE)).unwrap()["ModlightPageSize"],
+            json!(30)
+        );
+        assert_eq!(AppConfig::load(profile).page_size(), 120);
+    }
+
+    /// `BackupFileWeekly`: `{name}-{yyyy-MM}-W{week:00}{ext}`, week by `WeekOfYear`
+    /// (the first day rule, weeks from Monday), written once.
+    #[test]
+    fn the_weekly_copy_is_named_like_upstream_names_it() {
+        use chrono::TimeZone;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(APPLICATION_CONFIG_FILE);
+        let folder = dir.path().join(BACKUP_FOLDER);
+        std::fs::write(&file, "{\"a\":1}").unwrap();
+        let saturday = chrono::Local
+            .with_ymd_and_hms(2026, 10, 24, 12, 0, 0)
+            .unwrap();
+        backup_weekly(&file, &folder, saturday).unwrap();
+        let weekly = folder.join("ApplicationConfig-2026-10-W43.json");
+        assert_eq!(std::fs::read(&weekly).unwrap(), b"{\"a\":1}");
+        std::fs::write(&file, "{\"a\":2}").unwrap();
+        backup_weekly(&file, &folder, saturday).unwrap();
+        assert_eq!(std::fs::read(&weekly).unwrap(), b"{\"a\":1}", "once a week");
+        let new_year = chrono::Local.with_ymd_and_hms(2027, 1, 1, 9, 0, 0).unwrap();
+        backup_weekly(&file, &folder, new_year).unwrap();
+        assert!(folder.join("ApplicationConfig-2027-01-W01.json").exists());
     }
 
     #[test]
