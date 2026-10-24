@@ -201,6 +201,16 @@ Everything not listed behaves as upstream does. The per-screen state is in
   P2: a link somebody else generated shows a code no app of the person's shows).
   `modlight-api/src/signin.rs`, tests `signin_pickup_fake.rs` and `signin_pickup.rs`,
   snapshot screen `sign-in-waiting`.
+- **Settings sync digests the content, not the bytes** (logic review 2026-10-24). The
+  server keeps the synced document in a Postgres `jsonb` column and hands it back
+  through JavaScript: every object's members in jsonb's order (shorter names first) and
+  `3.0` as `3`. Upstream's digest of the bytes therefore never matched the server's copy
+  of the same settings, so every round alternated between "the server moved" (adopt)
+  and "an unsent local change" (push), writing to the account every other round, and a
+  machine that had just adopted pushed its unchanged settings over a change another
+  machine sent in between. The port hashes a canonical form (members sorted by name,
+  integral numbers without a point); a marker written by an earlier build is recognised
+  by its old digest. `modlight-core/src/sync/document.rs`, tests `tests/settings_sync.rs`.
 - **AI keys** live in the Keychain (service `Modlight`, `ai-*-api-key`). The OpenAI key
   is stored together with the base URL it was entered for (the custom URL, or the
   default endpoint); it is sent only to that base. Settings that point `OpenAICustomURL`
