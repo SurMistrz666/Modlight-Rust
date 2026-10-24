@@ -17,6 +17,7 @@
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -59,6 +60,20 @@ fn usage() -> String {
 }
 
 fn parse() -> Result<Args, String> {
+    parse_from(std::env::args_os().skip(1))
+}
+
+/// The value after one of the port's own options: plain text.
+fn option_value(it: &mut impl Iterator<Item = OsString>) -> Result<String, String> {
+    it.next()
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(usage)
+}
+
+/// The words after the program's name. Each is taken as the system gives it, not as
+/// Unicode (`env::args` would panic on a file name with a lone surrogate, which Windows
+/// allows and Explorer passes on).
+fn parse_from(mut it: impl Iterator<Item = OsString>) -> Result<Args, String> {
     let mut args = Args {
         qa_profile: None,
         shot: None,
@@ -74,13 +89,30 @@ fn parse() -> Result<Args, String> {
     };
     // Windows: upstream's words, read once the port's own options are out of the way.
     #[cfg(windows)]
-    let mut upstream: Vec<String> = Vec::new();
-    let mut it = std::env::args().skip(1);
-    while let Some(arg) = it.next() {
+    let mut upstream: Vec<OsString> = Vec::new();
+    while let Some(word) = it.next() {
+        // The port's own options are plain text; a word that is not Unicode can only be
+        // a file of upstream's command line.
+        let arg = match word.into_string() {
+            Ok(arg) => arg,
+            #[cfg(windows)]
+            Err(word) => {
+                upstream.push(word);
+                continue;
+            }
+            #[cfg(not(windows))]
+            Err(word) => {
+                return Err(format!(
+                    "unknown argument '{}'\n{}",
+                    word.to_string_lossy(),
+                    usage()
+                ));
+            }
+        };
         match arg.as_str() {
             "--qa-profile" => args.qa_profile = Some(it.next().ok_or_else(usage)?.into()),
             "--qa-shot" => {
-                let screen = it.next().ok_or_else(usage)?;
+                let screen = option_value(&mut it)?;
                 let out = it
                     .next()
                     .map(PathBuf::from)
@@ -88,24 +120,24 @@ fn parse() -> Result<Args, String> {
                 args.shot = Some((screen, out));
             }
             "--qa-lang" => {
-                args.look.language = match it.next().ok_or_else(usage)?.as_str() {
+                args.look.language = match option_value(&mut it)?.as_str() {
                     "pl" => Language::Polish,
                     "en" => Language::English,
                     other => return Err(format!("unknown language '{other}'\n{}", usage())),
                 }
             }
-            "--qa-skin" => args.look.skin = it.next().ok_or_else(usage)?,
+            "--qa-skin" => args.look.skin = option_value(&mut it)?,
             "--qa-light" => args.look.dark = false,
             "--qa-dark" => args.look.dark = true,
             "--qa-size" => {
-                let text = it.next().ok_or_else(usage)?;
+                let text = option_value(&mut it)?;
                 let (w, h) = text.split_once('x').ok_or_else(usage)?;
                 let w: f32 = w.parse().map_err(|_| usage())?;
                 let h: f32 = h.parse().map_err(|_| usage())?;
                 args.look.size = Some(vec2(w, h));
             }
             "--qa-scale" => {
-                args.look.scale = it.next().ok_or_else(usage)?.parse().map_err(|_| usage())?
+                args.look.scale = option_value(&mut it)?.parse().map_err(|_| usage())?
             }
             "-h" | "--help" => return Err(usage()),
             // macOS passes a process serial number to apps opened from Finder.
@@ -113,7 +145,7 @@ fn parse() -> Result<Args, String> {
             // Upstream's command line (`CLIManager`, `Program.cs`), read below.
             #[cfg(windows)]
             other if !other.starts_with('-') || (other.len() > 1 && !other.starts_with("--")) => {
-                upstream.push(other.to_string())
+                upstream.push(other.into())
             }
             other => return Err(format!("unknown argument '{other}'\n{}", usage())),
         }
@@ -158,17 +190,19 @@ struct CommandLine {
 }
 
 #[cfg(any(windows, test))]
-fn upstream_command_line(words: &[String]) -> CommandLine {
+fn upstream_command_line(words: &[OsString]) -> CommandLine {
     let mut line = CommandLine::default();
     // `lastCommand`: the command still waiting for its parameter.
     let mut waiting: Option<usize> = None;
     for word in words {
-        if let Some(name) = word.strip_prefix('-') {
+        let text = word.to_string_lossy();
+        if let Some(name) = text.strip_prefix('-') {
             line.commands.push((name.to_string(), None));
             waiting = Some(line.commands.len() - 1);
         } else if let Some(command) = waiting.take() {
-            line.commands[command].1 = Some(word.clone());
+            line.commands[command].1 = Some(text.into_owned());
         } else {
+            // A file keeps its name exactly as the system gave it.
             line.files.push(PathBuf::from(word));
         }
     }
@@ -417,12 +451,52 @@ mod tests {
     use super::*;
 
     fn line(words: &[&str]) -> CommandLine {
-        let words: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+        let words: Vec<OsString> = words.iter().map(OsString::from).collect();
         upstream_command_line(&words)
     }
 
     fn command(name: &str, parameter: Option<&str>) -> (String, Option<String>) {
         (name.to_string(), parameter.map(str::to_string))
+    }
+
+    /// A file name the system allows but Unicode does not: Windows takes a lone
+    /// surrogate in a name, and Explorer hands such a file over as it is.
+    fn not_unicode() -> OsString {
+        #[cfg(windows)]
+        let name = {
+            use std::os::windows::ffi::OsStringExt;
+            OsString::from_wide(&['C' as u16, ':' as u16, '\\' as u16, 0xD800, 'x' as u16])
+        };
+        #[cfg(unix)]
+        let name = {
+            use std::os::unix::ffi::OsStringExt;
+            OsString::from_vec(b"/tmp/\xffx".to_vec())
+        };
+        assert!(name.to_str().is_none());
+        name
+    }
+
+    #[test]
+    fn a_word_that_is_not_unicode_does_not_stop_the_start() {
+        // `env::args` panicked on such a word, before any window or message.
+        let result = parse_from(vec![not_unicode()].into_iter());
+        #[cfg(windows)]
+        assert_eq!(result.unwrap().files, vec![PathBuf::from(not_unicode())]);
+        #[cfg(not(windows))]
+        assert!(result.is_err());
+        // Upstream's reading keeps the name as it is.
+        let line = upstream_command_line(&[not_unicode()]);
+        assert_eq!(line.files, vec![PathBuf::from(not_unicode())]);
+        // The port's own options still read their values.
+        let args = parse_from(
+            ["--qa-lang", "pl", "--qa-size", "800x600"]
+                .into_iter()
+                .map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(args.look.language, Language::Polish);
+        assert_eq!(args.look.size, Some(vec2(800.0, 600.0)));
+        assert!(parse_from([OsString::from("--qa-lang")].into_iter()).is_err());
     }
 
     #[test]
