@@ -250,6 +250,13 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **GIF bit depth 4** is written as a 256-colour GIF (the encoder has no 16-colour
   palette mode). A custom time zone other than UTC in file name patterns falls back to
   local time.
+- **Image editor operations and annotations** (logic review 2026-10-24): crop, cut out,
+  rotate, flip, resize and canvas size move a bent line's or arrow's curve point with its
+  ends (upstream left it behind, so the curve changed shape), and move a speech balloon's
+  default tail once with its body (upstream took the tail after moving the body and moved
+  it again; it hid this by fixing the tail on first selection). A cut-out through an
+  annotation keeps the part before the strip and closes up the rest; upstream moved the
+  whole annotation back by the strip's width.
 
 ## Image editor
 
