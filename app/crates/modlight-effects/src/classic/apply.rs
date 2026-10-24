@@ -122,6 +122,15 @@ pub fn refused_by_gdi(e: &ClassicEffect, bmp: &Bitmap) -> bool {
             let (ox, oy) = e.point("Offset");
             too_large((w + 2 * s + (ox as i64).abs(), h + 2 * s + (oy as i64).abs()))
         }
+        Rotate if e.bool("Upsize") => {
+            // The rotated picture's bounding box (`gdi::rotate`).
+            let rad = e.float("Angle") as f64 * std::f64::consts::PI / 180.0;
+            let (c, s) = (rad.cos().abs(), rad.sin().abs());
+            too_large((
+                round(w as f64 * c + h as f64 * s),
+                round(w as f64 * s + h as f64 * c),
+            ))
+        }
         Reflection => {
             // `AddReflection` clones `height * percentage / 100` rows (GDI+ refuses an
             // empty rectangle), `DrawReflection` makes the picture plus those plus Offset.
@@ -1195,6 +1204,35 @@ mod tests {
             let out = preset.apply(&img);
             assert!(out.is_some(), "{kind:?} gave no picture");
         }
+    }
+
+    /// Rotate's Upsize: "the output image will be larger than the input and no clipping
+    /// will occur". Upstream's RotateImage computes the larger size but draws into
+    /// `bmp.CreateEmptyBitmap()`, the input's size, cutting the corners off; the port
+    /// makes the bitmap the size it computed (MACOS.md, "Behaviour that differs").
+    #[test]
+    fn rotate_with_upsize_grows_instead_of_clipping() {
+        let mut rotate = ClassicEffect::new(Kind::Rotate);
+        rotate.set("Angle", Value::Float(90.0));
+        let preset = Preset {
+            name: String::new(),
+            effects: vec![rotate.clone()],
+        };
+        let out = preset.apply(&picture(40, 10)).unwrap();
+        assert_eq!(out.dimensions(), (10, 40));
+        // The whole picture is there: no transparent corner where the clip was.
+        assert!(out.pixels().all(|p| p.0[3] == 255));
+        // Without Upsize it keeps the input's size (clipped, or scaled with Clip off).
+        rotate.set("Upsize", Value::Bool(false));
+        rotate.set("Clip", Value::Bool(true));
+        let preset = Preset {
+            name: String::new(),
+            effects: vec![rotate],
+        };
+        assert_eq!(
+            preset.apply(&picture(40, 10)).unwrap().dimensions(),
+            (40, 10)
+        );
     }
 
     #[test]
