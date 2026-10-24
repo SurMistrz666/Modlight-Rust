@@ -140,12 +140,39 @@ fn done(kind: CaptureKind, metadata: TaskMetadata, image: image::RgbaImage) -> C
     })
 }
 
-/// The overlay's starting point for a region capture (`ExecuteRegionCaptureAvaloniaAsync`,
-/// `ExecuteRegionCaptureLight`, `ExecuteRegionCaptureTransparent`).
+/// The overlay's starting point for choosing an area for something else than a capture
+/// (`RegionCaptureTasks`: a tool's picture, a recording's or the scrolling capture's
+/// area, a preconfigured region): the screen as a `new Screenshot()` takes it, without
+/// the pointer.
 pub fn region_request(
     kind: RegionKind,
     settings: &TaskSettings,
     source: &dyn CaptureSource,
+) -> Result<RegionRequest, CaptureError> {
+    request_for(kind, settings, source, false)
+}
+
+/// The overlay's starting point for a region capture (`ExecuteRegionCaptureAvaloniaAsync`,
+/// `ExecuteRegionCaptureLight`, `ExecuteRegionCaptureTransparent`), with the pointer
+/// when the task shows it (`ShowCursor`).
+fn capture_request(
+    kind: RegionKind,
+    settings: &TaskSettings,
+    source: &dyn CaptureSource,
+) -> Result<RegionRequest, CaptureError> {
+    request_for(
+        kind,
+        settings,
+        source,
+        settings.capture_settings.show_cursor,
+    )
+}
+
+fn request_for(
+    kind: RegionKind,
+    settings: &TaskSettings,
+    source: &dyn CaptureSource,
+    show_cursor: bool,
 ) -> Result<RegionRequest, CaptureError> {
     let capture = &settings.capture_settings;
     let active_monitor = capture.surface_options.active_monitor_mode;
@@ -158,18 +185,25 @@ pub fn region_request(
     let image = if kind == RegionKind::Transparent {
         None
     } else {
-        // The overlay draws the pointer itself, from its own picture.
-        Some(Arc::new(source.capture_rect(bounds, false)?))
-    };
-    let cursor = if kind == RegionKind::Default && capture.show_cursor {
-        source.cursor_image().map(|(picture, (x, y))| {
-            (
-                Arc::new(picture),
-                geometry::Point::new((x - bounds.x) as f64 * scale, (y - bounds.y) as f64 * scale),
-            )
-        })
-    } else {
-        None
+        // The pointer goes into the frozen desktop where it stood, so the overlay shows
+        // it and the picture keeps it: the platform's own picture of it (Windows'
+        // `CursorData`, which upstream inserts into the overlay's workspace), or, where
+        // the platform has none to hand over (macOS), the system's in the pixels.
+        let own = if show_cursor {
+            source.cursor_image()
+        } else {
+            None
+        };
+        let mut picture = source.capture_rect(bounds, show_cursor && own.is_none())?;
+        if let Some((pointer, (x, y))) = own {
+            image::imageops::overlay(
+                &mut picture,
+                &pointer,
+                ((x - bounds.x) as f64 * scale).round() as i64,
+                ((y - bounds.y) as f64 * scale).round() as i64,
+            );
+        }
+        Some(Arc::new(picture))
     };
     let windows = if kind == RegionKind::Default && capture.surface_options.detect_windows {
         source
@@ -189,7 +223,7 @@ pub fn region_request(
         enable_annotations: !settings.advanced_settings.region_capture_disable_annotation,
         windows,
         screens: source.screens(),
-        cursor,
+        show_cursor,
         last_region: last_region().rect,
         pointer: source.cursor_position(),
     })
@@ -273,7 +307,7 @@ pub fn capture(
             };
             if rect.is_empty() {
                 // Nothing to repeat yet: the capture it would repeat runs instead.
-                return match region_request(last.kind, settings, source) {
+                return match capture_request(last.kind, settings, source) {
                     Ok(request) => CaptureStep::Region(request),
                     Err(error) => CaptureStep::Nothing(Some(error)),
                 };
@@ -283,7 +317,7 @@ pub fn capture(
                 .map(|image| (TaskMetadata::default(), image))
         }
         CaptureKind::Region(region_kind) => {
-            return match region_request(*region_kind, settings, source) {
+            return match capture_request(*region_kind, settings, source) {
                 Ok(request) => CaptureStep::Region(request),
                 Err(error) => CaptureStep::Nothing(Some(error)),
             };
@@ -364,7 +398,9 @@ pub fn finish_region(
     let image = match &request.image {
         Some(frozen) => region::crop(frozen, *image_rect),
         // The transparent capture takes the area after the overlay has gone.
-        None => source.capture_rect(*screen_rect, false).ok()?,
+        None => source
+            .capture_rect(*screen_rect, request.show_cursor)
+            .ok()?,
     };
     let mut last = last_region();
     match request.kind {
@@ -416,6 +452,9 @@ mod tests {
     use super::*;
     use source::FakeSource;
 
+    /// Tests that write the process-wide last region take turns.
+    static LAST_REGION_TESTS: Mutex<()> = Mutex::new(());
+
     fn picture(step: CaptureStep) -> Captured {
         match step {
             CaptureStep::Done(captured) => captured,
@@ -423,6 +462,149 @@ mod tests {
             CaptureStep::Message(m) => panic!("message: {m}"),
             CaptureStep::Nothing(e) => panic!("nothing: {e:?}"),
         }
+    }
+
+    /// The sample desktop, telling whether each picture was asked with the pointer, and
+    /// handing over a picture of the pointer of its own when given one (Windows'
+    /// `CursorData`; a Mac has none and takes the pointer with the pixels).
+    struct PointerSource {
+        desktop: FakeSource,
+        pointer: Option<(image::RgbaImage, (i32, i32))>,
+        asked: Mutex<Vec<bool>>,
+    }
+
+    impl PointerSource {
+        fn new(pointer: Option<(image::RgbaImage, (i32, i32))>) -> PointerSource {
+            PointerSource {
+                desktop: FakeSource::sample(),
+                pointer,
+                asked: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn asked(&self) -> Vec<bool> {
+            std::mem::take(&mut *self.asked.lock().unwrap())
+        }
+    }
+
+    impl CaptureSource for PointerSource {
+        fn screens(&self) -> Vec<source::ScreenInfo> {
+            self.desktop.screens()
+        }
+        fn cursor_position(&self) -> (i32, i32) {
+            self.desktop.cursor_position()
+        }
+        fn windows(&self) -> Vec<WindowInfo> {
+            self.desktop.windows()
+        }
+        fn active_window(&self) -> Option<WindowInfo> {
+            self.desktop.active_window()
+        }
+        fn capture_rect(
+            &self,
+            rect: IRect,
+            cursor: bool,
+        ) -> Result<image::RgbaImage, CaptureError> {
+            self.asked.lock().unwrap().push(cursor);
+            self.desktop.capture_rect(rect, cursor)
+        }
+        fn capture_window(
+            &self,
+            window: &WindowInfo,
+            how: WindowCapture,
+        ) -> Result<image::RgbaImage, CaptureError> {
+            self.desktop.capture_window(window, how)
+        }
+        fn cursor_image(&self) -> Option<(image::RgbaImage, (i32, i32))> {
+            self.pointer.clone()
+        }
+    }
+
+    fn overlay_request(step: CaptureStep) -> RegionRequest {
+        match step {
+            CaptureStep::Region(request) => request,
+            _ => panic!("no overlay"),
+        }
+    }
+
+    /// `ShowCursor` puts the pointer into region captures as into every other: upstream
+    /// inserts its picture into the overlay's workspace (`InsertWorkspaceImageAnnotation`)
+    /// so the result carries it, the light capture freezes the screen with it, and the
+    /// transparent one takes the area with it (`GetScreenshot(taskSettings)`).
+    #[test]
+    fn region_captures_show_the_pointer_when_the_task_does() {
+        let _turn = LAST_REGION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut settings = TaskSettings::default();
+        assert!(settings.capture_settings.show_cursor);
+        let source = PointerSource::new(None);
+        for kind in [RegionKind::Default, RegionKind::Light] {
+            overlay_request(capture(CaptureKind::Region(kind), &settings, &source));
+            assert_eq!(source.asked(), [true], "{kind:?}");
+        }
+        let request = overlay_request(capture(
+            CaptureKind::Region(RegionKind::Transparent),
+            &settings,
+            &source,
+        ));
+        let outcome = RegionOutcome::Completed {
+            image_rect: IRect::new(10, 10, 40, 30),
+            screen_rect: IRect::new(10, 10, 40, 30),
+            window: None,
+        };
+        finish_region(&request, &outcome, &source, false).unwrap();
+        assert_eq!(source.asked(), [true]);
+        set_last_region(LastRegion::default());
+
+        // Without it, no pointer anywhere.
+        settings.capture_settings.show_cursor = false;
+        for kind in [RegionKind::Default, RegionKind::Light] {
+            overlay_request(capture(CaptureKind::Region(kind), &settings, &source));
+            assert_eq!(source.asked(), [false], "{kind:?}");
+        }
+    }
+
+    /// Where the platform hands over the pointer's own picture, it is drawn into the
+    /// frozen desktop where it stood, and so lands in the captured picture.
+    #[test]
+    fn the_pointers_own_picture_goes_into_the_frozen_desktop() {
+        let _turn = LAST_REGION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let red = image::Rgba([255, 0, 0, 255]);
+        let pointer = image::RgbaImage::from_pixel(4, 4, red);
+        let source = PointerSource::new(Some((pointer, (300, 200))));
+        let request = overlay_request(capture(
+            CaptureKind::Region(RegionKind::Default),
+            &TaskSettings::default(),
+            &source,
+        ));
+        assert_eq!(
+            source.asked(),
+            [false],
+            "the pixels without the system's pointer"
+        );
+        let frozen = request.image.clone().unwrap();
+        assert_eq!(*frozen.get_pixel(301, 201), red);
+        let outcome = RegionOutcome::Completed {
+            image_rect: IRect::new(290, 190, 20, 20),
+            screen_rect: IRect::new(290, 190, 20, 20),
+            window: None,
+        };
+        let captured = finish_region(&request, &outcome, &source, false).unwrap();
+        assert_eq!(*captured.metadata.image.unwrap().get_pixel(11, 11), red);
+        set_last_region(LastRegion::default());
+    }
+
+    /// A region chosen for something else (a tool's picture, a recording's area, the
+    /// scrolling capture's) is the bare screen, as `RegionCaptureTasks` takes it with a
+    /// `new Screenshot()`.
+    #[test]
+    fn a_region_asked_for_by_a_tool_has_no_pointer() {
+        let red = image::Rgba([255, 0, 0, 255]);
+        let pointer = image::RgbaImage::from_pixel(4, 4, red);
+        let source = PointerSource::new(Some((pointer, (300, 200))));
+        let request =
+            region_request(RegionKind::Default, &TaskSettings::default(), &source).unwrap();
+        assert_eq!(source.asked(), [false]);
+        assert_ne!(*request.image.unwrap().get_pixel(301, 201), red);
     }
 
     #[test]
@@ -489,6 +671,7 @@ mod tests {
 
     #[test]
     fn last_region_asks_first_then_repeats() {
+        let _turn = LAST_REGION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         set_last_region(LastRegion::default());
         let source = FakeSource::sample();
         let settings = TaskSettings::default();

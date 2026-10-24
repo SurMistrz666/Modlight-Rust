@@ -38,8 +38,9 @@ pub struct RegionRequest {
     pub enable_annotations: bool,
     pub windows: Vec<WindowInfo>,
     pub screens: Vec<ScreenInfo>,
-    /// The pointer's picture and where it sits, in image pixels.
-    pub cursor: Option<(Arc<RgbaImage>, Point)>,
+    /// A capture that shows the pointer (`ShowCursor`): it is in the frozen picture, and
+    /// the transparent kind takes the area with it.
+    pub show_cursor: bool,
     /// `RegionCaptureIntegration.LastRegionRectangle`, desktop points.
     pub last_region: IRect,
     /// Where the pointer is when the overlay opens, desktop points.
@@ -783,7 +784,7 @@ mod tests {
             enable_annotations: true,
             windows: source.windows(),
             screens: source.screens(),
-            cursor: None,
+            show_cursor: false,
             last_region: IRect::default(),
             pointer: (10, 10),
         }
