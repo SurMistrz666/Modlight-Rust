@@ -566,7 +566,13 @@ impl ToolWindow for AnalyzeWindow {
         ];
         let rects = kit::right_aligned(ui, &colors, head, &items, 8.0);
         if kit::button_at(ui, &colors, rects[0], items[0].0, items[0].1, idle).clicked() {
-            state.open_analyze_options(self.key, &self.home, &self.options, self.network.clone());
+            // `ShowDialog(this)`: this window waits while its options are open.
+            self.options_window = Some(state.open_analyze_options(
+                self.key,
+                &self.home,
+                &self.options,
+                self.network.clone(),
+            ));
         }
         if kit::button_at(
             ui,
@@ -1380,14 +1386,14 @@ impl AppState {
             .open_keyed(|key| Box::new(AnalyzeWindow::new(key, settings, options, file, network)));
     }
 
-    /// The options dialog of the window `parent`.
+    /// The options dialog of the window `parent`; its key.
     pub fn open_analyze_options(
         &mut self,
         parent: u64,
         home: &OptionsHome,
         options: &AiOptions,
         network: Network,
-    ) {
+    ) -> u64 {
         let home = home.clone();
         let options = options.clone();
         let key = self.tools.open_keyed(|key| {
@@ -1398,6 +1404,7 @@ impl AppState {
         if let Some(window) = self.tools.window_mut::<AnalyzeWindow>(parent) {
             window.options_window = Some(key);
         }
+        key
     }
 
     /// A region for an analyze window arrived.
