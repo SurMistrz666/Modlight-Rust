@@ -5,6 +5,10 @@
 //   /out/cases.json     every rendered case (effect, input, parameter values)
 //   /out/inputs/*.png   the fixed inputs
 //   /out/expected/*.png the reference outputs
+// With a third argument (a request file, `edge.txt`), it renders only the cases listed
+// there (one per line: name|effect id|input|key=value;key=value) and writes cases.json,
+// the inputs and the outputs, with small inputs cut from the photo and the alpha picture
+// (p1x1, p1x9, p9x1, p7x5, a5x3, transparent t7x5).
 
 using System.Diagnostics;
 using System.Globalization;
@@ -25,6 +29,7 @@ static class Program
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
         string outDir = args.Length > 0 ? args[0] : "/out";
         string filter = args.Length > 1 ? args[1] : "";
+        string request = args.Length > 2 ? args[2] : "";
         Directory.CreateDirectory(Path.Combine(outDir, "inputs"));
         Directory.CreateDirectory(Path.Combine(outDir, "expected"));
 
@@ -42,6 +47,11 @@ static class Program
             .OrderBy(e => e.Category)
             .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        if (request.Length > 0)
+        {
+            return RenderRequest(effects, inputs, outDir, request);
+        }
 
         var manifest = new JsonArray();
         var cases = new JsonArray();
@@ -109,6 +119,82 @@ static class Program
         File.WriteAllText(Path.Combine(outDir, "manifest.json"), manifest.ToJsonString(options));
         File.WriteAllText(Path.Combine(outDir, "cases.json"), cases.ToJsonString(options));
         Console.WriteLine($"{effects.Count} effects, {cases.Count} cases");
+        return 0;
+    }
+
+    // ---------- requested cases (edge.txt) ----------
+
+    static int RenderRequest(List<ImageEffectBase> effects, Dictionary<string, SKBitmap> inputs, string outDir, string request)
+    {
+        void Cut(string name, string from, int x, int y, int w, int h)
+        {
+            var bmp = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
+            using (var canvas = new SKCanvas(bmp))
+            {
+                canvas.Clear(SKColors.Transparent);
+                canvas.DrawBitmap(inputs[from], new SKRect(x, y, x + w, y + h), new SKRect(0, 0, w, h));
+            }
+            Save(bmp, Path.Combine(outDir, "inputs", name + ".png"));
+            inputs[name] = Load(Path.Combine(outDir, "inputs", name + ".png"));
+        }
+        Cut("p1x1", "photo", 40, 30, 1, 1);
+        Cut("p1x9", "photo", 26, 14, 1, 9);
+        Cut("p9x1", "photo", 20, 22, 9, 1);
+        Cut("p7x5", "photo", 22, 18, 7, 5);
+        Cut("a5x3", "alpha", 70, 2, 5, 3);
+        var empty = new SKBitmap(new SKImageInfo(7, 5, SKColorType.Bgra8888, SKAlphaType.Premul));
+        empty.Erase(SKColors.Transparent);
+        Save(empty, Path.Combine(outDir, "inputs", "t7x5.png"));
+        inputs["t7x5"] = Load(Path.Combine(outDir, "inputs", "t7x5.png"));
+
+        var cases = new JsonArray();
+        foreach (string line in File.ReadAllLines(request))
+        {
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#')) continue;
+            string[] parts = line.Split('|');
+            ImageEffectBase e = effects.First(x => x.Id == parts[1]);
+            var values = Defaults(e);
+            foreach (string kv in (parts.Length > 3 ? parts[3] : "").Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                int eq = kv.IndexOf('=');
+                string key = kv[..eq], text = kv[(eq + 1)..];
+                EffectParameter p = e.Parameters.First(x => x.Key == key);
+                values[key] = p switch
+                {
+                    SliderEffectParameter or NumericEffectParameter => double.Parse(text, CultureInfo.InvariantCulture),
+                    CheckboxEffectParameter => bool.Parse(text),
+                    EnumEffectParameter en => en.Options.First(o => o.Value.ToString() == text).Value,
+                    ColorEffectParameter => SKColor.Parse(text),
+                    _ => text,
+                };
+            }
+            var c = new JsonObject
+            {
+                ["name"] = parts[0],
+                ["effect"] = e.Id,
+                ["set"] = "edge",
+                ["input"] = parts[2],
+                ["values"] = ValuesJson(e, values),
+            };
+            try
+            {
+                using SKBitmap r1 = Run(e.GetType(), values, inputs[parts[2]]);
+                using SKBitmap r2 = Run(e.GetType(), values, inputs[parts[2]]);
+                c["deterministic"] = Same(r1, r2);
+                c["width"] = r1.Width;
+                c["height"] = r1.Height;
+                Save(r1, Path.Combine(outDir, "expected", parts[0] + ".png"));
+            }
+            catch (Exception ex)
+            {
+                c["error"] = ex.GetType().Name + ": " + ex.Message;
+            }
+            cases.Add(c);
+            Console.WriteLine(parts[0] + (c["error"] != null ? "  ERROR " + c["error"] : ""));
+        }
+        var options = new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        File.WriteAllText(Path.Combine(outDir, "cases.json"), cases.ToJsonString(options));
+        Console.WriteLine($"{cases.Count} requested cases");
         return 0;
     }
 
