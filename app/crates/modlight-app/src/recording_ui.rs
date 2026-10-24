@@ -736,12 +736,71 @@ impl AppState {
         }
     }
 
+    /// `FinishRecording`: the name the after-capture window gave, if any. A rename that
+    /// is refused shows upstream's message and the recording keeps its name.
+    pub(crate) fn recording_file_named(&mut self, path: PathBuf, name: Option<&str>) -> PathBuf {
+        let Some(name) = name.filter(|n| !n.is_empty()) else {
+            return path;
+        };
+        match rename_recording(&path, name) {
+            Ok(renamed) => renamed,
+            Err(message) => {
+                self.uploads.windows.messages.push_back(MessageBox::new(
+                    &format!(
+                        "Modlight - {}",
+                        modlight_core::l10n::t(modlight_core::l10n::helpers::Error)
+                    ),
+                    &message,
+                    MessageIcon::Error,
+                ));
+                path
+            }
+        }
+    }
+
     /// Repaint while the timer runs.
     pub fn tick_recording(&mut self, ctx: &egui::Context) {
         if self.captures.recording.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
     }
+}
+
+/// `FileHelpers.RenameFile(path, name + extension)` as `FinishRecording` uses it: the
+/// file keeps its extension, and another file of that name is never written over
+/// (`File.Move` refuses; `rename` would replace it). An error is upstream's "Rename file
+/// error" text with the reason, and the recording keeps its name.
+pub(crate) fn rename_recording(path: &std::path::Path, name: &str) -> Result<PathBuf, String> {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if stem.eq_ignore_ascii_case(name) {
+        return Ok(path.to_path_buf());
+    }
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let target = path.with_file_name(if ext.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}.{ext}")
+    });
+    let failed = |reason: String| {
+        format!(
+            "{}\n{}: {reason}",
+            modlight_core::l10n::t(modlight_core::l10n::helpers::FileHelpers_Rename_file_error),
+            target.display()
+        )
+    };
+    if target.symlink_metadata().is_ok() {
+        return Err(failed(
+            std::io::Error::from(std::io::ErrorKind::AlreadyExists).to_string(),
+        ));
+    }
+    std::fs::rename(path, &target).map_err(|error| failed(error.to_string()))?;
+    Ok(target)
 }
 
 /// `HandleExistsFile` with a unique name.
@@ -760,6 +819,27 @@ fn unique(path: PathBuf) -> PathBuf {
 mod tests {
     use super::*;
     use modlight_core::l10n::{Language, set_thread_language};
+
+    /// The after-capture window's new name for a recording (`FinishRecording`) keeps the
+    /// extension and never writes over another file: upstream's `File.Move` refuses, says
+    /// so ("Rename file error") and the recording keeps its name.
+    #[test]
+    fn a_new_name_never_replaces_another_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let clip = dir.path().join("abc123.mp4");
+        std::fs::write(&clip, b"recording").unwrap();
+        let other = dir.path().join("holiday.mp4");
+        std::fs::write(&other, b"somebody's video").unwrap();
+        let error = rename_recording(&clip, "holiday").unwrap_err();
+        assert!(error.contains("holiday.mp4"), "{error}");
+        assert_eq!(std::fs::read(&other).unwrap(), b"somebody's video");
+        assert_eq!(std::fs::read(&clip).unwrap(), b"recording");
+        assert_eq!(rename_recording(&clip, "ABC123").unwrap(), clip);
+        let renamed = rename_recording(&clip, "trip").unwrap();
+        assert_eq!(renamed, dir.path().join("trip.mp4"));
+        assert_eq!(std::fs::read(&renamed).unwrap(), b"recording");
+        assert!(!clip.exists());
+    }
 
     /// The recording hotkey pressed again while the area is still being prepared (the
     /// desktop being taken for the overlay) is not a second request: the other ways to

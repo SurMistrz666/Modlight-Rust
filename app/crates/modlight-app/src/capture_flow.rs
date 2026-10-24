@@ -588,27 +588,7 @@ impl AppState {
         match pending.file {
             Some(path) => {
                 // `FinishRecording`: a new name renames the file first.
-                let mut path = path;
-                if let Some(name) = custom_name.as_deref().filter(|n| !n.is_empty()) {
-                    let stem = path
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    if !stem.eq_ignore_ascii_case(name) {
-                        let ext = path
-                            .extension()
-                            .map(|e| e.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        let target = path.with_file_name(if ext.is_empty() {
-                            name.to_string()
-                        } else {
-                            format!("{name}.{ext}")
-                        });
-                        if std::fs::rename(&path, &target).is_ok() {
-                            path = target;
-                        }
-                    }
-                }
+                let path = self.recording_file_named(path, custom_name.as_deref());
                 if let Some(task) = WorkerTask::file_job(
                     &path,
                     pending.metadata,
