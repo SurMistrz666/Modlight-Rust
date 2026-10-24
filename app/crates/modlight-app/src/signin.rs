@@ -425,6 +425,8 @@ impl AppState {
         self.apply_admin_role();
         self.media.avatar.clear();
         self.strip.clear_storage();
+        // A reading still out is about the account just signed out of (`Clear` cancels).
+        self.strip.in_flight = None;
         self.space_refresh_account();
         if let Some(window) = self.windows.sign_in.as_mut() {
             window.clear_account();
@@ -1056,5 +1058,38 @@ mod tests {
         assert_eq!(window.tone, Tone::Neutral);
         assert!(window.cancel.is_none());
         drop(silent);
+    }
+
+    /// Signing out while the storage chip's request is out: its answer must not put the
+    /// signed-out account's figure back beside "Sign in" (upstream's `Clear` cancels it).
+    #[test]
+    fn signing_out_drops_the_chips_reading_in_flight() {
+        let ctx = egui::Context::default();
+        let mut app = state(&Look::default(), true);
+        // A server that is a closed port here: the reading fails at once, locally.
+        app.account = AccountStore::in_memory(
+            StoredAccount {
+                host: "http://127.0.0.1:9".into(),
+                tag: "alex".into(),
+                ..StoredAccount::default()
+            },
+            "alex-token",
+        );
+        app.refresh_account_strip();
+        assert!(app.strip.in_flight.is_some());
+
+        app.sign_out();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            for completion in app.rt.drain() {
+                completion(&mut app, &ctx);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!app.account.is_signed_in());
+        assert!(
+            !app.strip.has_storage,
+            "no reading for an account signed out of"
+        );
     }
 }
