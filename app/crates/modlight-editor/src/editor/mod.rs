@@ -42,6 +42,9 @@ pub enum TaskResult {
 pub enum Request {
     /// Copy the result image (`CopyRequested`).
     CopyImage,
+    /// Copy the result image after a change, and nothing else
+    /// (`AutoCopyImageToClipboard`: no notification, no closing after the task action).
+    AutoCopyImage,
     /// Save to `ImageFilePath`, or ask the host where (`SaveRequested`).
     Save,
     SaveAs,
@@ -460,11 +463,20 @@ impl Editor {
                 self.is_dirty = true;
             }
             self.input.suppress_dirty = false;
-            if self.options.auto_copy_image_to_clipboard && self.has_image() {
-                self.requests.push(Request::CopyImage);
-            }
+            self.queue_auto_copy();
         }
         self.invalidate();
+    }
+
+    /// `QueueAutoCopyImageToClipboard`: one copy of the picture for everything that
+    /// changed before the host looks (upstream coalesces them by version).
+    fn queue_auto_copy(&mut self) {
+        if self.options.auto_copy_image_to_clipboard
+            && self.has_image()
+            && !self.requests.contains(&Request::AutoCopyImage)
+        {
+            self.requests.push(Request::AutoCopyImage);
+        }
     }
 
     /// `RecalculateNumberCounter`.
@@ -503,9 +515,7 @@ impl Editor {
         self.tools.number_counter = self.tools.step_start_number;
         self.pump();
         self.is_dirty = false;
-        if self.options.auto_copy_image_to_clipboard && self.has_image() {
-            self.requests.push(Request::CopyImage);
-        }
+        self.queue_auto_copy();
     }
 
     /// `LoadBitmapIntoEditor` (open, recent file, clipboard, URL).

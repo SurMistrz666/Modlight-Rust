@@ -111,6 +111,7 @@ The editor's tests do not know the library's effects. The library should test ea
 | Request | Host does |
 |---|---|
 | `CopyImage` | `Editor::snapshot()` to the clipboard, then `show_task_action_notification`, `close_after_task_action`. |
+| `AutoCopyImage` | `Editor::snapshot()` to the clipboard and nothing else ("Auto copy image to clipboard" after each change; at most one per frame). |
 | `Save`, `SaveAs` | Write `snapshot()` to `image_file_path`, or a name from the task settings in the screenshots folder (Save as: a save panel first); then set `image_file_path`, clear `is_dirty`, `saved_notification`. |
 | `Upload`, `Print`, `PinToScreen` | Upload the snapshot; print and pin are later phases. |
 | `OpenImage`, `OpenRecent(path)`, `InsertImage`, `ReplaceImage(id)`, `BrowseBackgroundImage`, `BrowseEffectFile(key)` | Open panel (not for `OpenRecent`), then `load_bitmap` / `insert_external_image` / `replace_image` / `set_background_image` / `set_effect_value`. |

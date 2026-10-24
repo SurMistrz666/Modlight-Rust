@@ -301,6 +301,13 @@ impl AppState {
                     s.editor.close_after_task_action();
                 }
             }
+            // `AutoCopyImageToClipboard`: only the host's copy handler runs.
+            Request::AutoCopyImage => {
+                if let Some(image) = self.session(key).and_then(|s| s.editor.snapshot()) {
+                    self.effects
+                        .push(crate::state::Effect::CopyImage(Arc::new(image)));
+                }
+            }
             Request::Save | Request::SaveAs => {
                 let save_as = matches!(request, Request::SaveAs);
                 let Some((image, current)) = self
@@ -767,6 +774,47 @@ pub fn editor_viewports(state: &mut AppState, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn editor_state(image: Option<RgbaImage>, task_mode: bool) -> (AppState, u64) {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.open_editor(image, None, task_mode, false, Finish::RunImageTask);
+        let key = state.windows.editors.sessions.last().unwrap().key;
+        (state, key)
+    }
+
+    fn copies(state: &AppState) -> usize {
+        state
+            .effects
+            .iter()
+            .filter(|e| matches!(e, crate::state::Effect::CopyImage(_)))
+            .count()
+    }
+
+    /// `AutoCopyImageToClipboard` only hands the picture to the clipboard
+    /// (`RequestCopyToClipboardAsync`): no "copied" notice, and with "Close editor after
+    /// task" on the editor stays open (the Copy command's own close would end a capture's
+    /// annotate step before anything was drawn).
+    #[test]
+    fn auto_copy_copies_without_the_copy_commands_notice_or_closing() {
+        let image = RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]));
+        let (mut state, key) = editor_state(Some(image), true);
+        {
+            let s = state.session(key).unwrap();
+            s.editor.options.auto_copy_image_to_clipboard = true;
+            s.editor.options.auto_close_editor_on_task = true;
+            let _ = s.editor.take_requests();
+            let mut r = modlight_editor::model::Annotation::rectangle();
+            r.end = modlight_editor::geom::Point::new(10.0, 10.0);
+            s.editor.core.add_annotation(r);
+            s.editor.pump();
+        }
+        state.editor_requests(key);
+        assert_eq!(copies(&state), 1);
+        let s = state.session(key).unwrap();
+        assert!(!s.closed, "an automatic copy must not close the editor");
+        assert_eq!(s.editor.task_result, TaskResult::None);
+        assert!(s.editor.notification.is_none());
+    }
 
     /// S3: an address that answers with a small file claiming an enormous picture gets
     /// upstream's "not a valid image", and nothing is allocated for it.

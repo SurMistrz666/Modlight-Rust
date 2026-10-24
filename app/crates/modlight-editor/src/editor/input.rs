@@ -2430,6 +2430,25 @@ mod tests {
     }
 
     #[test]
+    fn auto_copy_asks_for_one_plain_copy_per_change() {
+        let mut e = editor();
+        e.options.auto_copy_image_to_clipboard = true;
+        e.load_image(
+            RgbaImage::from_pixel(50, 40, image::Rgba([9, 9, 9, 255])),
+            None,
+        );
+        assert_eq!(e.take_requests(), vec![Request::AutoCopyImage]);
+        e.select_tool(EditorTool::Rectangle);
+        drag(
+            &mut e,
+            Point::new(5.0, 5.0),
+            Point::new(30.0, 30.0),
+            Modifiers::NONE,
+        );
+        assert_eq!(e.take_requests(), vec![Request::AutoCopyImage]);
+    }
+
+    #[test]
     fn keys_undo_redo_and_delete() {
         let mut e = editor();
         e.select_tool(EditorTool::Rectangle);
