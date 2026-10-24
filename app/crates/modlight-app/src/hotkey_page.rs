@@ -1378,6 +1378,30 @@ mod tests {
         );
     }
 
+    /// Opening the settings window builds upstream's `HotkeySettingsAvaloniaService`,
+    /// which tries the keys that failed again (`RegisterFailedHotkeys`): a key another
+    /// app has let go of since works without a restart.
+    #[test]
+    fn opening_the_settings_tries_failed_keys_again() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let key = default_hotkeys()[0].info;
+        let backend = FakeBackend::default();
+        let registered = backend.registered.clone();
+        // Another app holds the region key.
+        registered.lock().unwrap().push((9999, key));
+        state.captures.hotkeys = HotkeyManager::new(Box::new(backend), default_hotkeys(), false);
+        state.captures.hotkeys.register_all();
+        assert_eq!(state.captures.hotkeys.failed().len(), 1);
+        // It lets go of it.
+        registered.lock().unwrap().retain(|(id, _)| *id != 9999);
+        state.show_settings(Some(HOTKEYS_SECTION));
+        assert!(state.captures.hotkeys.failed().is_empty());
+        assert_eq!(
+            state.captures.hotkeys.hotkeys[0].status,
+            HotkeyStatus::Registered
+        );
+    }
+
     /// `HotkeyManager.ResetHotkeys` turns hotkeys back on when they were disabled
     /// (`TaskHelpers.ToggleHotkeys`).
     #[test]

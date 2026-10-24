@@ -656,6 +656,8 @@ impl AppState {
             None => {
                 self.windows.settings = Some(SettingsWindow::new(section, &self.options.skin));
                 self.refresh_account_page();
+                // `HotkeySettingsAvaloniaService`: the keys that failed are tried again.
+                self.captures.hotkeys.register_failed();
             }
         }
     }
