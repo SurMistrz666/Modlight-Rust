@@ -58,7 +58,7 @@ fn queued(name: &str, length: i64, state: &AppState) -> QueueItem {
     }
 }
 
-fn row(state: &mut AppState, name: &str, minutes: i64) -> HistoryRow {
+pub(crate) fn row(state: &mut AppState, name: &str, minutes: i64) -> HistoryRow {
     HistoryRow {
         key: 0,
         task: None,

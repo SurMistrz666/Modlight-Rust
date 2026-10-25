@@ -1,5 +1,15 @@
 # Modlight (Rust)
 
+**ShareX for macOS and Windows, rewritten in Rust**, with its own self-hosted file and
+screenshot server: capture, record, annotate and upload to a server you run yourself.
+
+<p align="center">
+  <img src="docs/media/demo.webp" width="100%" alt="Modlight demo: a region is captured and annotated on the spot, marked up in the image editor, and uploaded with live progress">
+</p>
+<p align="center">
+  <a href="docs/media/demo.mp4">Demo video (MP4)</a> · <a href="#screenshots">Screenshots</a>
+</p>
+
 A Rust rewrite of [Modlight](https://github.com/Nimfek/Modlight), a self-hosted file and
 screenshot host, and of [Modlight App](https://github.com/Nimfek/Modlight-App), its desktop
 client (a ShareX fork for Windows), rebuilt here as one Rust app for macOS and Windows.
@@ -69,6 +79,39 @@ sign-in in WebView2; background removal on DirectML; "Start with Windows", "Uplo
 Modlight" in Explorer's context menu and "Send to"; one running copy that takes the files
 a later start is given; the tray, taskbar progress and Print Screen hotkeys.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/media/hero.webp" width="100%" alt="Modlight's My space on macOS in the dark appearance and on Windows in the light one">
+</p>
+
+### macOS
+
+| | |
+|---|---|
+| ![My space](docs/media/macos/my-space.webp)<br>**My space**: your library with thumbnails, folders and links | ![My space in the light appearance](docs/media/macos/my-space-light.webp)<br>**My space** in the light appearance |
+| ![Image editor](docs/media/macos/editor.webp)<br>**Image editor**: ShareX's annotation tools | ![Region capture with annotations](docs/media/macos/region-capture-annotate.webp)<br>**Region capture**, annotated on the spot |
+| ![Upload tab](docs/media/macos/tab-upload-busy.webp)<br>**Uploads** with live progress and an offline queue | ![Download tab](docs/media/macos/download-youtube.webp)<br>**Video downloads** through yt-dlp |
+| ![File details](docs/media/macos/my-space-details.webp)<br>**File details** with every link format | ![Notifications](docs/media/macos/toasts.webp)<br>**Notifications** with copy and open |
+| ![Tools tab](docs/media/macos/tab-tools.webp)<br>**ShareX tools** | ![Image effects](docs/media/macos/image-effects.webp)<br>**Image effects** with presets |
+| ![Upload history](docs/media/macos/history.webp)<br>**Upload history** | ![Capture tab](docs/media/macos/capture-menu.webp)<br>**Capture** with global hotkeys |
+| ![Colour picker](docs/media/macos/color-picker.webp)<br>**Colour picker** | ![OCR](docs/media/macos/ocr.webp)<br>**OCR** with Apple Vision |
+| ![QR codes](docs/media/macos/qr-code.webp)<br>**QR codes** | ![Image editor in the light appearance](docs/media/macos/editor-light.webp)<br>**Image editor** in the light appearance |
+
+### Windows
+
+| | |
+|---|---|
+| ![My space on Windows](docs/media/windows/my-space.webp) | ![My space on Windows, light](docs/media/windows/my-space-light.webp) |
+| ![Uploads on Windows](docs/media/windows/tab-upload-busy.webp) | ![Tools on Windows](docs/media/windows/tab-tools.webp) |
+| ![Downloads on Windows](docs/media/windows/download-youtube.webp) | ![Capture on Windows](docs/media/windows/capture-menu.webp) |
+
+Every picture here is drawn by the app's own headless renderer from its test fixtures: a
+demo account ("Alex Rivera" on files.example.com), no server and no real files. The macOS
+ones are rendered at Retina scale on a Mac; the Windows ones are the Windows renders kept by
+the snapshot tests. [`app/scripts/showcase/make-media.sh`](app/scripts/showcase/make-media.sh)
+makes them all again.
+
 ## Running it
 
 ### Server (local Docker stack)
@@ -115,6 +158,7 @@ as on the Mac.
 cd server && cargo test                          # ~1250 tests; DB tests need a Postgres URL
 cd server/web && npm run verify                  # SPA: typecheck, tests, build, bundle audit
 cd app && cargo test --workspace                 # macOS or Windows; headless snapshots included
+app/scripts/showcase/make-media.sh               # README screenshots and demo video (docs/media)
 ```
 
 Behaviour is checked against the original server running side by side: parity suites in

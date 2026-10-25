@@ -58,6 +58,7 @@ pub mod download_tab;
 pub mod media_windows;
 pub mod qa_media;
 pub mod qa_settings;
+pub mod qa_showcase;
 pub mod update_window;
 // Phase 5, tools: the tool windows, pinned pictures, the screen colour picker, history.
 pub mod tools;

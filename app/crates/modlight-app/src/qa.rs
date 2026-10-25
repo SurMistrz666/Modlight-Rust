@@ -1084,6 +1084,36 @@ impl eframe::App for ShotApp {
 
 /// Draw `screen` headlessly and return the picture.
 pub fn render(screen: &str, look: &Look) -> Result<RgbaImage, String> {
+    shot_harness(screen, look, None)?.render()
+}
+
+/// Draw `screen` as `render` does, then once per frame: `step` changes the state before
+/// the frame and `sink` takes its picture. The clock moves 1/30 s a frame, so what
+/// animates (notices, progress) moves as it does on screen. For the README's
+/// animations (`examples/showcase.rs`).
+pub fn render_frames(
+    screen: &str,
+    look: &Look,
+    frames: usize,
+    mut step: impl FnMut(&mut AppState, usize),
+    mut sink: impl FnMut(usize, RgbaImage) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut harness = shot_harness(screen, look, Some(1.0 / 60.0))?;
+    for frame in 0..frames {
+        step(&mut harness.state_mut().app.state, frame);
+        harness.run_steps(2);
+        sink(frame, harness.render()?)?;
+    }
+    Ok(())
+}
+
+/// The harness `render` and `render_frames` draw with, sized for the screen; `step_dt`
+/// is the clock's step (egui_kittest's own when `None`).
+fn shot_harness(
+    screen: &str,
+    look: &Look,
+    step_dt: Option<f32>,
+) -> Result<egui_kittest::Harness<'static, ShotApp>, String> {
     if !SCREENS.contains(&screen) {
         return Err(format!(
             "unknown screen '{screen}'; known: {}",
@@ -1097,7 +1127,7 @@ pub fn render(screen: &str, look: &Look) -> Result<RgbaImage, String> {
     modlight_core::names::helpers::set_thread_seed(Some(20261020));
     let signed_in = !matches!(screen, "signed-out" | "sign-in" | "sign-in-waiting");
     let mut size = MAIN_SIZE;
-    let mut harness = egui_kittest::Harness::builder()
+    let mut builder = egui_kittest::Harness::builder()
         .with_size(look.size.unwrap_or(MAIN_SIZE))
         .with_pixels_per_point(look.scale)
         .with_theme(if look.dark {
@@ -1105,18 +1135,20 @@ pub fn render(screen: &str, look: &Look) -> Result<RgbaImage, String> {
         } else {
             egui::Theme::Light
         })
-        .with_max_steps(64)
-        .wgpu()
-        .build_eframe(|cc| {
-            let state = state(look, signed_in);
-            let mut app = ModlightApp::new(cc, state, Mode::Shot);
-            size = prepare(screen, &mut app.state, &cc.egui_ctx);
-            ShotApp {
-                app,
-                screen: screen.to_string(),
-                wanted: None,
-            }
-        });
+        .with_max_steps(64);
+    if let Some(step_dt) = step_dt {
+        builder = builder.with_step_dt(step_dt);
+    }
+    let mut harness = builder.wgpu().build_eframe(|cc| {
+        let state = state(look, signed_in);
+        let mut app = ModlightApp::new(cc, state, Mode::Shot);
+        size = prepare(screen, &mut app.state, &cc.egui_ctx);
+        ShotApp {
+            app,
+            screen: screen.to_string(),
+            wanted: None,
+        }
+    });
     let size = look.size.unwrap_or(size);
     harness.set_size(size);
     harness.run_steps(3);
@@ -1127,7 +1159,7 @@ pub fn render(screen: &str, look: &Look) -> Result<RgbaImage, String> {
             harness.run_steps(3);
         }
     }
-    harness.render()
+    Ok(harness)
 }
 
 /// Where `--qa-shot` writes when given a bare name.
