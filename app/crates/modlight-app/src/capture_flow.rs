@@ -126,19 +126,33 @@ impl AppState {
     /// Load the hotkeys and, in the real app, register them (`HotkeyManager.UpdateHotkeys`).
     /// QA and headless runs keep a fake registration; nothing is taken from the system.
     pub fn start_hotkeys(&mut self) {
+        let system = self.mode == Mode::Normal && !self.env.qa;
+        self.start_hotkeys_with(|| -> Box<dyn modlight_core::hotkeys::HotkeyBackend> {
+            if system {
+                Box::new(crate::platform::hotkeys::SystemHotkeys::new())
+            } else {
+                Box::new(FakeBackend::default())
+            }
+        });
+    }
+
+    /// `start_hotkeys` with the registration `make` gives. The old registration goes
+    /// first: macOS takes one per app (a second Carbon handler is refused), so making the
+    /// new one while the old one lived left every hotkey unregistered after each settings
+    /// document that came in from sync, an import or a reset.
+    pub(crate) fn start_hotkeys_with(
+        &mut self,
+        make: impl FnOnce() -> Box<dyn modlight_core::hotkeys::HotkeyBackend>,
+    ) {
         let list = modlight_core::hotkeys::load(&self.config);
         let disabled = self
             .config
             .get("DisableHotkeys")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let backend: Box<dyn modlight_core::hotkeys::HotkeyBackend> =
-            if self.mode == Mode::Normal && !self.env.qa {
-                Box::new(crate::platform::hotkeys::SystemHotkeys::new())
-            } else {
-                Box::new(FakeBackend::default())
-            };
-        self.captures.hotkeys = HotkeyManager::new(backend, list, disabled);
+        self.captures.hotkeys =
+            HotkeyManager::new(Box::new(FakeBackend::default()), Vec::new(), false);
+        self.captures.hotkeys = HotkeyManager::new(make(), list, disabled);
         self.captures.hotkeys.register_all();
         if self.mode == Mode::Normal && !self.captures.hotkeys.failed().is_empty() {
             log::warn!(
@@ -1339,6 +1353,63 @@ pub fn hotkey_problem(state: &AppState) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A registration like macOS's: one per app. While another one lives, a new one takes
+    /// no key (Carbon refuses a second handler, and `GlobalHotKeyManager::new` fails).
+    struct OnePerApp {
+        works: bool,
+        alive: Arc<std::sync::atomic::AtomicUsize>,
+        next: u32,
+    }
+
+    impl OnePerApp {
+        fn new(alive: &Arc<std::sync::atomic::AtomicUsize>) -> OnePerApp {
+            let before = alive.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            OnePerApp {
+                works: before == 0,
+                alive: alive.clone(),
+                next: 0,
+            }
+        }
+    }
+
+    impl Drop for OnePerApp {
+        fn drop(&mut self) {
+            self.alive.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl modlight_core::hotkeys::HotkeyBackend for OnePerApp {
+        fn register(&mut self, _: modlight_core::hotkeys::HotkeyInfo) -> Result<u32, String> {
+            if !self.works {
+                return Err("no hotkey manager".into());
+            }
+            self.next += 1;
+            Ok(self.next)
+        }
+
+        fn unregister(&mut self, _: u32) {}
+    }
+
+    /// A settings document that comes in again (sync, import, reset) registers the
+    /// hotkeys anew; they must still work after it, however often it happens.
+    #[test]
+    fn hotkeys_keep_working_when_the_settings_come_in_again() {
+        let alive = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        for round in 0..3 {
+            state.start_hotkeys_with(|| Box::new(OnePerApp::new(&alive)));
+            assert!(
+                !state.captures.hotkeys.hotkeys.is_empty(),
+                "round {round}: the defaults are loaded"
+            );
+            assert!(
+                state.captures.hotkeys.failed().is_empty(),
+                "round {round}: every hotkey is registered"
+            );
+        }
+        assert_eq!(alive.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
 
     /// The area a tool asked for (OCR, QR, pin from screen) is no capture: upstream's
     /// `RegionCaptureTasks.GetRegionImage` leaves `LastRegionRectangle` alone, so "Last
