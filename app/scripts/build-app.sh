@@ -1,7 +1,8 @@
 #!/bin/sh
 # Build Modlight.app: a release build of the app, wrapped in a bundle with its
-# Info.plist and an icon converted from upstream's ShareX/Modlight_Icon.ico, signed
-# ad hoc. The script never starts the app.
+# Info.plist and an icon converted from upstream's ShareX/Modlight_Icon.ico, signed with
+# the Keychain's Apple Development certificate when there is one (ad hoc otherwise). The
+# script never starts the app.
 #
 #   app/scripts/build-app.sh [output-dir]     (default: app/dist)
 #
@@ -175,10 +176,24 @@ printf '"Upload with Modlight" = "Upload with Modlight";\n' > "$bundle/Contents/
 printf '"Upload with Modlight" = "Prześlij za pomocą Modlight";\n' > "$bundle/Contents/Resources/pl.lproj/ServicesMenu.strings"
 
 # --- Signature ------------------------------------------------------------------
-# Ad hoc: enough for the system to run an app built on this Mac, and stable for one
-# build. The Keychain is reached through /usr/bin/security, so a new signature does
-# not orphan the stored token.
-codesign --force --sign - --timestamp=none "$bundle"
+# macOS keeps the Screen Recording permission (and the others) for one signature. An ad
+# hoc signature is new with every build, so each rebuild lost the permission and
+# captures failed until it was given again; an Apple Development certificate gives every
+# build the same signature. MODLIGHT_SIGN_IDENTITY picks another identity, or "-" for ad
+# hoc. The Keychain is reached through /usr/bin/security, so a new signature does not
+# orphan the stored token.
+identity=${MODLIGHT_SIGN_IDENTITY:-}
+if [ -z "$identity" ]; then
+    identity=$(security find-identity -v -p codesigning 2>/dev/null |
+        awk '/"Apple Development: / { print $2; exit }')
+    [ -n "$identity" ] || identity=-
+fi
+if [ "$identity" = - ]; then
+    echo "build-app: signing ad hoc (macOS asks for its permissions again after each build)"
+else
+    echo "build-app: signing with the identity $identity"
+fi
+codesign --force --sign "$identity" --timestamp=none "$bundle"
 codesign --verify --strict --verbose=2 "$bundle"
 
 echo "build-app: $bundle"
