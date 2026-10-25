@@ -778,6 +778,11 @@ impl AppState {
             }
             ConfirmAction::ResetSettings => self.reset_settings_confirmed(),
             ConfirmAction::EnableImageEffects => self.enable_image_effects(),
+            ConfirmAction::OpenScreenRecordingSettings => {
+                if !crate::platform::integration::open_screen_recording_settings() {
+                    log::warn!("System Settings could not be opened");
+                }
+            }
         }
     }
 

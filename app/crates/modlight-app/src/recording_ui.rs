@@ -13,7 +13,7 @@ use std::sync::Arc;
 use egui::{Color32, Rect, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use modlight_core::capture::geometry::IRect;
 use modlight_core::capture::region::{RegionKind, RegionSession};
-use modlight_core::capture::source::even_size;
+use modlight_core::capture::source::{CaptureError, even_size};
 use modlight_core::icons;
 use modlight_core::l10n::{capture as c, s, t};
 use modlight_core::recording::session::{
@@ -494,6 +494,7 @@ impl AppState {
                                     state.time,
                                 ));
                             }
+                            Err(CaptureError::NotPermitted) => state.screen_recording_refused(),
                             Err(error) => {
                                 log::warn!("The recording area could not be chosen: {error}")
                             }
@@ -676,6 +677,11 @@ impl AppState {
             self.play_task_sound(NotificationSound::ActionCompleted, &recording.settings);
         }
         if let Some(error) = outcome.error.filter(|_| !outcome.aborted) {
+            // The frame source said macOS refused the screen (its error, as text).
+            if error == CaptureError::NotPermitted.to_string() {
+                self.screen_recording_refused();
+                return;
+            }
             // `FFmpegCLIManager.ShowError`: ffmpeg's output in the output box (phase 5).
             self.open_output_box(
                 &error,

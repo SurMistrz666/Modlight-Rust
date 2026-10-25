@@ -531,6 +531,11 @@ pub fn install_services_provider() {
     }
 }
 
+/// Windows asks no permission to read the screen; there is no such place to open.
+pub fn open_screen_recording_settings() -> bool {
+    false
+}
+
 /// Kept for the macOS API: there is no system page for the Explorer menu.
 pub fn open_services_settings() -> bool {
     false

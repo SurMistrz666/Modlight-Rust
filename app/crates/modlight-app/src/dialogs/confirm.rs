@@ -28,6 +28,8 @@ pub enum ConfirmAction {
     ResetSettings,
     /// A `.sxie` was imported: turn "Add image effects" on (`ImportImageEffect`).
     EnableImageEffects,
+    /// macOS refused the screen: open System Settings where Screen Recording is allowed.
+    OpenScreenRecordingSettings,
 }
 
 #[derive(Clone, Debug, PartialEq)]

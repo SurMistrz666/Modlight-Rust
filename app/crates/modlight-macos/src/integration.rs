@@ -162,6 +162,14 @@ pub fn install_services_provider() {
     }
 }
 
+/// Open System Settings where the Screen Recording permission is switched on and off.
+pub fn open_screen_recording_settings() -> bool {
+    std::process::Command::new("/usr/bin/open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        .spawn()
+        .is_ok()
+}
+
 /// Open System Settings where services are switched on and off.
 pub fn open_services_settings() -> bool {
     std::process::Command::new("/usr/bin/open")

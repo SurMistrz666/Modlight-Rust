@@ -10,8 +10,6 @@ use modlight_core::capture::geometry::IRect;
 use modlight_core::capture::region::{RegionKind, RegionSession};
 use modlight_core::capture::source::CaptureError;
 use modlight_core::capture::{self, CaptureKind, CaptureStep};
-use modlight_core::l10n::{s, t};
-use modlight_core::tasks::host::MessageIcon;
 use modlight_core::tasks::settings::TaskSettings;
 
 use crate::region_overlay::{OverlayPurpose, RegionOverlay};
@@ -96,14 +94,7 @@ impl AppState {
     /// macOS refused the pixels: said out loud, as the captures do.
     fn tool_capture_refused(&mut self, error: Option<CaptureError>) {
         if error == Some(CaptureError::NotPermitted) {
-            self.uploads
-                .windows
-                .messages
-                .push_back(crate::dialogs::message::MessageBox::new(
-                    &format!("Modlight - {}", t(s::Error)),
-                    &CaptureError::NotPermitted.to_string(),
-                    MessageIcon::Warning,
-                ));
+            self.screen_recording_refused();
         }
     }
 

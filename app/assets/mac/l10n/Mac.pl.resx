@@ -116,4 +116,15 @@
   <data name="AIKeyOtherAddress" xml:space="preserve">
     <value>Klucz OpenAI zapisano dla innego adresu niż ten, który jest teraz w opcjach, więc nie zostanie tam wysłany. Otwórz opcje i wpisz klucz ponownie, jeśli ufasz temu adresowi.</value>
   </data>
+  <data name="ScreenRecordingTitle" xml:space="preserve">
+    <value>Nagrywanie ekranu jest wyłączone</value>
+  </data>
+  <data name="ScreenRecordingDenied" xml:space="preserve">
+    <value>macOS nie pozwala Modlight widzieć ekranu, więc nie powstanie ani zrzut, ani nagranie.
+
+Włącz Modlight w Ustawieniach systemowych, w sekcji Prywatność i ochrona, Nagrywanie ekranu i dźwięku systemowego, a potem spróbuj ponownie.</value>
+  </data>
+  <data name="ScreenRecordingOpenSettings" xml:space="preserve">
+    <value>Otworzyć teraz to miejsce w Ustawieniach systemowych?</value>
+  </data>
 </root>

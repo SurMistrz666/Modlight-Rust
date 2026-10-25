@@ -17,7 +17,7 @@ use image::RgbaImage;
 use modlight_core::capture::geometry::IRect;
 use modlight_core::capture::source::{CaptureError, ScreenInfo};
 use modlight_core::l10n::{Arg, format, s, t};
-use modlight_core::tasks::host::{MessageIcon, NotificationSound};
+use modlight_core::tasks::host::NotificationSound;
 use modlight_core::tasks::settings::TaskSettings;
 use modlight_tools::color::Color;
 use modlight_tools::color_format;
@@ -436,13 +436,7 @@ impl AppState {
                     }
                     Err(error) => {
                         if error == CaptureError::NotPermitted {
-                            state.uploads.windows.messages.push_back(
-                                crate::dialogs::message::MessageBox::new(
-                                    &format!("Modlight - {}", t(s::Error)),
-                                    &CaptureError::NotPermitted.to_string(),
-                                    MessageIcon::Warning,
-                                ),
-                            );
+                            state.screen_recording_refused();
                         } else {
                             log::warn!(
                                 "The screen colour picker could not read the screen: {error}"

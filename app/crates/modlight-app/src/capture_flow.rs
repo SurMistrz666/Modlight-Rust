@@ -449,16 +449,47 @@ impl AppState {
     /// A capture that took nothing: a refusal is said out loud, anything else is logged.
     fn capture_failed(&mut self, error: Option<CaptureError>) {
         match error {
-            Some(CaptureError::NotPermitted) => {
-                // macOS refused the pixels: the Screen Recording permission is off.
-                self.uploads.windows.messages.push_back(MessageBox::new(
-                    &format!("Modlight - {}", t(s::Error)),
-                    &CaptureError::NotPermitted.to_string(),
-                    MessageIcon::Warning,
-                ));
-            }
+            Some(CaptureError::NotPermitted) => self.screen_recording_refused(),
             Some(other) => log::warn!("Capture failed: {other}"),
             None => {}
+        }
+    }
+
+    /// macOS refused the screen's pixels: the Screen Recording permission is off (after
+    /// each rebuild of an ad hoc signed app, too). Say how to turn it on and offer to
+    /// open that place in System Settings; with another question open, say it in a
+    /// message box instead.
+    pub(crate) fn screen_recording_refused(&mut self) {
+        use modlight_core::l10n::mac;
+        log::warn!("Capture: {}", CaptureError::NotPermitted);
+        let title = t(mac::ScreenRecordingTitle);
+        let denied = t(mac::ScreenRecordingDenied);
+        use crate::dialogs::confirm::{Confirm, ConfirmAction};
+        match &self.windows.confirm {
+            None => {
+                self.windows.confirm = Some(Confirm::new(
+                    title,
+                    &format!("{denied}\n\n{}", t(mac::ScreenRecordingOpenSettings)),
+                    ConfirmAction::OpenScreenRecordingSettings,
+                ));
+            }
+            // Already asked: one question is enough however often the capture is tried.
+            Some(open) if open.action == ConfirmAction::OpenScreenRecordingSettings => {}
+            Some(_) => {
+                if !self
+                    .uploads
+                    .windows
+                    .messages
+                    .iter()
+                    .any(|m| m.text == denied)
+                {
+                    self.uploads.windows.messages.push_back(MessageBox::new(
+                        &format!("Modlight - {title}"),
+                        denied,
+                        MessageIcon::Warning,
+                    ));
+                }
+            }
         }
     }
 
@@ -1389,6 +1420,39 @@ mod tests {
         }
 
         fn unregister(&mut self, _: u32) {}
+    }
+
+    /// A capture macOS refused (the Screen Recording permission is off) asks to open the
+    /// place in System Settings where it is switched on, once however often it is tried;
+    /// with another question open, the explanation comes as a message box, once.
+    #[test]
+    fn a_refused_capture_asks_to_open_the_screen_recording_settings() {
+        use crate::dialogs::confirm::{Confirm, ConfirmAction};
+        use modlight_core::l10n::mac;
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.capture_failed(Some(CaptureError::NotPermitted));
+        let asked = state.windows.confirm.clone().expect("the question");
+        assert_eq!(asked.action, ConfirmAction::OpenScreenRecordingSettings);
+        assert!(asked.text.starts_with(t(mac::ScreenRecordingDenied)));
+        assert!(asked.text.ends_with(t(mac::ScreenRecordingOpenSettings)));
+        state.capture_failed(Some(CaptureError::NotPermitted));
+        assert_eq!(state.windows.confirm, Some(asked));
+        assert!(state.uploads.windows.messages.is_empty());
+
+        state.windows.confirm = Some(Confirm::new("Reset", "?", ConfirmAction::ResetSettings));
+        state.screen_recording_refused();
+        state.screen_recording_refused();
+        assert_eq!(state.uploads.windows.messages.len(), 1);
+        assert_eq!(
+            state.windows.confirm.as_ref().map(|c| &c.action),
+            Some(&ConfirmAction::ResetSettings),
+            "the other question stays"
+        );
+        // Anything else that took nothing is only logged.
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.capture_failed(Some(CaptureError::Nothing));
+        assert!(state.windows.confirm.is_none());
+        assert!(state.uploads.windows.messages.is_empty());
     }
 
     /// A settings document that comes in again (sync, import, reset) registers the

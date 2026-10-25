@@ -116,4 +116,15 @@
   <data name="AIKeyOtherAddress" xml:space="preserve">
     <value>The OpenAI key was saved for a different address than the one in the options now, so it is not sent there. Open the options and enter the key again if you trust this address.</value>
   </data>
+  <data name="ScreenRecordingTitle" xml:space="preserve">
+    <value>Screen recording is off</value>
+  </data>
+  <data name="ScreenRecordingDenied" xml:space="preserve">
+    <value>macOS does not let Modlight see the screen, so it cannot take a screenshot or a recording.
+
+Turn Modlight on in System Settings, Privacy &amp; Security, Screen &amp; System Audio Recording, then try again.</value>
+  </data>
+  <data name="ScreenRecordingOpenSettings" xml:space="preserve">
+    <value>Open System Settings there now?</value>
+  </data>
 </root>
