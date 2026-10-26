@@ -173,6 +173,12 @@ pub fn raise_overlay(title: &str) -> bool {
                     | NSWindowCollectionBehavior::FullScreenAuxiliary
                     | NSWindowCollectionBehavior::Stationary,
             );
+            // The window was made at the normal level, where AppKit keeps it under the
+            // menu bar (a 1080 pt display gave a 924 pt window): over everything now, it
+            // takes the whole display.
+            if let Some(screen) = window.screen() {
+                window.setFrame_display(screen.frame(), true);
+            }
             found = true;
         }
     }

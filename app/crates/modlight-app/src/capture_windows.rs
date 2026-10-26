@@ -436,14 +436,26 @@ impl ModlightApp {
                     screen.bounds.height as f32,
                 ));
             let id = ViewportId::from_hash_of(("region-overlay", screen.id));
-            let raised_key = egui::Id::new(("region-overlay-raised", screen.id));
+            // Per overlay: each capture opens new windows, raised and shown anew.
+            let run = overlay.opened_at.to_bits();
+            let raised_key = egui::Id::new(("region-overlay-raised", screen.id, run));
+            let frames_key = egui::Id::new(("region-overlay-frames", screen.id, run));
+            // The window stays hidden for its first frames, while it is raised over the
+            // menu bar and the frozen desktop reaches it: shown at once it flashed dark.
+            let frames = ctx.data(|d| d.get_temp::<u32>(frames_key).unwrap_or(0));
+            let shown = frames >= 2;
+            let builder = builder.with_visible(shown);
             ctx.show_viewport_immediate(id, builder, |ui, _| {
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(frames_key, frames.saturating_add(1)));
                 if !ui
                     .ctx()
                     .data(|d| d.get_temp::<bool>(raised_key).unwrap_or(false))
                     && crate::platform::windows::raise_overlay(&title)
                 {
                     ui.ctx().data_mut(|d| d.insert_temp(raised_key, true));
+                }
+                if frames == 2 {
                     ui.ctx().send_viewport_cmd(ViewportCommand::Focus);
                 }
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
