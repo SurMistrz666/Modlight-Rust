@@ -408,6 +408,9 @@ impl ModlightApp {
         };
         let colors = state.colors.clone();
         let now = state.time;
+        // The frozen desktop goes up with the main window's frame, before any display's
+        // window draws (a texture first made inside one of them left it black).
+        overlay.prepare_textures(ctx);
         let screens = overlay.screens();
         let pointer = overlay.session.to_screen(overlay.session.last_point);
         let mut region_tool = false;

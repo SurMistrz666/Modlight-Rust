@@ -49,7 +49,10 @@ pub struct RegionOverlay {
     pub settings: TaskSettings,
     /// UI seconds when it opened: keys count after `InputDelay`.
     pub opened_at: f64,
-    texture: Option<TextureHandle>,
+    /// Each display's part of the frozen desktop, made before its window draws.
+    textures: std::collections::HashMap<u32, TextureHandle>,
+    /// The first frame of each display was described in the debug log.
+    logged: std::collections::HashSet<u32>,
     magnifier: Option<(TextureHandle, (i64, i64, i64))>,
     /// The press that opened a double click (UI seconds and image point).
     last_click: Option<(f64, Point)>,
@@ -78,7 +81,8 @@ impl RegionOverlay {
             purpose,
             settings,
             opened_at: now,
-            texture: None,
+            textures: std::collections::HashMap::new(),
+            logged: std::collections::HashSet::new(),
             magnifier: None,
             last_click: None,
             workspace: None,
@@ -188,18 +192,56 @@ impl RegionOverlay {
         )
     }
 
-    fn texture(&mut self, ctx: &egui::Context) -> Option<TextureHandle> {
-        if self.texture.is_none()
-            && let Some(image) = &self.session.request.image
-        {
-            let color = ColorImage::from_rgba_unmultiplied(
-                [image.width() as usize, image.height() as usize],
-                image.as_raw(),
-            );
-            self.texture =
-                Some(ctx.load_texture("region-overlay", color, egui::TextureOptions::NEAREST));
+    /// Each display's part of the frozen desktop as a texture, cut to the display and
+    /// no larger than the renderer takes, as the screen colour picker does. Called from
+    /// the main window before the displays' windows draw, so the pictures are uploaded
+    /// with the main window's frame and every display window finds them ready.
+    pub fn prepare_textures(&mut self, ctx: &egui::Context) {
+        if self.session.request.kind == RegionKind::Transparent {
+            return;
         }
-        self.texture.clone()
+        let Some(image) = self.session.request.image.clone() else {
+            return;
+        };
+        let max = ctx.input(|i| i.max_texture_side).max(256) as u32;
+        for screen in self.screens() {
+            if self.textures.contains_key(&screen.id) {
+                continue;
+            }
+            let top_left = self.to_image(&screen, pos2(0.0, 0.0));
+            let size = vec2(screen.bounds.width as f32, screen.bounds.height as f32);
+            let bottom_right = self.to_image(&screen, size.to_pos2());
+            let x = (top_left.x.round().max(0.0) as u32).min(image.width().saturating_sub(1));
+            let y = (top_left.y.round().max(0.0) as u32).min(image.height().saturating_sub(1));
+            let w =
+                ((bottom_right.x.round() as i64 - x as i64).max(1) as u32).min(image.width() - x);
+            let h =
+                ((bottom_right.y.round() as i64 - y as i64).max(1) as u32).min(image.height() - y);
+            let mut crop = image::imageops::crop_imm(image.as_ref(), x, y, w, h).to_image();
+            if crop.width() > max || crop.height() > max {
+                let f = (max as f64 / crop.width() as f64).min(max as f64 / crop.height() as f64);
+                crop = image::imageops::resize(
+                    &crop,
+                    ((crop.width() as f64 * f) as u32).max(1),
+                    ((crop.height() as f64 * f) as u32).max(1),
+                    image::imageops::FilterType::Triangle,
+                );
+            }
+            // Opaque: the desktop has no holes, whatever alpha the system handed over.
+            for p in crop.pixels_mut() {
+                p.0[3] = 255;
+            }
+            let color = ColorImage::from_rgba_unmultiplied(
+                [crop.width() as usize, crop.height() as usize],
+                crop.as_raw(),
+            );
+            let texture = ctx.load_texture(
+                format!("region-overlay-{}", screen.id),
+                color,
+                egui::TextureOptions::NEAREST,
+            );
+            self.textures.insert(screen.id, texture);
+        }
     }
 
     /// Hear the window's pointer, wheel and keys.
@@ -323,26 +365,47 @@ impl RegionOverlay {
         let painter = ui.painter().clone();
         let scale = self.session.request.scale as f32;
         let kind = self.session.request.kind;
+        if kind != RegionKind::Transparent && !self.textures.contains_key(&screen.id) {
+            self.prepare_textures(&ctx);
+        }
         let texture = if kind == RegionKind::Transparent {
             None
         } else {
-            self.texture(&ctx)
+            self.textures.get(&screen.id).cloned()
         };
-        let session = &self.session;
+        if self.logged.insert(screen.id) {
+            let image = self.session.request.image.as_deref();
+            let mean = image.map(|i| {
+                let n = (i.width() as u64 * i.height() as u64).max(1);
+                i.pixels()
+                    .map(|p| p.0[0] as u64 + p.0[1] as u64 + p.0[2] as u64)
+                    .sum::<u64>() as f64
+                    / (3 * n) as f64
+            });
+            log::info!(
+                "Region overlay on display {}: window {:?} at {:.2} pt/px, desktop {:?} (mean {:.0?}), texture {:?}, largest texture {}",
+                screen.id,
+                full,
+                ctx.pixels_per_point(),
+                image.map(|i| i.dimensions()),
+                mean,
+                texture.as_ref().map(|t| t.size()),
+                ctx.input(|i| i.max_texture_side),
+            );
+        }
 
         // The frozen desktop (or, for the transparent kind, almost nothing: a window
         // with alpha 1/255, which still receives the pointer as upstream's layered one).
         if kind == RegionKind::Transparent {
             painter.rect_filled(full, 0.0, Color32::from_black_alpha(1));
         } else if let Some(texture) = texture {
-            let (iw, ih) = (session.image_size.0 as f32, session.image_size.1 as f32);
-            let top_left = self.to_image(screen, pos2(0.0, 0.0));
-            let bottom_right = self.to_image(screen, full.size().to_pos2());
-            let uv = Rect::from_min_max(
-                pos2(top_left.x as f32 / iw, top_left.y as f32 / ih),
-                pos2(bottom_right.x as f32 / iw, bottom_right.y as f32 / ih),
+            // The texture is this display's part already.
+            let rect = Rect::from_min_size(
+                full.min,
+                vec2(screen.bounds.width as f32, screen.bounds.height as f32),
             );
-            painter.image(texture.id(), full, uv, Color32::WHITE);
+            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+            painter.image(texture.id(), rect, uv, Color32::WHITE);
         } else {
             painter.rect_filled(full, 0.0, Color32::BLACK);
         }
