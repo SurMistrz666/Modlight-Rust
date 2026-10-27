@@ -572,7 +572,7 @@ mod tests {
         assert!(has_release_channel());
         assert_eq!(
             download_page_url("https://files.example.com/"),
-            "https://files.example.com/download"
+            "https://files.example.com/dashboard/downloads"
         );
         assert_eq!(CHECK_INTERVAL, Duration::from_secs(1800));
     }

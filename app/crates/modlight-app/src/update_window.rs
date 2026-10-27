@@ -1033,7 +1033,7 @@ mod tests {
         assert_eq!(
             app.effects,
             vec![crate::state::Effect::OpenUrl(
-                "https://files.example.com/download".into()
+                "https://files.example.com/dashboard/downloads".into()
             )]
         );
         assert!(
