@@ -1,7 +1,7 @@
 # Per-account file encryption ("file vault")
 
 Not upstream: an intended addition on top of the 1:1 port (like Turnstile,
-SKELETON.md section 9, item 43). An account holder can switch it on in
+SKELETON.md section 9, item 46). An account holder can switch it on in
 Settings -> Security. From then on ALL of that account's files are stored
 encrypted, and reading any of them, by the owner in the panel or by anybody
 following a link, needs that account's **file password**. A browser that
