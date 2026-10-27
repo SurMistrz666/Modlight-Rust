@@ -60,8 +60,8 @@ fn page(app_name: &str, title: &str, body: &str) -> Response {
     let app = esc(app_name);
     let html = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{} - {app}</title></head>\n\
-<body style=\"margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b0c;color:#fafafa;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif\">\n\
-<div style=\"max-width:420px;width:90%;background:#151517;border:1px solid #26262a;border-radius:16px;padding:28px;text-align:center\">\n\
+<body style=\"margin:0;min-height:100vh;display:grid;place-items:center;background:#0a0a0a;color:#ededed;font-family:Geist,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif\">\n\
+<div style=\"max-width:420px;width:90%;background:#121212;border:1px solid #262626;border-radius:16px;padding:28px;text-align:center\">\n\
 <div style=\"font-weight:700;margin-bottom:12px\">{app}</div>{body}</div></body></html>",
         esc(title)
     );
@@ -97,7 +97,7 @@ async fn ask(
         return Ok(plain_text(StatusCode::NOT_FOUND, "Not found"));
     }
     let body = format!(
-        "\n    <p style=\"color:#a1a1aa;font-size:14px;line-height:1.6\">Delete <b style=\"color:#fafafa\">{}</b> permanently? This cannot be undone.</p>\n    <form method=\"post\" style=\"margin-top:18px\">\n      <button type=\"submit\" style=\"background:#ef4444;color:#fff;border:0;border-radius:10px;padding:11px 22px;font-weight:600;cursor:pointer\">Delete permanently</button>\n    </form>",
+        "\n    <p style=\"color:#a1a1a1;font-size:14px;line-height:1.6\">Delete <b style=\"color:#ededed\">{}</b> permanently? This cannot be undone.</p>\n    <form method=\"post\" style=\"margin-top:18px\">\n      <button type=\"submit\" style=\"background:#ef4444;color:#fff;border:0;border-radius:10px;padding:11px 22px;font-weight:600;cursor:pointer\">Delete permanently</button>\n    </form>",
         esc(&found.media.filename)
     );
     Ok(page(&state.config.app_name, "Delete file", &body))
@@ -118,7 +118,7 @@ async fn delete(
     Ok(page(
         &state.config.app_name,
         "Deleted",
-        "<p style=\"color:#a1a1aa;font-size:14px\">The file has been deleted.</p>",
+        "<p style=\"color:#a1a1a1;font-size:14px\">The file has been deleted.</p>",
     ))
 }
 

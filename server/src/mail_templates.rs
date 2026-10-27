@@ -6,7 +6,7 @@
 //!  - **Tables and inline styles only.** Outlook renders HTML with the Word
 //!    engine: no flexbox, no grid, no `<style>` rules it feels like ignoring.
 //!  - **Colours as literal hex.** An email has no access to the theme tokens;
-//!    the palette below is a deliberate, documented COPY of the "modern" skin.
+//!    the palette below is a deliberate, documented COPY of the Graphite look.
 //!
 //! Translations come from `messages/<locale>/mail.json` (the static import
 //! upstream): mail is sent on somebody else's behalf, where the request's
@@ -19,17 +19,22 @@ use serde_json::Value;
 
 use crate::i18n::Messages;
 
-// ── Palette (copy of the "modern" skin, dark) ───────────────────────────────
-const BG: &str = "#0b0b0c";
-const CARD: &str = "#151517";
-const BORDER: &str = "#26262a";
-const TEXT: &str = "#fafafa";
-const MUTED: &str = "#a1a1aa";
-const FAINT: &str = "#52525b";
-const ACCENT: &str = "#6E6BF5";
+// ── Palette (copy of the Graphite look, dark) ───────────────────────────────
+const BG: &str = "#0a0a0a";
+const CARD: &str = "#121212";
+const BORDER: &str = "#262626";
+const TEXT: &str = "#ededed";
+const MUTED: &str = "#a1a1a1";
+const FAINT: &str = "#525252";
+/// Links. The call to action is a white button with dark text, as in the panel.
+const ACCENT: &str = "#3b82f6";
+const BUTTON: &str = "#ffffff";
+const BUTTON_TEXT: &str = "#0a0a0a";
 const WARN: &str = "#f59e0b";
 
-const FONT: &str = "ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+/// Geist first for the clients that have it installed; mail cannot load web fonts
+/// reliably, so the system stack carries everyone else.
+const FONT: &str = "Geist,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MailLocale {
@@ -258,8 +263,8 @@ fn action(url: &str, label: &str, fallback_label: &str) -> String {
     let fallback = esc(fallback_label);
     format!(
         r#"<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 14px">
-  <tr><td align="center" bgcolor="{ACCENT}" style="border-radius:10px">
-    <a href="{safe}" style="display:inline-block;padding:12px 22px;font-family:{FONT};font-size:14px;font-weight:600;color:#ffffff;text-decoration:none">{label}</a>
+  <tr><td align="center" bgcolor="{BUTTON}" style="border-radius:10px">
+    <a href="{safe}" style="display:inline-block;padding:12px 22px;font-family:{FONT};font-size:14px;font-weight:600;color:{BUTTON_TEXT};text-decoration:none">{label}</a>
   </td></tr>
 </table>
 <p style="margin:0 0 6px;color:{FAINT};font-size:12px">{fallback}</p>

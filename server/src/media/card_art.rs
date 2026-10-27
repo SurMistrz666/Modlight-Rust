@@ -73,15 +73,23 @@ fn hex(l: f64, c: f64, hue: f64) -> String {
 const ACCENT_L: f64 = 0.8;
 const ACCENT_C_CAP: f64 = 0.13;
 
-/// Hue 277 is the default skin's --primary, so the card is related to the product.
-const NEUTRAL_HUE: f64 = 277.0;
+/// Hue 260 is the Graphite accent (#3b82f6), so the unknown-type card's faint tint
+/// is related to the product.
+const NEUTRAL_HUE: f64 = 260.0;
+
+// The Graphite surfaces, the same on every card: only the glyph carries a hue.
+const BG: &str = "#121212";
+const BG_EDGE: &str = "#0a0a0a";
+const PLATE_FILL: &str = "#171717";
+const PLATE_STROKE: &str = "#262626";
+const GLOW: &str = "#262626";
 
 fn bg() -> String {
-    hex(0.19, 0.015, NEUTRAL_HUE)
+    BG.to_string()
 }
 
 fn bg_edge() -> String {
-    hex(0.145, 0.012, NEUTRAL_HUE)
+    BG_EDGE.to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -185,10 +193,10 @@ pub fn card_art(category: CardCategory) -> CardArt {
     let s = style(category);
     let chroma = if s.neutral { 0.015 } else { fit_chroma(ACCENT_L, s.hue, ACCENT_C_CAP) };
     let accent = hex(ACCENT_L, chroma, s.hue);
-    let plate_fill = hex(0.28, if s.neutral { 0.01 } else { chroma.min(0.05) }, s.hue);
-    let plate_stroke = hex(0.42, if s.neutral { 0.012 } else { chroma.min(0.07) }, s.hue);
-    let glow = hex(0.32, if s.neutral { 0.012 } else { chroma.min(0.07) }, s.hue);
-    let glyph = s.glyph.replace("CHIP", &plate_stroke);
+    let (plate_fill, plate_stroke, glow) = (PLATE_FILL, PLATE_STROKE, GLOW);
+    // The glyph's own filled parts (a latch, a header row): a dim tint of its hue.
+    let chip = hex(0.36, if s.neutral { 0.012 } else { chroma.min(0.06) }, s.hue);
+    let glyph = s.glyph.replace("CHIP", &chip);
     let n = js_number_to_string;
     let (w, h) = (CARD_WIDTH, CARD_HEIGHT);
     let (bg, bg_edge) = (bg(), bg_edge());
@@ -255,7 +263,7 @@ mod tests {
 
     #[test]
     fn holds_the_family_together() {
-        let backdrop = relative_luminance("#12131b");
+        let backdrop = relative_luminance(BG);
         let ratios: Vec<f64> = CARD_CATEGORIES
             .iter()
             .map(|c| (relative_luminance(&card_art(*c).accent) + 0.05) / (backdrop + 0.05))
