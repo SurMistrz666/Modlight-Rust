@@ -1,5 +1,6 @@
 //! The upstream `app/` tree as data: EVERY page (`page.tsx`) and route handler
-//! (`route.ts`), with route groups stripped and `[params]` kept, plus Next's
+//! (`route.ts`), with route groups stripped and `[params]` kept (plus the one
+//! page that is not upstream's: `/dashboard/downloads`, Downloads), plus Next's
 //! route matching (`getSortedRoutes` order, first full match wins, static
 //! segments before `[slug]` before `[...rest]`, compared case-sensitively on
 //! the raw path, params decoded with `decodeURIComponent`).
@@ -88,6 +89,8 @@ pub const APP_ROUTES: &[AppRoute] = &[
     page("/dashboard", "app/(app)/dashboard/page.tsx", APP),
     page("/dashboard/admin", "app/(app)/dashboard/admin/page.tsx", APP),
     page("/dashboard/admin/users/[id]/files", "app/(app)/dashboard/admin/users/[id]/files/page.tsx", APP),
+    // Not upstream: Downloads (src/pages/dashboard_downloads.rs; the file is the SPA's own page).
+    page("/dashboard/downloads", "app/(app)/dashboard/downloads/page.tsx", APP),
     page("/dashboard/duplicates", "app/(app)/dashboard/duplicates/page.tsx", APP),
     page("/dashboard/folders", "app/(app)/dashboard/folders/page.tsx", APP),
     page("/dashboard/links", "app/(app)/dashboard/links/page.tsx", APP),
@@ -324,7 +327,8 @@ mod tests {
     fn the_table_has_every_upstream_page_and_route() {
         let pages = APP_ROUTES.iter().filter(|r| r.kind == RouteKind::Page).count();
         let handlers = APP_ROUTES.iter().filter(|r| r.kind == RouteKind::Handler).count();
-        assert_eq!(pages, 27);
+        // 27 upstream pages and Downloads.
+        assert_eq!(pages, 28);
         assert_eq!(handlers, 25);
     }
 
@@ -347,6 +351,7 @@ mod tests {
         assert_eq!(resolve("/api/foo").unwrap().0, "/[userCode]/[mediaCode]");
         assert_eq!(resolve("/api/foo/bar").unwrap().0, "/[userCode]/[mediaCode]/[action]");
         assert_eq!(resolve("/dashboard/nope").unwrap().0, "/[userCode]/[mediaCode]");
+        assert_eq!(resolve("/dashboard/downloads").unwrap().0, "/dashboard/downloads");
         assert_eq!(resolve("/s/promo").unwrap().0, "/s/[code]");
         assert_eq!(resolve("/s/promo/unlock").unwrap().0, "/s/[code]/unlock");
         assert_eq!(resolve("/s/tag/promo").unwrap().0, "/s/[code]/[name]");

@@ -1,0 +1,75 @@
+{
+  "metaTitle": "Downloads",
+  "title": "Downloads",
+  "intro": "The {appName} desktop app for macOS and Windows. The newest build of each platform is on top; the server keeps the last {keep} builds of each.",
+  "platform": {
+    "macos": "macOS",
+    "windows": "Windows"
+  },
+  "arch": {
+    "macos": {
+      "arm64": "Apple Silicon (arm64)",
+      "x64": "Intel (x64)"
+    },
+    "windows": {
+      "arm64": "ARM64",
+      "x64": "64-bit (x64)"
+    }
+  },
+  "newest": "Newest",
+  "version": "Version {version}",
+  "build": "build {build}",
+  "built": "Built {date}",
+  "published": "Published {date} · {who}",
+  "buildMachine": "build machine",
+  "download": "Download for {platform}",
+  "downloadShort": "Download",
+  "downloadLabel": "Download {filename} ({size})",
+  "alsoFor": "Also for {arch}",
+  "whatsNew": "What's new",
+  "sha256": "SHA-256",
+  "copySha": "Copy the SHA-256",
+  "shaCopied": "SHA-256 copied.",
+  "copyFailed": "Couldn't copy; select the text by hand.",
+  "install": {
+    "title": "How to install",
+    "macos": {
+      "step1": "Open the downloaded ZIP: it unpacks Modlight.app.",
+      "step2": "Drag Modlight.app into the Applications folder and open it.",
+      "step3": "Sign in to this server: {origin}",
+      "hint": "If macOS says it cannot check the developer, open System Settings, Privacy & Security, and click Open Anyway."
+    },
+    "windows": {
+      "step1": "Extract the ZIP (right-click it, Extract All).",
+      "step2": "Run Modlight.exe from the extracted folder.",
+      "step3": "Sign in to this server: {origin}",
+      "hint": "If Windows SmartScreen stops it, click More info, then Run anyway."
+    }
+  },
+  "older": "Older builds ({count})",
+  "empty": "No builds for this platform yet",
+  "emptyHint": "When a build for {platform} is published, it will be here.",
+  "emptyHintAdmin": "A build appears here as soon as a build machine publishes it (see Publishing builds below).",
+  "delete": "Delete",
+  "deleteLabel": "Delete {filename}",
+  "deleteTitle": "Delete this build?",
+  "deleteDesc": "{platform} {version} ({filename}, {size}) disappears from this list and from the server. Nobody can download it afterwards.",
+  "deleteConfirm": "Delete build",
+  "deleted": "Build deleted.",
+  "deleteFailed": "Couldn't delete the build.",
+  "publish": {
+    "title": "Publishing builds",
+    "intro": "Only administrators see this. Build machines publish with the publish token; a new build goes to the top of its card, and the server keeps the newest {keep} per platform and architecture, deleting older ones.",
+    "tokenSet": "Publish token set",
+    "tokenMissing": "No publish token",
+    "tokenMissingHint": "RELEASE_PUBLISH_TOKEN is not set on the server, so only administrators can publish (with their session or a full-scope API token). To let build machines publish, add it to the server's .env file (setup-local.sh generates one) and restart the server.",
+    "auth": "Every request carries the token:",
+    "start": "Start the upload with the build's details. The answer names the upload and the chunk size.",
+    "chunks": "Send the file in chunks numbered 0, 1, 2, and so on, each at most chunkSize bytes (50 MiB).",
+    "finish": "Finish. The server checks the size and the SHA-256, then publishes the build; if either is wrong, the upload is dropped and has to start again.",
+    "names": "File names the build machines use:",
+    "script": "The same as a shell script (curl):",
+    "copy": "Copy",
+    "copied": "Copied."
+  }
+}

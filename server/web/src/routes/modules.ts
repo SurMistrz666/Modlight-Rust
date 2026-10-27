@@ -17,6 +17,7 @@ const pageLoaders: Record<RouteId, () => Promise<{ default: PageComponent }>> = 
   "/dashboard": () => import("../pages/(app)/dashboard/page"),
   "/dashboard/admin": () => import("../pages/(app)/dashboard/admin/page"),
   "/dashboard/admin/users/[id]/files": () => import("../pages/(app)/dashboard/admin/users/[id]/files/page"),
+  "/dashboard/downloads": () => import("../pages/(app)/dashboard/downloads/page"),
   "/dashboard/duplicates": () => import("../pages/(app)/dashboard/duplicates/page"),
   "/dashboard/folders": () => import("../pages/(app)/dashboard/folders/page"),
   "/dashboard/links": () => import("../pages/(app)/dashboard/links/page"),

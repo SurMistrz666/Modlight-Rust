@@ -83,6 +83,7 @@ pub fn router(state: &AppState) -> Router {
         .merge(crate::routes::api::shortlinks::routes()) // app/api/shortlinks/route.ts
         .merge(crate::routes::api::admin_disk::routes()) // app/api/admin/disk/route.ts
         .merge(crate::routes::api::authorize_pickup::routes()) // not upstream: desktop sign-in pickup
+        .merge(crate::routes::api::downloads::routes()) // not upstream: Downloads (/api/downloads*, /downloads/{id}/{filename})
         .merge(crate::routes::s_code::routes()) // app/s/[code]/route.ts
         .merge(crate::routes::s_code_name::routes()) // app/s/[code]/[name]/route.ts
         .merge(crate::routes::media_action::routes()) // app/[userCode]/[mediaCode]/[action]/route.ts

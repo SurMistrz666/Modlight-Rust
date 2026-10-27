@@ -15,7 +15,7 @@ fn every_page_and_layout_has_a_loader() {
     let mut reg = PageRegistry::default();
     register_all(&mut reg);
     let pages: Vec<_> = APP_ROUTES.iter().filter(|r| r.kind == RouteKind::Page).collect();
-    assert_eq!(pages.len(), 27, "upstream has 27 page.tsx files");
+    assert_eq!(pages.len(), 28, "upstream has 27 page.tsx files, and Downloads is the port's own");
     for route in pages {
         assert!(reg.has_page(route.path), "no loader for {} ({})", route.path, route.file);
         for layout in route.layouts {

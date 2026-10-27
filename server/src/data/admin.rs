@@ -372,7 +372,9 @@ pub const STORAGE_SCAN_GRACE_MS: i64 = 60 * 60 * 1000;
 /// out of `uploads` on purpose: it must not appear in a dashboard, count
 /// against a quota, or be reachable at a /{tag}/{code} link. Each is freed by
 /// the feature that wrote it, so none of them is this report's business.
-const UNTRACKED_PREFIXES: [&str; 3] = [DERIVED_PREFIX, BACKGROUND_PREFIX, AVATAR_PREFIX];
+/// Not upstream: `releases/` holds Downloads' builds (`releases` table).
+const UNTRACKED_PREFIXES: [&str; 4] =
+    [DERIVED_PREFIX, BACKGROUND_PREFIX, AVATAR_PREFIX, crate::downloads::STORAGE_PREFIX];
 
 /// Hard ceiling on the walk, so one click can never wander off into a mount.
 const MAX_SCANNED_FILES: u64 = 250_000;

@@ -105,6 +105,7 @@ action errors), so upstream `.env` files keep their meaning.
 | `routes/api/{uploads,uploads_check,folders,duplicates,shortlinks,link_info,avatar,background,admin_disk}.rs`, `routes/{avatar,s_code,s_code_name}.rs` | `app/api/{uploads,uploads/check,folders,duplicates,shortlinks,link-info,avatar,background,admin/disk}`, `app/avatar/[userCode]`, `app/bg/[userCode]`, `app/s/[code]`, `app/s/[code]/[name]` | done (parity: `library.py`, `library_routes.py`) |
 | `runtime/limits.rs` | `lib/runtime/limits.ts` | done |
 | `turnstile.rs`, `actions/turnstile.rs` | none (not upstream) | optional Cloudflare Turnstile on the public entry points and its admin card (section 9, item 43) |
+| `downloads.rs`, `routes/api/downloads.rs`, `pages/dashboard_downloads.rs` | none (not upstream) | Downloads: the desktop app's builds for macOS and Windows, published with `RELEASE_PUBLISH_TOKEN` (section 9, item 45) |
 
 Reference sources (read-only, never executed) of the exact library versions
 upstream pins are unpacked in `_scratch/srv-skeleton/src/`: better-auth 1.6.13,
@@ -679,6 +680,75 @@ Deliberate, each for a reason:
       app `tests/signin_pickup_fake.rs` and the opt-in real-server
       `tests/signin_pickup.rs` (`MODLIGHT_PICKUP_E2E`); `tests/secreview_pickup.rs`
       (the review's attacks, asserting that each fails).
+
+45. **Intended addition: Downloads** (PL "Do pobrania", 2026-10-27). The
+    server keeps the desktop app's builds for macOS and Windows; signed-in
+    accounts download them, build machines publish them with a token, the
+    desktop app reads the list for updates. Nothing upstream changes: new
+    routes, a new table, a new page.
+    - *Table* `releases` (migration 0015, drizzle journal and snapshot like the
+      others): `id` text pk (32 hex), `platform` (`macos`|`windows`, CHECK),
+      `arch` (`arm64`|`x64`, CHECK), `version`, `build` (may be empty),
+      `built`, `published` (timestamptz), `size` bigint, `sha256`, `filename`,
+      `uploader`, `note`; index (`platform`, `arch`, `published`). Model
+      `db::models::Release`.
+    - *Files*: through the storage layer at `releases/<id>/<filename>` (local
+      and S3 alike: `ingest_local_file`, `read_stream` with ranges,
+      `delete_prefix`). The storage scan of the admin page skips `releases/`
+      like `derived/`, `avatars/` and `backgrounds/`. Chunks of an unfinished
+      upload are local files under `UPLOAD_TMP_PATH/releases/<upload>/`
+      (`upload.json`, `chunk-<n>`); `finish` joins them in order while hashing,
+      checks the declared size and SHA-256 (else 400 and the folder is
+      removed), hands the joined file to the driver, inserts the row and drops
+      every build of the same platform and architecture beyond the newest 5 in
+      one transaction (advisory lock per platform+arch), then deletes their
+      files. A finished upload keeps a `done` marker for a day so a repeated
+      `finish` answers the same build; an upload untouched for a day is swept
+      at the next start. One `finish` per upload at a time (409 `busy`).
+      `published` is monotonic within the process.
+    - *Routes* (`routes/api/downloads.rs`; errors JSON `{"error","code"}`,
+      `Cache-Control: private, no-store`): `GET /api/downloads` and
+      `GET /downloads/{id}/{filename}` for any signed-in account, by session
+      or by an API token of any scope (capability `identify`: the list
+      reveals nothing about an account, and the desktop app must find its
+      updates whatever its token's scope); the file with `Content-Length`,
+      `Content-Disposition: attachment`, `ETag` = the quoted SHA-256,
+      `If-None-Match` (304), `Range`/`If-Range` (206). `POST
+      /api/downloads/upload` (`read_json_object` rules, 16 KiB), `PUT
+      .../upload/{upload}/{n}` (chunks of at most 50 MiB, 413 beyond, or beyond
+      the declared size), `POST .../upload/{upload}/finish` for a publisher:
+      `RELEASE_PUBLISH_TOKEN` as a bearer token (`x-api-key` too; SHA-256 of
+      both sides compared in constant time, `config::PublishToken` keeps only
+      the digest), an administrator's session, or an administrator's `full`
+      API token (capability `admin`, as `/api/releases/app`). `DELETE
+      /api/downloads/{id}` for administrators only. The publish token opens
+      nothing else (401 elsewhere). The credential is checked before any body
+      is read; a token decides alone when one is offered (a wrong one is never
+      rescued by a cookie). 401 `unauthorized`/`account_disabled`, 403
+      `forbidden`/`insufficient_scope`/`invalid_scope`.
+    - *Shadowing*: `/downloads/{id}/{filename}` has the shape of upstream's
+      `/{userCode}/{mediaCode}/{action}`; a path that names no build (wrong id
+      or file name) is handed to the media action unchanged, so an account
+      tagged `downloads` from before keeps its links. The tags `downloads` and
+      `releases` are added to `RESERVED_TAGS` (a new account cannot take
+      them; `releases` because user files live under `<tag>/` in storage).
+    - *Audit* (`audit::record_audit_by`, a NULL `user_id` for the token):
+      `downloads.published`, `downloads.pruned`, `downloads.deleted`,
+      `downloads.rejected`, with `by`/`byEmail`/`via` and the build.
+    - *Page* `/dashboard/downloads` (`pages/dashboard_downloads.rs`, a 28th
+      page in `pages/table.rs`; CONTRACT.md 6.28): props are the
+      `GET /api/downloads` answer. The SPA (`web/src/downloads/`) shows a card
+      per platform, newest build on top, older folded; administrators also
+      delete and see how to publish (with `window.location.origin`).
+      Strings: `messages/<locale>/downloads.json`, a 20th client namespace,
+      and `nav.downloads`.
+    - *Configuration*: `RELEASE_PUBLISH_TOKEN` (optional; `setup-local.sh`
+      generates it; a value under 24 characters warns at start).
+    - Tests: `downloads::tests`, `routes::api::downloads::tests`,
+      `config::tests` (`publish_token_*`), `tests/downloads.rs` (auth rules,
+      chunked publish with a full 50 MiB chunk, wrong SHA-256, wrong size,
+      missing chunk, keep-5, delete, ranges, the page, the media-action
+      fallback), `web/tests/downloads.test.tsx`.
 
 ## 10. Verified on 2026-10-18
 

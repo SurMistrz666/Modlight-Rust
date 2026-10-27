@@ -1,6 +1,6 @@
 /**
  * The SPA's route table must agree with the Rust server's
- * (server/src/pages/table.rs): the same 27 pages with the same files and
+ * (server/src/pages/table.rs): the same 28 pages (27 upstream, plus Downloads) with the same files and
  * layouts, the same 25 route handlers, and the same answer for every path the
  * server's own matching tests pin down.
  */
@@ -42,7 +42,7 @@ describe.skipIf(table === null)("route table agrees with server/src/pages/table.
   const handlers = [...source.matchAll(/^\s*handler\("([^"]+)", "([^"]+)"\),/gm)];
 
   it("has the same pages, files and layouts", () => {
-    expect(pages.length).toBe(27);
+    expect(pages.length).toBe(28);
     expect(pages.map((m) => m[1]).sort()).toEqual(Object.keys(ROUTES).sort());
     for (const [, id, file, layouts] of pages) {
       const route = ROUTES[id as RouteId];

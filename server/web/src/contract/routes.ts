@@ -1,7 +1,8 @@
 /**
  * Every upstream page, by the id the payload's `route` field carries: its Next
  * app path (route groups stripped, `[params]` kept), exactly as the Rust
- * server's route table names it (server/src/pages/table.rs `APP_ROUTES`).
+ * server's route table names it (server/src/pages/table.rs `APP_ROUTES`), and
+ * the one page that is the port's own (`/dashboard/downloads`, Downloads).
  * `pattern` is the URL pattern in react-router syntax, `file` the upstream file.
  */
 export const ROUTES = {
@@ -19,6 +20,12 @@ export const ROUTES = {
     pattern: "/dashboard/admin/users/:id/files",
     layouts: ["root", "(app)"],
     file: "app/(app)/dashboard/admin/users/[id]/files/page.tsx",
+  },
+  // Not upstream: Downloads (server/src/pages/dashboard_downloads.rs).
+  "/dashboard/downloads": {
+    pattern: "/dashboard/downloads",
+    layouts: ["root", "(app)"],
+    file: "app/(app)/dashboard/downloads/page.tsx",
   },
   "/dashboard/duplicates": {
     pattern: "/dashboard/duplicates",
@@ -102,6 +109,8 @@ export type LayoutId = "root" | "(app)" | "(auth)";
  *    `[param]` as `:param` and `[...all]` as `*`;
  *  - the resumable upload endpoint of upstream server.ts (`/api/files*`; its
  *    POST-only ShareX paths /upload and /api/upload are pages for a GET);
+ *  - not upstream: Downloads' API (`/api/downloads*`; its files,
+ *    `/downloads/:id/:filename`, already match the media action pattern);
  *  - files: app/icon.svg, app/apple-icon.png, public/ (brand/, fonts/) and the
  *    SPA's own build (assets/).
  *
@@ -140,6 +149,8 @@ export const SERVER_PATHS = [
   "/s/:code", // app/s/[code]/route.ts
   "/s/:code/:name", // app/s/[code]/[name]/route.ts
   "/api/files/*", // server.ts: tus resumable uploads (any method)
+  "/api/downloads", // not upstream: Downloads (server/src/routes/api/downloads.rs)
+  "/api/downloads/*", // not upstream: Downloads' publishing and deleting
   "/icon.svg", // app/icon.svg
   "/apple-icon.png", // app/apple-icon.png
   "/brand/*", // public/brand

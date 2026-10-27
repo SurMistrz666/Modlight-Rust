@@ -40,7 +40,9 @@ docker compose -f server/docker/docker-compose.yml up -d --build
 
 `setup-local.sh` writes `server/docker/.env` with mode 600: the key that
 signs sessions (`AUTH_SECRET`), the key for secrets in the database
-(`SETTINGS_ENCRYPTION_KEY`) and the database password (`POSTGRES_PASSWORD`). The file does not go
+(`SETTINGS_ENCRYPTION_KEY`), the database password (`POSTGRES_PASSWORD`) and
+the token build machines publish the desktop app with (`RELEASE_PUBLISH_TOKEN`,
+see "Downloads" below). The file does not go
 into git. **Do not change these values on a running installation** (it would sign
 everyone out, the SMTP password in the database would become unreadable, and the application would
 lose access to the database). The script can be run again: it keeps existing secrets
@@ -84,7 +86,7 @@ cache.
 
 | What | Where |
 |---|---|
-| Uploaded files, thumbnails, avatars, wallpapers, files being uploaded | the Docker volume `modlight-rust_appdata` (in the container `/app/data`) |
+| Uploaded files, thumbnails, avatars, wallpapers, files being uploaded, the desktop app's builds (Downloads) | the Docker volume `modlight-rust_appdata` (in the container `/app/data`) |
 | The PostgreSQL 17 database (accounts, files, settings) | the Docker volume `modlight-rust_pgdata` |
 | Secrets and configuration | `server/docker/.env` (mode 600) |
 
@@ -166,6 +168,85 @@ to the original:
    loopback port). Or paste a token created in the panel under **Integracje** (Integrations).
 3. The token goes into the macOS Keychain (the service `Modlight`).
 
+## Downloads (Do pobrania): the desktop app's builds
+
+A novelty the original does not have. The server keeps the builds of the
+desktop app for **macOS** and **Windows**: every signed-in account downloads
+them from the panel (**Do pobrania** / **Downloads** in the left panel), build
+machines publish them with a token, and the desktop app checks the same list
+for updates. The newest **5** builds of each platform and architecture stay;
+publishing a sixth deletes the oldest (row and file).
+
+**The publish token.** `setup-local.sh` writes a random `RELEASE_PUBLISH_TOKEN`
+into `server/docker/.env` (an existing one is kept); `up -d` hands it to the
+server. Copy it from that file to the build machines; it is never printed.
+It opens only the three publish routes below (anywhere else it is an unknown
+token: 401). Without it (empty or unset), only administrators publish: with
+their session in the panel or with an API token of scope `full`. To replace it,
+put a new value in `.env` and `docker compose -f server/docker/docker-compose.yml up -d`;
+the build machines then need the new value. The server keeps only its SHA-256
+and compares in constant time.
+
+**The API** (errors are JSON `{"error", "code"}`; 401 without valid
+credentials, 403 for an account that may not do it):
+
+| Route | Who | What |
+|---|---|---|
+| `GET /api/downloads` | signed in (session cookie, or the API token the desktop app uses, any scope) | `{"platforms":[{"platform":"macos","builds":[...]},{"platform":"windows","builds":[...]}],"keep":5,"admin":false,"publishToken":null}`, builds newest first; `publishToken` (is the token set) only for administrators |
+| `GET /downloads/{id}/{filename}` | signed in | the file: attachment, `Content-Length`, `ETag` = the quoted SHA-256, `Range` |
+| `POST /api/downloads/upload` | publish token or administrator | JSON `{"platform","arch","version","build","built","size","sha256","filename","note"}` -> `{"upload":"<id>","chunkSize":52428800}` |
+| `PUT /api/downloads/upload/{upload}/{n}` | publish token or administrator | the raw bytes of chunk `n` (0, 1, 2, ...), each at most `chunkSize` |
+| `POST /api/downloads/upload/{upload}/finish` | publish token or administrator | the build; a wrong size or SHA-256: 400, and the upload is dropped |
+| `DELETE /api/downloads/{id}` | administrator | deletes the build and its file |
+
+A build is `{"id","platform","arch","version","build","built","published","size","sha256","filename","uploader","note","url"}`
+with `url` = `/downloads/{id}/{filename}`. `platform` is `macos` or `windows`,
+`arch` `arm64` or `x64` (`aarch64`, `x86_64` and `amd64` are accepted; empty
+means `arm64` on macOS, `x64` on Windows), `built` an ISO 8601 date-time or
+milliseconds since 1970 (empty: now), `size` at most 4 GiB, `filename` letters,
+digits, `.`, `_`, `+` and `-` only (the build machines send
+`Modlight-<version>-<build>-macos-arm64.zip` and
+`Modlight-<version>-<build>-windows-x64.zip`), `note` up to 2000 characters.
+Chunks may be smaller than `chunkSize` (50 MiB, half of what Cloudflare lets
+through in one request); sending a chunk again replaces it; `finish` joins
+them in order and checks the total size and the SHA-256. A repeated `finish`
+(its answer got lost) answers the same build. An upload nobody touches for a
+day is dropped. Publishing and deleting are written to the admin audit log
+(`downloads.published`, `downloads.pruned`, `downloads.deleted`,
+`downloads.rejected`).
+
+**Publishing from a build machine** (POSIX shell with curl; the panel's
+Downloads page shows the same script with this server's address filled in):
+
+```sh
+SERVER=https://files.example.com
+TOKEN=...                                   # RELEASE_PUBLISH_TOKEN
+FILE=Modlight-1.2.0-45-macos-arm64.zip
+SIZE=$(wc -c < "$FILE" | tr -d " ")
+SHA=$( (shasum -a 256 "$FILE" 2>/dev/null || sha256sum "$FILE") | cut -d" " -f1)
+UPLOAD=$(curl -fsS -X POST "$SERVER/api/downloads/upload" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  --data "{\"platform\":\"macos\",\"arch\":\"arm64\",\"version\":\"1.2.0\",\"build\":\"45\",\"size\":$SIZE,\"sha256\":\"$SHA\",\"filename\":\"$FILE\",\"note\":\"\"}" \
+  | sed -n 's/.*"upload":"\([0-9a-f]*\)".*/\1/p')
+CHUNK=52428800; N=0
+while [ $((N * CHUNK)) -lt "$SIZE" ]; do
+  dd if="$FILE" bs=$CHUNK skip=$N count=1 2>/dev/null |
+    curl -fsS -X PUT "$SERVER/api/downloads/upload/$UPLOAD/$N" \
+      -H "Authorization: Bearer $TOKEN" --data-binary @- > /dev/null
+  N=$((N + 1))
+done
+curl -fsS -X POST "$SERVER/api/downloads/upload/$UPLOAD/finish" -H "Authorization: Bearer $TOKEN"
+```
+
+**Where the files are.** In the server's storage under
+`releases/<id>/<filename>` (the `appdata` volume on the local driver, the
+bucket on S3: both go through the same storage layer), and the list in the
+table `releases` (migration 0015). Chunks of an unfinished upload wait in
+`UPLOAD_TMP_PATH/releases/` on the server's own disk, which needs room for
+twice the build while it is being joined. The account tags `downloads` and
+`releases` are reserved from now on (the first is the download path, the
+second the storage folder). Details: `docs/SKELETON.md`, section 9, item 45.
+
 ## Cloudflare Turnstile (checking that the visitor is a human)
 
 Optional and off by default: without keys everything works exactly as in
@@ -235,6 +316,9 @@ The full list: `docs/SKELETON.md`, section 9. In short:
 - The ZIP album works (in the original it was always a 500 error).
 - A novelty the original does not have: optional Cloudflare Turnstile on the
   sign-in, registration, password reset and invitation forms (above).
+- Another one: Downloads, the desktop app's builds for macOS and Windows,
+  published by build machines with `RELEASE_PUBLISH_TOKEN` (above); the tags
+  `downloads` and `releases` are reserved for it.
 - A bad `%` character in the address: 400 instead of 500.
 
 ## Tests

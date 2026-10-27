@@ -160,13 +160,16 @@ mod tests {
     #[test]
     fn reads_the_shipped_journal() {
         let files = read_migration_files(&Paths::crate_dir().migrations).unwrap();
-        assert_eq!(files.len(), 15);
+        assert_eq!(files.len(), 16);
         assert_eq!(files[0].tag, "0000_init_folders_naming");
         assert_eq!(files[0].folder_millis, 1785441450828);
         assert_eq!(files[13].tag, "0013_upload_av_metadata");
         assert!(files.iter().all(|f| f.breakpoints && f.hash.len() == 64));
         // 0013 is two statements.
         assert_eq!(files[13].statements.len(), 2);
+        // Not upstream: Downloads' table and its index.
+        assert_eq!(files[15].tag, "0015_releases");
+        assert_eq!(files[15].statements.len(), 2);
         // Timestamps strictly increase, which the "newest row" rule relies on.
         assert!(files.windows(2).all(|w| w[0].folder_millis < w[1].folder_millis));
     }
