@@ -27,6 +27,7 @@ pub mod credentials;
 pub mod crypto;
 pub mod data;
 pub mod db;
+pub mod downloads;
 pub mod error;
 pub mod folders;
 pub mod format;

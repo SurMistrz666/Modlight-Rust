@@ -152,6 +152,10 @@ pub const RESERVED_TAGS: &[&str] = &[
     "links",
     "folders",
     "folder",
+    // Not upstream: Downloads, served at /downloads/{id}/{filename} and stored
+    // under releases/ beside the accounts' own `{tag}/` folders (src/downloads.rs).
+    "downloads",
+    "releases",
     // decoration served per account: /bg/{tag} and /avatar/{tag}
     "bg",
     "avatar",
@@ -831,6 +835,9 @@ mod url_tests {
         assert!(!is_reserved_tag("login-screen"));
         assert!(!is_reserved_tag("apis"));
         assert!(!is_reserved_tag("alicja"));
+        // Not upstream: Downloads' path and storage folder.
+        assert_eq!(check_tag("downloads"), Err(TagProblem::Reserved));
+        assert_eq!(check_tag("Releases"), Err(TagProblem::Reserved));
         for tag in ["alicja", "bobby", "root", "hIto3", "kiNo4"] {
             assert_eq!(check_tag(tag), Ok(()), "{tag}");
         }

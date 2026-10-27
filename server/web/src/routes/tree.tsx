@@ -5,8 +5,8 @@
  *   ├── page.tsx, welcome/, download/
  *   ├── (app)/layout.tsx
  *   │   └── dashboard/ (error.tsx, loading.tsx)
- *   │       ├── page.tsx, admin/, admin/users/[id]/files/, duplicates/, folders/,
- *   │       └── links/, paste/, profile/, tokens/, trash/, upload/
+ *   │       ├── page.tsx, admin/, admin/users/[id]/files/, downloads/ (not upstream),
+ *   │       └── duplicates/, folders/, links/, paste/, profile/, tokens/, trash/, upload/
  *   ├── (auth)/layout.tsx
  *   │   └── 2fa/, authorize/, forgot/, invite/[token]/, login/, register/, reset/
  *   ├── [userCode]/page.tsx, [userCode]/[mediaCode]/page.tsx
@@ -38,6 +38,7 @@ function rel(id: RouteId, base: string): string {
 const dashboardPages: RouteId[] = [
   "/dashboard/admin",
   "/dashboard/admin/users/[id]/files",
+  "/dashboard/downloads", // not upstream: Downloads
   "/dashboard/duplicates",
   "/dashboard/folders",
   "/dashboard/links",

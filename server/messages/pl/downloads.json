@@ -1,0 +1,75 @@
+{
+  "metaTitle": "Do pobrania",
+  "title": "Do pobrania",
+  "intro": "Aplikacja {appName} na komputery z macOS i Windows. Najnowsze wydanie każdej platformy jest na górze; serwer trzyma {keep} ostatnich wydań każdej z nich.",
+  "platform": {
+    "macos": "macOS",
+    "windows": "Windows"
+  },
+  "arch": {
+    "macos": {
+      "arm64": "Apple Silicon (arm64)",
+      "x64": "Intel (x64)"
+    },
+    "windows": {
+      "arm64": "ARM64",
+      "x64": "64-bitowy (x64)"
+    }
+  },
+  "newest": "Najnowsza",
+  "version": "Wersja {version}",
+  "build": "kompilacja {build}",
+  "built": "Zbudowano {date}",
+  "published": "Opublikowano {date} · {who}",
+  "buildMachine": "maszyna kompilująca",
+  "download": "Pobierz dla {platform}",
+  "downloadShort": "Pobierz",
+  "downloadLabel": "Pobierz {filename} ({size})",
+  "alsoFor": "Także dla {arch}",
+  "whatsNew": "Co nowego",
+  "sha256": "SHA-256",
+  "copySha": "Kopiuj sumę SHA-256",
+  "shaCopied": "Skopiowano sumę SHA-256.",
+  "copyFailed": "Nie udało się skopiować; zaznacz tekst ręcznie.",
+  "install": {
+    "title": "Instalacja",
+    "macos": {
+      "step1": "Otwórz pobrany plik ZIP: rozpakuje się z niego Modlight.app.",
+      "step2": "Przeciągnij Modlight.app do folderu Aplikacje i uruchom.",
+      "step3": "Zaloguj się na ten serwer: {origin}",
+      "hint": "Jeśli macOS nie może sprawdzić dewelopera, otwórz Ustawienia systemowe, Prywatność i ochrona, i kliknij Otwórz mimo to."
+    },
+    "windows": {
+      "step1": "Rozpakuj plik ZIP (prawy przycisk myszy, Wyodrębnij wszystko).",
+      "step2": "Uruchom Modlight.exe z rozpakowanego folderu.",
+      "step3": "Zaloguj się na ten serwer: {origin}",
+      "hint": "Jeśli Windows SmartScreen zatrzyma aplikację, kliknij Więcej informacji, a potem Uruchom mimo to."
+    }
+  },
+  "older": "Starsze wydania ({count})",
+  "empty": "Brak wydań dla tej platformy",
+  "emptyHint": "Gdy pojawi się wydanie dla {platform}, znajdziesz je tutaj.",
+  "emptyHintAdmin": "Wydanie pojawi się tu, gdy tylko maszyna kompilująca je opublikuje (zobacz Publikowanie wydań niżej).",
+  "delete": "Usuń",
+  "deleteLabel": "Usuń {filename}",
+  "deleteTitle": "Usunąć to wydanie?",
+  "deleteDesc": "{platform} {version} ({filename}, {size}) zniknie z tej listy i z serwera. Nikt już go nie pobierze.",
+  "deleteConfirm": "Usuń wydanie",
+  "deleted": "Usunięto wydanie.",
+  "deleteFailed": "Nie udało się usunąć wydania.",
+  "publish": {
+    "title": "Publikowanie wydań",
+    "intro": "Widzą to tylko administratorzy. Maszyny kompilujące publikują tokenem publikacji; nowe wydanie trafia na górę swojej karty, a serwer trzyma {keep} najnowszych na platformę i architekturę, usuwając starsze.",
+    "tokenSet": "Token publikacji ustawiony",
+    "tokenMissing": "Brak tokenu publikacji",
+    "tokenMissingHint": "Serwer nie ma ustawionego RELEASE_PUBLISH_TOKEN, więc publikować mogą tylko administratorzy (sesją albo tokenem API o zakresie full). Żeby maszyny kompilujące publikowały same, dodaj go do pliku .env serwera (setup-local.sh go wygeneruje) i uruchom serwer ponownie.",
+    "auth": "Każde żądanie niesie token:",
+    "start": "Rozpocznij wysyłkę z danymi wydania. Odpowiedź podaje identyfikator wysyłki i rozmiar kawałka.",
+    "chunks": "Wyślij plik w kawałkach numerowanych 0, 1, 2 i tak dalej, każdy najwyżej chunkSize bajtów (50 MiB).",
+    "finish": "Zakończ. Serwer sprawdzi rozmiar i sumę SHA-256, po czym opublikuje wydanie; jeśli coś się nie zgadza, wysyłka przepada i trzeba zacząć od nowa.",
+    "names": "Nazwy plików, których używają maszyny kompilujące:",
+    "script": "To samo jako skrypt powłoki (curl):",
+    "copy": "Kopiuj",
+    "copied": "Skopiowano."
+  }
+}

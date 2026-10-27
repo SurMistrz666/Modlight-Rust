@@ -53,12 +53,16 @@ fn panel_screens() -> Vec<&'static str> {
 }
 
 // tests/unit/panel-reachability.test.ts: "every panel screen is reachable
-// from the shell", over the SPA's copy of components/app-shell.tsx and the
-// Rust route table.
+// from the shell", over the SPA's components/app-shell.tsx and the Rust route
+// table. The shell is a port since the Graphite layout
+// (web/src/overrides/components/app-shell.tsx); the upstream copy is the
+// fallback should the port ever go.
 #[test]
 fn every_panel_screen_is_reachable_from_the_shell() {
-    let shell = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/components/app-shell.tsx"))
-        .expect("the SPA keeps upstream's app-shell.tsx");
+    let web = concat!(env!("CARGO_MANIFEST_DIR"), "/web");
+    let shell = std::fs::read_to_string(format!("{web}/src/overrides/components/app-shell.tsx"))
+        .or_else(|_| std::fs::read_to_string(format!("{web}/components/app-shell.tsx")))
+        .expect("the SPA has components/app-shell.tsx (its port or upstream's copy)");
     let screens = panel_screens();
     assert!(screens.len() > 5, "{screens:?}");
     assert!(shell.contains("nav"));

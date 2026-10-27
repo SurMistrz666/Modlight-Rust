@@ -1,0 +1,44 @@
+{
+  "url": "/dashboard/downloads",
+  "payload": {
+    "route": "/dashboard/downloads",
+    "params": {},
+    "layouts": "$app",
+    "props": {
+      "platforms": [
+        {
+          "platform": "macos",
+          "builds": []
+        },
+        {
+          "platform": "windows",
+          "builds": [
+            {
+              "id": "000000000000000000000000000000b1",
+              "platform": "windows",
+              "arch": "x64",
+              "version": "1.2.0",
+              "build": "",
+              "built": "2026-10-27T11:00:00.000Z",
+              "published": "2026-10-27T11:02:00.000Z",
+              "size": 39845888,
+              "sha256": "00000000000000000000000000000000000000000000006d645b2941027fca85",
+              "filename": "Modlight-1.2.0--windows-x64.zip",
+              "uploader": "publish-token",
+              "note": "",
+              "url": "/downloads/000000000000000000000000000000b1/Modlight-1.2.0--windows-x64.zip"
+            }
+          ]
+        }
+      ],
+      "keep": 5,
+      "admin": false,
+      "publishToken": null
+    },
+    "meta": {
+      "title": "Downloads - Modlight",
+      "description": "Fast, modern, self-hosted file & screenshot sharing with rock-solid large-file uploads and first-class ShareX support.",
+      "applicationName": "Modlight"
+    }
+  }
+}

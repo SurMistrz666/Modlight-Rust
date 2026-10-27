@@ -13,6 +13,12 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 pub async fn record_audit(db: &PgPool, actor_id: &str, action: &str, detail: Value, ip: &str) {
+    record_audit_by(db, Some(actor_id), action, detail, ip).await;
+}
+
+/// Not upstream: [`record_audit`] for an actor that is no account (Downloads'
+/// `RELEASE_PUBLISH_TOKEN`), whose entry carries a NULL `user_id`.
+pub async fn record_audit_by(db: &PgPool, actor_id: Option<&str>, action: &str, detail: Value, ip: &str) {
     let result =
         sqlx::query("INSERT INTO \"audit_log\" (\"user_id\", \"action\", \"detail\", \"ip\") VALUES ($1, $2, $3, $4)")
             .bind(actor_id)

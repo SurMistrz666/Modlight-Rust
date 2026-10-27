@@ -1,9 +1,13 @@
 // Port of upstream components/app-shell.tsx, rearranged for the Graphite layout.
 // @upstream components/app-shell.tsx
 // Deviations: the rail reads top to bottom as account card, navigation, then
-// storage, Settings and the app name (with the collapse control); Settings
-// (the profile page) moved out of the Account section into that footer; the
-// header's account menu is phone-only, since the rail already has the card.
+// storage, Settings with the theme toggle beside it, and the app name (with
+// the collapse control); Settings (the profile page) moved out of the Account
+// section into that footer. All of the panel's chrome lives in the rail: there
+// is no top bar on wide screens, and on a phone the bar only opens the rail (as
+// a drawer) and names the page; the theme toggle and the account menu that sat
+// at its right are in the drawer. Not upstream: Downloads (/dashboard/downloads)
+// in the Account section.
 "use client";
 
 import Link from "next/link";
@@ -18,6 +22,7 @@ import {
   ChevronsUpDown,
   Copy,
   CopyCheck,
+  Download,
   ExternalLink,
   FileText,
   Film,
@@ -136,6 +141,8 @@ const CREATE_ITEMS: LinkItem[] = [
 
 const ACCOUNT_ITEMS: LinkItem[] = [
   { href: "/dashboard/tokens", labelKey: "sharexApi", icon: KeyRound },
+  // Not upstream: the desktop app's builds for macOS and Windows.
+  { href: "/dashboard/downloads", labelKey: "downloads", icon: Download },
 ];
 
 /** The profile page, shown as Settings in the rail's footer. */
@@ -154,6 +161,7 @@ const TITLE_ROUTES: { prefix: string; labelKey: string }[] = [
   { prefix: "/dashboard/paste", labelKey: "newPaste" },
   { prefix: "/dashboard/links", labelKey: "shortLinks" },
   { prefix: "/dashboard/tokens", labelKey: "sharexApi" },
+  { prefix: "/dashboard/downloads", labelKey: "downloads" },
   { prefix: "/dashboard/profile", labelKey: "settings" },
   { prefix: "/dashboard/admin", labelKey: "admin" },
   { prefix: "/dashboard", labelKey: "files" },
@@ -917,19 +925,26 @@ export function AppShell({
     </div>
   );
 
-  /** Settings, then the app name: the foot of the rail and of the drawer. */
+  /** Settings and the theme toggle, then the app name: the foot of the rail and of the drawer. */
   const railFoot = (railCollapsed: boolean, onNavigate?: () => void, withCollapse?: boolean) => (
     <div className="border-foreground/10 shrink-0 border-t pt-2">
       {sidebar ? <StorageMeter storage={sidebar.storage} collapsed={railCollapsed} /> : null}
-      <div className={cn("flex flex-col gap-0.5", railCollapsed ? "items-center px-3" : "px-2")}>
-        <NavRow
-          href={SETTINGS_ITEM.href}
-          label={t(SETTINGS_ITEM.labelKey)}
-          icon={SETTINGS_ITEM.icon}
-          active={pathname === SETTINGS_ITEM.href || pathname.startsWith(`${SETTINGS_ITEM.href}/`)}
-          collapsed={railCollapsed}
-          onNavigate={onNavigate}
-        />
+      <div className={cn("flex gap-0.5", railCollapsed ? "flex-col items-center px-3" : "items-center px-2")}>
+        <div className={railCollapsed ? undefined : "min-w-0 flex-1"}>
+          <NavRow
+            href={SETTINGS_ITEM.href}
+            label={t(SETTINGS_ITEM.labelKey)}
+            icon={SETTINGS_ITEM.icon}
+            active={pathname === SETTINGS_ITEM.href || pathname.startsWith(`${SETTINGS_ITEM.href}/`)}
+            collapsed={railCollapsed}
+            onNavigate={onNavigate}
+          />
+        </div>
+        {/* The theme toggle sat at the right of a top bar; it lives with the
+            rest of the chrome now, beside Settings (under it on the icon rail). */}
+        <div data-rail-theme="" className="grid shrink-0 place-items-center [&_button]:size-9 max-lg:[&_button]:size-11">
+          <ThemeToggle />
+        </div>
       </div>
       <div className="border-foreground/10 mt-2 flex items-center border-t">
         <div className="min-w-0 flex-1">
@@ -999,14 +1014,15 @@ export function AppShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top bar */}
-        <header className="bg-background/70 sticky top-0 z-30 flex h-14 items-center gap-1 border-b px-2 backdrop-blur-md sm:gap-2 sm:px-4">
+        {/* Phones only: there the rail is a drawer, so this bar opens it and
+            says where you are. Every other piece of chrome is in the rail. */}
+        <header className="bg-background/70 sticky top-0 z-30 flex h-14 items-center gap-1 border-b px-2 backdrop-blur-md sm:gap-2 sm:px-4 lg:hidden">
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-11 lg:hidden"
+                className="size-11"
                 aria-label={t("menu")}
               >
                 <Menu className="size-5" />
@@ -1033,31 +1049,9 @@ export function AppShell({
           </Sheet>
 
           {/* Where you are — the phone has no rail to read it from. */}
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight lg:hidden">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
             {titleKey ? t(titleKey) : "Modlight"}
           </span>
-
-          <div className="hidden flex-1 lg:block" />
-
-          <div className="[&_button]:size-10 lg:[&_button]:size-8">
-            <ThemeToggle />
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-11 gap-2 px-2 lg:hidden">
-                <Avatar className="size-7">
-                  {user.image ? <AvatarImage src={user.image} alt="" /> : null}
-                  <AvatarFallback className="text-xs font-semibold">{initials}</AvatarFallback>
-                </Avatar>
-                <span className="hidden text-sm font-medium sm:inline">
-                  {user.name || user.email}
-                </span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              {accountMenu}
-            </DropdownMenuContent>
-          </DropdownMenu>
         </header>
 
         <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">{children}</main>

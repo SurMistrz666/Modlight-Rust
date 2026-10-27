@@ -5,6 +5,7 @@ pub mod authorize_pickup;
 pub mod avatar;
 pub mod background;
 pub mod client_settings;
+pub mod downloads;
 pub mod duplicates;
 pub mod folders;
 pub mod health;

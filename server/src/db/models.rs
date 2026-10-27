@@ -361,6 +361,41 @@ impl Columns for DuplicateDismissal {
     const COLUMNS: &'static str = "\"owner_id\", \"checksum\", \"copies\", \"bytes\", \"created_at\"";
 }
 
+// ── Not upstream: Downloads (migration 0015, src/downloads.rs) ──────────────
+
+/// `releases`: a build of the desktop app offered under Downloads. The bytes
+/// are in storage at `releases/<id>/<filename>`.
+#[derive(Debug, Clone, PartialEq, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Release {
+    /// 32 lower-case hex characters.
+    pub id: String,
+    /// `macos` or `windows` (CHECK constraint).
+    pub platform: String,
+    /// `arm64` or `x64` (CHECK constraint).
+    pub arch: String,
+    pub version: String,
+    /// May be empty.
+    pub build: String,
+    /// When the build machine built it.
+    pub built: JsDate,
+    /// When the server accepted it; "newest" means this.
+    pub published: JsDate,
+    pub size: i64,
+    /// Lower-case hex.
+    pub sha256: String,
+    pub filename: String,
+    /// Who published it: an administrator's name, or `publish-token`.
+    pub uploader: String,
+    /// May be empty.
+    pub note: String,
+}
+
+impl Columns for Release {
+    const TABLE: &'static str = "\"releases\"";
+    const COLUMNS: &'static str = "\"id\", \"platform\", \"arch\", \"version\", \"build\", \"built\", \"published\", \"size\", \"sha256\", \"filename\", \"uploader\", \"note\"";
+}
+
 // ── drizzle's own bookkeeping ───────────────────────────────────────────────
 
 /// `drizzle.__drizzle_migrations`: one row per applied migration.
@@ -395,5 +430,6 @@ pub const ALL_TABLES: &[(&str, &str)] = &[
     (ShortLink::TABLE, ShortLink::COLUMNS),
     (ClientSettings::TABLE, ClientSettings::COLUMNS),
     (DuplicateDismissal::TABLE, DuplicateDismissal::COLUMNS),
+    (Release::TABLE, Release::COLUMNS),
     (DrizzleMigration::TABLE, DrizzleMigration::COLUMNS),
 ];

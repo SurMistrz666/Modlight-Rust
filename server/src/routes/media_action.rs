@@ -170,7 +170,9 @@ struct Ask {
     signal: AbortSignal,
 }
 
-async fn handle(
+/// Also reached from `routes::api::downloads` for a `/downloads/...` path that
+/// names no build (an account tagged `downloads`).
+pub(crate) async fn handle(
     State(state): State<AppState>,
     Path((user_code, media_code, action)): Path<(String, String, String)>,
     Sessions(session): Sessions,

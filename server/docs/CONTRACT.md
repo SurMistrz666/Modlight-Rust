@@ -2242,6 +2242,29 @@ password the redirect is `/s/<tag>/<name>`. Payload `params`: `{code, name}`.
    `data-theme = resolveTheme(ownerTheme)` and the owner's wallpaper in all three views
    (`P:270,302,446`); the applier does not persist (`ml_skin` is never written here).
 
+### 6.28 `/dashboard/downloads` (not upstream: Downloads)
+
+The port's own page (`server/src/pages/dashboard_downloads.rs`,
+`web/src/pages/(app)/dashboard/downloads/page.tsx`, `web/src/downloads/`;
+SKELETON.md section 9, item 45). Layouts root + `(app)`; `requireUser()`.
+
+- **props**: exactly what `GET /api/downloads` answers the same account:
+  `{platforms: [{platform: "macos", builds: Build[]}, {platform: "windows", builds: Build[]}], keep: 5, admin: boolean, publishToken: boolean | null}`,
+  builds newest first; `Build = {id, platform, arch, version, build, built, published, size, sha256, filename, uploader, note, url}`
+  with `built`/`published` as ISO strings (plain, not `{"$date"}`), `url` =
+  `/downloads/{id}/{filename}`, `uploader` an administrator's name or
+  `publish-token`. `publishToken` (is `RELEASE_PUBLISH_TOKEN` set) only for an
+  administrator, else `null`.
+- **meta**: `{title: t("downloads.metaTitle")}` ("Downloads - Modlight", "Do
+  pobrania - Modlight").
+- **SPA**: a card per platform, the newest build of each architecture on top
+  (version, build, built, size, note, Download (`<a download>` to `url`), the
+  SHA-256 with a copy button, install steps naming `window.location.origin`),
+  older builds folded; "No builds for this platform yet". Administrators also
+  get Delete (a confirmation, then `DELETE /api/downloads/{id}` with the
+  session cookie and a refresh) and "Publishing builds" (the token's state and
+  the three calls and a curl script, with `window.location.origin`).
+
 ---
 
 ## 7. Server actions: `POST /_rpc`
@@ -4615,14 +4638,28 @@ nothing below happens and the forms behave exactly as upstream's.
   loaded by `src/main.tsx` right after `app/globals.css` (which stays verbatim).
 - `components/app-shell.tsx` is a port: the rail reads account card, navigation,
   then storage, Settings (the profile page, moved out of the Account section)
-  and the app name with the collapse control; the header's account menu is
-  phone-only. The rail carries `data-rail` for the skin's rules.
+  with the theme toggle beside it, and the app name with the collapse control.
+  All of the panel's chrome is in the rail: wide screens have no top bar, and
+  on a phone the bar (`lg:hidden`) only opens the rail as a drawer and names
+  the page (the theme toggle and the account menu are in the drawer). The rail
+  carries `data-rail` for the skin's rules, the toggle's slot `data-rail-theme`.
 - `components/auth/brand-mark.tsx` and `components/brand/ModlightMark.tsx` are
   ports that draw the app icon (`src/assets/modlight-icon.png`) instead of the
   violet tile; `public/icon.svg`, `public/apple-icon.png` and
   `public/brand/{email-logo,audio-cover}.png` are rendered from the same icon.
 - Translations: `profile.themes.graphite` and `nav.settings` are added to
   `server/messages/{en,pl}/` (the only lines there that are not upstream's).
+
+**Not upstream: Downloads** (section 6.28; SKELETON.md section 9, item 45).
+
+- A 28th page, `/dashboard/downloads`, in `src/contract/routes.ts` (and the
+  server's `pages/table.rs`), with fixtures `dashboard-downloads.json` (an
+  administrator, builds, no publish token) and `dashboard-downloads-user.json`.
+- `SERVER_PATHS` gain `/api/downloads` and `/api/downloads/*`; the files
+  (`/downloads/:id/:filename`) already match the media action pattern.
+- The rail's Account section gains Downloads (`nav.downloads`, the only line
+  added to `nav.json` besides Graphite's `nav.settings`); the page's strings
+  are `server/messages/<locale>/downloads.json`, a 20th client namespace.
 
 **Infrastructure**:
 

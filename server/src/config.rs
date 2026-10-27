@@ -55,6 +55,8 @@ pub const ENV_VARS: &[&str] = &[
     // Not upstream: optional Cloudflare Turnstile (src/turnstile.rs).
     "TURNSTILE_SITE_KEY",
     "TURNSTILE_SECRET_KEY",
+    // Not upstream: the build machines' credential for Downloads (src/downloads.rs).
+    "RELEASE_PUBLISH_TOKEN",
 ];
 
 /// A production refusal. Displays exactly like the upstream `Error` message.
@@ -420,6 +422,46 @@ impl std::fmt::Debug for TurnstileEnv {
     }
 }
 
+/// Not upstream: RELEASE_PUBLISH_TOKEN, the build machines' credential for
+/// publishing to Downloads (src/downloads.rs). Only its SHA-256 is kept, so
+/// no log line or Debug print can carry the token itself. Empty or unset: only
+/// administrators publish.
+#[derive(Clone, Default)]
+pub struct PublishToken {
+    digest: Option<[u8; 32]>,
+}
+
+impl PublishToken {
+    /// From the variable's value (trimmed; empty means unset).
+    pub fn from_value(raw: &str) -> PublishToken {
+        use sha2::{Digest, Sha256};
+        let token = js_trim(raw);
+        PublishToken { digest: (!token.is_empty()).then(|| Sha256::digest(token.as_bytes()).into()) }
+    }
+
+    pub fn is_set(&self) -> bool {
+        self.digest.is_some()
+    }
+
+    /// Does `given` equal the configured token? Both sides are hashed and the
+    /// digests compared in constant time, so the answer takes as long for a
+    /// near miss as for a wild guess, and the token's length does not leak.
+    pub fn matches(&self, given: &str) -> bool {
+        use sha2::{Digest, Sha256};
+        let Some(want) = self.digest else {
+            return false;
+        };
+        let got: [u8; 32] = Sha256::digest(given.as_bytes()).into();
+        crate::auth::crypto::constant_time_eq(&got, &want)
+    }
+}
+
+impl std::fmt::Debug for PublishToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.is_set() { "PublishToken(<set>)" } else { "PublishToken(<unset>)" })
+    }
+}
+
 /// Port of the upstream `config` object.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -450,6 +492,8 @@ pub struct Config {
     pub mail: MailConfig,
     /// Not upstream: TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY.
     pub turnstile: TurnstileEnv,
+    /// Not upstream: RELEASE_PUBLISH_TOKEN (Downloads).
+    pub release_publish_token: PublishToken,
     /// SHORTLINK_URL exactly as set: proxy.ts reads it raw, not through
     /// lib/config, to find the shortener host.
     pub raw_shortlink_url: Option<String>,
@@ -610,6 +654,14 @@ impl Config {
             "" => "127.0.0.1".to_string(),
             v => v.to_string(),
         };
+        let publish_token = env.trimmed("RELEASE_PUBLISH_TOKEN");
+        if !publish_token.is_empty() && publish_token.chars().count() < 24 {
+            warn(
+                "release-publish-token",
+                "RELEASE_PUBLISH_TOKEN is shorter than 24 characters; anyone who guesses it can publish builds to Downloads (setup-local.sh generates a long one).",
+            );
+        }
+        let release_publish_token = PublishToken::from_value(publish_token);
 
         Ok(Config {
             app_domains: app_domains(&app_url, env.get("APP_DOMAINS")),
@@ -649,6 +701,7 @@ impl Config {
                 from_name: env.or("MAIL_FROM_NAME", ""),
             },
             turnstile,
+            release_publish_token,
             raw_shortlink_url: env.get("SHORTLINK_URL").map(str::to_string),
             csp_origins: crate::http::headers::self_origins(
                 env.get("APP_URL"),
@@ -788,6 +841,35 @@ mod tests {
         assert_eq!(c.mail.from_name, "");
         assert!(!c.mail.enabled());
         assert!(!c.secure_cookies());
+        assert!(!c.release_publish_token.is_set());
+    }
+
+    // Not upstream: RELEASE_PUBLISH_TOKEN (Downloads).
+    #[test]
+    fn publish_token_is_kept_as_a_digest_and_compared_whole() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let raw = format!("  {token}\n");
+        let c = cfg(&[("RELEASE_PUBLISH_TOKEN", raw.as_str())]).unwrap();
+        assert!(c.release_publish_token.is_set());
+        assert!(c.release_publish_token.matches(token));
+        for wrong in ["", " ", "0123456789abcdef", &format!("{token}x"), &format!(" {token}"), &token.to_uppercase()] {
+            assert!(!c.release_publish_token.matches(wrong), "{wrong:?}");
+        }
+        // Neither Debug nor the struct carries the token itself.
+        let debug = format!("{c:?}");
+        assert!(!debug.contains(token));
+        assert!(debug.contains("PublishToken(<set>)"));
+    }
+
+    #[test]
+    fn publish_token_unset_or_blank_matches_nothing() {
+        for vars in [vec![], vec![("RELEASE_PUBLISH_TOKEN", "   ")]] {
+            let c = cfg(&vars).unwrap();
+            assert!(!c.release_publish_token.is_set());
+            assert!(!c.release_publish_token.matches(""));
+            assert!(!c.release_publish_token.matches("   "));
+            assert_eq!(format!("{:?}", c.release_publish_token), "PublishToken(<unset>)");
+        }
     }
 
     #[test]

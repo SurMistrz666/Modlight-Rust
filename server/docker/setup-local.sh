@@ -1,6 +1,7 @@
 #!/bin/sh
 # Writes server/docker/.env for the local Docker stack (docker-compose.yml in
-# this directory): random secrets, the panel on http://127.0.0.1:8430.
+# this directory): random secrets (and the Downloads publish token), the panel
+# on http://127.0.0.1:8430.
 #
 # Run again at any time: secrets that already exist are KEPT (changing
 # AUTH_SECRET or POSTGRES_PASSWORD on a running install would sign everybody
@@ -32,6 +33,10 @@ fi
 # Hex, not base64: the password goes into a URL, and base64's "/" breaks it.
 POSTGRES_PASSWORD=$(existing POSTGRES_PASSWORD)
 [ -n "$POSTGRES_PASSWORD" ] || POSTGRES_PASSWORD=$(rand_hex 24)
+# Downloads: what build machines publish the desktop app with. Hex as well: it
+# travels in an Authorization header and in shell scripts.
+RELEASE_PUBLISH_TOKEN=$(existing RELEASE_PUBLISH_TOKEN)
+[ -n "$RELEASE_PUBLISH_TOKEN" ] || RELEASE_PUBLISH_TOKEN=$(rand_hex 32)
 
 APP_PORT=$(existing APP_PORT)
 [ -n "$APP_PORT" ] || APP_PORT=8430
@@ -67,6 +72,12 @@ EOF
   [ -n "$SETTINGS_ENCRYPTION_KEY" ] && printf 'SETTINGS_ENCRYPTION_KEY=%s\n' "$SETTINGS_ENCRYPTION_KEY"
   cat <<EOF
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+
+# ── Downloads: the build machines' publish token ────────────────────────────
+# Sent as "Authorization: Bearer <token>" to /api/downloads/upload*; it opens
+# nothing else. Empty: only administrators publish. Replacing it only stops
+# the build machines that still send the old one.
+RELEASE_PUBLISH_TOKEN=$RELEASE_PUBLISH_TOKEN
 
 # ── Storage: the Docker volume modlight-rust_appdata ────────────────────────
 STORAGE_DRIVER=local

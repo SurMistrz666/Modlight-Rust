@@ -34,6 +34,7 @@ pub mod authorize;
 pub mod dashboard;
 pub mod dashboard_admin;
 pub mod dashboard_admin_user_files;
+pub mod dashboard_downloads;
 pub mod dashboard_duplicates;
 pub mod dashboard_folders;
 pub mod dashboard_links;
@@ -393,6 +394,7 @@ pub fn register_all(reg: &mut PageRegistry) {
     reg.page("/dashboard/paste", dashboard_paste::load); // app/(app)/dashboard/paste/page.tsx
     reg.page("/dashboard/upload", dashboard_upload::load); // app/(app)/dashboard/upload/page.tsx
     reg.page("/dashboard/admin/users/[id]/files", dashboard_admin_user_files::load); // app/(app)/dashboard/admin/users/[id]/files/page.tsx
+    reg.page("/dashboard/downloads", dashboard_downloads::load); // not upstream: Downloads
     reg.page("/s/[code]/unlock", shortlink_unlock::load); // app/s/[code]/unlock/page.tsx
     reg.page("/s/[code]/[name]/unlock", shortlink_unlock::load_scoped); // app/s/[code]/[name]/unlock/page.tsx
     reg.page("/[userCode]/[mediaCode]", media::load); // app/[userCode]/[mediaCode]/page.tsx
