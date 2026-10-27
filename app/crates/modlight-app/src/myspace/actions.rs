@@ -11,7 +11,7 @@ use modlight_api::{
 use modlight_core::format::cloud_size;
 use modlight_core::icons;
 use modlight_core::l10n::{Arg, format, s, t};
-use modlight_core::library::{LIBRARY_VIEWS, LinkFormat, convert, pager};
+use modlight_core::library::{CloudFile, LIBRARY_VIEWS, LinkFormat, convert, pager};
 use modlight_core::messages;
 
 use crate::dialogs::confirm::{Confirm, ConfirmAction, ConfirmOutcome};
@@ -20,6 +20,7 @@ use crate::dialogs::folder_delete::{FolderDelete, FolderDeleteChoice};
 use crate::dialogs::link_settings::{LinkSettings, LinkSettingsOutcome};
 use crate::dialogs::prompt::{Prompt, PromptOutcome, PromptPurpose};
 use crate::state::AppState;
+use crate::vault::Waiting;
 
 /// Emptying the trash reads it in pages of this size...
 const TRASH_SCAN_PAGE: i64 = 120;
@@ -53,6 +54,9 @@ impl AppState {
 
     /// The account may have changed (`RefreshAccount`).
     pub fn space_refresh_account(&mut self) {
+        // Not upstream: the grant of an account whose files are encrypted follows the
+        // account before any of its pictures is asked for.
+        self.vault_follow_account();
         let Some(credential) = self.credential() else {
             self.space_signed_out();
             return;
@@ -85,6 +89,8 @@ impl AppState {
             let size = self.space.page_size;
             self.space.pager.update(1, size, 0);
         }
+        // Not upstream: whether the account's files are encrypted, and open here.
+        self.vault_check();
         self.start_listing(credential, true, 1);
     }
 
@@ -1173,6 +1179,30 @@ impl AppState {
         let Some(file) = self.space.file(id).cloned() else {
             return;
         };
+        self.download_file(credential, file, convert_to);
+    }
+
+    /// [`AppState::download`] of a file in hand: one of the listing, or one a lock kept
+    /// waiting (which may have left the listing since).
+    pub(crate) fn download_file(
+        &mut self,
+        credential: Credential,
+        file: CloudFile,
+        convert_to: Option<String>,
+    ) {
+        // Not upstream: the account's files are known to be encrypted and locked, so
+        // nothing would come. The download waits for the file password, and asks where
+        // to save once they open.
+        if self.vault.is_locked() && self.vault.credential.as_ref() == Some(&credential) {
+            self.vault_wait(
+                &credential,
+                Waiting::File {
+                    file: Box::new(file),
+                    convert_to,
+                },
+            );
+            return;
+        }
         let (link, suggested) = match &convert_to {
             None => (file.download_link(), file.name.clone()),
             Some(to) => {
@@ -1203,6 +1233,19 @@ impl AppState {
                     state.save_download(credential, file.name, link, suggested);
                     return;
                 }
+                // Not upstream: the files are encrypted and locked, which says nothing
+                // about the conversion; it is asked about again once they open.
+                if let Some(locked) = &verdict.locked {
+                    state.vault_refused(&credential, locked);
+                    state.vault_wait(
+                        &credential,
+                        Waiting::File {
+                            file: Box::new(file),
+                            convert_to: Some(to),
+                        },
+                    );
+                    return;
+                }
                 let title = format(
                     t(s::MySpace_ConvertRefusedTitle),
                     &[Arg::from(to.to_uppercase())],
@@ -1229,6 +1272,23 @@ impl AppState {
         let Some(path) = self.choose_save_path(&suggested) else {
             return;
         };
+        self.start_download(credential, name, link, path);
+    }
+
+    /// Pull `link` down to `path`, which the person chose. Not upstream: when the files
+    /// are encrypted and locked, the download waits for the file password and starts
+    /// again, to the same place, once they open.
+    pub(crate) fn start_download(
+        &mut self,
+        credential: Credential,
+        name: String,
+        link: String,
+        path: PathBuf,
+    ) {
+        if self.vault.is_locked() && self.vault.credential.as_ref() == Some(&credential) {
+            self.vault_wait(&credential, Waiting::Save { name, link, path });
+            return;
+        }
         let text = format(t(s::MySpace_DownloadStarted), &[Arg::from(name.as_str())]);
         self.notice(icons::DOWNLOAD, &text, "", false);
         let api = self.api.clone();
@@ -1243,6 +1303,10 @@ impl AppState {
                             .unwrap_or_default();
                         let text = format(t(s::MySpace_DownloadSaved), &[Arg::from(saved)]);
                         state.notice(icons::CIRCLE_CHECK, &text, "", false);
+                    }
+                    Err(ApiError::Locked(locked)) => {
+                        state.vault_refused(&credential, &locked);
+                        state.vault_wait(&credential, Waiting::Save { name, link, path });
                     }
                     Err(error) => state.report_failure(&error, &credential.host),
                 },

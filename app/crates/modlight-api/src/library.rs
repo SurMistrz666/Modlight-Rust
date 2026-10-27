@@ -14,6 +14,7 @@ use crate::models::{
     ConvertVerdict, DeleteResult, Folder, FolderDeleteResult, FolderList, FolderResult,
     MotionPreview, UploadEdit, UploadPage, UploadPatchResult,
 };
+use crate::vault;
 
 /// What the server means by "not in any folder" when it has not said otherwise.
 pub const ROOT_FOLDER: &str = "root";
@@ -100,7 +101,9 @@ impl Api {
     /// Fetch one preview image, or `None` when the server has none to give.
     ///
     /// Anything the server answers with comes back as `None`; a connection that never
-    /// completed is still an error, because that is a fact about the whole grid.
+    /// completed is still an error, because that is a fact about the whole grid. So is
+    /// `423 Locked` ([`ApiError::Locked`]): the picture exists, the account's files are
+    /// encrypted and no grant opened them.
     pub async fn get_thumbnail(
         &self,
         credential: &Credential,
@@ -109,19 +112,23 @@ impl Api {
         let Some(url) = rewrite_to_host(thumbnail_url, &credential.host) else {
             return Ok(None);
         };
-        let response = self
-            .request(Method::GET, &url, credential)
+        let (request, grant) = self.content_request(Method::GET, &url, credential);
+        let response = request
             .timeout(THUMBNAIL_TIMEOUT)
             .send()
             .await
             .map_err(ApiError::from_reqwest)?;
+        if vault::is_locked(&response) {
+            return Err(ApiError::Locked(vault::locked(response, grant).await));
+        }
         if !response.status().is_success() {
             return Ok(None);
         }
         Api::read_limited(response, MAX_THUMBNAIL_BYTES).await
     }
 
-    /// Fetch one MOVING preview and say which kind of no it got.
+    /// Fetch one MOVING preview and say which kind of no it got. Locked files are
+    /// [`ApiError::Locked`], which says nothing about the file.
     pub async fn get_motion_thumbnail(
         &self,
         credential: &Credential,
@@ -130,12 +137,15 @@ impl Api {
         let Some(url) = rewrite_to_host(motion_url, &credential.host) else {
             return Ok(MotionPreview::Refused);
         };
-        let response = self
-            .request(Method::GET, &url, credential)
+        let (request, grant) = self.content_request(Method::GET, &url, credential);
+        let response = request
             .timeout(THUMBNAIL_TIMEOUT)
             .send()
             .await
             .map_err(ApiError::from_reqwest)?;
+        if vault::is_locked(&response) {
+            return Err(ApiError::Locked(vault::locked(response, grant).await));
+        }
         let status = response.status();
         if !status.is_success() {
             return Ok(
@@ -309,17 +319,16 @@ impl Api {
             "?check=1"
         });
 
-        let response = match self
-            .request(Method::GET, &url, credential)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-        {
+        let (request, grant) = self.content_request(Method::GET, &url, credential);
+        let response = match request.timeout(REQUEST_TIMEOUT).send().await {
             Ok(response) => response,
             Err(error) if error.is_timeout() => return ConvertVerdict::no("timeout"),
             Err(_) => return ConvertVerdict::no("offline"),
         };
 
+        if vault::is_locked(&response) {
+            return ConvertVerdict::locked(vault::locked(response, grant).await);
+        }
         if response.status().is_success() {
             ConvertVerdict::yes()
         } else {
@@ -350,14 +359,15 @@ impl Api {
                 reason: Some("missing".into()),
             });
         };
-        let response = self
-            .request(Method::GET, &url, credential)
-            .send()
-            .await
-            .map_err(ApiError::from_reqwest)?;
+        let (request, grant) = self.content_request(Method::GET, &url, credential);
+        let response = request.send().await.map_err(ApiError::from_reqwest)?;
         let status = response.status();
         if status == StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
+        }
+        // Refused before a byte was written: the destination stays as it was.
+        if vault::is_locked(&response) {
+            return Err(ApiError::Locked(vault::locked(response, grant).await));
         }
         if !status.is_success() {
             return Err(ApiError::Refused {

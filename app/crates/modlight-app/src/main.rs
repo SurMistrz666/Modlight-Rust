@@ -321,6 +321,17 @@ fn main() -> ExitCode {
         Box::new(platform::SecretStore::for_app())
     };
     let account = AccountStore::load(&profile, credentials);
+    // Not upstream: the grant that opens encrypted files, kept as the token is.
+    let grants: Box<dyn CredentialStore> = if qa_mode {
+        Box::new(FileCredentialStore::new(
+            profile.join(modlight_core::vault::GRANT_FILE),
+        ))
+    } else {
+        Box::new(platform::SecretStore::new(
+            "Modlight",
+            modlight_core::vault::GRANT_ITEM,
+        ))
+    };
     let env = Env {
         profile,
         qa: qa_mode,
@@ -340,6 +351,7 @@ fn main() -> ExitCode {
     let start_hidden = false;
     let mut state = AppState::new(env, config, account);
     state.first_launch = first_launch && !qa_mode;
+    state.vault.keeper = modlight_core::vault::GrantKeeper::new(grants);
     // This start's own files wait for the window like those of later starts.
     #[cfg(windows)]
     if !args.files.is_empty() {

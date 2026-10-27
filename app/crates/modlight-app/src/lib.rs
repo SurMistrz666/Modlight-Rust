@@ -51,6 +51,8 @@ pub mod theme;
 pub mod tray;
 pub mod upload_tab;
 pub mod uploads;
+// Not upstream: accounts whose files are encrypted on the server.
+pub mod vault;
 pub mod widgets;
 #[cfg(windows)]
 pub mod win32;

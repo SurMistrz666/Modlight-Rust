@@ -25,7 +25,7 @@ what it did.
 | Upstream | Windows port | Notes |
 |---|---|---|
 | Personal folder `Documents\Modlight` (`Program.PersonalFolder`), `PersonalPath.cfg` | The same: the shell's Documents folder (a moved or OneDrive Documents is followed), or the folder `PersonalPath.cfg` names (beside the exe, else inside `Documents\Modlight`), which the Paths page writes | `-portable` and the registry override are accepted and ignored. |
-| Token encrypted with DPAPI inside `UploadersConfig.json` | Credential Manager, generic credential `Modlight/api-token` (DPAPI-protected for this user), the token stored with the origin it was issued for, as the macOS Keychain item | AI keys are credentials `Modlight/ai-*-api-key`. No `UploadersConfig.json` is written, so none goes into a settings backup. |
+| Token encrypted with DPAPI inside `UploadersConfig.json` | Credential Manager, generic credential `Modlight/api-token` (DPAPI-protected for this user), the token stored with the origin it was issued for, as the macOS Keychain item | AI keys are credentials `Modlight/ai-*-api-key`; the grant that opens an account's encrypted files (not upstream) is `Modlight/vault-grant`, written only when "Remember on this computer for 30 days" is ticked. No `UploadersConfig.json` is written, so none goes into a settings backup. |
 | `Process.Start(url)` | `ShellExecuteExW`, http and https only; characters that could leave the browser's quoted `%1` are percent-encoded | |
 | Open file / folder, "Show in folder" | `ShellExecuteExW` on an existing absolute path; `SHOpenFolderAndSelectItems` (fallback `explorer.exe /select,`) | |
 | Delete to the Recycle Bin | `SHFileOperationW` with undo, no questions | A drive without a Recycle Bin deletes for good, as upstream. |

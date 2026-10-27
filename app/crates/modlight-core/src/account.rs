@@ -136,7 +136,7 @@ struct BoundToken {
 }
 
 /// Whether two account hosts name the same server: the same origin, or the same text.
-fn same_host(a: &str, b: &str) -> bool {
+pub(crate) fn same_host(a: &str, b: &str) -> bool {
     let (a, b) = (
         a.trim().trim_end_matches('/'),
         b.trim().trim_end_matches('/'),

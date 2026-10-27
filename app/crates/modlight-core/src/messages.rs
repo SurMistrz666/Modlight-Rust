@@ -4,7 +4,7 @@
 
 use modlight_api::{ApiError, SignInFailure};
 
-use crate::l10n::{Arg, format, s, t, uploaders};
+use crate::l10n::{Arg, format, port, s, t, uploaders};
 
 /// What a failed sign-in tells the person.
 pub fn sign_in_failure(failure: &SignInFailure) -> String {
@@ -107,6 +107,13 @@ fn with_detail(message: String, detail: &str) -> String {
 pub fn library_failure(error: &ApiError, host: &str) -> (String, String, bool) {
     match error {
         ApiError::Unauthorized => (t(s::MySpace_TokenRejected).to_string(), String::new(), true),
+        // Not upstream: the account's files are encrypted and locked. The token is fine:
+        // the remedy is the file password above the files, never signing in again.
+        ApiError::Locked(_) => (
+            t(port::VaultFilesLocked).to_string(),
+            t(port::VaultFilesLockedDetail).to_string(),
+            false,
+        ),
         ApiError::Refused { detail, reason, .. } => (
             t(s::MySpace_ServerRefused).to_string(),
             if detail.is_empty() {
@@ -157,6 +164,12 @@ mod tests {
         let (title, _, sign_in) = library_failure(&ApiError::Unauthorized, "h");
         assert_eq!(title, t(s::MySpace_TokenRejected));
         assert!(sign_in);
+        // Locked files are not a refused token: no sign-in is offered.
+        let (title, detail, sign_in) =
+            library_failure(&ApiError::Locked(modlight_api::FilesLocked::default()), "h");
+        assert_eq!(title, t(port::VaultFilesLocked));
+        assert_eq!(detail, t(port::VaultFilesLockedDetail));
+        assert!(!sign_in);
         set_thread_language(None);
     }
 }

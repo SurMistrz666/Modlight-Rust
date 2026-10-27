@@ -195,11 +195,24 @@ impl AppState {
             &[Arg::from(label.as_str())],
         );
         let host = self.account.host();
-        if host.is_empty() {
+        let mut tip = if host.is_empty() {
             signed
         } else {
             format!("{signed}\n{host}")
+        };
+        // Not upstream: what this app can do with the account's encrypted files.
+        match self.vault_badge() {
+            Some(crate::vault::Badge::Unlocked) => {
+                tip.push('\n');
+                tip.push_str(t(modlight_core::l10n::port::VaultStateUnlocked));
+            }
+            Some(crate::vault::Badge::Locked) => {
+                tip.push('\n');
+                tip.push_str(t(modlight_core::l10n::port::VaultStateLocked));
+            }
+            None => {}
         }
+        tip
     }
 }
 

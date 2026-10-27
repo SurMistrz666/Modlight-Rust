@@ -93,7 +93,16 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) {
     }
     let main = Rect::from_min_max(pos2(main_left, body.top()), body.max);
     let pager_height = crate::myspace::pager::height(ui, state);
-    let list = Rect::from_min_max(main.min, pos2(main.right(), main.bottom() - pager_height));
+    let mut list = Rect::from_min_max(main.min, pos2(main.right(), main.bottom() - pager_height));
+    // Not upstream: the account's files are encrypted and locked here. The banner with
+    // the file password stands over the files; the grid takes the room under it.
+    if state.vault_shows_banner() {
+        let banner = crate::vault::banner_rect(ui, state, list);
+        if let Some(command) = crate::vault::banner(ui, state, banner) {
+            state.push(command);
+        }
+        list.min.y = banner.bottom().min(list.max.y);
+    }
 
     let drawn = if state.space.has_content() {
         grid(ui, state, list)

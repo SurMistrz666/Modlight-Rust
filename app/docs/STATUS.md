@@ -37,6 +37,7 @@ Snapshots of every screen below that is drawn live in
 | Actions: move, publish, custom URL, link settings, trash, restore, delete for good, empty trash, new / rename / public / delete folder, download, download as (conversion check) | done | |
 | Duplicates window | done | |
 | Upload into a folder ("Upload here", folder tile button, Finder drop) | partial | Through the task flow and the offline queue (`TargetedSettings`). A Finder drop onto a folder *tile* uploads into the open folder instead: winit reports no pointer position during an OS drag. |
+| Not upstream: an account whose files are encrypted on the server (the server's `docs/ENCRYPTION.md`) | done | `GET /api/encryption` with every reload of the library; a `423 Locked` (never read as a refused token) or a locked state puts a banner over the files (file password, "Remember on this computer for 30 days", Unlock; wrong password and too many attempts said in it); after unlocking the pictures, the drawer's preview and the downloads the lock stopped load again; the account card and menu say the files are encrypted and offer "Lock files" / "Unlock files...". The grant is kept like the token (`MACOS.md`, "Behaviour that differs on purpose"). Snapshots `my-space-locked`, `my-space-locked-wrong`, `my-space-unlocked`; tests `modlight-api/tests/vault.rs`, `modlight-core/src/vault.rs`, `modlight-app/src/vault.rs`, `modlight-app/tests/vault_banner.rs`. Not yet tried against a real encrypted account in a window. |
 
 ## Sign-in and account
 

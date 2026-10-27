@@ -6,7 +6,7 @@
 
 use egui::{Color32, Id, Order, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use modlight_core::icons;
-use modlight_core::l10n::{Key, s, t};
+use modlight_core::l10n::{Key, port, s, t};
 
 use crate::commands::Command;
 use crate::menus::Entry;
@@ -530,7 +530,9 @@ fn account_button(ui: &mut Ui, state: &mut AppState, right: f32, cy: f32) -> Rec
         if response.clicked() {
             state.push(Command::ShowSignIn);
         }
-    } else if let Some(command) = crate::menus::popup_below(&colors, &response, account_menu) {
+    } else if let Some(command) =
+        crate::menus::popup_below(&colors, &response, || account_menu(state))
+    {
         state.push(command);
     }
     r
@@ -602,8 +604,11 @@ fn storage_chip(ui: &mut Ui, state: &mut AppState, right: f32, cy: f32) {
 }
 
 /// `MainMenuBuilder.BuildAccountMenu`.
-pub fn account_menu() -> Vec<Entry> {
-    vec![
+///
+/// Not upstream: when the account's files are encrypted, what this app can do with them
+/// (locked or unlocked here) and the way to change it ("Lock files", "Unlock files...").
+pub fn account_menu(state: &AppState) -> Vec<Entry> {
+    let mut entries = vec![
         Entry::item(
             t(s::MainMenuBuilder_AccountSettings),
             icons::CIRCLE_USER,
@@ -614,13 +619,37 @@ pub fn account_menu() -> Vec<Entry> {
             icons::PLUG,
             Command::ShowSignIn,
         ),
+    ];
+    match state.vault_badge() {
+        Some(crate::vault::Badge::Unlocked) => entries.extend([
+            Entry::Separator,
+            Entry::header(t(port::VaultStateUnlocked), Some(icons::LOCK_KEYHOLE_OPEN)),
+            Entry::item(
+                t(port::VaultLockFiles),
+                icons::LOCK_KEYHOLE,
+                Command::LockFiles,
+            ),
+        ]),
+        Some(crate::vault::Badge::Locked) => entries.extend([
+            Entry::Separator,
+            Entry::header(t(port::VaultStateLocked), Some(icons::LOCK_KEYHOLE)),
+            Entry::item(
+                t(port::VaultUnlockFiles),
+                icons::LOCK_KEYHOLE_OPEN,
+                Command::ShowUnlockFiles,
+            ),
+        ]),
+        None => {}
+    }
+    entries.extend([
         Entry::Separator,
         Entry::item(
             t(s::MainMenuBuilder_SignOut),
             icons::LOG_OUT,
             Command::SignOut,
         ),
-    ]
+    ]);
+    entries
 }
 
 /// `MainMenuBuilder.BuildSettingsMenu`; what arrives in a later phase says so.

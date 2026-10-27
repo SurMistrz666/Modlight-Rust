@@ -26,6 +26,8 @@ pub mod sync;
 pub mod tasks;
 pub mod theme;
 pub mod upload;
+// Not upstream: the grant that opens an account's encrypted files.
+pub mod vault;
 pub mod watch;
 // Phase 3, media: components, the Download tab, the app's own updates.
 pub mod components;

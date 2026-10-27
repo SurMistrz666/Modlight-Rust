@@ -78,6 +78,10 @@ pub const SCREENS: &[&str] = &[
     "quick-task-editor",
     "scrolling-capture",
     "my-space-wide",
+    // Not upstream: an account whose files are encrypted on the server.
+    "my-space-locked",
+    "my-space-locked-wrong",
+    "my-space-unlocked",
     // Phase 3, media (`qa_media::SCREENS`).
     "tab-download",
     "tab-download-busy",
@@ -693,6 +697,32 @@ fn duplicates_fixture() -> DuplicateScan {
     .expect("fixture duplicates")
 }
 
+/// The account's files are encrypted; `unlocked` says whether this app holds a grant
+/// that opens them (as the server's `GET /api/encryption` would have said).
+fn encrypted(state: &mut AppState, unlocked: bool) {
+    state.vault.credential = state.credential();
+    state.vault.status = Some(modlight_api::EncryptionStatus {
+        state: modlight_api::VaultState::On,
+        unlocked,
+        progress: modlight_api::VaultProgress { done: 9, total: 9 },
+    });
+    state.vault.grant = unlocked.then_some(1);
+}
+
+/// Where a QA screen draws the account menu: beside the side panel's account card
+/// (Graphite), or under the account button at the end of the tab strip.
+fn account_menu_at(state: &AppState, menu_width: f32, window_width: f32) -> egui::Pos2 {
+    use crate::shell::{SIDE_PANEL_WIDTH, STRIP_HEIGHT, TITLE_HEIGHT};
+    if crate::shell::uses_side_panel(state) {
+        egui::pos2(SIDE_PANEL_WIDTH - 4.0, TITLE_HEIGHT + 10.0)
+    } else {
+        egui::pos2(
+            window_width - 48.0 - menu_width,
+            TITLE_HEIGHT + STRIP_HEIGHT - 2.0,
+        )
+    }
+}
+
 /// Set the state up for `screen`. Returns the window size the screen wants.
 pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 {
     let signed = state.account.is_signed_in();
@@ -784,6 +814,19 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
         "my-space-menu" => {
             load_library(state, ctx, files(), 9);
             state.space.select_file("4");
+        }
+        "my-space-locked" | "my-space-locked-wrong" => {
+            load_library(state, ctx, files(), 9);
+            // The server answered 423 for every picture: the cards show their kind.
+            state.media.thumbs.clear();
+            encrypted(state, false);
+            if screen == "my-space-locked-wrong" {
+                state.vault.problem = Some(crate::vault::Problem::WrongPassword);
+            }
+        }
+        "my-space-unlocked" => {
+            load_library(state, ctx, files(), 9);
+            encrypted(state, true);
         }
         "my-space-empty" => {
             state.space.has_account = true;
@@ -997,6 +1040,18 @@ impl eframe::App for ShotApp {
                 let entries = crate::myspace::menus::file(&self.app.state, "4");
                 let at = egui::pos2(586.0, 488.0);
                 egui::Area::new(egui::Id::new("qa-menu"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(at)
+                    .show(&ctx, |ui| {
+                        crate::menus::panel(ui, &self.app.state.colors, at, &entries);
+                    });
+            }
+            if self.screen == "my-space-unlocked" {
+                // The account menu, open: the files are encrypted and open here.
+                let entries = crate::shell::account_menu(&self.app.state);
+                let width = crate::menus::natural_width(ui, &entries) + 16.0;
+                let at = account_menu_at(&self.app.state, width, ui.max_rect().width());
+                egui::Area::new(egui::Id::new("qa-account-menu"))
                     .order(egui::Order::Foreground)
                     .fixed_pos(at)
                     .show(&ctx, |ui| {

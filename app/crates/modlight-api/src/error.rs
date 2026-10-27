@@ -8,6 +8,9 @@
 //! * [`ApiError::Status`]: `EnsureSuccessStatusCode` failing on a read.
 //! * [`ApiError::Timeout`], [`ApiError::Transport`]: the request never completed.
 //! * [`ApiError::NotSupported`], [`ApiError::AdminForbidden`]: the administration screen only.
+//! * [`ApiError::Locked`]: not upstream; the account's files are encrypted and this request
+//!   carried no grant that opens them (`423 Locked`). The token is fine: the remedy is the
+//!   file password, never signing in again.
 
 use std::fmt;
 
@@ -48,6 +51,20 @@ pub enum ApiError {
     AdminForbidden,
     /// The caller stopped waiting.
     Cancelled,
+    /// `423 Locked` (not upstream): the account's files are encrypted on the server and
+    /// the request carried no grant that opens them. Never a reason to sign in again.
+    Locked(FilesLocked),
+}
+
+/// What a `423 Locked` answer said, and which grant the refused request carried.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilesLocked {
+    /// The tag of the account whose files these are, when the server named it.
+    pub owner: Option<String>,
+    /// The grant the request carried, by the number [`crate::Api::hold_grant`] gave it;
+    /// `None` when it carried none. A refusal of the grant still held says that grant
+    /// no longer works; a refusal of an older one (or of none) says nothing about it.
+    pub grant: Option<u64>,
 }
 
 impl ApiError {
@@ -56,11 +73,17 @@ impl ApiError {
         matches!(self, ApiError::Refused { reason: Some(r), .. } if r == "code-taken" || r == "code-reserved")
     }
 
+    /// Whether the account's files are locked (encrypted, and no grant opened them).
+    pub fn is_locked(&self) -> bool {
+        matches!(self, ApiError::Locked(_))
+    }
+
     /// The HTTP status behind this error, when the server answered at all.
     pub fn status(&self) -> Option<u16> {
         match self {
             ApiError::Refused { status, .. } | ApiError::Status(status) => Some(*status),
             ApiError::Unauthorized => Some(401),
+            ApiError::Locked(_) => Some(423),
             _ => None,
         }
     }
@@ -136,6 +159,10 @@ impl fmt::Display for ApiError {
             ApiError::NotSupported => write!(f, "the server has no such endpoint"),
             ApiError::AdminForbidden => write!(f, "the API token is not allowed to do this"),
             ApiError::Cancelled => write!(f, "cancelled"),
+            ApiError::Locked(_) => write!(
+                f,
+                "the account's files are encrypted; unlock them with the file password"
+            ),
         }
     }
 }

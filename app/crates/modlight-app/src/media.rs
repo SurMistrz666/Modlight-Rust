@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use image::{AnimationDecoder, DynamicImage, ImageFormat, imageops::FilterType};
-use modlight_api::{Credential, MotionPreview};
+use modlight_api::{ApiError, Credential, MotionPreview};
 use modlight_core::library::{
     MotionCache, THUMBNAIL_BUDGET_BYTES, THUMBNAIL_DECODE_WIDTH, THUMBNAIL_SLOTS, ThumbnailBudget,
     ThumbnailCache, ThumbnailQueue, clamp_frame_delay, enlarge_thumbnail_url, motion, visible_band,
@@ -209,6 +209,10 @@ pub struct Media {
     /// The server whose files `bytes` and `motion_bytes` hold: codes are unique on one
     /// server only.
     pub cache_host: String,
+    /// Not upstream: bumped when the grid's fetches start over without a new listing (the
+    /// files were unlocked or locked). A fetch of an earlier epoch that still finishes
+    /// holds none of the queue's slots and puts nothing on a card.
+    pub epoch: u64,
 }
 
 impl Default for Media {
@@ -225,6 +229,7 @@ impl Default for Media {
             preview_generation: 0,
             listing: tokio_util::sync::CancellationToken::new(),
             cache_host: String::new(),
+            epoch: 0,
         }
     }
 }
@@ -240,6 +245,28 @@ impl Media {
         self.budget.clear();
         self.queue.reset();
         self.motion = MotionPlayer::default();
+    }
+
+    /// Not upstream: the account's files were unlocked. What is in flight was asked for
+    /// without the grant; it stops, and the pictures are asked for again.
+    pub fn restart_pictures(&mut self) {
+        self.listing.cancel();
+        self.listing = tokio_util::sync::CancellationToken::new();
+        self.epoch += 1;
+        self.queue.reset();
+        self.motion = MotionPlayer::default();
+    }
+
+    /// Not upstream: the account's files were locked again ("Lock files"). The pictures
+    /// the grant opened leave the window and the session's caches.
+    pub fn forget_pictures(&mut self) {
+        self.restart_pictures();
+        self.thumbs.clear();
+        self.budget.clear();
+        self.bytes.clear();
+        self.motion_bytes.clear();
+        self.preview = None;
+        self.preview_generation += 1;
     }
 
     /// The grid now lists `host`'s files: what the session cached for another server's
@@ -317,6 +344,15 @@ impl AppState {
     }
 
     fn start_thumbnails(&mut self, ids: Vec<String>) {
+        if self.vault.is_locked() {
+            // Not upstream: the account's files are encrypted and locked, so nothing would
+            // come. Everything is asked for again once they open.
+            self.media.queue.clear();
+            for id in &ids {
+                self.media.queue.finished(id);
+            }
+            return;
+        }
         for id in ids {
             self.fetch_thumbnail(id);
         }
@@ -330,10 +366,12 @@ impl AppState {
             return;
         };
         let generation = self.space.generation;
+        let epoch = self.media.epoch;
         let api = self.api.clone();
         let cache = self.media.bytes.clone();
         let listing = self.media.listing.clone();
         self.rt.spawn(async move {
+            let mut locked = None;
             let bytes = match cache.get(&file.code) {
                 Some(bytes) => Some(bytes),
                 None => {
@@ -347,6 +385,10 @@ impl AppState {
                             cache.put(&file.code, bytes.clone());
                             Some(bytes)
                         }
+                        Some(Err(ApiError::Locked(refusal))) => {
+                            locked = Some(refusal);
+                            None
+                        }
                         _ => None,
                     }
                 }
@@ -357,8 +399,13 @@ impl AppState {
                 bytes.and_then(|b| decode_still(&b, THUMBNAIL_DECODE_WIDTH))
             };
             Box::new(move |state: &mut AppState, ctx: &egui::Context| {
+                // Not upstream: the account's files are encrypted and locked. Whatever
+                // listing it was for, that is a fact about the account.
+                if let Some(locked) = &locked {
+                    state.vault_refused(&credential, locked);
+                }
                 // A new listing reset the queue: this fetch holds none of its slots.
-                if state.space.generation != generation {
+                if state.space.generation != generation || state.media.epoch != epoch {
                     return;
                 }
                 if let Some(image) = decoded
@@ -478,11 +525,17 @@ impl AppState {
         let Some(credential) = self.credential() else {
             return;
         };
+        // Not upstream: nothing moves while the account's files are locked.
+        if self.vault.is_locked() {
+            self.media.motion.attempted = Some(id.to_string());
+            return;
+        }
         self.media.motion.attempted = Some(id.to_string());
         self.media.motion.fetching = Some(id.to_string());
         let api = self.api.clone();
         let id = id.to_string();
         let generation = self.space.generation;
+        let epoch = self.media.epoch;
         let listing = self.media.listing.clone();
         self.rt.spawn(async move {
             // The listing's token comes along (`CloudMotionPlayer.Enter`): changing
@@ -493,8 +546,11 @@ impl AppState {
                 preview = api.get_motion_thumbnail(&credential, &file.motion_url) => preview,
             };
             Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
+                if let Err(ApiError::Locked(locked)) = &preview {
+                    state.vault_refused(&credential, locked);
+                }
                 // A new listing started its own player; this one's slot is not its.
-                if state.space.generation != generation {
+                if state.space.generation != generation || state.media.epoch != epoch {
                     return;
                 }
                 state.media.motion.fetching = None;
@@ -610,14 +666,26 @@ impl AppState {
         let Some(credential) = self.credential() else {
             return;
         };
+        // Not upstream: the larger picture is asked for again once the files open.
+        if self.vault.is_locked() {
+            return;
+        }
         let api = self.api.clone();
         let id = id.to_string();
         let url = enlarge_thumbnail_url(&file.thumbnail_url);
         self.rt.spawn(async move {
-            let bytes = api.get_thumbnail(&credential, &url).await.ok().flatten();
+            let answer = api.get_thumbnail(&credential, &url).await;
+            let locked = match &answer {
+                Err(ApiError::Locked(locked)) => Some(locked.clone()),
+                _ => None,
+            };
+            let bytes = answer.ok().flatten();
             let decoded =
                 bytes.and_then(|b| decode_still(&b, modlight_core::library::DETAILS_PREVIEW_EDGE));
             Box::new(move |state: &mut AppState, ctx: &egui::Context| {
+                if let Some(locked) = &locked {
+                    state.vault_refused(&credential, locked);
+                }
                 if state.media.preview_generation != generation {
                     return;
                 }

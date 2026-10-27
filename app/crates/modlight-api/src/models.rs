@@ -319,6 +319,9 @@ pub struct ConvertVerdict {
     pub ok: bool,
     /// The `X-Convert-Refused` token, or empty when the answer was yes.
     pub reason: String,
+    /// Not upstream: the account's files are encrypted and locked (`423`), which says
+    /// nothing about the conversion (`reason` is `locked`).
+    pub locked: Option<crate::error::FilesLocked>,
 }
 
 impl ConvertVerdict {
@@ -326,6 +329,7 @@ impl ConvertVerdict {
         ConvertVerdict {
             ok: true,
             reason: String::new(),
+            locked: None,
         }
     }
 
@@ -337,6 +341,16 @@ impl ConvertVerdict {
             } else {
                 reason.to_string()
             },
+            locked: None,
+        }
+    }
+
+    /// The files are locked: ask again once they are unlocked.
+    pub fn locked(locked: crate::error::FilesLocked) -> Self {
+        ConvertVerdict {
+            ok: false,
+            reason: "locked".to_string(),
+            locked: Some(locked),
         }
     }
 }

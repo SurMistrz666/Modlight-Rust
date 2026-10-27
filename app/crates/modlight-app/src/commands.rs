@@ -101,6 +101,14 @@ pub enum Command {
     Local(usize),
     /// `MainFormCommand.About`.
     ShowAbout,
+
+    // Not upstream: an account whose files are encrypted on the server.
+    /// The banner's Unlock: the file password for a grant.
+    UnlockFiles,
+    /// "Lock files": forget the grant here and revoke it.
+    LockFiles,
+    /// "Unlock files...": My space, with the password field ready.
+    ShowUnlockFiles,
 }
 
 impl AppState {
@@ -220,6 +228,9 @@ impl AppState {
             // Graphite: About is the side panel's Information page, in the main window.
             Command::ShowAbout if crate::shell::uses_side_panel(self) => self.show_information(),
             Command::ShowAbout => self.show_about(),
+            Command::UnlockFiles => self.vault_unlock(),
+            Command::LockFiles => self.vault_lock(),
+            Command::ShowUnlockFiles => self.show_unlock_files(),
             Command::QuickTask(index) => {
                 let choice = self
                     .captures
