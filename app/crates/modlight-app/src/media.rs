@@ -420,8 +420,9 @@ impl AppState {
 
     /// Per frame: start the dwell-delayed fetch, advance the playing reel.
     pub fn tick_motion(&mut self, ctx: &egui::Context) {
-        // Behind another tab no card is under the pointer, whatever was last hovered.
-        if self.tab != crate::state::Tab::MySpace
+        // Behind another tab (or a page of the side panel) no card is under the pointer,
+        // whatever was last hovered.
+        if !self.shows_tab(crate::state::Tab::MySpace)
             && let Some((hovered, _)) = self.media.motion.hovered.clone()
         {
             self.unhover_file(&hovered);

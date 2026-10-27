@@ -140,6 +140,14 @@ Everything not listed behaves as upstream does. The per-screen state is in
 - **About** keeps the team and the project page; upstream's links to getsharex.com and
   ShareX's stores and social accounts are left out (PORT.md). The logo's clicker game is
   not ported.
+- **The Graphite skin** (the port's own) puts every place of the app in a side panel of
+  the main window: the tabs, then the settings window's tree (Settings), the rest of the
+  settings menu (the task menus, the screenshots folder, the history windows) and About.
+  A settings section opens in the main window instead of the settings window, and About
+  is a page there too, with an Updates card over the same check the About window makes.
+  Choosing a tab closes the settings as closing their window does; switching to another
+  skin moves an open settings page into its own window. The other skins keep upstream's
+  tab strip and windows.
 - **Image effects** is the effects branch's; until it lands its settings are edited and
   stored and its buttons say "later". Printing and OCR are phase 5's tools.
 - **The image editor selector** stores the choice the first time the editor is asked

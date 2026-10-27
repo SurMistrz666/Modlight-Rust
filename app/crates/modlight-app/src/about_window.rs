@@ -35,6 +35,17 @@ pub enum AboutUpdate {
     Available(update::ReleaseManifest),
 }
 
+impl AboutUpdate {
+    /// What a completed check says.
+    pub fn from_outcome(outcome: UpdateOutcome) -> AboutUpdate {
+        match outcome {
+            UpdateOutcome::UpdateAvailable(manifest) => AboutUpdate::Available(manifest),
+            UpdateOutcome::UpToDate => AboutUpdate::UpToDate,
+            UpdateOutcome::CheckFailed(_) => AboutUpdate::Failed,
+        }
+    }
+}
+
 pub struct AboutWindow {
     pub update: AboutUpdate,
     /// The logo, and whether it is the Graphite one.
@@ -72,16 +83,26 @@ impl AppState {
                 let outcome = update::check().await;
                 move |state: &mut AppState, _ctx: &egui::Context| {
                     if let Some(window) = state.windows.about.as_mut() {
-                        window.update = match outcome {
-                            UpdateOutcome::UpdateAvailable(manifest) => {
-                                AboutUpdate::Available(manifest)
-                            }
-                            UpdateOutcome::UpToDate => AboutUpdate::UpToDate,
-                            UpdateOutcome::CheckFailed(_) => AboutUpdate::Failed,
-                        };
+                        window.update = AboutUpdate::from_outcome(outcome);
                     }
                 }
             });
+        }
+    }
+
+    /// What a click in About (the window, or the Information page under the Graphite
+    /// skin) asked for.
+    pub fn about_ask(&mut self, ask: AboutAsk) {
+        match ask {
+            AboutAsk::Open(url) => self.open_url(&url),
+            // The question of the hourly check, unless one is up or a download runs.
+            AboutAsk::Update(manifest) => {
+                if self.updates.message.is_none() && self.updates.downloader.is_none() {
+                    self.updates.message = Some(manifest);
+                    self.updates.message_activate = true;
+                }
+            }
+            AboutAsk::DebugLog => self.show_debug_log(),
         }
     }
 
@@ -107,7 +128,62 @@ pub fn startup_path() -> String {
         .unwrap_or_default()
 }
 
-fn link(ui: &mut Ui, colors: &Colors, text: &str) -> bool {
+/// The app's logo as a texture `side` pixels square: the Graphite one or upstream's.
+pub(crate) fn logo_texture(ctx: &egui::Context, graphite: bool, side: u32) -> egui::TextureHandle {
+    let image = crate::app::window_logo(graphite)
+        .map(|icon| {
+            image::imageops::resize(&icon, side, side, image::imageops::FilterType::Lanczos3)
+        })
+        .unwrap_or_else(|| image::RgbaImage::new(1, 1));
+    let color = egui::ColorImage::from_rgba_unmultiplied(
+        [image.width() as usize, image.height() as usize],
+        image.as_raw(),
+    );
+    ctx.load_texture("about-logo", color, egui::TextureOptions::LINEAR)
+}
+
+/// One part of the credits: its title and its rows (name, what the link shows, what a
+/// click asks for).
+pub(crate) type Credits = (&'static str, Vec<(String, &'static str, AboutAsk)>);
+
+/// The credits About shows: the team, and the project page with the Debug log.
+pub(crate) fn credits() -> [Credits; 2] {
+    [
+        (
+            t(s::AboutWindow_Team),
+            vec![
+                (
+                    "Jaex".to_string(),
+                    "https://github.com/Jaex",
+                    AboutAsk::Open("https://github.com/Jaex".into()),
+                ),
+                (
+                    "McoreD".to_string(),
+                    "https://github.com/McoreD",
+                    AboutAsk::Open("https://github.com/McoreD".into()),
+                ),
+            ],
+        ),
+        (
+            t(s::AboutWindow_Links),
+            vec![
+                (
+                    t(s::AboutWindow_ProjectPage).to_string(),
+                    "https://github.com/ShareX/ShareX",
+                    AboutAsk::Open("https://github.com/ShareX/ShareX".into()),
+                ),
+                (
+                    t(s::DebugLogWindow_Title).replace("Modlight - ", ""),
+                    "Modlight.log",
+                    AboutAsk::DebugLog,
+                ),
+            ],
+        ),
+    ]
+}
+
+/// A text link: the accent, underlined under the pointer. Whether it was clicked.
+pub(crate) fn link(ui: &mut Ui, colors: &Colors, text: &str) -> bool {
     let galley = layout(
         ui,
         crate::widgets::job(text, 13.0, Weight::Normal, colors.accent_start()),
@@ -153,19 +229,10 @@ pub fn about_ui(ui: &mut Ui, window: &mut AboutWindow, colors: &Colors) -> Vec<A
         window.logo = None;
     }
     let (_, logo) = window.logo.get_or_insert_with(|| {
-        let image = crate::app::window_logo(colors.graphite)
-            .map(|icon| {
-                image::imageops::resize(&icon, 320, 320, image::imageops::FilterType::Lanczos3)
-            })
-            .unwrap_or_else(|| image::RgbaImage::new(1, 1));
-        let color = egui::ColorImage::from_rgba_unmultiplied(
-            [image.width() as usize, image.height() as usize],
-            image.as_raw(),
-        );
-        let texture = ui
-            .ctx()
-            .load_texture("about-logo", color, egui::TextureOptions::LINEAR);
-        (colors.graphite, texture)
+        (
+            colors.graphite,
+            logo_texture(ui.ctx(), colors.graphite, 320),
+        )
     });
     let box_rect = Rect::from_min_size(
         pos2(inner.center().x - 120.0, inner.top()),
@@ -266,39 +333,7 @@ pub fn about_ui(ui: &mut Ui, window: &mut AboutWindow, colors: &Colors) -> Vec<A
         pos2(panel.right() + 22.0, full.top() + 14.0),
         full.max - vec2(14.0, 14.0),
     );
-    type Section<'a> = (&'a str, Vec<(String, &'a str, AboutAsk)>);
-    let sections: [Section; 2] = [
-        (
-            t(s::AboutWindow_Team),
-            vec![
-                (
-                    "Jaex".to_string(),
-                    "https://github.com/Jaex",
-                    AboutAsk::Open("https://github.com/Jaex".into()),
-                ),
-                (
-                    "McoreD".to_string(),
-                    "https://github.com/McoreD",
-                    AboutAsk::Open("https://github.com/McoreD".into()),
-                ),
-            ],
-        ),
-        (
-            t(s::AboutWindow_Links),
-            vec![
-                (
-                    t(s::AboutWindow_ProjectPage).to_string(),
-                    "https://github.com/ShareX/ShareX",
-                    AboutAsk::Open("https://github.com/ShareX/ShareX".into()),
-                ),
-                (
-                    t(s::DebugLogWindow_Title).replace("Modlight - ", ""),
-                    "Modlight.log",
-                    AboutAsk::DebugLog,
-                ),
-            ],
-        ),
-    ];
+    let sections = credits();
     let row_h = 13.0 * 1.25 + 4.0;
     let content_h: f32 = sections
         .iter()

@@ -237,7 +237,9 @@ impl ModlightApp {
             state.drop_on_window(paths);
         }
         let modal = state.windows.modal_open() || state.uploads.modal_open();
-        if state.tab == crate::state::Tab::MySpace && !modal {
+        // My space on screen, not under a settings or Information page of the side panel.
+        let my_space = state.shows_tab(crate::state::Tab::MySpace);
+        if my_space && !modal {
             state.my_space_keys(ctx);
         }
         // Cmd+V outside a text field uploads the clipboard (`ClipboardUploadMainWindow`);
@@ -255,7 +257,7 @@ impl ModlightApp {
         }
         if pasted
             && main_focused
-            && state.tab == crate::state::Tab::MySpace
+            && my_space
             && !modal
             && !ctx.egui_wants_keyboard_input()
             && self.mode != Mode::Shot
@@ -519,7 +521,8 @@ impl ModlightApp {
             }
         }
 
-        if state.windows.settings.is_some() {
+        // Under the Graphite skin the settings are drawn in the main window instead.
+        if state.windows.settings.as_ref().is_some_and(|w| !w.embedded) {
             let size = vec2(crate::settings::WIDTH, crate::settings::HEIGHT);
             let builder_min = vec2(crate::settings::MIN_WIDTH, crate::settings::MIN_HEIGHT);
             let (asks, close) = dialog_resizable(

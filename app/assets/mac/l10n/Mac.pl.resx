@@ -127,4 +127,14 @@ Włącz Modlight w Ustawieniach systemowych, w sekcji Prywatność i ochrona, Na
   <data name="ScreenRecordingOpenSettings" xml:space="preserve">
     <value>Otworzyć teraz to miejsce w Ustawieniach systemowych?</value>
   </data>
+  <!-- The Graphite skin's side panel and its Information page (shell, side_panel, information). -->
+  <data name="SidePanelMore" xml:space="preserve">
+    <value>Więcej</value>
+  </data>
+  <data name="SidePanelAbout" xml:space="preserve">
+    <value>Informacje</value>
+  </data>
+  <data name="UpdatesNotChecked" xml:space="preserve">
+    <value>Ta wersja nie sprawdza aktualizacji.</value>
+  </data>
 </root>

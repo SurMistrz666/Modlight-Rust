@@ -582,6 +582,9 @@ pub struct SettingsWindow {
     pub target: crate::task_pages::TaskTarget,
     /// The window title of a hotkey's settings (`ShareXTaskSettingsFor0`).
     pub title: String,
+    /// Drawn in the main window's content area instead of a window of its own: the
+    /// Graphite skin's side panel lists the sections in place of the tree.
+    pub embedded: bool,
 }
 
 impl SettingsWindow {
@@ -602,6 +605,7 @@ impl SettingsWindow {
             groups: &GROUPS,
             target: crate::task_pages::TaskTarget::Defaults,
             title: t(s::SettingsWindow_WindowTitle).to_string(),
+            embedded: false,
         };
         window.reveal(section);
         window
@@ -646,15 +650,31 @@ impl SettingsWindow {
 
 impl AppState {
     /// Open the settings window, or bring it to `section` (`SettingsWindowIntegration`).
+    ///
+    /// Under the Graphite skin the page opens in the main window instead, where the side
+    /// panel lists the sections; a settings window already open moves in there.
     pub fn show_settings(&mut self, section: Option<&str>) {
         let section = section.unwrap_or(DEFAULT_SECTION);
+        let embed = crate::shell::uses_side_panel(self);
+        if embed {
+            // The Information page gives way, as it does to a tab.
+            self.side.information = None;
+            self.side.reveal_section(section);
+        }
         match self.windows.settings.as_mut() {
             Some(window) => {
                 window.section = section.to_string();
                 window.reveal(section);
+                if embed && !window.embedded {
+                    window.embedded = true;
+                    // The window's search box is not drawn in there.
+                    window.search.clear();
+                }
             }
             None => {
-                self.windows.settings = Some(SettingsWindow::new(section, &self.options.skin));
+                let mut window = SettingsWindow::new(section, &self.options.skin);
+                window.embedded = embed;
+                self.windows.settings = Some(window);
                 self.refresh_account_page();
                 // `HotkeySettingsAvaloniaService`: the keys that failed are tried again.
                 self.captures.hotkeys.register_failed();
@@ -742,26 +762,43 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Vec<SettingsAsk> {
         .rect_filled(full, 0.0, colors.background_main());
     let nav_width = (full.width() * 0.26).clamp(220.0, 276.0);
     let nav = Rect::from_min_size(full.min, vec2(nav_width, full.height()));
-    let mut asks = Vec::new();
     navigation(ui, state, &colors, nav);
     let right = Rect::from_min_max(pos2(nav.right(), full.top()), full.max);
     let Some(window) = state.windows.settings.as_ref() else {
-        return asks;
+        return Vec::new();
     };
-    let section_id = window.section.clone();
     let any_match = window
         .groups
         .iter()
         .any(|g| g.sections.iter().any(|sec| window.matches(g, sec)));
     if !any_match {
         no_results(ui, state, &colors, right);
-        return asks;
+        return Vec::new();
     }
     let editor_open = window.task_pages.editor.is_some() || window.app_pages.editor.is_some();
-    if let Some(window) = state.windows.settings.as_mut() {
-        window.page_area = right;
+    let mut asks = page_view(ui, state, &colors, right);
+    if !editor_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        asks.push(SettingsAsk::Close);
     }
-    let header_h = header(ui, &colors, right, &section_id);
+    asks
+}
+
+/// The settings page in the main window's content area (`rect`), under the Graphite
+/// skin: the side panel stands for the tree, and Escape does not leave the page.
+pub fn embedded_ui(ui: &mut Ui, state: &mut AppState, rect: Rect) -> Vec<SettingsAsk> {
+    let colors = state.colors.clone();
+    page_view(ui, state, &colors, rect)
+}
+
+/// The chosen section's header and its page, scrolling, in `right`.
+fn page_view(ui: &mut Ui, state: &mut AppState, colors: &Colors, right: Rect) -> Vec<SettingsAsk> {
+    let mut asks = Vec::new();
+    let Some(window) = state.windows.settings.as_mut() else {
+        return asks;
+    };
+    let section_id = window.section.clone();
+    window.page_area = right;
+    let header_h = header(ui, colors, right, &section_id);
     let body = Rect::from_min_max(pos2(right.left(), right.top() + header_h), right.max);
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -779,14 +816,11 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Vec<SettingsAsk> {
                 ui.add_space(28.0);
                 ui.vertical(|ui| {
                     ui.set_width((width - 56.0).max(200.0));
-                    page(ui, state, &colors, &section_id, &mut asks);
+                    page(ui, state, colors, &section_id, &mut asks);
                 });
             });
             ui.add_space(36.0);
         });
-    if !editor_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-        asks.push(SettingsAsk::Close);
-    }
     asks
 }
 

@@ -149,6 +149,8 @@ pub struct AppState {
     pub updates: crate::update_window::Updates,
     /// The tool windows (phase 5, tools).
     pub tools: crate::tools::Tools,
+    /// The Graphite skin's side panel: its folds, and the Information page it shows.
+    pub side: crate::side_panel::SidePanel,
 }
 
 /// A request to the platform layer, handled after the frame is drawn.
@@ -246,6 +248,7 @@ impl AppState {
             components: Default::default(),
             updates: Default::default(),
             tools: Default::default(),
+            side: Default::default(),
         }
     }
 
@@ -265,6 +268,10 @@ impl AppState {
         let before = self.theme.skin.id;
         self.theme = resolve(&self.options, self.env.system_dark, None);
         self.colors = Colors::new(&self.theme);
+        // A skin without the side panel has nowhere to show its pages in the window.
+        if !crate::shell::uses_side_panel(self) {
+            self.undock_side_pages();
+        }
         if let Some(ctx) = ctx {
             crate::theme::apply_style(ctx, &self.colors);
             // A skin with another layout (Graphite's side panel) needs another

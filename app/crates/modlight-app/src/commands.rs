@@ -217,6 +217,8 @@ impl AppState {
                 self.open_scrolling_capture(settings);
             }
             Command::Local(_) => {}
+            // Graphite: About is the side panel's Information page, in the main window.
+            Command::ShowAbout if crate::shell::uses_side_panel(self) => self.show_information(),
             Command::ShowAbout => self.show_about(),
             Command::QuickTask(index) => {
                 let choice = self
@@ -240,10 +242,13 @@ impl AppState {
     }
 
     pub fn select_tab(&mut self, tab: Tab) {
-        if self.tab == tab {
+        if tab == Tab::Admin && !self.is_admin() {
             return;
         }
-        if tab == Tab::Admin && !self.is_admin() {
+        // A settings or Information page of the side panel gives way to the tab, the
+        // one it covered too.
+        self.leave_side_pages();
+        if self.tab == tab {
             return;
         }
         self.tab = tab;

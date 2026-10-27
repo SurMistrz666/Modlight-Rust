@@ -127,4 +127,14 @@ Turn Modlight on in System Settings, Privacy &amp; Security, Screen &amp; System
   <data name="ScreenRecordingOpenSettings" xml:space="preserve">
     <value>Open System Settings there now?</value>
   </data>
+  <!-- The Graphite skin's side panel and its Information page (shell, side_panel, information). -->
+  <data name="SidePanelMore" xml:space="preserve">
+    <value>More</value>
+  </data>
+  <data name="SidePanelAbout" xml:space="preserve">
+    <value>About</value>
+  </data>
+  <data name="UpdatesNotChecked" xml:space="preserve">
+    <value>This build does not check for updates.</value>
+  </data>
 </root>
