@@ -316,6 +316,31 @@ own output and two Developer ID apps.
   machine sent in between. The port hashes a canonical form (members sorted by name,
   integral numbers without a point); a marker written by an earlier build is recognised
   by its old digest. `modlight-core/src/sync/document.rs`, tests `tests/settings_sync.rs`.
+- **Encrypted files** (not upstream; the server's `docs/ENCRYPTION.md`, section 6). An
+  account can keep its files encrypted on the server; reading their contents then needs
+  a grant that the file password buys (`POST /api/encryption/unlock`). The app asks
+  `GET /api/encryption` with every reload of the library. While the files are locked
+  (the server says so, or a picture, preview or download is answered `423 Locked`),
+  My space shows a banner over the files: the lock, a short text, the file password,
+  "Remember on this computer for 30 days" (ticked by default) and Unlock; a wrong
+  password and too many attempts (the server's wait, in minutes) are said in it. A
+  `423` is its own error (`ApiError::Locked`), never a refused token: nothing signs out,
+  and 401 keeps meaning what it meant. Once unlocked, the grant goes in
+  `X-Modlight-Unlock` with every content request of that credential (pictures, moving
+  tiles, the drawer's preview, downloads, conversions, and the status), and with nothing
+  else; the pictures, the preview and the downloads the lock stopped (to the place
+  already chosen; "Download as" asks again) load again. The grant is kept like the token,
+  in the login Keychain (service `Modlight`, account `vault-grant`; on Windows the
+  credential `Modlight/vault-grant`; a QA profile's `vault-grant` file), together with
+  the server and account it opens, and only when "Remember" is ticked; otherwise in
+  memory for the run. It is forgotten on sign-out and on a switch to another account
+  (and revoked on the server while the token still works), on a `423` or a status that
+  shows it no longer opens the files, when the server says encryption is off, and on
+  "Lock files" in the account menu (revoked with `POST /api/encryption/lock`; the
+  pictures it opened leave the window). The account card shows a lock (open while
+  unlocked); the account menu says "Files encrypted, unlocked / locked" with "Lock
+  files" or "Unlock files...". Texts in `assets/port/l10n`. `modlight-api/src/vault.rs`,
+  `modlight-core/src/vault.rs`, `modlight-app/src/vault.rs`.
 - **Answers about an account that is no longer signed in are dropped** (logic review
   2026-10-24). Upstream's storage chip adopted an `/api/me` answer that set out before
   another account signed in (its `Owns` check did not cover a switch), renaming the new

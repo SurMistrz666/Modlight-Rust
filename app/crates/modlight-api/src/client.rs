@@ -6,6 +6,10 @@
 //! * redirects are never followed. The Windows client followed them with .NET's default
 //!   handler, which keeps custom headers, so a redirect could carry `x-api-key` to
 //!   another host. Here a 3xx is just a status that is not a success.
+//!
+//! Not upstream: the grant of an account whose files are encrypted travels the same way,
+//! in `X-Modlight-Unlock`, and only with the content requests of the credential it was
+//! held for (`crate::vault`).
 
 use std::time::Duration;
 
@@ -13,6 +17,7 @@ use reqwest::header::{CACHE_CONTROL, HeaderMap, HeaderValue, USER_AGENT};
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
 
 use crate::error::{ApiError, ApiResult, RefusalBody};
+use crate::vault::{SharedGrantSlot, locked_from_text};
 
 /// Long enough for a cold server, short enough that nobody wonders whether it hung.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -54,12 +59,15 @@ impl std::fmt::Debug for Credential {
     }
 }
 
-/// The HTTP client of the app. Cheap to clone.
+/// The HTTP client of the app. Cheap to clone; the clones share the grant held for an
+/// account whose files are encrypted ([`crate::vault`]).
 #[derive(Clone)]
 pub struct Api {
     http: reqwest::Client,
     /// The live upload's client: see [`transfer_client`].
     transfer: reqwest::Client,
+    /// The file vault's grant, sent with the content requests of its credential only.
+    grants: SharedGrantSlot,
 }
 
 impl Api {
@@ -79,7 +87,12 @@ impl Api {
         Ok(Api {
             http,
             transfer: transfer_client(version)?,
+            grants: SharedGrantSlot::default(),
         })
+    }
+
+    pub(crate) fn grants(&self) -> &SharedGrantSlot {
+        &self.grants
     }
 
     /// The client the live upload goes through.
@@ -134,6 +147,11 @@ impl Api {
         if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
             return Err(ApiError::Unauthorized);
         }
+        // An encrypted account's file the request needed the contents of: the token is
+        // fine, the files are locked (none of these requests carries a grant).
+        if status.as_u16() == 423 {
+            return Err(ApiError::Locked(locked_from_text(&text, None)));
+        }
 
         if !status.is_success() {
             // A refusal that is not JSON at all (a proxy's error page) leaves the status
@@ -168,6 +186,9 @@ impl Api {
         let status = response.status();
         if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
             return Err(ApiError::Unauthorized);
+        }
+        if crate::vault::is_locked(&response) {
+            return Err(ApiError::Locked(crate::vault::locked(response, None).await));
         }
         if !status.is_success() {
             return Err(ApiError::Status(status.as_u16()));

@@ -46,4 +46,67 @@
   <data name="OpenDownloadsPage" xml:space="preserve">
     <value>Open Downloads page</value>
   </data>
+  <data name="VaultBannerTitle" xml:space="preserve">
+    <value>Your files are encrypted</value>
+  </data>
+  <data name="VaultBannerText" xml:space="preserve">
+    <value>Enter the file password to see previews and download your files in this app.</value>
+  </data>
+  <data name="VaultPassword" xml:space="preserve">
+    <value>File password</value>
+  </data>
+  <data name="VaultRemember" xml:space="preserve">
+    <value>Remember on this computer for 30 days</value>
+  </data>
+  <data name="VaultRememberHelp" xml:space="preserve">
+    <value>Leave it unticked on a computer you share.</value>
+  </data>
+  <data name="VaultUnlock" xml:space="preserve">
+    <value>Unlock</value>
+  </data>
+  <data name="VaultUnlocking" xml:space="preserve">
+    <value>Unlocking...</value>
+  </data>
+  <data name="VaultWrongPassword" xml:space="preserve">
+    <value>Wrong password. Try again.</value>
+  </data>
+  <data name="VaultRateLimited" xml:space="preserve">
+    <value>Too many attempts. Try again in {0} min.</value>
+  </data>
+  <data name="VaultUnlockFailed" xml:space="preserve">
+    <value>The files could not be unlocked: {0}</value>
+  </data>
+  <data name="VaultNotEncrypted" xml:space="preserve">
+    <value>This account's files are not encrypted any more.</value>
+  </data>
+  <data name="VaultUnlocked" xml:space="preserve">
+    <value>Files unlocked</value>
+  </data>
+  <data name="VaultRememberFailed" xml:space="preserve">
+    <value>Unlocked until Modlight closes; this computer could not keep it: {0}</value>
+  </data>
+  <data name="VaultLockFiles" xml:space="preserve">
+    <value>Lock files</value>
+  </data>
+  <data name="VaultLockedHere" xml:space="preserve">
+    <value>Files locked on this computer</value>
+  </data>
+  <data name="VaultStateUnlocked" xml:space="preserve">
+    <value>Files encrypted, unlocked</value>
+  </data>
+  <data name="VaultStateLocked" xml:space="preserve">
+    <value>Files encrypted, locked</value>
+  </data>
+  <data name="VaultUnlockFiles" xml:space="preserve">
+    <value>Unlock files...</value>
+  </data>
+  <data name="VaultFilesLocked" xml:space="preserve">
+    <value>Your files are locked</value>
+  </data>
+  <data name="VaultFilesLockedDetail" xml:space="preserve">
+    <value>Enter the file password in My space.</value>
+  </data>
+  <data name="VaultDownloadWaits" xml:space="preserve">
+    <value>Enter the file password in My space. The download starts once the files are unlocked.</value>
+  </data>
 </root>

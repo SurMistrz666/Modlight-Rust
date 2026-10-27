@@ -179,7 +179,7 @@ const PROJECTS: &[(&str, &str)] = &[
     // (assets/windows/l10n).
     ("Windows", "windows"),
     // The port's own texts on both systems, for what upstream never had (assets/port/l10n):
-    // the build line, the app's updates from the server's Downloads.
+    // the build line, the app's updates from the server's Downloads, encrypted files.
     ("Port", "port"),
 ];
 

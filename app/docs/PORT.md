@@ -94,6 +94,12 @@ C#/.NET 10 with an Avalonia UI, GPL-3.0). The upstream checkout is the
 
 - The API token travels only in the `x-api-key` header to the account's host,
   never in a URL, never to another host, never across a redirect.
+- Not upstream: the grant that opens an account's encrypted files (server
+  `docs/ENCRYPTION.md` section 6) is a secret like the token. It travels only in
+  `X-Modlight-Unlock`, only with the content requests (pictures, downloads, conversions)
+  of the credential it was given for, and is kept like the token (Keychain / Credential
+  Manager, item `vault-grant`) only when the person asks to be remembered. A `423 Locked`
+  is never read as a refused token: 401 alone means signing in again.
 - The app updates itself only from the server it is signed in to (its Downloads,
   `GET /api/downloads`), over https (plain http only on the loopback interface), with
   the account's token in `x-api-key` and no redirect followed; a build's size and SHA-256

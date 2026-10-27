@@ -151,6 +151,8 @@ pub struct AppState {
     pub tools: crate::tools::Tools,
     /// The Graphite skin's side panel: its folds, and the Information page it shows.
     pub side: crate::side_panel::SidePanel,
+    /// Not upstream: the account's encrypted files, their grant and the unlock banner.
+    pub vault: crate::vault::Vault,
 }
 
 /// A request to the platform layer, handled after the frame is drawn.
@@ -249,6 +251,7 @@ impl AppState {
             updates: Default::default(),
             tools: Default::default(),
             side: Default::default(),
+            vault: Default::default(),
         }
     }
 

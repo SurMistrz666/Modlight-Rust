@@ -46,4 +46,67 @@
   <data name="OpenDownloadsPage" xml:space="preserve">
     <value>Otwórz stronę Do pobrania</value>
   </data>
+  <data name="VaultBannerTitle" xml:space="preserve">
+    <value>Twoje pliki są zaszyfrowane</value>
+  </data>
+  <data name="VaultBannerText" xml:space="preserve">
+    <value>Wpisz hasło do plików, aby w tej aplikacji widzieć podglądy i pobierać swoje pliki.</value>
+  </data>
+  <data name="VaultPassword" xml:space="preserve">
+    <value>Hasło do plików</value>
+  </data>
+  <data name="VaultRemember" xml:space="preserve">
+    <value>Zapamiętaj na tym komputerze na 30 dni</value>
+  </data>
+  <data name="VaultRememberHelp" xml:space="preserve">
+    <value>Odznacz na komputerze, z którego korzysta ktoś jeszcze.</value>
+  </data>
+  <data name="VaultUnlock" xml:space="preserve">
+    <value>Odblokuj</value>
+  </data>
+  <data name="VaultUnlocking" xml:space="preserve">
+    <value>Odblokowywanie...</value>
+  </data>
+  <data name="VaultWrongPassword" xml:space="preserve">
+    <value>Nieprawidłowe hasło. Spróbuj ponownie.</value>
+  </data>
+  <data name="VaultRateLimited" xml:space="preserve">
+    <value>Za dużo prób. Spróbuj ponownie za {0} min.</value>
+  </data>
+  <data name="VaultUnlockFailed" xml:space="preserve">
+    <value>Nie udało się odblokować plików: {0}</value>
+  </data>
+  <data name="VaultNotEncrypted" xml:space="preserve">
+    <value>Pliki tego konta nie są już zaszyfrowane.</value>
+  </data>
+  <data name="VaultUnlocked" xml:space="preserve">
+    <value>Pliki odblokowane</value>
+  </data>
+  <data name="VaultRememberFailed" xml:space="preserve">
+    <value>Odblokowano do zamknięcia Modlight; ten komputer nie mógł tego zapamiętać: {0}</value>
+  </data>
+  <data name="VaultLockFiles" xml:space="preserve">
+    <value>Zablokuj pliki</value>
+  </data>
+  <data name="VaultLockedHere" xml:space="preserve">
+    <value>Pliki zablokowane na tym komputerze</value>
+  </data>
+  <data name="VaultStateUnlocked" xml:space="preserve">
+    <value>Pliki zaszyfrowane, odblokowane</value>
+  </data>
+  <data name="VaultStateLocked" xml:space="preserve">
+    <value>Pliki zaszyfrowane, zablokowane</value>
+  </data>
+  <data name="VaultUnlockFiles" xml:space="preserve">
+    <value>Odblokuj pliki...</value>
+  </data>
+  <data name="VaultFilesLocked" xml:space="preserve">
+    <value>Twoje pliki są zablokowane</value>
+  </data>
+  <data name="VaultFilesLockedDetail" xml:space="preserve">
+    <value>Wpisz hasło do plików w zakładce Moje pliki.</value>
+  </data>
+  <data name="VaultDownloadWaits" xml:space="preserve">
+    <value>Wpisz hasło do plików w zakładce Moje pliki. Pobieranie ruszy po odblokowaniu plików.</value>
+  </data>
 </root>

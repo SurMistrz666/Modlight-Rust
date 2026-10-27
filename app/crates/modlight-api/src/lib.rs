@@ -4,6 +4,9 @@
 //! uploader and the URL shortener): the same endpoints, headers, bodies, timeouts and
 //! refusal handling, with no GUI and no settings. Every call takes a [`Credential`] and
 //! sends its token in the `x-api-key` header only; redirects are never followed.
+//!
+//! Not upstream: [`vault`], the calls an account whose files are encrypted needs, and the
+//! grant its content requests carry.
 
 pub mod account;
 pub mod client;
@@ -17,6 +20,7 @@ pub mod models;
 pub mod signin;
 pub mod tus;
 pub mod upload;
+pub mod vault;
 pub mod web;
 
 pub use client::{API_KEY_HEADER, Api, Credential, REQUEST_TIMEOUT};
@@ -24,7 +28,7 @@ pub use downloads::{
     DOWNLOADS_PATH, DownloadsListing, DownloadsPlatform, PublishedBuild, parse_build,
     parse_downloads,
 };
-pub use error::{ApiError, ApiResult};
+pub use error::{ApiError, ApiResult, FilesLocked};
 pub use extras::{
     DISK_PATH, DISK_TIMEOUT, DUPLICATE_SCAN_TIMEOUT, SETTINGS_CLIENT, SettingsAnswer,
     THEME_TIMEOUT, UploadAnswer, is_worth_queuing, server_text,
@@ -48,4 +52,8 @@ pub use tus::{
 pub use upload::{
     DEFAULT_BUFFER_SIZE, LiveOutcome, LiveUpload, ServerAnswer, UploadRefusal, UploadSource,
     buffer_size_for_power,
+};
+pub use vault::{
+    EncryptionStatus, UNLOCK_HEADER, UnlockFailure, UnlockGrant, VaultAnswer, VaultProgress,
+    VaultState,
 };

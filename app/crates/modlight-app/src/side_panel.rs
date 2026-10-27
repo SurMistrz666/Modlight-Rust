@@ -206,7 +206,24 @@ fn account_card(ui: &mut Ui, state: &mut AppState, colors: &Colors, inner: Rect)
         );
     }
     let text_left = circle.right() + 10.0;
-    let text_width = card.right() - 10.0 - text_left;
+    // Not upstream: a lock at the card's right edge when the account's files are
+    // encrypted, open while this app holds a grant for them.
+    let badge = state.vault_badge().map(|badge| match badge {
+        crate::vault::Badge::Unlocked => icons::LOCK_KEYHOLE_OPEN,
+        crate::vault::Badge::Locked => icons::LOCK_KEYHOLE,
+    });
+    let badge_room = if badge.is_some() { 20.0 } else { 0.0 };
+    let text_width = card.right() - 10.0 - badge_room - text_left;
+    if let Some(glyph) = badge {
+        paint_icon(
+            ui,
+            &painter,
+            pos2(card.right() - 18.0, circle.center().y),
+            glyph,
+            14.0,
+            colors.text_secondary(),
+        );
+    }
     let label = if signed_in {
         state.account_label()
     } else {
@@ -248,7 +265,7 @@ fn account_card(ui: &mut Ui, state: &mut AppState, colors: &Colors, inner: Rect)
             state.push(Command::ShowSignIn);
         }
     } else if let Some(command) =
-        crate::menus::popup_beside(colors, &response, crate::shell::account_menu)
+        crate::menus::popup_beside(colors, &response, || crate::shell::account_menu(state))
     {
         state.push(command);
     }
