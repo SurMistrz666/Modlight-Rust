@@ -231,7 +231,7 @@ const SHELL_HEAD: &str = r#"<!doctype html>
 <style>
   :root { color-scheme: light dark; --ink: #1c1c1e; --paper: #ffffff; --muted: #6b7280; --rule: #e5e7eb; }
   @media (prefers-color-scheme: dark) {
-    :root { --ink: #e8e8ea; --paper: #17171a; --muted: #9ca3af; --rule: #2e2e33; }
+    :root { --ink: #ededed; --paper: #121212; --muted: #a1a1a1; --rule: #262626; }
   }
   html { background: var(--paper); }
   body {

@@ -95,7 +95,7 @@ static AUDIO_COVER: LazyLock<String> = LazyLock::new(|| match std::env::var("AUD
 
 /// `audioCoverPath()`: the still picture that plays behind an audio track.
 ///
-/// A committed asset (rendered once from app/icon.svg), not something drawn
+/// A committed asset (made by app/scripts/make-icons.py), not something drawn
 /// per request: it is the same 1280x720 frame for every file on the server,
 /// so building it on the request path would be work with no variable in it.
 /// `AUDIO_COVER_PATH`, or `public/brand/audio-cover.png` under the server's

@@ -464,6 +464,7 @@ impl Tray {
         let menu = build_menu(&entries, &mut commands);
         let builder = TrayIconBuilder::new()
             .with_icon(icon.clone())
+            .with_icon_as_template(TEMPLATE)
             .with_tooltip(modlight_core::APP_NAME)
             .with_menu(Box::new(menu));
         // Windows: the left button runs its action instead of opening the menu.
@@ -513,7 +514,7 @@ impl Tray {
             self.app_icon.clone()
         };
         if let Some(icon) = icon
-            && let Err(error) = self.icon.set_icon(Some(icon))
+            && let Err(error) = self.icon.set_icon_with_as_template(Some(icon), TEMPLATE)
         {
             log::warn!("Modlight: the tray icon could not be changed: {error}");
         }
@@ -573,16 +574,142 @@ const ICON_SIZE: u32 = 36;
 #[cfg(windows)]
 const ICON_SIZE: u32 = 32;
 
+/// A Mac draws the menu bar extra as a template image: only its alpha counts, and the
+/// system colours it for a light or dark menu bar, highlighted or not. Windows shows
+/// the colours as they are.
+const TEMPLATE: bool = cfg!(not(windows));
+
 fn app_tray_icon() -> Option<Icon> {
-    crate::app::app_icon().and_then(|image| {
-        let small = image::imageops::resize(
-            &image,
-            ICON_SIZE,
-            ICON_SIZE,
-            image::imageops::FilterType::Lanczos3,
-        );
-        Icon::from_rgba(small.into_raw(), ICON_SIZE, ICON_SIZE).ok()
-    })
+    let image = if TEMPLATE {
+        tray_glyph(ICON_SIZE)
+    } else {
+        // The hand-drawn 32 px frame of the app icon: the big artwork scaled down
+        // smudges the corners and the arrow.
+        image::load_from_memory_with_format(
+            include_bytes!("../../../assets/icons/Modlight-32.png"),
+            image::ImageFormat::Png,
+        )
+        .ok()?
+        .to_rgba8()
+    };
+    let (w, h) = image.dimensions();
+    Icon::from_rgba(image.into_raw(), w, h).ok()
+}
+
+/// Where the glyph's strokes run, in pixels of a `size` square: the four capture
+/// corners and the upload arrow of the app icon, with stroke widths rounded to whole
+/// pixels and straight strokes on the pixel grid, so the menu bar shows them sharp.
+struct GlyphGeometry {
+    /// The outer edges of the corners' box.
+    lo: f32,
+    hi: f32,
+    /// The corners' stroke and the arrow's.
+    stroke: f32,
+    arrow: f32,
+    /// How far each corner's arms reach along the box, from its outer edge.
+    arm: f32,
+}
+
+impl GlyphGeometry {
+    fn new(size: u32) -> GlyphGeometry {
+        let s = size as f32;
+        let stroke = (s * 0.085).round().max(1.0);
+        let inset = (s * 0.06).round().max(1.0);
+        // The shaft is centred on the square: an even width keeps it on whole pixels
+        // when the side is even, an odd one when it is odd.
+        let mut arrow = stroke;
+        if (size as f32 - arrow) % 2.0 != 0.0 {
+            arrow += 1.0;
+        }
+        let (lo, hi) = (inset, s - inset);
+        GlyphGeometry {
+            lo,
+            hi,
+            stroke,
+            arrow,
+            arm: ((hi - lo) * 0.32).round(),
+        }
+    }
+
+    /// The corners as segments (round-capped, `stroke` wide).
+    fn corners(&self) -> Vec<[f32; 4]> {
+        let half = self.stroke / 2.0;
+        let (a, b) = (self.lo + half, self.hi - half);
+        let reach = self.arm - self.stroke;
+        let mut out = Vec::new();
+        for (x, dx) in [(a, 1.0), (b, -1.0)] {
+            for (y, dy) in [(a, 1.0), (b, -1.0)] {
+                out.push([x, y, x + dx * reach, y]);
+                out.push([x, y, x, y + dy * reach]);
+            }
+        }
+        out
+    }
+
+    /// The arrow as segments (round-capped, `arrow` wide): the shaft and the chevron.
+    fn arrow(&self) -> Vec<[f32; 4]> {
+        let box_side = self.hi - self.lo;
+        let half = self.arrow / 2.0;
+        let x = (self.lo + self.hi) / 2.0;
+        let tip = self.lo + box_side * 0.2 + half;
+        let bottom = self.hi - box_side * 0.17 - half;
+        let spread = box_side * 0.25 - half;
+        vec![
+            [x, tip, x, bottom],
+            [x, tip, x - spread, tip + spread],
+            [x, tip, x + spread, tip + spread],
+        ]
+    }
+}
+
+/// How much of the pixel (`px`, `py`) the round-capped segments `width` wide cover,
+/// sampled 4 by 4.
+fn coverage(segments: &[[f32; 4]], width: f32, px: u32, py: u32) -> f32 {
+    let r2 = (width / 2.0) * (width / 2.0);
+    let mut hits = 0;
+    for sy in 0..4 {
+        for sx in 0..4 {
+            let x = px as f32 + (sx as f32 + 0.5) / 4.0;
+            let y = py as f32 + (sy as f32 + 0.5) / 4.0;
+            let inside = segments.iter().any(|&[x0, y0, x1, y1]| {
+                let (dx, dy) = (x1 - x0, y1 - y0);
+                let len2 = dx * dx + dy * dy;
+                let t = if len2 > 0.0 {
+                    (((x - x0) * dx + (y - y0) * dy) / len2).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let (cx, cy) = (x0 + t * dx - x, y0 + t * dy - y);
+                cx * cx + cy * cy <= r2 + 1e-4
+            });
+            hits += inside as u32;
+        }
+    }
+    hits as f32 / 16.0
+}
+
+fn stroke_into(image: &mut image::RgbaImage, segments: &[[f32; 4]], width: f32) {
+    let (w, h) = image.dimensions();
+    for py in 0..h {
+        for px in 0..w {
+            let c = coverage(segments, width, px, py);
+            if c > 0.0 {
+                let p = image.get_pixel_mut(px, py);
+                let a = (p.0[3] as f32 / 255.0).max(c);
+                *p = image::Rgba([0, 0, 0, (a * 255.0).round() as u8]);
+            }
+        }
+    }
+}
+
+/// The menu bar glyph: the app icon's capture corners and upload arrow, black on
+/// transparent (a template image), `size` pixels square.
+pub fn tray_glyph(size: u32) -> image::RgbaImage {
+    let g = GlyphGeometry::new(size);
+    let mut image = image::RgbaImage::new(size, size);
+    stroke_into(&mut image, &g.corners(), g.stroke);
+    stroke_into(&mut image, &g.arrow(), g.arrow);
+    image
 }
 
 /// The digits of the progress icon, 5 by 7 (Arial 10 has no counterpart to draw with
@@ -600,18 +727,98 @@ const DIGITS: [[u8; 7]; 10] = [
     [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C],
 ];
 
-/// `Helpers.GetProgressIcon`: a dark square filled from the bottom in (16, 116, 193)
-/// up to the percentage, a lighter line on the fill's edge, and the number (0 to 99)
-/// in white in the middle. Drawn at the icon's size, digits at twice upstream's pixels.
+/// The number (0 to 99) centred in the box `left..right`, `top..bottom`, digits at
+/// `scale` pixels per dot: calls `dot` for every pixel of it.
+fn each_digit_pixel(
+    percentage: i32,
+    (left, top, right, bottom): (u32, u32, u32, u32),
+    scale: u32,
+    mut dot: impl FnMut(u32, u32),
+) {
+    let text = percentage.clamp(0, 99).to_string();
+    let glyph_w = 5 * scale;
+    let gap = scale;
+    let width = text.len() as u32 * glyph_w + (text.len() as u32 - 1) * gap;
+    let x_start = left + (right - left).saturating_sub(width) / 2;
+    let y_start = top + (bottom - top).saturating_sub(7 * scale) / 2;
+    for (i, digit) in text.bytes().enumerate() {
+        let rows = DIGITS[(digit - b'0') as usize];
+        let x0 = x_start + i as u32 * (glyph_w + gap);
+        for (row, bits) in rows.iter().enumerate() {
+            for col in 0..5u32 {
+                if bits & (0x10 >> col) != 0 {
+                    for dy in 0..scale {
+                        for dx in 0..scale {
+                            dot(x0 + col * scale + dx, y_start + row as u32 * scale + dy);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The menu bar's progress glyph (a template image): the capture corners stay, the
+/// number (0 to 99) stands between them, and a bar along their bottom fills from the
+/// left up to the percentage over a faint track.
+pub fn template_progress_image(size: u32, percentage: i32) -> image::RgbaImage {
+    let g = GlyphGeometry::new(size);
+    let mut image = image::RgbaImage::new(size, size);
+    stroke_into(&mut image, &g.corners(), g.stroke);
+    let gap = (g.stroke / 2.0).ceil().max(1.0);
+    let inner_lo = (g.lo + g.stroke + gap) as u32;
+    let inner_hi = (g.hi - g.stroke - gap) as u32;
+    let side = inner_hi - inner_lo;
+    let bar = (side / 6).max(2);
+    let bar_top = inner_hi - bar;
+    let filled_to =
+        inner_lo + (side as f32 * percentage.clamp(0, 100) as f32 / 100.0).round() as u32;
+    for py in bar_top..inner_hi {
+        for px in inner_lo..inner_hi {
+            let alpha = if px < filled_to {
+                255
+            } else {
+                PROGRESS_TRACK_ALPHA
+            };
+            image.put_pixel(px, py, image::Rgba([0, 0, 0, alpha]));
+        }
+    }
+    // Two digits and their gap are 11 dots wide, 7 tall.
+    let scale = (side / 11).clamp(1, 2);
+    each_digit_pixel(
+        percentage,
+        (
+            inner_lo,
+            inner_lo,
+            inner_hi,
+            bar_top.saturating_sub(bar / 2),
+        ),
+        scale,
+        |x, y| image.put_pixel(x, y, image::Rgba([0, 0, 0, 255])),
+    );
+    image
+}
+
+/// The bar's track: present, but well behind the fill and the number.
+const PROGRESS_TRACK_ALPHA: u8 = 80;
+
+/// `Helpers.GetProgressIcon` in the app's colours (Windows): a dark square filled from
+/// the bottom in the accent up to the percentage, a lighter line on the fill's edge,
+/// and the number (0 to 99) in white in the middle. Drawn at the icon's size, digits at
+/// twice upstream's pixels.
 pub fn progress_image(percentage: i32) -> image::RgbaImage {
     const SIZE: u32 = ICON_SIZE;
-    const SCALE: u32 = 2;
     let percentage = percentage.clamp(0, 100);
-    let fill = image::Rgba([16, 116, 193, 255]);
+    let fill = image::Rgba(PROGRESS_FILL);
     // `ColorHelpers.LighterColor`: a float lerp towards white, truncated.
     let lerp = |c: u8| (c as f32 + (255.0 - c as f32) * 0.3) as u8;
-    let line = image::Rgba([lerp(16), lerp(116), lerp(193), 255]);
-    let mut image = image::RgbaImage::from_pixel(SIZE, SIZE, image::Rgba([39, 39, 39, 255]));
+    let line = image::Rgba([
+        lerp(PROGRESS_FILL[0]),
+        lerp(PROGRESS_FILL[1]),
+        lerp(PROGRESS_FILL[2]),
+        255,
+    ]);
+    let mut image = image::RgbaImage::from_pixel(SIZE, SIZE, image::Rgba(PROGRESS_BACK));
     let y = (SIZE as f32 * (percentage as f32 / 100.0)) as u32;
     if y > 0 {
         for py in SIZE - y..SIZE {
@@ -625,38 +832,24 @@ pub fn progress_image(percentage: i32) -> image::RgbaImage {
             }
         }
     }
-    let text = percentage.clamp(0, 99).to_string();
-    let glyph_w = 5 * SCALE;
-    let gap = SCALE;
-    let width = text.len() as u32 * glyph_w + (text.len() as u32 - 1) * gap;
-    let left = (SIZE - width) / 2;
-    let top = (SIZE - 7 * SCALE) / 2;
-    for (i, digit) in text.bytes().enumerate() {
-        let rows = DIGITS[(digit - b'0') as usize];
-        let x0 = left + i as u32 * (glyph_w + gap);
-        for (row, bits) in rows.iter().enumerate() {
-            for col in 0..5u32 {
-                if bits & (0x10 >> col) != 0 {
-                    for dy in 0..SCALE {
-                        for dx in 0..SCALE {
-                            image.put_pixel(
-                                x0 + col * SCALE + dx,
-                                top + row as u32 * SCALE + dy,
-                                image::Rgba([255, 255, 255, 255]),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
+    each_digit_pixel(percentage, (0, 0, SIZE, SIZE), 2, |x, y| {
+        image.put_pixel(x, y, image::Rgba([255, 255, 255, 255]))
+    });
     // `bmp.SetPixel(0, 0, Color.Transparent)`.
     image.put_pixel(0, 0, image::Rgba([0, 0, 0, 0]));
     image
 }
 
+/// The progress square's colours: the app's surface and its accent (#171717, #3b82f6).
+const PROGRESS_BACK: [u8; 4] = [23, 23, 23, 255];
+const PROGRESS_FILL: [u8; 4] = [59, 130, 246, 255];
+
 fn progress_icon(percentage: i32) -> Option<Icon> {
-    let image = progress_image(percentage);
+    let image = if TEMPLATE {
+        template_progress_image(ICON_SIZE, percentage)
+    } else {
+        progress_image(percentage)
+    };
     let (w, h) = image.dimensions();
     Icon::from_rgba(image.into_raw(), w, h).ok()
 }
@@ -709,12 +902,57 @@ mod tests {
         let size = super::ICON_SIZE;
         let image = super::progress_image(50);
         assert_eq!(image.get_pixel(0, 0).0[3], 0, "the corner pixel is cleared");
-        assert_eq!(image.get_pixel(1, size - 1).0, [16, 116, 193, 255]);
-        assert_eq!(image.get_pixel(1, 1).0, [39, 39, 39, 255]);
+        assert_eq!(image.get_pixel(1, size - 1).0, super::PROGRESS_FILL);
+        assert_eq!(image.get_pixel(1, 1).0, super::PROGRESS_BACK);
         assert_eq!(
             image.get_pixel(1, size / 2).0,
-            [87, 157, 211, 255],
+            [117, 167, 248, 255],
             "the edge line"
         );
+    }
+
+    /// The menu bar glyph is a template: black with alpha, the corners solid on whole
+    /// pixels, nothing in the square's own corner.
+    #[test]
+    fn the_menu_bar_glyph_is_a_sharp_template() {
+        for size in [16, 18, 32, 36] {
+            let image = super::tray_glyph(size);
+            assert!(image.pixels().all(|p| p.0[..3] == [0, 0, 0]));
+            assert_eq!(image.get_pixel(0, 0).0[3], 0);
+            let g = super::GlyphGeometry::new(size);
+            // The middle of the top-left corner's horizontal arm.
+            let (x, y) = ((g.lo + g.arm / 2.0) as u32, (g.lo + g.stroke / 2.0) as u32);
+            assert_eq!(image.get_pixel(x, y).0[3], 255, "size {size}");
+            // The middle of the shaft.
+            assert_eq!(
+                image.get_pixel(size / 2, size * 3 / 5).0[3],
+                255,
+                "size {size}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_menu_bar_progress_fills_its_bar_from_the_left() {
+        let alpha = |i: &image::RgbaImage, x, y| i.get_pixel(x, y).0[3];
+        let empty = super::template_progress_image(36, 0);
+        let half = super::template_progress_image(36, 50);
+        let full = super::template_progress_image(36, 100);
+        // At 36 px the box between the corners is 7..29, the bar its last 3 rows.
+        assert_eq!(alpha(&empty, 7, 28), super::PROGRESS_TRACK_ALPHA);
+        assert_eq!(alpha(&half, 7, 28), 255);
+        assert_eq!(alpha(&half, 28, 28), super::PROGRESS_TRACK_ALPHA);
+        assert_eq!(alpha(&full, 28, 28), 255);
+        assert_eq!(
+            alpha(&full, 28, 24),
+            0,
+            "nothing between the bar and the number"
+        );
+        // The number is drawn above the bar.
+        let ink = (7..24)
+            .flat_map(|y| (7..29).map(move |x| (x, y)))
+            .filter(|&(x, y)| alpha(&half, x, y) == 255)
+            .count();
+        assert!(ink > 20);
     }
 }
