@@ -5,6 +5,7 @@ pub mod account;
 pub mod admin;
 pub mod background_removal;
 pub mod backup;
+pub mod build_info;
 pub mod capture;
 pub mod config;
 pub mod culture;

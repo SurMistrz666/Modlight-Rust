@@ -133,12 +133,14 @@ Requires the Rust toolchain on an Apple Silicon Mac (macOS 13 or newer; capture 
 APIs from macOS 14).
 
 ```sh
-app/scripts/build-app.sh               # builds app/dist/Modlight.app (ad-hoc signed)
+app/scripts/build-app.sh               # app/dist/Modlight.app and Modlight-<version>-<build>-macos-<arch>.zip
 ```
 
 Open the app, choose **Sign in**, enter your server's address and approve the app in the
 browser. The first clean build downloads ONNX Runtime (pinned SHA-256) for the background
-remover.
+remover. The app updates itself from the Downloads of the server it is signed in to, and
+the build script publishes there when given a server and a publish token
+(`app/docs/MACOS.md`, "Updates and publishing").
 
 ### Windows app
 
@@ -146,11 +148,11 @@ Requires the Rust toolchain (MSVC target) and the Visual Studio Build Tools with
 SDK, on Windows 10 2004 or newer (x64; arm64 builds the same way).
 
 ```powershell
-app\scripts\build-app.ps1               # app\dist\Modlight\ and Modlight-<version>-windows-<arch>.zip
+app\scripts\build-app.ps1               # app\dist\Modlight\ and Modlight-<version>-<build>-windows-<arch>.zip
 ```
 
 The folder runs where it is (no installer); settings live in `Documents\Modlight`. Sign in
-as on the Mac.
+as on the Mac; updates and publishing work as there (`app/docs/WINDOWS.md`).
 
 ## Development
 

@@ -94,8 +94,17 @@ C#/.NET 10 with an Avalonia UI, GPL-3.0). The upstream checkout is the
 
 - The API token travels only in the `x-api-key` header to the account's host,
   never in a URL, never to another host, never across a redirect.
-- The update host is fixed at build time (`MODLIGHT_DEFAULT_HOST`, empty by
-  default = updates off) and is never taken from the sign-in box.
+- The app updates itself only from the server it is signed in to (its Downloads,
+  `GET /api/downloads`), over https (plain http only on the loopback interface), with
+  the account's token in `x-api-key` and no redirect followed; a build's size and SHA-256
+  are checked before it is unpacked, and nothing is installed unasked. On a Mac a new
+  build replaces the running one only when it is signed by the same developer (team
+  identifier and the running app's designated requirement); an ad hoc build never
+  installs an update. Windows builds carry no publisher signature yet, so on Windows the
+  server and TLS are what vouch for a build (signing them and checking the signer as on
+  a Mac is open). Details in `MACOS.md` and `WINDOWS.md`, "Updates and publishing".
+  (Until 2026-10-27 the update host was fixed at build time, `MODLIGHT_DEFAULT_HOST`,
+  which now only fills the sign-in box.)
 - Every downloaded executable or model is checked against a pinned SHA-256
   before it is used, and a download without a known size or hash is a failure.
 - Settings sync sends only the allow-listed fields (no token, AI keys, proxy
@@ -116,6 +125,9 @@ C#/.NET 10 with an Avalonia UI, GPL-3.0). The upstream checkout is the
 - Work in your own git worktree and branch; small commits, English messages
   ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Code, identifiers and comments in English. UI text from the upstream
-  `.resx` translations (English + Polish), loaded from files, not hard-coded.
+  `.resx` translations (English + Polish), loaded from files, not hard-coded. Texts
+  upstream never had: `assets/mac/l10n/Mac.resx` (macOS only),
+  `assets/windows/l10n/Windows.resx` (Windows only), `assets/port/l10n/Port.resx` (both
+  systems: the build line, the app's updates), each with its `.pl.resx`.
 - Keep `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test` green.
 - Never print secrets. Never bind to `0.0.0.0`. Never push to a remote.

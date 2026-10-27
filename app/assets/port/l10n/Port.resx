@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- Texts of the port on both systems, for what upstream never had (see app/docs/PORT.md). -->
+  <data name="BuildLine" xml:space="preserve">
+    <value>Build: {0}</value>
+  </data>
+  <data name="CheckNow" xml:space="preserve">
+    <value>Check now</value>
+  </data>
+  <data name="UpdateSignedOut" xml:space="preserve">
+    <value>Sign in to check for updates.</value>
+  </data>
+  <data name="UpdatePreparing" xml:space="preserve">
+    <value>Checking the new version before it is installed...</value>
+  </data>
+  <data name="UpdateRestarting" xml:space="preserve">
+    <value>Modlight closes now and opens again in the new version.</value>
+  </data>
+  <data name="UpdateNotAppBundle" xml:space="preserve">
+    <value>This copy of Modlight does not run from Modlight.app, so it cannot replace itself. Download the new version from the Downloads page.</value>
+  </data>
+  <data name="UpdateTranslocated" xml:space="preserve">
+    <value>macOS runs this copy of Modlight from a temporary, read-only place, so it cannot replace itself. Move Modlight.app to the Applications folder and open it from there, or download the new version from the Downloads page.</value>
+  </data>
+  <data name="UpdateCannotWrite" xml:space="preserve">
+    <value>Modlight cannot write to {0}, so it cannot replace itself there. Download the new version from the Downloads page.</value>
+  </data>
+  <data name="UpdateUnsigned" xml:space="preserve">
+    <value>This copy of Modlight is not signed with a developer certificate, so it cannot check that the new version comes from the same developer. Download the new version from the Downloads page.</value>
+  </data>
+  <data name="UpdateSignerDiffers" xml:space="preserve">
+    <value>The new version is not signed by the same developer as this copy of Modlight, so it was not installed. Download it from the Downloads page only if you trust it.</value>
+  </data>
+  <data name="UpdateDevelopmentBuild" xml:space="preserve">
+    <value>This copy of Modlight runs from a build folder ({0}) and does not replace itself. Download the new version from the Downloads page.</value>
+  </data>
+  <data name="UpdateNotAnUpdate" xml:space="preserve">
+    <value>The download is not a Modlight update for this computer: {0}</value>
+  </data>
+  <data name="UpdateStartFailed" xml:space="preserve">
+    <value>The update could not be started: {0}</value>
+  </data>
+  <data name="UpdateOtherServer" xml:space="preserve">
+    <value>Modlight is now signed in to another server, so this update was not downloaded. Check for updates again.</value>
+  </data>
+  <data name="OpenDownloadsPage" xml:space="preserve">
+    <value>Open Downloads page</value>
+  </data>
+</root>

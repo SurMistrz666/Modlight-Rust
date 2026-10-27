@@ -299,7 +299,16 @@ impl ModlightApp {
             }
         }
 
-        // About (CenterScreen).
+        // About (CenterScreen), saying what the last update check found.
+        if state.windows.about.is_some() {
+            let status = crate::about_window::status_of(state);
+            if let Some(window) = state.windows.about.as_mut()
+                && window.update != status
+                && status != crate::about_window::AboutUpdate::Hidden
+            {
+                window.update = status;
+            }
+        }
         if let Some(window) = state.windows.about.as_mut() {
             use crate::about_window as a;
             let (asks, close) = dialog_resizable(
@@ -314,12 +323,11 @@ impl ModlightApp {
             for ask in asks {
                 match ask {
                     a::AboutAsk::Open(url) => state.open_url(&url),
-                    a::AboutAsk::Update(manifest) => {
-                        if state.updates.message.is_none() && state.updates.downloader.is_none() {
-                            state.updates.message = Some(manifest);
-                            state.updates.message_activate = true;
-                        }
-                    }
+                    a::AboutAsk::Update(manifest) => crate::update_window::offer(
+                        state,
+                        modlight_core::update::UpdateOutcome::UpdateAvailable(*manifest),
+                    ),
+                    a::AboutAsk::CheckNow => crate::update_window::check_quietly(state),
                     a::AboutAsk::DebugLog => state.show_debug_log(),
                 }
             }

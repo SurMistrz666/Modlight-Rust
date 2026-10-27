@@ -1,14 +1,14 @@
 //! The few things the window asks of Windows itself, beside `modlight-windows`: the
 //! parent's console for a GUI program started from one, the taskbar button's progress
 //! (`TaskbarManager`), the tray icon's double-click time, whether ShareX is running
-//! (`HotkeyProblemViewModel`), starting a downloaded installer (`DownloaderWindow`), and a
-//! wake-up for hotkeys that arrive while the window is idle.
+//! (`HotkeyProblemViewModel`), and a wake-up for hotkeys that arrive while the window is
+//! idle. (App updates replace the program's files through a helper script:
+//! `modlight_core::update::install`.)
 
 use std::os::windows::ffi::OsStrExt;
-use std::path::Path;
 use std::time::Duration;
 
-use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, HWND};
+use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::UI::Shell::{ITaskbarList3, TBPF_NOPROGRESS, TaskbarList};
 use windows::core::PCWSTR;
@@ -133,40 +133,6 @@ fn mutex_exists(opened: windows::core::Result<windows::Win32::Foundation::HANDLE
             true
         }
         Err(error) => error.code() == ERROR_ACCESS_DENIED.to_hresult(),
-    }
-}
-
-/// What starting the installer did (`InstallerLaunch`).
-#[derive(Clone, Debug, PartialEq)]
-pub enum InstallerStart {
-    Started,
-    /// The elevation prompt was declined.
-    Cancelled,
-    Failed(String),
-}
-
-/// `DownloaderWindow.StartInstaller`: the verified installer with `/UPDATE`, through the
-/// shell so it can ask for elevation itself.
-pub fn start_installer(path: &Path) -> InstallerStart {
-    use windows::Win32::UI::Shell::{SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW};
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    let file = wide(path.as_os_str());
-    let parameters = wide(std::ffi::OsStr::new("/UPDATE"));
-    let verb = wide(std::ffi::OsStr::new("open"));
-    let mut info = SHELLEXECUTEINFOW {
-        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOASYNC,
-        lpVerb: PCWSTR(verb.as_ptr()),
-        lpFile: PCWSTR(file.as_ptr()),
-        lpParameters: PCWSTR(parameters.as_ptr()),
-        nShow: SW_SHOWNORMAL.0,
-        ..Default::default()
-    };
-    // SAFETY: every string is NUL-terminated and lives until the call returns.
-    match unsafe { ShellExecuteExW(&mut info) } {
-        Ok(()) => InstallerStart::Started,
-        Err(error) if error.code() == ERROR_CANCELLED.to_hresult() => InstallerStart::Cancelled,
-        Err(error) => InstallerStart::Failed(error.message()),
     }
 }
 

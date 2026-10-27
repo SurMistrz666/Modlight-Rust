@@ -25,6 +25,7 @@ const TABLES: &[(&str, &str)] = &[
     ("history", "ShareX.HistoryLib"),
     ("mac", "Mac"),
     ("windows", "Windows"),
+    ("port", "Port"),
 ];
 
 fn rust_sources(folder: &Path, out: &mut Vec<PathBuf>) {
