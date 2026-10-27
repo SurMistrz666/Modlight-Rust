@@ -61,7 +61,8 @@ pub struct User {
     pub max_quota: Option<i64>,
     pub hide_uploads: Option<bool>,
     pub copy_raw: Option<bool>,
-    /// Column default 'discord' since migration 0009; old rows may hold "modern".
+    /// Column default 'graphite' since migration 0014 ('discord' from 0009); sign-up
+    /// writes "modern", which resolves to the default skin.
     pub theme: Option<String>,
     /// 'pl' | 'en' | NULL (= by browser).
     pub locale: Option<String>,

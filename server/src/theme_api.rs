@@ -165,7 +165,7 @@ mod tests {
         }
         assert_eq!(
             unknown_theme_message(),
-            "Unknown theme. Known themes: default, glass, synthwave, terminal, paper, win98, nebula, grimoire, cartoon, mono, deco, riso, discord, spotify."
+            "Unknown theme. Known themes: graphite, default, glass, synthwave, terminal, paper, win98, nebula, grimoire, cartoon, mono, deco, riso, discord, spotify."
         );
     }
 

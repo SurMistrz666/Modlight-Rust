@@ -11,6 +11,13 @@ pub struct Theme {
 }
 
 pub const THEMES: &[Theme] = &[
+    // Graphite leads the list: it is the panel's own look and what an account
+    // gets until it picks something else.
+    Theme {
+        id: "graphite",
+        name: "Graphite",
+        description: "Deep neutrals, hairline borders, white buttons and one blue accent.",
+    },
     // The id stays `default` - it is written into every existing row and into
     // the CSS selector. Only the LABEL changes.
     Theme {
@@ -65,13 +72,18 @@ pub const THEMES: &[Theme] = &[
     },
 ];
 
-/// What an account gets when it has never chosen ("Late Night"). Must stay in
-/// step with the `user.theme` column default (migration 0009).
-pub const DEFAULT_THEME: &str = "discord";
+/// What an account gets when it has never chosen ("Graphite"). Must stay in
+/// step with the `user.theme` column default (migration 0014).
+pub const DEFAULT_THEME: &str = "graphite";
 
-/// Skin ids that were renamed, mapped to what they are called now. Keep
-/// entries here forever: `user.theme` rows still hold "modern".
-pub const THEME_ALIASES: &[(&str, &str)] = &[("modern", "default")];
+/// Stored values that are not skin ids, mapped to the skin they render. Keep
+/// entries here forever.
+///
+/// "modern" is what sign-up writes into `user.theme` for every new account (the
+/// Better Auth schema default), so a row holding it is an account that never
+/// opened the picker: it follows the default skin. A choice made in the picker
+/// is always stored under a real id ("default" for Classic), never as "modern".
+pub const THEME_ALIASES: &[(&str, &str)] = &[("modern", DEFAULT_THEME)];
 
 pub fn is_theme_id(v: &str) -> bool {
     THEMES.iter().any(|t| t.id == v)
@@ -99,10 +111,14 @@ mod tests {
     #[test]
     fn resolves_ids_aliases_and_junk() {
         assert_eq!(resolve_theme(Some("glass")), "glass");
-        assert_eq!(resolve_theme(Some("modern")), "default");
-        assert_eq!(resolve_theme(Some("nope")), "discord");
-        assert_eq!(resolve_theme(None), "discord");
-        assert_eq!(THEMES.len(), 14);
+        assert_eq!(resolve_theme(Some("graphite")), "graphite");
+        assert_eq!(resolve_theme(Some("default")), "default");
+        assert_eq!(resolve_theme(Some("discord")), "discord");
+        assert_eq!(resolve_theme(Some("modern")), "graphite");
+        assert_eq!(resolve_theme(Some("nope")), "graphite");
+        assert_eq!(resolve_theme(None), "graphite");
+        assert_eq!(THEMES.len(), 15);
+        assert_eq!(THEMES[0].id, DEFAULT_THEME);
         assert!(is_theme_id(DEFAULT_THEME));
     }
 }

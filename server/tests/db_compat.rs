@@ -83,7 +83,7 @@ async fn run(pool: &PgPool) {
     // ── migrations ──
     let dir = Paths::crate_dir().migrations;
     let report = modlight_server::db::migrate::run(pool, &dir, true).await.unwrap();
-    assert_eq!(report.applied.len(), 14);
+    assert_eq!(report.applied.len(), 15);
     let again = modlight_server::db::migrate::run(pool, &dir, false).await.unwrap();
     assert!(again.applied.is_empty());
     let seeded: String =

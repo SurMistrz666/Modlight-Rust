@@ -4,6 +4,8 @@
  * Without an inlined page (the vite dev server) the router asks /_page itself.
  */
 import "@/app/globals.css";
+// The Graphite skin (the default): after globals.css so its rules win ties.
+import "./styles/graphite.css";
 // next/font output for geist/font/{sans,mono}; the classes are on <html> in the
 // document template (src/shims/geist/font.ts names them for any importer).
 import "./fonts/geist.css";

@@ -1,5 +1,10 @@
+// Port of upstream components/auth/brand-mark.tsx.
+// @upstream components/auth/brand-mark.tsx
+// Deviation: BrandTile shows the app icon (src/assets/modlight-icon.png)
+// instead of the violet gradient tile; ModlightGlyph and BrandMark are unchanged.
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import modlightIcon from "../../../assets/modlight-icon.png";
 
 /**
  * The Modlight glyph — a beam rising from two dispersing bars.
@@ -41,32 +46,25 @@ export function ModlightGlyph({ className }: { className?: string }) {
 }
 
 /**
- * The brand mark: the violet tile plus the white glyph, i.e. the favicon.
+ * The brand mark: the app icon, i.e. the favicon.
  *
- * This is the *only* correct way to show the logo. The previous pattern —
- * wrapping the bare glyph in a `bg-primary text-primary-foreground` chip —
- * repainted the mark from the active skin, so it came out navy under win98 and,
- * worse, near-black-on-violet in every dark mode (`--primary-foreground` is a
- * dark ink there, since its job is to sit on top of a light primary). The tab
- * showed one logo and the header showed another.
- *
- * Brand paint therefore lives in the `brand-tile` utility (app/globals.css),
- * literal and skin-independent, mirroring the gradient in `app/icon.svg`:
- * the corner radius here (22%) is the CSS equivalent of that file's `rx="7"`
- * on a 32-wide tile. Pass a size through `className` (`size-9`, `size-6`, …);
- * the glyph fills the tile and keeps the favicon's proportions at every size.
+ * A picture rather than paint: the icon is the same object the desktop app and
+ * the browser tab show (public/icon.svg and public/apple-icon.png are rendered
+ * from the same source), so it never re-tints per skin. The image already
+ * carries its own rounded tile with transparent corners, so nothing here adds a
+ * background, ring or radius. Pass a size through `className` (`size-9`,
+ * `size-6`, ...).
  */
 export function BrandTile({ className }: { className?: string }) {
   return (
-    <span
+    <img
+      src={modlightIcon}
+      alt=""
       aria-hidden="true"
-      className={cn(
-        "brand-tile grid shrink-0 place-items-center overflow-hidden rounded-[22%] shadow-sm ring-1 ring-white/15 ring-inset",
-        className,
-      )}
-    >
-      <ModlightGlyph className="size-full" />
-    </span>
+      draggable={false}
+      decoding="async"
+      className={cn("shrink-0 select-none", className)}
+    />
   );
 }
 

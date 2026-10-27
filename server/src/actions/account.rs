@@ -1371,9 +1371,9 @@ mod tests {
 
     #[test]
     fn the_prototype_quirk_of_resolve_theme() {
-        assert_eq!(resolve_theme_result(Some("modern")).unwrap(), "default");
-        assert_eq!(resolve_theme_result(Some("nope")).unwrap(), "discord");
-        assert_eq!(resolve_theme_result(None).unwrap(), "discord");
+        assert_eq!(resolve_theme_result(Some("modern")).unwrap(), "graphite");
+        assert_eq!(resolve_theme_result(Some("nope")).unwrap(), "graphite");
+        assert_eq!(resolve_theme_result(None).unwrap(), "graphite");
         assert!(resolve_theme_result(Some("toString")).is_err());
         assert!(resolve_theme_result(Some("__proto__")).is_err());
     }
