@@ -61,6 +61,11 @@ jsonwebtoken = "9"
 aes-gcm = "0.10"
 sha1 = "0.10"
 hkdf = "0.12"
+# Per-account file encryption (src/vault/, docs/ENCRYPTION.md): the account
+# key pair, the password KDF and wiping key material from memory.
+x25519-dalek = { version = "2.0.1", features = ["static_secrets", "zeroize"] }
+argon2 = { version = "0.5.3", default-features = false, features = ["alloc", "zeroize"] }
+zeroize = { version = "1.8", features = ["derive"] }
 unicode-normalization = "0.1"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "hostname", "tokio1-rustls-tls"] }
 # Optional Cloudflare Turnstile (src/turnstile.rs): the siteverify call over

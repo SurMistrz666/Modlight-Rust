@@ -21,6 +21,10 @@ struct AdminUserFilesProps {
     view: &'static str,
     trashed: bool,
     data: AdminFilesView,
+    /// Not upstream: the account encrypts its files (docs/ENCRYPTION.md);
+    /// absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encryption: Option<String>,
 }
 
 pub async fn load(ctx: PageCtx) -> PageResult {
@@ -44,5 +48,6 @@ pub async fn load(ctx: PageCtx) -> PageResult {
         .await?
         .ok_or(PageError::NotFound)?;
     let title = ctx.t("admin").t("files.pageTitle");
-    PageData::new(&AdminUserFilesProps { search, sort, kind, view, trashed, data }, PageMeta::titled(title))
+    let encryption = crate::vault::store::load(&ctx.state.db, &id).await?.map(|v| v.state);
+    PageData::new(&AdminUserFilesProps { search, sort, kind, view, trashed, data, encryption }, PageMeta::titled(title))
 }

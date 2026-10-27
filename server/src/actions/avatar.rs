@@ -152,7 +152,23 @@ async fn set_avatar_from_upload(ctx: ActionCtx) -> ActionResult {
         return refused("too-large");
     }
     let storage = ctx.state.storage.get()?;
-    let Ok(input) = storage.read_buffer(&storage_key).await else {
+    // Not upstream: a file of an encrypted account is read only through this
+    // browser's grant (docs/ENCRYPTION.md); the avatar itself is public.
+    let full: Option<crate::db::models::Upload> =
+        crate::data::uploads::get_upload(db, id.parse().map_err(anyhow::Error::from)?).await?;
+    let vault = crate::vault::store::load(db, &session.user.id).await?.map(|v| v.state);
+    let readable = match full.as_ref() {
+        Some(row) => {
+            crate::vault::access::open_files(&ctx.state, &ctx.headers, &session.user.id, vault.as_deref(), &[row])
+                .await?
+        }
+        None => None,
+    };
+    let Some(readable) = readable else {
+        return refused("not-found");
+    };
+    let reader = readable.storage.get()?;
+    let Ok(input) = reader.read_buffer(&storage_key).await else {
         // The row exists but its bytes do not.
         return refused("not-found");
     };

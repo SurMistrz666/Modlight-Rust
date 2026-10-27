@@ -29,6 +29,8 @@ import {
   DefaultFolderSection,
   type FolderOption,
 } from "@/components/profile/TagSection";
+import { EncryptionSettings } from "../../../../encryption/EncryptionSettings";
+import type { VaultStatus } from "../../../../encryption/actions";
 
 export interface ProfilePageProps {
   /** The session user's fields the page reads (session.user) */
@@ -60,6 +62,8 @@ export interface ProfilePageProps {
   avatarUrl: string | null;
   /** backgroundUrl(prefs?.userCode, prefs?.backgroundKey) */
   backgroundUrl: string | null;
+  /** Not upstream: the "File encryption" card (docs/ENCRYPTION.md). */
+  encryption?: VaultStatus;
 }
 /**
  * One labelled band of settings.
@@ -183,6 +187,10 @@ export default function ProfilePage({ props }: { props: ProfilePageProps }) {
           twoFactorEnabled={Boolean(u.twoFactorEnabled)}
           emailVerified={Boolean(u.emailVerified)}
         />
+
+        {/* Not upstream: per-account file encryption. Full width: the list of
+            browsers that remember the password carries long labels. */}
+        <EncryptionSettings initial={props.encryption} />
 
         {/* Full width: one row per session, and the rows carry long strings
             (the raw User-Agent) that a half-width card would only truncate. */}

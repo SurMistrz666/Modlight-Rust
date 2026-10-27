@@ -106,6 +106,10 @@ enum View {
     Encrypted { raw_path: String, cipher_size: i64, created_at: String, views: i32, downloads: i32 },
     #[serde(rename = "media")]
     Media { viewer: Box<ViewerProps> },
+    /// Not upstream: the owner's file vault asks for the file password
+    /// (docs/ENCRYPTION.md). Nothing about the file: not even its name.
+    #[serde(rename = "vault", rename_all = "camelCase")]
+    Vault { media_id: String },
 }
 
 /// `MediaPageProps`: the owner's look, then the view.
@@ -150,7 +154,8 @@ async fn media_metadata(ctx: &PageCtx, found: &MediaLookup) -> PageMeta {
     let owner_base = user_base_url(config, found.owner_preferred_domain.as_deref());
     let page = public_url(&found.owner_user_code, &media.code, &media.ext, &owner_base);
     let raw = raw_url(&found.owner_user_code, &media.code, &media.ext, &owner_base);
-    let has_password = media.password_hash.as_deref().is_some_and(|h| !h.is_empty());
+    // Not upstream: an account's file password hides a file like its own does.
+    let has_password = media.password_hash.as_deref().is_some_and(|h| !h.is_empty()) || media.is_vaulted();
     let hidden = has_password || !media.published;
     // Security fix 1: the opening of a capped file is its content (a short paste
     // is ALL of it), so its card describes it by type and size instead.
@@ -276,6 +281,21 @@ async fn media_page(ctx: &PageCtx, user_code: &str, media_code: &str, search: &S
         return Err(PageError::NotFound);
     }
 
+    // Not upstream: the owner's file vault (docs/ENCRYPTION.md). The unlock
+    // page for everybody without a grant, the owner and administrators
+    // included; no view is counted. With a grant, `keyed` reads the plaintext.
+    let Some(keyed) =
+        crate::vault::access::open_files(state, &ctx.headers, &found.owner_id, found.owner_vault.as_deref(), &[media])
+            .await?
+    else {
+        let props = MediaPageProps {
+            owner_theme: found.owner_theme.clone(),
+            owner_background: found.owner_background.clone(),
+            view: View::Vault { media_id: media.id.to_string() },
+        };
+        return Ok(skin(PageData::new(&props, meta)?));
+    };
+
     let owner_base = user_base_url(&state.config, found.owner_preferred_domain.as_deref());
     let page = public_url(&found.owner_user_code, &media.code, &media.ext, &owner_base);
     let raw = raw_url(&found.owner_user_code, &media.code, &media.ext, &owner_base);
@@ -292,6 +312,7 @@ async fn media_page(ctx: &PageCtx, user_code: &str, media_code: &str, search: &S
         && is_direct_media_bot(Some(&ua))
         && media.published
         && !has_password
+        && !media.is_vaulted()
         && media.max_views.is_none()
         && matches!(kind, MediaKind::Image | MediaKind::Video | MediaKind::Audio)
     {
@@ -384,7 +405,7 @@ async fn media_page(ctx: &PageCtx, user_code: &str, media_code: &str, search: &S
         if inline_text_plan(media.size) == InlineTextPlan::TooLarge {
             text_unavailable = Some("too-large");
         } else {
-            match read_text(ctx, media).await {
+            match read_text(&keyed, media).await {
                 Some(text) => text_content = Some(text),
                 None => text_unavailable = Some("unreadable"),
             }
@@ -474,8 +495,8 @@ fn host_of(u: &url::Url) -> String {
 }
 
 /// The whole object as text (`buf.toString("utf8")`), None when storage fails.
-async fn read_text(ctx: &PageCtx, media: &Upload) -> Option<String> {
-    let storage = ctx.state.storage.get().ok()?;
+async fn read_text(state: &crate::state::AppState, media: &Upload) -> Option<String> {
+    let storage = state.storage.get().ok()?;
     let buf = storage.read_buffer(&media.storage_key).await.ok()?;
     Some(String::from_utf8_lossy(&buf).into_owned())
 }

@@ -53,6 +53,9 @@ pub struct CacheableMedia<'a> {
     pub password_hash: Option<&'a str>,
     pub expires_at: Option<crate::db::types::JsDate>,
     pub max_views: Option<i32>,
+    /// Not upstream: the owner's file vault covers it (docs/ENCRYPTION.md):
+    /// nothing derived from its bytes is ever kept.
+    pub vaulted: bool,
 }
 
 impl<'a> From<&'a crate::db::models::Upload> for CacheableMedia<'a> {
@@ -62,6 +65,7 @@ impl<'a> From<&'a crate::db::models::Upload> for CacheableMedia<'a> {
             password_hash: u.password_hash.as_deref(),
             expires_at: u.expires_at,
             max_views: u.max_views,
+            vaulted: u.is_vaulted(),
         }
     }
 }
@@ -74,6 +78,7 @@ pub fn may_cache_derived(media: CacheableMedia<'_>) -> bool {
         && media.password_hash.is_none_or(str::is_empty)
         && media.expires_at.is_none()
         && media.max_views.is_none()
+        && !media.vaulted
 }
 
 /// sha256 of the bytes, hex. The content half of the address.
@@ -162,11 +167,14 @@ mod tests {
 
     #[test]
     fn what_may_be_cached() {
-        let open = CacheableMedia { published: true, password_hash: None, expires_at: None, max_views: None };
+        let open =
+            CacheableMedia { published: true, password_hash: None, expires_at: None, max_views: None, vaulted: false };
         assert!(may_cache_derived(open));
         assert!(!may_cache_derived(CacheableMedia { published: false, ..open }));
         assert!(!may_cache_derived(CacheableMedia { password_hash: Some("scrypt$..."), ..open }));
         assert!(!may_cache_derived(CacheableMedia { expires_at: Some(crate::db::types::JsDate::now()), ..open }));
         assert!(!may_cache_derived(CacheableMedia { max_views: Some(1), ..open }));
+        // Not upstream: a file of an encrypted account (docs/ENCRYPTION.md).
+        assert!(!may_cache_derived(CacheableMedia { vaulted: true, ..open }));
     }
 }

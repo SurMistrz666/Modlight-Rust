@@ -48,6 +48,9 @@ pub struct MediaLookup {
     pub owner_background: Option<BackgroundStyle>,
     /// Hostname the owner generates links with (None = deployment default).
     pub owner_preferred_domain: Option<String>,
+    /// Not upstream: the owner's file vault state, when there is one
+    /// (`encrypting` | `on` | `decrypting`; docs/ENCRYPTION.md).
+    pub owner_vault: Option<String>,
 }
 
 /// What a public `{userCode}/{code}` resolves to.
@@ -100,15 +103,16 @@ pub async fn lookup_media(db: &PgPool, user_code: &str, media_code: &str) -> any
     let Some(owner_id) = media.owner_id.clone() else {
         return Ok(Lookup::Missing);
     };
-    type OwnerRow = (String, Option<String>, Option<String>, Option<String>, Option<String>, i32);
+    type OwnerRow = (String, Option<String>, Option<String>, Option<String>, Option<String>, i32, Option<String>);
     let owner: Option<OwnerRow> = sqlx::query_as(
-        r#"select "id", "user_code", "theme", "preferred_domain", "background_key", "background_dim"
+        r#"select "id", "user_code", "theme", "preferred_domain", "background_key", "background_dim",
+                  (select "state" from "file_vaults" where "file_vaults"."user_id" = "user"."id") as "vault"
            from "user" where "user"."id" = $1 limit 1"#,
     )
     .bind(&owner_id)
     .fetch_optional(db)
     .await?;
-    let Some((id, owner_code, theme, preferred_domain, background_key, background_dim)) = owner else {
+    let Some((id, owner_code, theme, preferred_domain, background_key, background_dim, vault)) = owner else {
         return Ok(Lookup::Missing);
     };
     // The tag in the URL must belong to the owner - either their current one or a
@@ -144,7 +148,12 @@ pub async fn lookup_media(db: &PgPool, user_code: &str, media_code: &str) -> any
         owner_id: id,
         owner_theme: theme.unwrap_or_else(|| "modern".to_string()),
         owner_preferred_domain: preferred_domain,
-        media: Upload { mime_type: mime, ..media },
+        media: Upload {
+            mime_type: mime,
+            vault_gated: vault.as_deref().and_then(crate::vault::VaultState::parse).is_some_and(|s| s.is_gated()),
+            ..media
+        },
+        owner_vault: vault,
     };
     Ok(if spent { Lookup::Spent(found) } else { Lookup::Live(found) })
 }
@@ -356,7 +365,9 @@ pub fn cache_headers_for(media: &Upload) -> IndexMap<&'static str, String> {
     let restricted = !media.published
         || media.password_hash.as_deref().is_some_and(|h| !h.is_empty())
         || media.expires_at.is_some()
-        || media.max_views.is_some();
+        || media.max_views.is_some()
+        // Not upstream: behind a file password of the whole account.
+        || media.is_vaulted();
     if restricted {
         headers.insert("Cache-Control", "private, no-store".to_string());
         headers.insert("Vary", "Cookie".to_string());

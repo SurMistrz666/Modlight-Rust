@@ -154,8 +154,18 @@ async fn create_paste(ctx: ActionCtx) -> ActionResult {
     let key = crate::media::urls::storage_key_for(&user_code, &code, ext);
     let checksum = crate::media::derived_cache::content_hash(&buf);
     let storage = ctx.state.storage.get()?;
-    let body = buf.clone();
-    storage.write(&key, Box::pin(futures_util::stream::once(async move { Ok(body) }))).await?;
+    // Not upstream: an account with file encryption on stores the paste
+    // encrypted with its public key (docs/ENCRYPTION.md section 5).
+    let sealer =
+        crate::vault::write::sealer_for(&ctx.state.db, &ctx.state.config.auth.secret, &session.user.id).await?;
+    let encryption = match &sealer {
+        Some(sealer) => Some(sealer.write_bytes(storage.as_ref(), &key, buf.clone()).await?),
+        None => {
+            let body = buf.clone();
+            storage.write(&key, Box::pin(futures_util::stream::once(async move { Ok(body) }))).await?;
+            None
+        }
+    };
 
     let filename = format!("{}.{ext}", file_stem(prop(input, "title"))?);
 
@@ -195,11 +205,18 @@ async fn create_paste(ctx: ActionCtx) -> ActionResult {
     let mime_type =
         crate::media::paste_type::paste_mime_type(Some(&lang)).unwrap_or_else(|| "text/plain; charset=utf-8".into());
     let published = !session.user.hide_uploads.unwrap_or(false);
+    let mut tx = ctx.state.db.begin().await?;
+    if let Err(err) =
+        crate::vault::write::confirm_vault_for_write(&mut tx, &session.user.id, encryption.is_some()).await
+    {
+        let _ = storage.delete(&key).await;
+        return Err(err.into());
+    }
     sqlx::query(
         r#"insert into "uploads" ("owner_id", "code", "filename", "ext", "kind", "language", "mime_type", "size",
              "checksum", "storage_key", "published", "delete_token", "expires_at", "password_hash",
-             "password_version", "max_views")
-           values ($1, $2, $3, $4, 'paste', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"#,
+             "password_version", "max_views", "encryption")
+           values ($1, $2, $3, $4, 'paste', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"#,
     )
     .bind(&session.user.id)
     .bind(&code)
@@ -216,8 +233,10 @@ async fn create_paste(ctx: ActionCtx) -> ActionResult {
     .bind(&password_hash)
     .bind(password_version)
     .bind(max_views.map(|v| v as i32))
-    .execute(&ctx.state.db)
+    .bind(&encryption)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     // drizzle's `$onUpdate` stamps `updated_at` on every user update.
     sqlx::query(
         r#"update "user" set "used_quota" = "user"."used_quota" + $1, "updated_at" = $2 where "user"."id" = $3"#,

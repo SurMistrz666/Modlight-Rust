@@ -8,7 +8,7 @@
 // generateMetadata: { title: t("admin.files.pageTitle") }.
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { ArrowLeft, Ban, Eye, HardDrive, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, Ban, Eye, HardDrive, LockKeyhole, ShieldCheck, Trash2 } from "lucide-react";
 import type { AdminFilesView } from "@/lib/data/admin-files";
 import type { FileKind, SortKey } from "@/lib/data/uploads";
 import { humanFileSize } from "@/lib/format";
@@ -21,6 +21,7 @@ import { FileGrid } from "@/components/dashboard/FileGrid";
 import { FileList } from "@/components/dashboard/FileList";
 import { TrashList } from "@/components/dashboard/TrashList";
 import { Pagination } from "@/components/dashboard/Pagination";
+import { AdminVaultNotice } from "../../../../../../../encryption/VaultBanner";
 
 export interface AdminUserFilesPageProps {
   /** first(sp.search)?.trim() || undefined */
@@ -35,6 +36,8 @@ export interface AdminUserFilesPageProps {
   trashed: boolean;
   /** adminUserFiles(session.user.id, id, { page, perPage, search, sort, kind, trashed }) */
   data: AdminFilesView;
+  /** Not upstream: the account's file vault state (docs/ENCRYPTION.md); absent without one. */
+  encryption?: string;
 }
 
 export default function AdminUserFilesPage({ props }: { props: AdminUserFilesPageProps }) {
@@ -74,6 +77,7 @@ export default function AdminUserFilesPage({ props }: { props: AdminUserFilesPag
                   <Ban className="size-3" /> {t("banned")}
                 </Badge>
               ) : null}
+              {props.encryption ? <EncryptedBadge /> : null}
             </div>
             <p className="text-muted-foreground truncate text-sm">{target.email}</p>
           </div>
@@ -99,6 +103,9 @@ export default function AdminUserFilesPage({ props }: { props: AdminUserFilesPag
       <div className="ring-foreground/10 bg-muted/40 rounded-lg px-3 py-2 text-xs leading-relaxed ring-1">
         {t("banner", { name: target.name || target.email })}
       </div>
+
+      {/* Not upstream: why nothing of these files opens (docs/ENCRYPTION.md). */}
+      <AdminVaultNotice encryption={props.encryption} />
 
       <AdminFileToolbar
         search={search ?? ""}
@@ -152,5 +159,15 @@ export default function AdminUserFilesPage({ props }: { props: AdminUserFilesPag
         </div>
       )}
     </div>
+  );
+}
+
+/** Not upstream: the account keeps its files encrypted (docs/ENCRYPTION.md). */
+function EncryptedBadge() {
+  const t = useTranslations("encryption.admin");
+  return (
+    <Badge variant="outline" className="gap-1">
+      <LockKeyhole className="size-3" /> {t("badge")}
+    </Badge>
   );
 }

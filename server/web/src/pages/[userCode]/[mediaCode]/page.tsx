@@ -15,13 +15,17 @@
 // generateMetadata is the Open Graph / Twitter / oEmbed card (lib/media/embed.ts),
 // computed into the payload `meta`.
 //
-// The three views render exactly the upstream JSX.
+// The three views render exactly the upstream JSX. A fourth, "vault", is not
+// upstream: the owner keeps their files encrypted and this browser has not
+// entered the file password (docs/ENCRYPTION.md); nothing about the file is
+// in the payload but its id.
 import { config } from "@/lib/config";
 import type { BackgroundStyle } from "@/lib/background";
 import { MediaViewer, type MediaViewerProps } from "@/components/viewer/MediaViewer";
 import { EncryptedViewer } from "@/components/viewer/EncryptedViewer";
 import { PasswordGate } from "@/components/viewer/PasswordGate";
 import { ThemeApplier } from "@/components/theme-applier";
+import { VaultGate } from "../../../encryption/VaultGate";
 
 interface OwnerLook {
   /** found.ownerTheme (getMedia: owner.theme ?? "modern") */
@@ -55,6 +59,12 @@ export type MediaPageProps = OwnerLook &
         /** Every prop upstream passes to <MediaViewer> (createdAt as a Date). */
         viewer: MediaViewerProps;
       }
+    | {
+        /** Not upstream: the owner's file password (docs/ENCRYPTION.md). */
+        view: "vault";
+        /** media.id */
+        mediaId: string;
+      }
   );
 
 export default function MediaPage({ props }: { props: MediaPageProps }) {
@@ -69,6 +79,15 @@ export default function MediaPage({ props }: { props: MediaPageProps }) {
           appName={config.appName}
           onDefaultPassword={props.onDefaultPassword}
         />
+      </CenteredShell>
+    );
+  }
+
+  if (props.view === "vault") {
+    return (
+      <CenteredShell>
+        <ThemeApplier theme={ownerTheme} background={ownerBackground} />
+        <VaultGate target={{ mediaId: props.mediaId }} kind="file" appName={config.appName} />
       </CenteredShell>
     );
   }

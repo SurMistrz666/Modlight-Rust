@@ -43,6 +43,7 @@ Contents
 | `src/runtime/` | Tagged JSON, the `/_page` and `/_rpc` clients, the translations the root layout delivers, navigation, Next-compatible redirect/not-found errors. |
 | `src/contract/` | TypeScript types of the layout data, the route table (page ids as in `server/src/pages/table.rs`, plus the route handlers and files the server answers itself), and the drizzle row shapes that cross the wire. |
 | `src/turnstile/` | Not upstream: the optional Cloudflare Turnstile widget (`widget.tsx`: script loader, `useCaptcha()`), the admin card (`TurnstileSettings.tsx`) and the stubs of the server's `turnstile` actions (`actions.ts`). Section 11. |
+| `src/encryption/` | Not upstream: per-account file encryption (the Settings card, the unlock page, the library banner, the admin note, the stubs of the server's `encryption` actions). Section 11 and `docs/ENCRYPTION.md`. |
 | `fixtures/` | Example payloads for every page (`fixtures/pages/*.json`), shared layout data (`fixtures/layouts.json`) and canned action answers (`fixtures/actions.json`). They double as worked examples of section 6. The root layout's `messages` are filled in from `server/messages/` (the server's own copy of upstream `messages/`). |
 | `tests/` | vitest + jsdom: `smoke.test.tsx` mounts every fixture page; `runtime.test.tsx` pins the wire formats; `route-table.test.ts` checks the route table against `server/src/pages/table.rs` and the server's matching tests; `turnstile.test.tsx` the optional Turnstile widget and its header (section 11). |
 | `scripts/` | `sync-upstream.mjs`, `gen-actions.mjs`, `gen-type-mirrors.mjs`, `audit-bundle.mjs`, `size-report.mjs`. |
@@ -4624,6 +4625,32 @@ nothing below happens and the forms behave exactly as upstream's.
   upstream).
 - Translations: `server/messages/<locale>/turnstile.json`, a namespace of its
   own, so upstream's files stay verbatim.
+
+**Not upstream: per-account file encryption** (`server/src/vault/`,
+`docs/ENCRYPTION.md`, SKELETON.md section 9 item 46). For an account without a
+vault every payload is upstream's (the new props are absent), except the
+Settings page's `encryption` prop, which is always sent.
+
+- `src/encryption/`: the stubs of the server's `encryption` actions
+  (`actions.ts`: `loadEncryptionStatus`, `enableEncryption`, `unlockMyFiles`,
+  `lockMyFiles`, `changeFilePassword`, `disableEncryption`, `revokeVaultGrant`,
+  `revokeAllVaultGrants`, `unlockOwnerFiles`; failures come back as
+  `{ok: false, reason}`), the Settings card (`EncryptionSettings.tsx`), the
+  unlock page (`VaultGate.tsx`), the library banner and the admin note
+  (`VaultBanner.tsx`).
+- Payload additions: `/dashboard/profile` `encryption: VaultStatus` (section
+  6.18; `{state: "off"|"encrypting"|"on"|"decrypting", unlocked, progress:
+  {done, total}, error, since, grants: [{id, kind: "owner"|"visitor"|"app",
+  label, ip, createdAt, lastUsedAt, expiresAt, current}], minLength}`);
+  `/dashboard` `vault?: {state, unlocked}`; the media page's fourth view
+  `{view: "vault", mediaId}` (section 6.27; nothing else about the file);
+  `/u/[userCode]` and `/a/[userCode]/[slug]` `vault?: {locked, tag}` with
+  empty `items`/`tiles` while locked; `/dashboard/admin/users/[id]/files`
+  `encryption?: string`; Admin -> Users rows `encryption?: string`.
+- Ports: `components/admin/UserManager.tsx` (`src/overrides/`, one badge and
+  one import path), and the pages above (lines marked "Not upstream").
+- Translations: `server/messages/<locale>/encryption.json`, a namespace of its
+  own (the 20th client namespace).
 
 **Not upstream: the Graphite skin and layout** (the default skin).
 

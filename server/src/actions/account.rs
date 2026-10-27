@@ -930,7 +930,10 @@ pub async fn admin_user_rows(db: &PgPool) -> anyhow::Result<Vec<AdminUserRow>> {
     // One query for the whole table rather than one per row: the badge is
     // cosmetic and must not cost a round trip per account.
     let invited = crate::invites::pending_invite_user_ids(db);
-    let (users, counts, invited) = tokio::try_join!(users, counts, invited)?;
+    // Not upstream: which accounts encrypt their files (docs/ENCRYPTION.md).
+    let vaults = async { crate::vault::store::all_vaults(db).await };
+    let (users, counts, invited, vaults) = tokio::try_join!(users, counts, invited, vaults)?;
+    let vaults: std::collections::HashMap<String, String> = vaults.into_iter().collect();
 
     let by_owner: std::collections::HashMap<String, i64> =
         counts.into_iter().map(|(owner, n)| (owner, i64::from(n))).collect();
@@ -941,6 +944,7 @@ pub async fn admin_user_rows(db: &PgPool) -> anyhow::Result<Vec<AdminUserRow>> {
                 avatar: avatar_url(tag.as_deref(), image.as_deref()),
                 files: by_owner.get(&id).copied().unwrap_or(0),
                 invite_pending: invited.contains(&id),
+                encryption: vaults.get(&id).cloned(),
                 id,
                 name,
                 email,

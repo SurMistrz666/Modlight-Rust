@@ -7,6 +7,7 @@ pub mod background;
 pub mod client_settings;
 pub mod downloads;
 pub mod duplicates;
+pub mod encryption;
 pub mod folders;
 pub mod health;
 pub mod link_info;

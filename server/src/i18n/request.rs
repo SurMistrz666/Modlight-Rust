@@ -66,6 +66,9 @@ pub const NAMESPACES: &[&str] = &[
     "authorizePickup",
     // Not upstream: Downloads, the desktop app's builds (src/downloads.rs).
     "downloads",
+    // Not upstream: per-account file encryption (src/vault/, docs/ENCRYPTION.md):
+    // the Settings card, the unlock pages, the library banner, the admin notes.
+    "encryption",
 ];
 
 /// The resolution rule itself, on plain values.

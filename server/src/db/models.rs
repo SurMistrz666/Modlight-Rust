@@ -223,11 +223,35 @@ pub struct Upload {
     pub original_ext: Option<String>,
     pub duration_seconds: Option<f64>,
     pub fps: Option<f64>,
+    /// Not upstream (0016, docs/ENCRYPTION.md): the header of the stored
+    /// ciphertext (`vault::cipher::CipherHeader`), NULL for a plaintext object.
+    /// Never sent to a client.
+    #[serde(default, skip_serializing)]
+    pub encryption: Option<String>,
+    /// Not a column: the owner's file vault asks for the password (state
+    /// `encrypting` or `on`), as `media::serve::lookup_media` found it. Every
+    /// file of such an account is gated, cached privately and never derived
+    /// into a cache, whether or not its own object is encrypted yet.
+    #[sqlx(skip)]
+    #[serde(skip)]
+    pub vault_gated: bool,
+}
+
+impl Upload {
+    /// The stored object is ciphertext of the owner's file vault.
+    pub fn is_encrypted(&self) -> bool {
+        self.encryption.as_deref().is_some_and(|e| !e.is_empty())
+    }
+
+    /// Its bytes are behind the owner's file password (or are ciphertext).
+    pub fn is_vaulted(&self) -> bool {
+        self.vault_gated || self.is_encrypted()
+    }
 }
 
 impl Columns for Upload {
     const TABLE: &'static str = "\"uploads\"";
-    const COLUMNS: &'static str = "\"id\", \"owner_id\", \"code\", \"filename\", \"ext\", \"kind\", \"language\", \"mime_type\", \"size\", \"storage_key\", \"checksum\", \"width\", \"height\", \"blurhash\", \"thumb_key\", \"published\", \"delete_token\", \"views\", \"downloads\", \"last_accessed_at\", \"expires_at\", \"max_views\", \"password_hash\", \"folder_id\", \"deleted_at\", \"created_at\", \"updated_at\", \"password_version\", \"frames\", \"converted_at\", \"original_ext\", \"duration_seconds\", \"fps\"";
+    const COLUMNS: &'static str = "\"id\", \"owner_id\", \"code\", \"filename\", \"ext\", \"kind\", \"language\", \"mime_type\", \"size\", \"storage_key\", \"checksum\", \"width\", \"height\", \"blurhash\", \"thumb_key\", \"published\", \"delete_token\", \"views\", \"downloads\", \"last_accessed_at\", \"expires_at\", \"max_views\", \"password_hash\", \"folder_id\", \"deleted_at\", \"created_at\", \"updated_at\", \"password_version\", \"frames\", \"converted_at\", \"original_ext\", \"duration_seconds\", \"fps\", \"encryption\"";
 }
 
 /// `folders`: the single organisational unit (nesting via `parent_id`).
@@ -394,6 +418,71 @@ pub struct Release {
 impl Columns for Release {
     const TABLE: &'static str = "\"releases\"";
     const COLUMNS: &'static str = "\"id\", \"platform\", \"arch\", \"version\", \"build\", \"built\", \"published\", \"size\", \"sha256\", \"filename\", \"uploader\", \"note\"";
+
+// ── Not upstream: per-account file encryption (0016, docs/ENCRYPTION.md) ────
+
+/// `file_vaults`: one row per account whose files are (being) encrypted.
+#[derive(Debug, Clone, PartialEq, FromRow)]
+pub struct FileVault {
+    pub user_id: String,
+    /// 'encrypting' | 'on' | 'decrypting'
+    pub state: String,
+    pub public_key: Vec<u8>,
+    /// HMAC of the public key under the server key.
+    pub public_key_mac: Vec<u8>,
+    /// The private key under the Argon2id key of the file password.
+    pub wrapped_key: Vec<u8>,
+    pub kdf_salt: Vec<u8>,
+    pub kdf_memory_kib: i32,
+    pub kdf_iterations: i32,
+    pub kdf_parallelism: i32,
+    /// Bumped by every password change; grants of older generations are dead.
+    pub generation: i32,
+    /// Only while 'decrypting': the private key in the secret box.
+    pub job_key: Option<String>,
+    pub job_error: Option<String>,
+    pub created_at: JsDate,
+    pub updated_at: JsDate,
+}
+
+impl Columns for FileVault {
+    const TABLE: &'static str = "\"file_vaults\"";
+    const COLUMNS: &'static str = "\"user_id\", \"state\", \"public_key\", \"public_key_mac\", \"wrapped_key\", \"kdf_salt\", \"kdf_memory_kib\", \"kdf_iterations\", \"kdf_parallelism\", \"generation\", \"job_key\", \"job_error\", \"created_at\", \"updated_at\"";
+}
+
+/// `vault_grants`: one browser or app that unlocked an account's files.
+#[derive(Debug, Clone, PartialEq, FromRow)]
+pub struct VaultGrant {
+    pub id: Uuid,
+    pub user_id: String,
+    /// 'owner' | 'visitor' | 'app'
+    pub kind: String,
+    pub generation: i32,
+    /// The private key under the key derived from the grant's secret.
+    pub wrapped_key: Vec<u8>,
+    pub label: Option<String>,
+    pub ip: Option<String>,
+    pub created_at: JsDate,
+    pub expires_at: JsDate,
+    pub last_used_at: Option<JsDate>,
+}
+
+impl Columns for VaultGrant {
+    const TABLE: &'static str = "\"vault_grants\"";
+    const COLUMNS: &'static str = "\"id\", \"user_id\", \"kind\", \"generation\", \"wrapped_key\", \"label\", \"ip\", \"created_at\", \"expires_at\", \"last_used_at\"";
+}
+
+/// `vault_cleanup`: stored objects an encryption pass still has to delete.
+#[derive(Debug, Clone, PartialEq, FromRow)]
+pub struct VaultCleanup {
+    pub storage_key: String,
+    pub user_id: Option<String>,
+    pub created_at: JsDate,
+}
+
+impl Columns for VaultCleanup {
+    const TABLE: &'static str = "\"vault_cleanup\"";
+    const COLUMNS: &'static str = "\"storage_key\", \"user_id\", \"created_at\"";
 }
 
 // ── drizzle's own bookkeeping ───────────────────────────────────────────────
@@ -431,5 +520,8 @@ pub const ALL_TABLES: &[(&str, &str)] = &[
     (ClientSettings::TABLE, ClientSettings::COLUMNS),
     (DuplicateDismissal::TABLE, DuplicateDismissal::COLUMNS),
     (Release::TABLE, Release::COLUMNS),
+    (FileVault::TABLE, FileVault::COLUMNS),
+    (VaultGrant::TABLE, VaultGrant::COLUMNS),
+    (VaultCleanup::TABLE, VaultCleanup::COLUMNS),
     (DrizzleMigration::TABLE, DrizzleMigration::COLUMNS),
 ];

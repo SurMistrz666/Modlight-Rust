@@ -1,0 +1,23 @@
+{
+  "url": "/alicja/vaulted.png?__fixture=media-vault",
+  "payload": {
+    "route": "/[userCode]/[mediaCode]",
+    "params": {
+      "userCode": "alicja",
+      "mediaCode": "vaulted.png"
+    },
+    "layouts": "$root",
+    "props": {
+      "ownerTheme": "graphite",
+      "ownerBackground": null,
+      "view": "vault",
+      "mediaId": "aaaaaaaa-0000-4000-8000-000000000009"
+    },
+    "meta": {
+      "title": "Modlight",
+      "description": null,
+      "applicationName": null,
+      "robots": "noindex, nofollow"
+    }
+  }
+}

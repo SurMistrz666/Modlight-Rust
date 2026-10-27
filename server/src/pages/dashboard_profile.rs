@@ -74,6 +74,8 @@ pub struct ProfileProps {
     pub folders: Vec<FolderOption>,
     pub avatar_url: Option<String>,
     pub background_url: Option<String>,
+    /// Not upstream: the "File encryption" card (docs/ENCRYPTION.md).
+    pub encryption: crate::vault::status::VaultStatus,
 }
 
 /// Depth-first flatten so the select can indent nested folders.
@@ -103,6 +105,7 @@ pub async fn load(ctx: PageCtx) -> PageResult {
         url_prefs(db, &ctx.state.config, &u.id),
         list_my_sessions(db, &session),
     )?;
+    let encryption = crate::vault::status::vault_status(&ctx.state, &ctx.headers, &u.id).await?;
 
     let props = ProfileProps {
         u: ProfileUser {
@@ -136,6 +139,7 @@ pub async fn load(ctx: PageCtx) -> PageResult {
         url_prefs,
         sessions,
         folders: flatten_folders(&tree, 0),
+        encryption,
     };
     PageData::new(&props, PageMeta::titled("Profile"))
 }

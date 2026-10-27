@@ -77,8 +77,35 @@ async fn zip(
         if f.is_empty() { "folder".to_string() } else { f }
     };
 
+    // Not upstream: the owner's file vault (docs/ENCRYPTION.md). The archive
+    // carries every file's content, so it needs the owner's grant, and its
+    // encrypted items are read through a view that decrypts them.
+    let owner_vault = crate::vault::store::load(&state.db, &data.owner.id).await?.map(|v| v.state);
+    let sql = format!(r#"select {} from {} where "uploads"."id" = any($1)"#, Upload::COLUMNS, Upload::TABLE);
+    let rows: Vec<Upload> = if owner_vault.is_some() {
+        let ids: Vec<Uuid> = items.iter().map(|i| i.id).collect();
+        sqlx::query_as(&sql).bind(&ids).fetch_all(&state.db).await?
+    } else {
+        Vec::new()
+    };
+    let refs: Vec<&Upload> = rows.iter().collect();
+    let Some(keyed) =
+        crate::vault::access::open_files(&state, req.headers(), &data.owner.id, owner_vault.as_deref(), &refs).await?
+    else {
+        let tag = data.owner.user_code.clone().unwrap_or_default();
+        let next = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
+        return Ok(crate::vault::gate::locked_response(&state, req.headers(), &tag, &next));
+    };
+    // The keys of the rows the view was built from (a row the pass rewrote in
+    // between is read at its new key).
+    for item in items.iter_mut() {
+        if let Some(row) = rows.iter().find(|r| r.id == item.id) {
+            item.storage_key = row.storage_key.clone();
+        }
+    }
+
     let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Bytes>>(4);
-    let storage = state.storage.clone();
+    let storage = keyed.storage.clone();
     tokio::spawn(async move {
         if let Err(err) = build_archive(&storage, &items, &tx).await {
             // The client sees the connection cut rather than a corrupt or

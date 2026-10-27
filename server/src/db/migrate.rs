@@ -160,7 +160,11 @@ mod tests {
     #[test]
     fn reads_the_shipped_journal() {
         let files = read_migration_files(&Paths::crate_dir().migrations).unwrap();
-        assert_eq!(files.len(), 16);
+        // 0000..0016: 0015 (releases, Downloads) and 0016 (per-account file
+        // encryption) are not upstream.
+        assert_eq!(files.len(), 17);
+        assert_eq!(files[15].tag, "0015_releases");
+        assert_eq!(files[16].tag, "0016_file_vaults");
         assert_eq!(files[0].tag, "0000_init_folders_naming");
         assert_eq!(files[0].folder_millis, 1785441450828);
         assert_eq!(files[13].tag, "0013_upload_av_metadata");

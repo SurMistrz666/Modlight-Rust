@@ -84,6 +84,9 @@ pub struct ConvertInPlaceInput {
     pub mode: ConvertMode,
     pub actor: ConvertActor,
     pub signal: Option<AbortSignal>,
+    /// Not upstream: the request's headers, where the file vault's grant is
+    /// (docs/ENCRYPTION.md). None reads like a request without one.
+    pub headers: Option<std::sync::Arc<axum::http::HeaderMap>>,
 }
 
 /// Largest result we will read back into memory to measure (dimensions,
@@ -98,7 +101,7 @@ fn failed(upload_id: &str, reason: ConvertFailure) -> ConvertOutcome {
 /// `convertUploadInPlace(input)`. Errors are what upstream let escape: a
 /// database error reading the row, or allocating a code for a copy.
 pub async fn convert_upload_in_place(state: &AppState, input: ConvertInPlaceInput) -> anyhow::Result<ConvertOutcome> {
-    let ConvertInPlaceInput { upload_id, to, mode, actor, signal } = input;
+    let ConvertInPlaceInput { upload_id, to, mode, actor, signal, headers } = input;
 
     // `$1::uuid`: node-postgres sends the id untyped and Postgres infers the
     // column's type, so a malformed id is the same error ("invalid input
@@ -117,6 +120,31 @@ pub async fn convert_upload_in_place(state: &AppState, input: ConvertInPlaceInpu
     if !is_admin && media.owner_id.as_deref().is_none_or(|o| o.is_empty() || o != actor.id) {
         return Ok(failed(&id, ConvertFailure::Forbidden));
     }
+
+    // Not upstream: an encrypted account's file is read only with its grant
+    // (the owner's browser), and the result is stored encrypted.
+    let vault = match media.owner_id.as_deref().filter(|o| !o.is_empty()) {
+        Some(owner) => crate::vault::store::load(&state.db, owner).await?,
+        None => None,
+    };
+    let sealer = match vault.as_ref() {
+        Some(v) if crate::vault::store::state_of(v).is_some_and(crate::vault::VaultState::is_gated) => {
+            Some(crate::vault::write::Sealer::from_vault(&state.config.auth.secret, v)?)
+        }
+        _ => None,
+    };
+    let reading_state = if vault.is_some() || media.is_encrypted() {
+        let empty = axum::http::HeaderMap::new();
+        let headers = headers.as_deref().unwrap_or(&empty);
+        let access = crate::vault::access::access_with(state, headers, vault.as_ref()).await?;
+        if access.is_locked() || (media.is_encrypted() && access.secret().is_none()) {
+            return Ok(failed(&id, ConvertFailure::Forbidden));
+        }
+        crate::vault::view::readable(state, access.secret(), &[&media])?
+    } else {
+        state.clone()
+    };
+    let state = &reading_state;
 
     let candidate = ConvertCandidate::from(&media);
     let (engine, _ext, _mime) = match plan_conversion(&candidate, &to, mode, JsDate::now()) {
@@ -182,9 +210,9 @@ pub async fn convert_upload_in_place(state: &AppState, input: ConvertInPlaceInpu
     };
 
     let outcome = if mode == ConvertMode::Copy {
-        commit_copy(state, &media, &produced).await
+        commit_copy(state, &media, &produced, sealer.as_ref()).await
     } else {
-        commit_replace(state, &media, &produced).await
+        commit_replace(state, &media, &produced, sealer.as_ref()).await
     };
     produced.dispose().await;
     outcome
@@ -432,21 +460,34 @@ fn to_bytes(produced: &Produced, storage_key: String) -> ConvertedBytes {
     }
 }
 
-async fn commit_replace(state: &AppState, media: &Upload, produced: &Produced) -> anyhow::Result<ConvertOutcome> {
+async fn commit_replace(
+    state: &AppState,
+    media: &Upload,
+    produced: &Produced,
+    sealer: Option<&crate::vault::write::Sealer>,
+) -> anyhow::Result<ConvertOutcome> {
     let id = media.id.to_string();
-    let stored = match store_produced(state, produced, &swap_key_ext(&media.storage_key, &produced.ext)).await {
-        None => return Ok(failed(&id, ConvertFailure::NoSpace)),
-        Some(Err(reason)) => return Ok(failed(&id, reason)),
-        Some(Ok(key)) => key,
-    };
-    let patch = conversion_row_patch(
+    let (stored, encryption) =
+        match store_produced(state, produced, &swap_key_ext(&media.storage_key, &produced.ext), sealer).await {
+            None => return Ok(failed(&id, ConvertFailure::NoSpace)),
+            Some(Err(reason)) => return Ok(failed(&id, reason)),
+            Some(Ok(stored)) => stored,
+        };
+    let mut patch = conversion_row_patch(
         &PatchSource { ext: Some(&media.ext), filename: &media.filename, original_ext: media.original_ext.as_deref() },
         &to_bytes(produced, stored.clone()),
         JsDate::now(),
     );
+    if encryption.is_some() {
+        // Not upstream: no picture of an encrypted file's content.
+        patch.blurhash = None;
+    }
 
     let tx_result: anyhow::Result<i64> = async {
         let mut tx = state.db.begin().await?;
+        if let Some(owner) = media.owner_id.as_deref().filter(|o| !o.is_empty()) {
+            crate::vault::write::confirm_vault_for_write(&mut tx, owner, encryption.is_some()).await?;
+        }
         let locked: Option<(String, i64, Option<String>)> = sqlx::query_as(
             r#"select "storage_key", "size", "owner_id" from "uploads" where "uploads"."id" = $1 limit 1 for update"#,
         )
@@ -469,7 +510,7 @@ async fn commit_replace(state: &AppState, media: &Upload, produced: &Produced) -
         if let Some(owner) = owner_id.as_deref().filter(|o| !o.is_empty()) {
             charge_quota(&mut tx, owner, delta).await?;
         }
-        let updated = apply_patch(&mut tx, media, &patch).await?;
+        let updated = apply_patch(&mut tx, media, &patch, encryption.as_deref()).await?;
         if updated == 0 {
             return Err(ConvertAbort(ConvertFailure::Conflict).into());
         }
@@ -520,11 +561,13 @@ async fn apply_patch(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     media: &Upload,
     p: &ConversionRowPatch,
+    encryption: Option<&str>,
 ) -> anyhow::Result<u64> {
     let rows = sqlx::query(
         r#"update "uploads" set "ext" = $1, "mime_type" = $2, "size" = $3, "storage_key" = $4, "checksum" = $5,
              "width" = $6, "height" = $7, "frames" = $8, "duration_seconds" = $9, "fps" = $10, "blurhash" = $11,
-             "thumb_key" = $12, "filename" = $13, "converted_at" = $14, "original_ext" = $15, "updated_at" = $16
+             "thumb_key" = $12, "filename" = $13, "converted_at" = $14, "original_ext" = $15, "updated_at" = $16,
+             "encryption" = $19
            where ("uploads"."id" = $17 and "uploads"."storage_key" = $18) returning "id""#,
     )
     .bind(&p.ext)
@@ -545,12 +588,18 @@ async fn apply_patch(
     .bind(p.updated_at)
     .bind(media.id)
     .bind(&media.storage_key)
+    .bind(encryption)
     .fetch_all(&mut **tx)
     .await?;
     Ok(rows.len() as u64)
 }
 
-async fn commit_copy(state: &AppState, media: &Upload, produced: &Produced) -> anyhow::Result<ConvertOutcome> {
+async fn commit_copy(
+    state: &AppState,
+    media: &Upload,
+    produced: &Produced,
+    sealer: Option<&crate::vault::write::Sealer>,
+) -> anyhow::Result<ConvertOutcome> {
     let source_id = media.id.to_string();
     let Some(owner_id) = media.owner_id.clone().filter(|o| !o.is_empty()) else {
         return Ok(failed(&source_id, ConvertFailure::Forbidden));
@@ -565,23 +614,26 @@ async fn commit_copy(state: &AppState, media: &Upload, produced: &Produced) -> a
     let code = allocate_code_for(&state.db, &owner, &filename).await?;
     let key = storage_key_for(owner.user_code.as_deref().unwrap_or("u"), &code, &produced.ext);
 
-    let stored = match store_produced(state, produced, &key).await {
+    let (stored, encryption) = match store_produced(state, produced, &key, sealer).await {
         None => return Ok(failed(&source_id, ConvertFailure::NoSpace)),
         Some(Err(reason)) => return Ok(failed(&source_id, reason)),
-        Some(Ok(key)) => key,
+        Some(Ok(stored)) => stored,
     };
+    let blurhash = if encryption.is_some() { None } else { produced.blurhash.clone() };
 
     let created: anyhow::Result<String> = async {
         let mut tx = state.db.begin().await?;
+        crate::vault::write::confirm_vault_for_write(&mut tx, &owner_id, encryption.is_some()).await?;
         // A copy is a whole new file, so it is charged in full - the same
         // conditional UPDATE the upload path uses.
         charge_quota(&mut tx, &owner_id, produced.size as i64).await?;
         let id: uuid::Uuid = sqlx::query_scalar(
             r#"insert into "uploads" ("owner_id", "code", "filename", "ext", "kind", "language", "mime_type", "size",
                  "storage_key", "checksum", "width", "height", "blurhash", "published", "delete_token", "expires_at",
-                 "max_views", "password_hash", "folder_id", "password_version", "frames", "converted_at", "original_ext")
+                 "max_views", "password_hash", "folder_id", "password_version", "frames", "converted_at", "original_ext",
+                 "encryption")
                values ($1, $2, $3, $4, 'file', null, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-                 $19, $20, $21)
+                 $19, $20, $21, $22)
                returning "id""#,
         )
         .bind(&owner_id)
@@ -594,7 +646,7 @@ async fn commit_copy(state: &AppState, media: &Upload, produced: &Produced) -> a
         .bind(&produced.checksum)
         .bind(produced.width)
         .bind(produced.height)
-        .bind(&produced.blurhash)
+        .bind(&blurhash)
         // Inherited from the SOURCE ROW, not from the account defaults: the
         // only direction that leaks is a copy of a private file coming out
         // public. The password hash travels WITH its generation; policy
@@ -609,6 +661,7 @@ async fn commit_copy(state: &AppState, media: &Upload, produced: &Produced) -> a
         .bind(produced.frames)
         .bind(JsDate::now())
         .bind(&media.ext)
+        .bind(&encryption)
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -686,7 +739,8 @@ async fn store_produced(
     state: &AppState,
     produced: &Produced,
     preferred_key: &str,
-) -> Option<Result<String, ConvertFailure>> {
+    sealer: Option<&crate::vault::write::Sealer>,
+) -> Option<Result<(String, Option<String>), ConvertFailure>> {
     // Re-checked with the REAL size now that it is known.
     if !has_headroom(state, produced.size as f64).await {
         return None;
@@ -695,6 +749,19 @@ async fn store_produced(
         return Some(Err(ConvertFailure::Storage));
     };
     let key = fresh_key(preferred_key);
+    // Not upstream: the file vault stores the result encrypted (the sealer
+    // verifies what landed itself).
+    if let Some(sealer) = sealer {
+        let written = match (&produced.path, &produced.buffer) {
+            (Some(path), _) => sealer.write_local_file(storage.as_ref(), &key, path).await,
+            (None, Some(buffer)) => sealer.write_bytes(storage.as_ref(), &key, buffer.clone()).await,
+            (None, None) => return Some(Err(ConvertFailure::Storage)),
+        };
+        return Some(match written {
+            Ok(header) => Ok((key, Some(header))),
+            Err(_) => Err(ConvertFailure::Storage),
+        });
+    }
     let written = match (&produced.path, &produced.buffer) {
         (Some(path), _) => storage.ingest_local_file(path, &key).await,
         (None, Some(buffer)) => storage.write(&key, crate::storage::bytes_stream(buffer.clone())).await,
@@ -708,7 +775,7 @@ async fn store_produced(
         let _ = storage.delete(&key).await;
         return Some(Err(ConvertFailure::Storage));
     }
-    Some(Ok(key))
+    Some(Ok((key, None)))
 }
 
 /// `freshKey(preferred)`: a key nothing else can be using, by construction

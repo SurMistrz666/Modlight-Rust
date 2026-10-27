@@ -11,6 +11,8 @@ import { ThemeApplier } from "@/components/theme-applier";
 import type { BackgroundStyle } from "@/lib/background";
 import { PublicGallery } from "@/components/public/PublicGallery";
 import type { PublicTileItem } from "@/components/public/types";
+import { config } from "@/lib/config";
+import { VaultGate } from "../../../../encryption/VaultGate";
 
 export interface AlbumPageProps {
   /** data.folder: the fields the page reads */
@@ -25,6 +27,8 @@ export interface AlbumPageProps {
   background: BackgroundStyle | null;
   /** items mapped to PublicTileItem (id, code, ext, filename, mimeType, size, blurhash) */
   tiles: PublicTileItem[];
+  /** Not upstream: the owner keeps their files encrypted (docs/ENCRYPTION.md). */
+  vault?: { locked: boolean; tag: string };
 }
 
 export default function PublicFolderPage({ props }: { props: AlbumPageProps }) {
@@ -32,6 +36,15 @@ export default function PublicFolderPage({ props }: { props: AlbumPageProps }) {
   const { album, owner, ownerCode, ownerBase, tiles } = props;
   const ownerName = owner.name || t("album.anonymous");
   const count = tiles.length;
+
+  if (props.vault?.locked) {
+    return (
+      <main className="page-surface flex min-h-dvh w-full items-center justify-center px-4 py-10 sm:py-16">
+        <ThemeApplier theme={owner.theme} background={props.background} />
+        <VaultGate target={{ tag: props.vault.tag }} kind="files" appName={config.appName} />
+      </main>
+    );
+  }
 
   return (
     <main className="page-surface relative min-h-dvh w-full overflow-hidden">

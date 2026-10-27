@@ -38,6 +38,10 @@ pub struct AdminUserRow {
     /// a password set (distinct from "no password", also true for accounts
     /// imported without a usable hash).
     pub invite_pending: bool,
+    /// Not upstream: the account's file vault state (`encrypting` | `on` |
+    /// `decrypting`; docs/ENCRYPTION.md); absent for an account without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encryption: Option<String>,
 }
 
 /// Everything the edit form needs on top of what the table shows, loaded per

@@ -45,6 +45,8 @@ const EXPECTED: &[(&str, &[&str])] = &[
     // Not upstream: Downloads. Listing and downloading take any token (identify);
     // publishing and deleting an administrator's `full` one (or the publish token).
     ("src/routes/api/downloads.rs", &["admin", "identify"]),
+    // Not upstream: per-account file encryption (status, the app's unlock).
+    ("src/routes/api/encryption.rs", &["read", "read"]),
 ];
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {

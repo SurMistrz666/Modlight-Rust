@@ -42,6 +42,11 @@ pub enum SecretPurpose {
     RegistrationKey,
     /// Not upstream: the Cloudflare Turnstile secret key (src/turnstile.rs).
     Turnstile,
+    /// Not upstream: per-account file encryption (src/vault/): the server key
+    /// mixed into every unlock grant, the MAC of each account's public key, and
+    /// the private key kept for the decryption pass of an account switching
+    /// encryption off.
+    Vault,
 }
 
 impl SecretPurpose {
@@ -50,6 +55,7 @@ impl SecretPurpose {
             SecretPurpose::Smtp => "smtp",
             SecretPurpose::RegistrationKey => "registration-key",
             SecretPurpose::Turnstile => "turnstile",
+            SecretPurpose::Vault => "vault",
         }
     }
 }
@@ -108,6 +114,12 @@ fn key_for(auth_secret: &str, purpose: SecretPurpose) -> Result<[u8; 32], Secret
     let mut okm = [0u8; 32];
     hk.expand(info.as_bytes(), &mut okm).map_err(|e| SecretBoxError(e.to_string()))?;
     Ok(okm)
+}
+
+/// The 32-byte key of `purpose` itself (not upstream), for a module that needs
+/// key material rather than a sealed string: the file vault's server key.
+pub fn derive_key(auth_secret: &str, purpose: SecretPurpose) -> Result<[u8; 32], SecretBoxError> {
+    key_for(auth_secret, purpose)
 }
 
 /// `encryptSecret(plaintext, purpose)`.

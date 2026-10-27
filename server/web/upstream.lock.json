@@ -12,7 +12,6 @@
     "components/admin/ReleaseChannel.tsx": "964ff82451980b3467e06bb1e80a59e0da737bb0aec82a335f0d2cb3a919c67f",
     "components/admin/SettingsForm.tsx": "6e2a803c99f69947b2216892ae773cccacdec61704d169db784cb52f0dae83db",
     "components/admin/StatsCards.tsx": "24053ba025dc85af4e4f33d2a8749126d048003acef696edd547ff3a57287d60",
-    "components/admin/UserManager.tsx": "acfdfd5aa848055501414abb6f2c466b7f72584be254aa340d46d737a6d1279f",
     "components/admin/UserRowMenu.tsx": "e67877e3ca45bba3417ee535653177dbe698c3a9d8998bd4b78e48523eed0bbd",
     "components/admin/confirm.ts": "f9d92eed66f46049f2d19cc1e6886c0404d793886594e53a57e1d242b0065435",
     "components/auth/auth-card.tsx": "f79fbc7f4926a022648316566ba22e73a8bd2c74bec54e3c24183acdeb6eef57",
@@ -469,6 +468,12 @@
       "sha256": "2d8dbf8ff5c69b6cb48cbeda2353eeede0fe4c7582da70d87e254df5fc768d58",
       "ports": [
         "src/overrides/components/admin/ServerDisk.tsx"
+      ]
+    },
+    "components/admin/UserManager.tsx": {
+      "sha256": "acfdfd5aa848055501414abb6f2c466b7f72584be254aa340d46d737a6d1279f",
+      "ports": [
+        "src/overrides/components/admin/UserManager.tsx"
       ]
     },
     "components/app-shell.tsx": {

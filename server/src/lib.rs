@@ -69,6 +69,7 @@ pub mod themes;
 pub mod turnstile;
 pub mod upload;
 pub mod uploads;
+pub mod vault;
 
 pub use config::Config;
 pub use error::{AppError, AppResult};

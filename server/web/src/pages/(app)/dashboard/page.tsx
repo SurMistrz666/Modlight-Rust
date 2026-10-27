@@ -18,6 +18,7 @@ import { FileList } from "@/components/dashboard/FileList";
 import { Pagination } from "@/components/dashboard/Pagination";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import type { FileItem } from "@/components/dashboard/types";
+import { VaultBanner, type LibraryVault } from "../../../encryption/VaultBanner";
 
 export interface DashboardPageProps {
   /** first(sp.search)?.trim() || undefined */
@@ -58,6 +59,8 @@ export interface DashboardPageProps {
   userCode: string;
   /** user.copyRaw ?? false */
   copyRaw: boolean;
+  /** Not upstream: the account's file vault (docs/ENCRYPTION.md); absent without one. */
+  vault?: LibraryVault;
 }
 
 export default function DashboardPage({ props }: { props: DashboardPageProps }) {
@@ -177,6 +180,9 @@ export default function DashboardPage({ props }: { props: DashboardPageProps }) 
 
         <p className="text-muted-foreground text-sm">{subtitle}</p>
       </div>
+
+      {/* Not upstream: the file password, while this browser lacks it. */}
+      <VaultBanner vault={props.vault} />
 
       <Toolbar
         search={search ?? ""}
