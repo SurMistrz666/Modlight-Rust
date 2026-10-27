@@ -418,6 +418,7 @@ pub struct Release {
 impl Columns for Release {
     const TABLE: &'static str = "\"releases\"";
     const COLUMNS: &'static str = "\"id\", \"platform\", \"arch\", \"version\", \"build\", \"built\", \"published\", \"size\", \"sha256\", \"filename\", \"uploader\", \"note\"";
+}
 
 // ── Not upstream: per-account file encryption (0016, docs/ENCRYPTION.md) ────
 
