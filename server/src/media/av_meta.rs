@@ -171,6 +171,16 @@ pub async fn probe_stored_av_meta_with(
     meta
 }
 
+/// Not upstream: probe a local file (an upload's temp file, read before the
+/// file vault encrypts it; docs/ENCRYPTION.md). Same rules as
+/// [`probe_stored_av_meta`]: None for every reason there is no answer.
+pub async fn probe_local_av_meta(path: &std::path::Path) -> Option<AvMeta> {
+    if !ffmpeg_available().await {
+        return None;
+    }
+    probe_or_none(&path.to_string_lossy(), None).await
+}
+
 async fn probe_or_none(path: &str, signal: Option<AbortSignal>) -> Option<AvMeta> {
     // AvTimeoutError / AvAbortedError / a spawn failure. All of them mean "no
     // answer this time", and none of them is worth failing an upload whose

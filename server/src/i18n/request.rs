@@ -64,6 +64,9 @@ pub const NAMESPACES: &[&str] = &[
     // Not upstream: the desktop sign-in pickup's wording on /authorize
     // (src/authorize/pickup.rs), kept apart for the same reason.
     "authorizePickup",
+    // Not upstream: per-account file encryption (src/vault/, docs/ENCRYPTION.md):
+    // the Settings card, the unlock pages, the library banner, the admin notes.
+    "encryption",
 ];
 
 /// The resolution rule itself, on plain values.

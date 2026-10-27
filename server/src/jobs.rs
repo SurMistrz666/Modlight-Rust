@@ -94,6 +94,9 @@ pub fn start(state: &AppState) -> JoinSet<()> {
             tracing::warn!("[turnstile] could not preload settings: {err}");
         }
     });
+    // Not upstream: the file vault's background pass (docs/ENCRYPTION.md
+    // section 7). It runs its own loop: at boot, when kicked, every 30 s.
+    set.spawn(crate::vault::pass::worker(state.clone()));
     for job in jobs() {
         set.spawn(run_job(state.clone(), job));
     }

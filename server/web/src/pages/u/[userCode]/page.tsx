@@ -13,6 +13,8 @@ import type { BackgroundStyle } from "@/lib/background";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PublicGallery } from "@/components/public/PublicGallery";
 import type { PublicTileItem } from "@/components/public/types";
+import { config } from "@/lib/config";
+import { VaultGate } from "../../../encryption/VaultGate";
 
 const ITEM_LIMIT = 200;
 
@@ -27,12 +29,23 @@ export interface UserGalleryPageProps {
   ownerAvatar: string | null;
   /** backgroundStyle(owner.userCode, owner.backgroundKey, owner.backgroundDim) */
   background: BackgroundStyle | null;
+  /** Not upstream: the owner keeps their files encrypted (docs/ENCRYPTION.md). */
+  vault?: { locked: boolean; tag: string };
 }
 
 export default function UserGalleryPage({ props }: { props: UserGalleryPageProps }) {
   const t = useTranslations("public");
   const { owner, items, ownerBase, ownerAvatar } = props;
   const count = items.length;
+
+  if (props.vault?.locked) {
+    return (
+      <main className="page-surface flex min-h-dvh w-full items-center justify-center px-4 py-10 sm:py-16">
+        <ThemeApplier theme={owner.theme} background={props.background} />
+        <VaultGate target={{ tag: props.vault.tag }} kind="files" appName={config.appName} />
+      </main>
+    );
+  }
 
   return (
     <main className="page-surface text-foreground min-h-dvh w-full">

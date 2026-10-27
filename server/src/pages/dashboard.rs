@@ -135,6 +135,10 @@ struct DashboardProps {
     link_base: String,
     user_code: String,
     copy_raw: bool,
+    /// Not upstream: the account's file vault (docs/ENCRYPTION.md); absent for
+    /// an account without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vault: Option<crate::vault::status::LibraryVault>,
 }
 
 pub async fn load(ctx: PageCtx) -> PageResult {
@@ -244,6 +248,7 @@ pub async fn load(ctx: PageCtx) -> PageResult {
         link_base,
         user_code: user.user_code.clone().unwrap_or_default(),
         copy_raw: user.copy_raw.unwrap_or(false),
+        vault: crate::vault::status::library_vault(&ctx.state, &ctx.headers, &user.id).await?,
     };
     PageData::new(&props, PageMeta::default())
 }

@@ -243,21 +243,38 @@ pub async fn finalize_upload(
         None => allocate_code_for(db, owner, filename).await?,
     };
 
-    // 2) host headroom, before the per-user quota.
-    assert_disk_headroom(config, pending_write_cost(config, &input).await).await?;
+    // Not upstream: an account with file encryption on stores its uploads
+    // encrypted with its public key (docs/ENCRYPTION.md section 5).
+    let sealer = crate::vault::write::sealer_for(db, &config.auth.secret, &owner.id).await?;
+
+    // 2) host headroom, before the per-user quota. An encrypted ingest writes a
+    // whole new copy, never a rename.
+    let cost = if sealer.is_some() && input.local_path.is_some() {
+        input.size
+    } else {
+        pending_write_cost(config, &input).await
+    };
+    assert_disk_headroom(config, cost).await?;
 
     // 3) quota: atomic reserve.
     reserve_quota(db, &owner.id, size).await?;
 
-    let storage_key = match input.existing_key {
-        Some(k) => k.to_string(),
-        None => storage_key_for(owner.user_code.as_deref().unwrap_or("u"), &code, &ext),
+    let storage_key = match (input.existing_key, sealer.is_some()) {
+        (Some(k), false) => k.to_string(),
+        // The ciphertext of an object already in storage goes beside it.
+        _ => storage_key_for(owner.user_code.as_deref().unwrap_or("u"), &code, &ext),
     };
     let mut wrote_bytes = false;
+    let mut encryption: Option<String> = None;
 
     let outcome: Result<FinalizeResult, FinalizeError> = async {
+        // Not upstream: with the vault, the plaintext is described first (from
+        // the temp file, or the object an S3 tus upload left) and encrypted
+        // after; it never lands in storage as it is.
+        let plain = sealer.as_ref().map(|_| PlainSource::of(&input));
+
         // 3) ingest bytes
-        if input.existing_key.is_none() {
+        if plain.is_none() && input.existing_key.is_none() {
             let Some(local) = input.local_path else {
                 return Err(anyhow::anyhow!("finalizeUpload: no source provided").into());
             };
@@ -266,9 +283,10 @@ pub async fn finalize_upload(
         }
 
         // 4) what the file actually IS (signature, extension, client claim).
-        let head = match input.head.as_ref().filter(|h| !h.is_empty()) {
-            Some(h) => h.clone(),
-            None => crate::storage::read_head(storage, &storage_key, 4096).await,
+        let head = match (input.head.as_ref().filter(|h| !h.is_empty()), &plain) {
+            (Some(h), _) => h.clone(),
+            (None, Some(p)) => p.head(storage).await,
+            (None, None) => crate::storage::read_head(storage, &storage_key, 4096).await,
         };
         let mime = resolve_upload_type(UploadTypeInput {
             client_mime: Some(input.mime),
@@ -284,12 +302,17 @@ pub async fn finalize_upload(
         let mut frames: Option<i64> = None;
         if mime.starts_with("image/")
             && size <= IMAGE_META_MAX
-            && let Ok(buf) = storage.read_buffer(&storage_key).await
+            && let Ok(buf) = match &plain {
+                Some(p) => p.whole(storage).await,
+                None => storage.read_buffer(&storage_key).await,
+            }
         {
             let meta = crate::media::image::image_meta_from_buffer(buf).await;
             width = meta.width.map(i64::from);
             height = meta.height.map(i64::from);
-            blurhash = meta.blurhash;
+            // Not upstream: a blurhash is a small picture of the content, never
+            // kept for an encrypted file.
+            blurhash = if plain.is_some() { None } else { meta.blurhash };
             frames = meta.frames.map(i64::from);
         }
 
@@ -298,14 +321,41 @@ pub async fn finalize_upload(
         let mut duration_seconds: Option<f64> = None;
         let mut fps: Option<f64> = None;
         let av_kind = media_kind(Some(&mime), Some(&ext));
-        if (av_kind == MediaKind::Video || av_kind == MediaKind::Audio)
-            && let Some(meta) = crate::media::av_meta::probe_stored_av_meta(storage, &storage_key).await
-        {
+        let av_meta = if av_kind == MediaKind::Video || av_kind == MediaKind::Audio {
+            match &plain {
+                Some(p) => p.av(storage).await,
+                None => crate::media::av_meta::probe_stored_av_meta(storage, &storage_key).await,
+            }
+        } else {
+            None
+        };
+        if let Some(meta) = av_meta {
             width = meta.width.map(i64::from);
             height = meta.height.map(i64::from);
             frames = meta.frames.map(i64::from);
             duration_seconds = meta.duration_seconds;
             fps = meta.fps;
+        }
+
+        // 5c) Not upstream: now the plaintext is encrypted into storage.
+        if let (Some(sealer), Some(p)) = (&sealer, &plain) {
+            let header = match p {
+                PlainSource::Stored(existing) => {
+                    let Some(stat) = storage.stat(existing).await? else {
+                        return Err(anyhow::anyhow!("finalizeUpload: the uploaded object is missing").into());
+                    };
+                    let body = storage.read_stream(existing, None).await?;
+                    sealer.write_stream(storage, &storage_key, body, stat.size).await?
+                }
+                PlainSource::Local(local) => {
+                    let header = sealer.write_local_file(storage, &storage_key, local).await?;
+                    // What the ingest would have done: the temp file is gone.
+                    let _ = tokio::fs::remove_file(local).await;
+                    header
+                }
+            };
+            wrote_bytes = true;
+            encryption = Some(header);
         }
 
         // 6) DB row. The account default password is COPIED onto the file.
@@ -319,11 +369,15 @@ pub async fn finalize_upload(
             Some(explicit) => explicit,
             None => owner.default_folder_id,
         };
+        // Not upstream: the vault is re-read under a lock with the insert, so a
+        // switch on or off that raced with this upload is never missed.
+        let mut tx = db.begin().await?;
+        crate::vault::write::confirm_vault_for_write(&mut tx, &owner.id, encryption.is_some()).await?;
         let (id, folder): (Uuid, Option<Uuid>) = sqlx::query_as(
             r#"insert into "uploads" ("owner_id", "code", "filename", "ext", "mime_type", "size", "storage_key", "checksum",
                                       "width", "height", "frames", "duration_seconds", "fps", "blurhash", "published",
-                                      "delete_token", "password_hash", "password_version", "folder_id")
-               values ($1, $2, $3, $4, $5, $6, $7, $8, $9::int, $10::int, $11::int, $12, $13, $14, $15, $16, $17, $18, $19)
+                                      "delete_token", "password_hash", "password_version", "folder_id", "encryption")
+               values ($1, $2, $3, $4, $5, $6, $7, $8, $9::int, $10::int, $11::int, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                returning "id", "folder_id""#,
         )
         .bind(&owner.id)
@@ -345,8 +399,19 @@ pub async fn finalize_upload(
         .bind(&password_hash)
         .bind(password_version)
         .bind(folder_id)
-        .fetch_one(db)
+        .bind(&encryption)
+        .fetch_one(&mut *tx)
         .await?;
+        tx.commit().await?;
+        // The plaintext an S3 tus upload left in the bucket: its ciphertext now
+        // lives at `storage_key`.
+        if encryption.is_some()
+            && let Some(existing) = input.existing_key
+            && existing != storage_key
+            && let Err(e) = storage.delete(existing).await
+        {
+            tracing::error!("[finalize] plaintext object left after encrypting: {existing} {e:#}");
+        }
 
         let uc = owner.user_code.as_deref().unwrap_or("u");
         let base = user_base_url(config, owner.preferred_domain.as_deref());
@@ -378,6 +443,59 @@ pub async fn finalize_upload(
                 tracing::error!("[finalize] could not release quota reservation: {} {e}", owner.id);
             }
             Err(err)
+        }
+    }
+}
+
+/// Not upstream: where finalize reads an upload's plaintext from when the
+/// file vault will encrypt it (docs/ENCRYPTION.md): the temp file, or the
+/// object an S3 tus upload left in the bucket.
+enum PlainSource<'a> {
+    Local(&'a Path),
+    Stored(&'a str),
+}
+
+impl<'a> PlainSource<'a> {
+    fn of(input: &FinalizeInput<'a>) -> PlainSource<'a> {
+        match (input.existing_key, input.local_path) {
+            (Some(key), _) => PlainSource::Stored(key),
+            (None, Some(path)) => PlainSource::Local(path),
+            // finalize refuses this shape before anything is read.
+            (None, None) => PlainSource::Stored(""),
+        }
+    }
+
+    async fn head(&self, storage: &dyn StorageDriver) -> Bytes {
+        use tokio::io::AsyncReadExt;
+        match self {
+            PlainSource::Stored(key) => crate::storage::read_head(storage, key, 4096).await,
+            PlainSource::Local(path) => {
+                let Ok(mut file) = tokio::fs::File::open(path).await else { return Bytes::new() };
+                let mut buf = vec![0u8; 4096];
+                let mut filled = 0;
+                while filled < buf.len() {
+                    match file.read(&mut buf[filled..]).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => filled += n,
+                    }
+                }
+                buf.truncate(filled);
+                Bytes::from(buf)
+            }
+        }
+    }
+
+    async fn whole(&self, storage: &dyn StorageDriver) -> anyhow::Result<Bytes> {
+        match self {
+            PlainSource::Stored(key) => storage.read_buffer(key).await,
+            PlainSource::Local(path) => Ok(Bytes::from(tokio::fs::read(path).await?)),
+        }
+    }
+
+    async fn av(&self, storage: &dyn StorageDriver) -> Option<crate::media::av_meta::AvMeta> {
+        match self {
+            PlainSource::Stored(key) => crate::media::av_meta::probe_stored_av_meta(storage, key).await,
+            PlainSource::Local(path) => crate::media::av_meta::probe_local_av_meta(path).await,
         }
     }
 }

@@ -178,7 +178,14 @@ async fn convert_one(
     let upload_id = id_string(id)?;
     let outcome = convert_upload_in_place(
         &ctx.state,
-        ConvertInPlaceInput { upload_id, to: to.to_string(), mode, actor: actor.clone(), signal: None },
+        ConvertInPlaceInput {
+            upload_id,
+            to: to.to_string(),
+            mode,
+            actor: actor.clone(),
+            signal: None,
+            headers: Some(ctx.headers.clone()),
+        },
     )
     .await
     .map_err(ActionError::Internal)?;

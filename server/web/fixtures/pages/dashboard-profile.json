@@ -73,7 +73,19 @@
         }
       ],
       "avatarUrl": null,
-      "backgroundUrl": null
+      "backgroundUrl": null,
+      "encryption": {
+        "state": "off",
+        "unlocked": false,
+        "progress": {
+          "done": 0,
+          "total": 0
+        },
+        "error": false,
+        "since": null,
+        "grants": [],
+        "minLength": 8
+      }
     },
     "meta": {
       "title": "Profile - Modlight",

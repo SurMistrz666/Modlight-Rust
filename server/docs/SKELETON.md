@@ -680,6 +680,40 @@ Deliberate, each for a reason:
       `tests/signin_pickup.rs` (`MODLIGHT_PICKUP_E2E`); `tests/secreview_pickup.rs`
       (the review's attacks, asserting that each fails).
 
+45. **Intended addition: per-account file encryption** (2026-10-27, the
+    owner's request; the design, the threat model, the API for bearer clients
+    and the limits are in `docs/ENCRYPTION.md`). **An account without a vault
+    sees nothing new**: no query beyond a subselect in `lookup_media`, no
+    cookie, no header, the same payloads (the new props are absent), except
+    the Settings page's `encryption` prop and the empty
+    `uploads.encryption` column.
+    - *Code*: `src/vault/` (cipher, keys, store, access, view, write, gate,
+      unlock, status, pass), `src/actions/encryption.rs` (RPC module
+      `encryption`), `src/routes/api/encryption.rs` (`/api/encryption`,
+      `/unlock`, `/lock`), migration 0016 (`uploads.encryption`,
+      `file_vaults`, `vault_grants`, `vault_cleanup`), the SPA's
+      `src/encryption/`.
+    - *Where it hooks in*: the writers (`upload::finalize`, `pastes.createPaste`,
+      `media::convert_in_place`) encrypt with the public key; the readers get
+      a decrypting storage view only behind the gate (`vault::access::open_files`
+      in `routes/media_action.rs` and its `render`, `pages/media.rs`,
+      `routes/album_zip.rs`, `actions/avatar.rs`, `convert_in_place`); the
+      galleries (`pages/public_{profile,album}.rs`); `lookup_media` marks every
+      file of a gated account (`Upload::vault_gated`), which makes
+      `cache_headers_for` private, `may_cache_derived` false, and the embed
+      plan, `/oembed` and `/api/link-info` treat it as password-protected;
+      `http.rs` lets the unlock form keep its own CSP on a raw URL
+      (`vault::gate::GateDocumentCsp`); `jobs::start` runs `vault::pass::worker`.
+    - *Answers*: locked content is `401` for a browser (an HTML form for a
+      document, text otherwise) and `423 Locked` JSON `{"error":
+      "files_locked"}` for a bearer client (401 would sign the desktop app
+      out).
+    - Tests: `vault::*::tests` (crypto round trips, Range across chunk
+      borders, tampering, wrong passwords, grants, gate escaping, rate-limit
+      buckets), `tests/vault_db.rs` (bearer uploads, every public surface,
+      grants, the pass with an interruption and a restart, rate limits),
+      `web/tests/encryption.test.tsx`.
+
 ## 10. Verified on 2026-10-18
 
 - Fresh dev database -> `modlight-server migrate` -> `pg_dump --schema-only`

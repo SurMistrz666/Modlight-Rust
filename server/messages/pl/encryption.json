@@ -1,0 +1,112 @@
+{
+  "gate": {
+    "fileTitle": "Ten plik jest chroniony",
+    "filePrompt": "Właściciel szyfruje swoje pliki. Wpisz hasło do plików, aby go otworzyć.",
+    "galleryTitle": "Te pliki są chronione",
+    "galleryPrompt": "Ta osoba szyfruje swoje pliki. Wpisz hasło do plików, aby je zobaczyć.",
+    "passwordLabel": "Hasło do plików",
+    "passwordPlaceholder": "Wpisz hasło do plików",
+    "remember": "Zapamiętaj w tej przeglądarce na 30 dni",
+    "rememberHelp": "Pozostałe pliki tej osoby otworzą się bez pytania. Odznacz na komputerze, z którego korzysta ktoś jeszcze.",
+    "unlock": "Odblokuj",
+    "unlocking": "Odblokowywanie…",
+    "wrong": "Nieprawidłowe hasło. Spróbuj ponownie.",
+    "rateLimited": "Za dużo prób. Spróbuj ponownie za {minutes, plural, one {# minutę} few {# minuty} many {# minut} other {# minuty}}.",
+    "failed": "Coś poszło nie tak. Spróbuj ponownie.",
+    "protectedBy": "Chronione przez"
+  },
+  "settings": {
+    "title": "Szyfrowanie plików",
+    "description": "Zaszyfruj wszystkie swoje pliki osobnym hasłem. Każdy, kto otwiera któryś z nich, także Ty, wpisuje to hasło raz w każdej przeglądarce.",
+    "state": {
+      "off": "Wyłączone",
+      "on": "Włączone",
+      "encrypting": "Szyfrowanie",
+      "decrypting": "Odszyfrowywanie"
+    },
+    "offIntro": "Twoje pliki są przechowywane tak, jak je wysłano. Po włączeniu szyfrowania każdy obecny i każdy nowy plik jest przechowywany zaszyfrowany, a linki do nich pytają o hasło do plików.",
+    "points": {
+      "uploads": "Wysyłanie z panelu, ShareX i aplikacji działa dalej bez hasła.",
+      "links": "Osoby, którym wyślesz link, też potrzebują hasła do plików.",
+      "admins": "Administratorzy nie mogą otworzyć Twoich plików."
+    },
+    "enable": "Włącz szyfrowanie",
+    "enableTitle": "Włącz szyfrowanie plików",
+    "enableIntro": "Ustaw hasło do plików. Zaszyfruje wszystkie pliki, które masz teraz, i każdy, który wyślesz później.",
+    "password": "Hasło do plików",
+    "passwordHelp": "Co najmniej {min} znaków i inne niż hasło do logowania: to hasło będą wpisywać osoby, którym wyślesz link.",
+    "confirm": "Powtórz hasło do plików",
+    "warningTitle": "Zapomniane hasło oznacza utratę plików",
+    "warning": "Bez tego hasła nikt nie odzyska Twoich plików: ani Ty, ani administrator, ani reset hasła. Zapisz je w bezpiecznym miejscu.",
+    "acknowledge": "Rozumiem, że bez tego hasła moich plików nie da się odzyskać",
+    "cancel": "Anuluj",
+    "turnOn": "Zaszyfruj moje pliki",
+    "progressEncrypting": "Szyfrowanie plików: {done} z {total}",
+    "progressDecrypting": "Odszyfrowywanie plików: {done} z {total}",
+    "progressNote": "W tym czasie pliki są dostępne. Jeśli serwer się zrestartuje, praca ruszy od miejsca, w którym stanęła.",
+    "allEncrypted": "{total, plural, one {# plik jest zaszyfrowany} few {# pliki są zaszyfrowane} many {# plików jest zaszyfrowanych} other {# pliku jest zaszyfrowane}}.",
+    "unlockedHere": "Odblokowane w tej przeglądarce",
+    "lockedHere": "Zablokowane w tej przeglądarce",
+    "lockedHint": "Wpisz hasło do plików, aby w tej przeglądarce widzieć podglądy i otwierać swoje pliki.",
+    "unlock": "Odblokuj",
+    "unlocking": "Odblokowywanie…",
+    "lockNow": "Zablokuj w tej przeglądarce",
+    "changePassword": "Zmień hasło",
+    "changeTitle": "Zmień hasło do plików",
+    "changeNote": "Każda przeglądarka i aplikacja, która pamięta hasło, będzie musiała wpisać nowe. Pliki zostają bez zmian.",
+    "current": "Obecne hasło do plików",
+    "newPassword": "Nowe hasło do plików",
+    "confirmNew": "Powtórz nowe hasło do plików",
+    "save": "Zapisz",
+    "disable": "Wyłącz szyfrowanie",
+    "disableTitle": "Wyłącz szyfrowanie plików",
+    "disableNote": "Pliki zostaną odszyfrowane i będą przechowywane jak wcześniej, a linki przestaną pytać o hasło.",
+    "disableConfirm": "Odszyfruj moje pliki",
+    "grantsTitle": "Przeglądarki i aplikacje, które pamiętają hasło",
+    "grantsEmpty": "Brak.",
+    "kind": {
+      "owner": "Twoja przeglądarka",
+      "visitor": "Odwiedzający link",
+      "app": "Aplikacja"
+    },
+    "thisBrowser": "Ta przeglądarka",
+    "unknownDevice": "Nieznane urządzenie",
+    "created": "Odblokowano {date}",
+    "lastUsed": "ostatnio {date}",
+    "expires": "do {date}",
+    "revoke": "Cofnij",
+    "revokeAll": "Cofnij wszystkie",
+    "pending": "Części plików nie udało się jeszcze przetworzyć. Za chwilę nastąpi kolejna próba.",
+    "error": {
+      "wrong": "Nieprawidłowe hasło.",
+      "rate-limited": "Za dużo prób. Spróbuj ponownie za kilka minut.",
+      "mismatch": "Hasła różnią się.",
+      "too-short": "Hasło jest za krótkie.",
+      "too-long": "Hasło jest za długie.",
+      "same-as-sign-in": "Użyj innego hasła niż hasło do logowania.",
+      "not-acknowledged": "Potwierdź, że rozumiesz ostrzeżenie.",
+      "already-on": "Szyfrowanie jest już włączone.",
+      "busy": "Pliki są jeszcze odszyfrowywane. Spróbuj, gdy to się skończy.",
+      "not-encrypted": "Szyfrowanie nie jest włączone.",
+      "not-found": "Już cofnięte.",
+      "failed": "Coś poszło nie tak. Spróbuj ponownie."
+    },
+    "toast": {
+      "enabled": "Szyfrowanie włączone. Pliki są szyfrowane.",
+      "unlocked": "Odblokowano w tej przeglądarce",
+      "locked": "Zablokowano w tej przeglądarce",
+      "changed": "Hasło do plików zmienione",
+      "disabled": "Szyfrowanie jest wyłączane",
+      "revoked": "Cofnięto"
+    }
+  },
+  "banner": {
+    "title": "Twoje pliki są zaszyfrowane",
+    "text": "Wpisz hasło do plików, aby w tej przeglądarce widzieć podglądy i otwierać swoje pliki.",
+    "unlock": "Odblokuj"
+  },
+  "admin": {
+    "badge": "Zaszyfrowane",
+    "notice": "Pliki tego konta są zaszyfrowane. Administratorzy nie mogą ich otwierać, podglądać ani pobierać; nazwy, rozmiary i daty pozostają widoczne."
+  }
+}

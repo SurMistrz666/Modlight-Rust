@@ -220,6 +220,23 @@ fetches a script from `challenges.cloudflare.com`, and the server sends there th
 from the form and the visitor's IP address (more: `docs/SKELETON.md`, section 9,
 item 43).
 
+## File encryption (per account)
+
+Not in the original. In **Settings → Security → File encryption** an account
+holder can switch it on: they choose a **file password** (not their sign-in
+password), and from then on every file of the account, existing and new,
+is stored encrypted (XChaCha20-Poly1305 in 64 KiB chunks, file keys sealed to
+the account's X25519 key, the private key wrapped with Argon2id of the
+password). Everyone who opens one of those files, the owner and
+administrators included, types the file password once per browser; the
+browser may remember it for 30 days. Uploads from the panel, ShareX and the
+app keep working without the password. **A forgotten file password means the
+files are lost**: there is no recovery. Details, the threat model and what is
+not protected: `docs/ENCRYPTION.md`.
+
+Before switching back to the original (Next.js) server, switch encryption off
+on every account (the original would serve the encrypted bytes).
+
 ## What is different from the original (the most important)
 
 The full list: `docs/SKELETON.md`, section 9. In short:
@@ -233,6 +250,7 @@ The full list: `docs/SKELETON.md`, section 9. In short:
   deleted at its tus address (with S3 this bypassed the file's privacy);
   changing the avatar or wallpaper deletes the old file (the original left it forever).
 - The ZIP album works (in the original it was always a 500 error).
+- A novelty: per-account file encryption (above).
 - A novelty the original does not have: optional Cloudflare Turnstile on the
   sign-in, registration, password reset and invitation forms (above).
 - A bad `%` character in the address: 400 instead of 500.

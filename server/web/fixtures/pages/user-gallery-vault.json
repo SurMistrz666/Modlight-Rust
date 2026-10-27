@@ -1,0 +1,30 @@
+{
+  "url": "/u/alicja?__fixture=user-gallery-vault",
+  "payload": {
+    "route": "/u/[userCode]",
+    "params": {
+      "userCode": "alicja"
+    },
+    "layouts": "$root",
+    "props": {
+      "owner": {
+        "name": "Alicja",
+        "userCode": "alicja",
+        "theme": "glass"
+      },
+      "items": [],
+      "ownerBase": "https://files.example.com",
+      "ownerAvatar": "/avatar/alicja?v=abc",
+      "background": null,
+      "vault": {
+        "locked": true,
+        "tag": "alicja"
+      }
+    },
+    "meta": {
+      "title": "Alicja - Modlight",
+      "description": "Public gallery · @alicja",
+      "applicationName": "Modlight"
+    }
+  }
+}

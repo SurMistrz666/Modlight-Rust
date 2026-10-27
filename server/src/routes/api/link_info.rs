@@ -232,7 +232,9 @@ async fn describe_media(
     }
 
     let base = user_base_url(&state.config, found.owner_preferred_domain.as_deref());
-    let has_password = media.password_hash.as_deref().is_some_and(|h| !h.is_empty());
+    // Not upstream: the account's file password (docs/ENCRYPTION.md) gates a
+    // file exactly like its own password does.
+    let has_password = media.password_hash.as_deref().is_some_and(|h| !h.is_empty()) || media.is_vaulted();
     let status = if !media.published {
         "unlisted"
     } else if has_password {

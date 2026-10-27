@@ -42,6 +42,8 @@ const EXPECTED: &[(&str, &[&str])] = &[
     ("src/routes/api/releases_app.rs", &["admin"]),
     ("src/routes/api/admin_disk.rs", &["admin"]),
     ("src/routes/api/link_info.rs", &["read"]),
+    // Not upstream: per-account file encryption (status, the app's unlock).
+    ("src/routes/api/encryption.rs", &["read", "read"]),
 ];
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {

@@ -167,7 +167,18 @@ struct Ask {
     cookies: ResponseCookies,
     query: Query,
     raw_path: String,
+    raw_query: Option<String>,
     signal: AbortSignal,
+}
+
+impl Ask {
+    /// Where the vault's unlock form sends the browser back to: this URL.
+    fn next_path(&self) -> String {
+        match self.raw_query.as_deref().filter(|q| !q.is_empty()) {
+            Some(q) => format!("{}?{q}", self.raw_path),
+            None => self.raw_path.clone(),
+        }
+    }
 }
 
 async fn handle(
@@ -185,6 +196,7 @@ async fn handle(
         cookies: parts.extensions.get::<ResponseCookies>().cloned().unwrap_or_default(),
         query: Query::parse(parts.uri.query()),
         raw_path: parts.uri.path().to_string(),
+        raw_query: parts.uri.query().map(str::to_string),
         headers: parts.headers,
         signal: controller.signal(),
     };
@@ -235,6 +247,17 @@ async fn dispatch(
     if !media.published && !privileged {
         return Ok(not_found());
     }
+
+    // Not upstream: the owner's file vault (docs/ENCRYPTION.md). Nobody is
+    // exempt, the owner and administrators included; from here on `state`
+    // reads this file's plaintext only for a request that holds a grant.
+    let Some(keyed) =
+        crate::vault::access::open_files(state, &ask.headers, &found.owner_id, found.owner_vault.as_deref(), &[media])
+            .await?
+    else {
+        return Ok(crate::vault::gate::locked_response(state, &ask.headers, &found.owner_user_code, &ask.next_path()));
+    };
+    let state = &keyed;
 
     // Same gate as the preview page: the page is what the visitor unlocks, but
     // /raw is what the <img> and the player actually fetch.
@@ -1045,6 +1068,24 @@ async fn render_sandboxed(
     if media.password_hash.as_deref().is_some_and(|h| !h.is_empty()) && !privileged && !unlocked(state, ask, &media) {
         return Ok(plain_text(StatusCode::UNAUTHORIZED, "Password required"));
     }
+    // Not upstream: nor for the file vault's grant (docs/ENCRYPTION.md).
+    let owner_vault = match media.owner_id.as_deref() {
+        Some(owner) => crate::vault::store::load(&state.db, owner).await?.map(|v| v.state),
+        None => None,
+    };
+    let keyed = match media.owner_id.as_deref() {
+        Some(owner) => {
+            crate::vault::access::open_files(state, &ask.headers, owner, owner_vault.as_deref(), &[&media]).await?
+        }
+        None if media.is_encrypted() => None,
+        None => Some(state.clone()),
+    };
+    let Some(keyed) = keyed else {
+        let mut res = plain_text(StatusCode::UNAUTHORIZED, "Files are encrypted: unlock required");
+        put_headers(&mut res, [no_store()]);
+        return Ok(res);
+    };
+    let state = &keyed;
 
     // `rowMimeType`, because this handler looks the row up by id: a paste
     // declares its type through its language.

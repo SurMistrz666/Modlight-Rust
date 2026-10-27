@@ -241,6 +241,8 @@ async fn load_user_detail(ctx: ActionCtx) -> ActionResult {
     .fetch_optional(db)
     .await?;
     let invite_pending = has_pending_invite(db, &row.id).await?;
+    // Not upstream: the account's file vault (docs/ENCRYPTION.md).
+    let encryption = crate::vault::store::load(db, &row.id).await?.map(|v| v.state);
 
     let detail = AdminUserDetail {
         row: AdminUserRow {
@@ -258,6 +260,7 @@ async fn load_user_detail(ctx: ActionCtx) -> ActionResult {
             allow_root_short_links: row.allow_root_short_links.unwrap_or(false),
             email_verified: row.email_verified,
             invite_pending,
+            encryption,
         },
         username: row.username,
         two_factor_enabled: row.two_factor_enabled.unwrap_or(false),

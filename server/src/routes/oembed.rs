@@ -73,7 +73,8 @@ async fn oembed(State(state): State<AppState>, RawQuery(query): RawQuery) -> App
     };
     let media = &found.media;
     // Don't leak embeds for private or password-protected media.
-    if !media.published || media.password_hash.as_deref().is_some_and(|h| !h.is_empty()) {
+    // Not upstream: the account's file password counts as a password.
+    if !media.published || media.password_hash.as_deref().is_some_and(|h| !h.is_empty()) || media.is_vaulted() {
         return Ok(error(StatusCode::NOT_FOUND, "Not found"));
     }
 

@@ -13,6 +13,7 @@ pub mod authorize;
 pub mod avatar;
 pub mod convert;
 pub mod duplicates;
+pub mod encryption;
 pub mod folders;
 pub mod invite;
 pub mod login_identifier;
@@ -51,4 +52,5 @@ pub fn register_all(reg: &mut RpcRegistry) {
     convert::register(reg); // app/actions/convert.ts
     unlock::register(reg); // app/actions/unlock.ts
     turnstile::register(reg); // not upstream: the optional Cloudflare Turnstile card
+    encryption::register(reg); // not upstream: per-account file encryption (docs/ENCRYPTION.md)
 }

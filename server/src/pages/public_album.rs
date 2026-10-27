@@ -36,6 +36,10 @@ struct AlbumProps {
     owner_base: String,
     background: Option<BackgroundStyle>,
     tiles: Vec<PublicTileItem>,
+    /// Not upstream: the owner's file vault (docs/ENCRYPTION.md); absent for
+    /// an account without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vault: Option<crate::vault::access::GalleryVault>,
 }
 
 /// `/a/[userCode]/[slug]`
@@ -60,9 +64,14 @@ pub async fn load(ctx: PageCtx) -> PageResult {
         &[("count", Arg::Num(data.items.len() as f64)), ("owner", owner_name.as_str().into())],
     );
     let url = format!("{owner_base}/a/{owner_code}/{}", data.folder.slug);
+    // Not upstream: an encrypted account's album asks for the file password
+    // and never offers a picture to an unfurler.
+    let vault = crate::vault::access::gallery_vault(&ctx.state, &ctx.headers, &owner.id, &owner_code).await?;
+    let locked = vault.as_ref().is_some_and(|v| v.locked);
     let og_image = data
         .items
         .iter()
+        .filter(|_| vault.is_none())
         .find(|i| is_displayable_image(Some(&i.mime_type), Some(&i.ext)))
         .map(|i| format!("{}?w=1200&h=630", raw_url(&owner_code, &i.code, &i.ext, &owner_base)));
     let meta = gallery_meta(&ctx, title, description, url, "website", og_image);
@@ -73,6 +82,7 @@ pub async fn load(ctx: PageCtx) -> PageResult {
     let tiles = data
         .items
         .iter()
+        .filter(|_| !locked)
         .map(|i| PublicTileItem {
             id: i.id,
             code: i.code.clone(),
@@ -90,6 +100,7 @@ pub async fn load(ctx: PageCtx) -> PageResult {
         owner_base,
         background: background.clone(),
         tiles,
+        vault,
     };
     Ok(PageData::new(&props, meta)?.with_skin(owner.theme.as_deref(), background))
 }

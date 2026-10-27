@@ -1,3 +1,11 @@
+// Port of upstream components/admin/UserManager.tsx, verbatim except for one
+// badge and one import path.
+// @upstream components/admin/UserManager.tsx
+// Deviations (not upstream, docs/ENCRYPTION.md): an account that keeps its
+// files encrypted carries an "Encrypted" badge in the status column (the row's
+// `encryption` field is the vault state the server adds to AdminUserRow); the
+// row menu is imported as "@/components/admin/UserRowMenu", because this file
+// does not live next to it.
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -25,6 +33,7 @@ import {
   Hash,
   IdCard,
   ShieldAlert,
+  LockKeyhole,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocale, useTranslations } from "next-intl";
@@ -82,7 +91,7 @@ import {
   type UpdateUserResult,
   type UserFieldIssue,
 } from "@/app/actions/admin";
-import { UserRowContextMenu, UserRowDropdown } from "./UserRowMenu";
+import { UserRowContextMenu, UserRowDropdown } from "@/components/admin/UserRowMenu";
 
 function initialsOf(u: AdminUserRow) {
   const src = u.name?.trim() || u.email;
@@ -793,6 +802,9 @@ export function UserManager({
                           {/* Who cannot sign in yet, and why. An invitation that is
                               still outstanding is a different state from an address
                               that was never confirmed, and the fix differs too. */}
+                          {(u as AdminUserRow & { encryption?: string }).encryption ? (
+                            <EncryptedBadge />
+                          ) : null}
                           {u.invitePending ? (
                             <Badge
                               variant="outline"
@@ -1486,5 +1498,15 @@ function DispositionCard({
       </span>
       <span className="text-muted-foreground text-xs leading-relaxed">{description}</span>
     </button>
+  );
+}
+
+/** Not upstream: the account keeps its files encrypted (docs/ENCRYPTION.md). */
+function EncryptedBadge() {
+  const t = useTranslations("encryption.admin");
+  return (
+    <Badge variant="outline" className="gap-1" data-encrypted-account>
+      <LockKeyhole className="size-3" /> {t("badge")}
+    </Badge>
   );
 }

@@ -44,12 +44,17 @@ struct ProfileProps {
     owner_base: String,
     owner_avatar: Option<String>,
     background: Option<BackgroundStyle>,
+    /// Not upstream: the owner's file vault (docs/ENCRYPTION.md); absent for
+    /// an account without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vault: Option<crate::vault::access::GalleryVault>,
 }
 
 type GalleryUser =
     (String, String, Option<String>, Option<String>, Option<String>, Option<bool>, Option<String>, i32, Option<String>);
 
 struct Gallery {
+    owner_id: String,
     name: String,
     user_code: String,
     theme: Option<String>,
@@ -94,7 +99,17 @@ async fn load_gallery(ctx: &PageCtx, user_code: &str) -> Result<Option<Gallery>,
     .bind(ITEM_LIMIT)
     .fetch_all(&ctx.state.db)
     .await?;
-    Ok(Some(Gallery { name, user_code: code, theme, preferred_domain, background_key, background_dim, image, items }))
+    Ok(Some(Gallery {
+        owner_id: id,
+        name,
+        user_code: code,
+        theme,
+        preferred_domain,
+        background_key,
+        background_dim,
+        image,
+        items,
+    }))
 }
 
 /// The card both public galleries emit (`openGraph.type` differs).
@@ -155,20 +170,26 @@ pub async fn load(ctx: PageCtx) -> PageResult {
     let title = t.t_with("profile.metaTitle", &[("name", g.name.as_str().into())]);
     let description = t.t_with("profile.metaDescription", &[("tag", g.user_code.as_str().into())]);
     let url = format!("{owner_base}/u/{}", g.user_code);
+    // Not upstream: an encrypted account's gallery asks for the file password
+    // and never offers a picture to an unfurler.
+    let vault = crate::vault::access::gallery_vault(&ctx.state, &ctx.headers, &g.owner_id, &g.user_code).await?;
     let og_image = g
         .items
         .iter()
+        .filter(|_| vault.is_none())
         .find(|i| is_displayable_image(Some(&i.mime_type), Some(&i.ext)))
         .map(|i| format!("{}?w=1200&h=630", raw_url(&g.user_code, &i.code, &i.ext, &owner_base)));
     let meta = gallery_meta(&ctx, title, description, url, "profile", og_image);
 
     let background = background_style(Some(&g.user_code), g.background_key.as_deref(), Some(g.background_dim));
+    let locked = vault.as_ref().is_some_and(|v| v.locked);
     let props = ProfileProps {
         owner_avatar: avatar_url(Some(&g.user_code), g.image.as_deref()),
         owner: ProfileOwner { name: g.name, user_code: g.user_code, theme: g.theme.clone() },
-        items: g.items,
+        items: if locked { Vec::new() } else { g.items },
         owner_base,
         background: background.clone(),
+        vault,
     };
     Ok(PageData::new(&props, meta)?.with_skin(g.theme.as_deref(), background))
 }

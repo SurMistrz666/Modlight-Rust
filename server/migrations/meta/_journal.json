@@ -106,6 +106,13 @@
       "when": 1793059200000,
       "tag": "0014_default_theme_graphite",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793318400000,
+      "tag": "0016_file_vaults",
+      "breakpoints": true
     }
   ]
 }

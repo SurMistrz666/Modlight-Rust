@@ -83,6 +83,7 @@ pub fn router(state: &AppState) -> Router {
         .merge(crate::routes::api::shortlinks::routes()) // app/api/shortlinks/route.ts
         .merge(crate::routes::api::admin_disk::routes()) // app/api/admin/disk/route.ts
         .merge(crate::routes::api::authorize_pickup::routes()) // not upstream: desktop sign-in pickup
+        .merge(crate::routes::api::encryption::routes()) // not upstream: per-account file encryption
         .merge(crate::routes::s_code::routes()) // app/s/[code]/route.ts
         .merge(crate::routes::s_code_name::routes()) // app/s/[code]/[name]/route.ts
         .merge(crate::routes::media_action::routes()) // app/[userCode]/[mediaCode]/[action]/route.ts
@@ -261,6 +262,12 @@ impl App {
         let mut response = response;
         let turnstile = self.state.turnstile.csp_on(&self.state.config);
         self.state.security.apply(&raw_path, response.headers_mut(), turnstile);
+        // Not upstream: the file vault's unlock form answering on a raw URL
+        // keeps its own policy (the raw one sandboxes it, and a sandboxed
+        // document cannot submit a form). See vault::gate::GATE_CSP.
+        if let Some(csp) = response.extensions_mut().remove::<crate::vault::gate::GateDocumentCsp>() {
+            response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, csp.0);
+        }
         // 6. Next's compression, on what Next renders itself.
         compression::apply(accept_encoding.as_ref(), &method, response).await
     }

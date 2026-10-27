@@ -1,0 +1,112 @@
+{
+  "gate": {
+    "fileTitle": "This file is protected",
+    "filePrompt": "Its owner keeps their files encrypted. Enter the file password to open it.",
+    "galleryTitle": "These files are protected",
+    "galleryPrompt": "This person keeps their files encrypted. Enter the file password to see them.",
+    "passwordLabel": "File password",
+    "passwordPlaceholder": "Enter the file password",
+    "remember": "Remember on this browser for 30 days",
+    "rememberHelp": "This person's other files will open without asking. Leave it unticked on a computer you share.",
+    "unlock": "Unlock",
+    "unlocking": "Unlocking…",
+    "wrong": "Wrong password. Try again.",
+    "rateLimited": "Too many attempts. Try again in {minutes, plural, one {# minute} other {# minutes}}.",
+    "failed": "Something went wrong. Try again.",
+    "protectedBy": "Protected by"
+  },
+  "settings": {
+    "title": "File encryption",
+    "description": "Encrypt all of your files with a password of their own. Anybody who opens one of them, you included, types that password once per browser.",
+    "state": {
+      "off": "Off",
+      "on": "On",
+      "encrypting": "Encrypting",
+      "decrypting": "Decrypting"
+    },
+    "offIntro": "Your files are stored as they are. With encryption on, every file you have and upload is stored encrypted, and links to them ask for the file password.",
+    "points": {
+      "uploads": "Uploads from the panel, ShareX and the app keep working without the password.",
+      "links": "People you share a link with need the file password too.",
+      "admins": "Administrators cannot open your files."
+    },
+    "enable": "Turn on encryption",
+    "enableTitle": "Turn on file encryption",
+    "enableIntro": "Choose the file password. It encrypts every file you have now and every file you upload later.",
+    "password": "File password",
+    "passwordHelp": "At least {min} characters, and not the password you sign in with: people you share links with will type this one.",
+    "confirm": "Repeat the file password",
+    "warningTitle": "A forgotten password means lost files",
+    "warning": "Nobody can recover your files without this password: not you, not an administrator, not a password reset. Keep it somewhere safe.",
+    "acknowledge": "I understand that my files cannot be recovered without this password",
+    "cancel": "Cancel",
+    "turnOn": "Encrypt my files",
+    "progressEncrypting": "Encrypting your files: {done} of {total}",
+    "progressDecrypting": "Decrypting your files: {done} of {total}",
+    "progressNote": "Your files stay available meanwhile. If the server restarts, it carries on where it stopped.",
+    "allEncrypted": "All {total, plural, one {# file is} other {# files are}} encrypted.",
+    "unlockedHere": "Unlocked on this browser",
+    "lockedHere": "Locked on this browser",
+    "lockedHint": "Enter the file password to see previews and open your files on this browser.",
+    "unlock": "Unlock",
+    "unlocking": "Unlocking…",
+    "lockNow": "Lock on this browser",
+    "changePassword": "Change password",
+    "changeTitle": "Change the file password",
+    "changeNote": "Every browser and app that remembers the password will have to enter the new one. Your files stay as they are.",
+    "current": "Current file password",
+    "newPassword": "New file password",
+    "confirmNew": "Repeat the new file password",
+    "save": "Save",
+    "disable": "Turn off encryption",
+    "disableTitle": "Turn off file encryption",
+    "disableNote": "Your files will be decrypted and stored as they were before, and links will stop asking for the password.",
+    "disableConfirm": "Decrypt my files",
+    "grantsTitle": "Browsers and apps that remember the password",
+    "grantsEmpty": "None.",
+    "kind": {
+      "owner": "Your browser",
+      "visitor": "Link visitor",
+      "app": "App"
+    },
+    "thisBrowser": "This browser",
+    "unknownDevice": "Unknown device",
+    "created": "Unlocked {date}",
+    "lastUsed": "last used {date}",
+    "expires": "until {date}",
+    "revoke": "Revoke",
+    "revokeAll": "Revoke all",
+    "pending": "Some files could not be processed yet. They will be tried again shortly.",
+    "error": {
+      "wrong": "Wrong password.",
+      "rate-limited": "Too many attempts. Try again in a few minutes.",
+      "mismatch": "The two passwords are different.",
+      "too-short": "The password is too short.",
+      "too-long": "The password is too long.",
+      "same-as-sign-in": "Use a different password than the one you sign in with.",
+      "not-acknowledged": "Confirm that you understand the warning.",
+      "already-on": "Encryption is already on.",
+      "busy": "Your files are still being decrypted. Try again when it has finished.",
+      "not-encrypted": "Encryption is not on.",
+      "not-found": "Already revoked.",
+      "failed": "Something went wrong. Try again."
+    },
+    "toast": {
+      "enabled": "Encryption is on. Your files are being encrypted.",
+      "unlocked": "Unlocked on this browser",
+      "locked": "Locked on this browser",
+      "changed": "File password changed",
+      "disabled": "Encryption is being turned off",
+      "revoked": "Revoked"
+    }
+  },
+  "banner": {
+    "title": "Your files are encrypted",
+    "text": "Enter the file password to see previews and open your files on this browser.",
+    "unlock": "Unlock"
+  },
+  "admin": {
+    "badge": "Encrypted",
+    "notice": "This account's files are encrypted. Administrators cannot open, preview or download them; names, sizes and dates stay visible."
+  }
+}
