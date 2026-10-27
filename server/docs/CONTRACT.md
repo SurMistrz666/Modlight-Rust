@@ -4545,9 +4545,9 @@ What the server can rely on, and what it does not need to do:
 ## 11. Deviations from upstream
 
 Components are byte-for-byte upstream (`upstream.lock.json`,
-`npm run sync:check`), and so are the translations: `server/messages/` is
-upstream's `messages/`, read and sent by the server (section 5.7), not part of
-the SPA. What had to change, and why:
+`npm run sync:check`), and so are the translations (apart from the Graphite
+keys listed below): `server/messages/` is upstream's `messages/`, read and sent
+by the server (section 5.7), not part of the SPA. What had to change, and why:
 
 **Ported Server Components** (`src/overrides/components/`, each starts with a
 header naming the change):
@@ -4601,6 +4601,28 @@ nothing below happens and the forms behave exactly as upstream's.
   upstream).
 - Translations: `server/messages/<locale>/turnstile.json`, a namespace of its
   own, so upstream's files stay verbatim.
+
+**Not upstream: the Graphite skin and layout** (the default skin).
+
+- `lib/themes.ts` is a port (`src/overrides/lib/themes.ts`, mirrored by
+  `server/src/themes.rs`): `graphite` leads `THEMES` and is `DEFAULT_THEME`, and
+  the retired id `modern` (what sign-up writes for an account that never opened
+  the picker) resolves to the default instead of `default` (Classic). Wherever
+  this document says a value resolves to `"discord"` or that `modern` resolves
+  to `"default"`, read `"graphite"`. The `user.theme` column default is
+  `'graphite'` from migration 0014.
+- The skin's tokens and its few `data-slot` rules are `src/styles/graphite.css`,
+  loaded by `src/main.tsx` right after `app/globals.css` (which stays verbatim).
+- `components/app-shell.tsx` is a port: the rail reads account card, navigation,
+  then storage, Settings (the profile page, moved out of the Account section)
+  and the app name with the collapse control; the header's account menu is
+  phone-only. The rail carries `data-rail` for the skin's rules.
+- `components/auth/brand-mark.tsx` and `components/brand/ModlightMark.tsx` are
+  ports that draw the app icon (`src/assets/modlight-icon.png`) instead of the
+  violet tile; `public/icon.svg`, `public/apple-icon.png` and
+  `public/brand/{email-logo,audio-cover}.png` are rendered from the same icon.
+- Translations: `profile.themes.graphite` and `nav.settings` are added to
+  `server/messages/{en,pl}/` (the only lines there that are not upstream's).
 
 **Infrastructure**:
 

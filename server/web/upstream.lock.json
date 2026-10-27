@@ -15,16 +15,13 @@
     "components/admin/UserManager.tsx": "acfdfd5aa848055501414abb6f2c466b7f72584be254aa340d46d737a6d1279f",
     "components/admin/UserRowMenu.tsx": "e67877e3ca45bba3417ee535653177dbe698c3a9d8998bd4b78e48523eed0bbd",
     "components/admin/confirm.ts": "f9d92eed66f46049f2d19cc1e6886c0404d793886594e53a57e1d242b0065435",
-    "components/app-shell.tsx": "28594663ebb73bf2fb2aee060af7625be936d118e5729113b17fd096efccdc0b",
     "components/auth/auth-card.tsx": "f79fbc7f4926a022648316566ba22e73a8bd2c74bec54e3c24183acdeb6eef57",
     "components/auth/auth-error.ts": "8772de7af8144d44454be627d24914efeff0a3d48bb9834541845d2f3c3d4c9a",
-    "components/auth/brand-mark.tsx": "415c39cfcf15f71678cb4f65b51ef98ad8ed5e07d803a8a58537ca2abd34e3ac",
     "components/auth/form-bits.tsx": "bd6d8b25daf44c0366767a5fe500ed570a9067c2861fc26093b181eb37e1773b",
     "components/auth/password-input.tsx": "a96eb968f4c6886b8b6df9e2df27e8ef711da83a0f5dac3701a8417c5eec28fa",
     "components/auth/reset-form.tsx": "bfa04fae9b1ea94c6eb097a269270d405226468ae87cd3ad40c17c1dd001c245",
     "components/auth/submit-button.tsx": "98ca0ed7bfb05376bccfc25138d898b27053e78aaf964cb418ebc379669b6614",
     "components/auth/two-factor-form.tsx": "8b4a58997720fb675f394df52af3d1b1bc961d345f56092a20986ea773e01517",
-    "components/brand/ModlightMark.tsx": "cd6dca335c64581fdb369a1a35957f37399e1ec03a26c9151ecb8ee1351697a1",
     "components/dashboard/BulkBar.tsx": "a28020d20df0193a0d4df67b8e4115ca3e43ae2663c6679182a80d43c67adbf5",
     "components/dashboard/ConvertDialog.tsx": "3570644dee20bed28aed6f146ed4b0ef01632b14b36c5afcf3e6348171021d01",
     "components/dashboard/DeleteFolderDialog.tsx": "34bf276c5d5f2eb85e5ff44b2d3dd7cfc9bfdd45fd4ea8be4093bca88be9d345",
@@ -162,7 +159,6 @@
     "lib/paste-languages.ts": "0736c5f231d3997e49a0aadce356b03745699ebff50f9eeb1eb7f62a0d423532",
     "lib/quota.ts": "b163192767959836de3f11e83da073bda66e39ab292db9aae42b91eedbce9c25",
     "lib/theme-cookies.ts": "b46ea2fe07e77860c2f28f7a586593fe3e7200eb1854f45e5a33418c61728e2c",
-    "lib/themes.ts": "0c54ee11e6db6988a61032234cd524d52cf3a3f373f2c7a314df9f7db9933b12",
     "lib/transfer-rate.ts": "d0114fbc0110ce44fc0f554f6140ea45b684ce825623296da8f6462cf459f357",
     "lib/upload/duplicate-check.ts": "3e15c7ca05519fcd154e6f894a7a0bd79b515ac8dc381f9a81139a7204b7c46c",
     "lib/utils.ts": "7c8c3dfc0cdd370d44932828eb067ef771c8fe7996693221d5d4b90af6d54f2d",
@@ -475,6 +471,18 @@
         "src/overrides/components/admin/ServerDisk.tsx"
       ]
     },
+    "components/app-shell.tsx": {
+      "sha256": "28594663ebb73bf2fb2aee060af7625be936d118e5729113b17fd096efccdc0b",
+      "ports": [
+        "src/overrides/components/app-shell.tsx"
+      ]
+    },
+    "components/auth/brand-mark.tsx": {
+      "sha256": "415c39cfcf15f71678cb4f65b51ef98ad8ed5e07d803a8a58537ca2abd34e3ac",
+      "ports": [
+        "src/overrides/components/auth/brand-mark.tsx"
+      ]
+    },
     "components/auth/forgot-form.tsx": {
       "sha256": "8b2373e79728594f5072b3a0128844d35c41d347871d726924caeb2cf77a8894",
       "ports": [
@@ -503,6 +511,12 @@
       "sha256": "08fbfe07f1152cbfbb8c8acf80846371d88cdde12bd242fd893136aabc95ab3c",
       "ports": [
         "src/overrides/components/authorize/authorize-prompt.tsx"
+      ]
+    },
+    "components/brand/ModlightMark.tsx": {
+      "sha256": "cd6dca335c64581fdb369a1a35957f37399e1ec03a26c9151ecb8ee1351697a1",
+      "ports": [
+        "src/overrides/components/brand/ModlightMark.tsx"
       ]
     },
     "components/dashboard/EmptyState.tsx": {
@@ -719,6 +733,12 @@
       "sha256": "2d51c08b24522b3b9b88d2ff09e7e7e4239f0ac0822d96cdcd1eb20ccb091bf3",
       "ports": [
         "src/overrides/lib/shortlinks.ts"
+      ]
+    },
+    "lib/themes.ts": {
+      "sha256": "0c54ee11e6db6988a61032234cd524d52cf3a3f373f2c7a314df9f7db9933b12",
+      "ports": [
+        "src/overrides/lib/themes.ts"
       ]
     },
     "lib/upload/disk.ts": {

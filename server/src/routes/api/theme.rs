@@ -371,7 +371,7 @@ mod tests {
     #[tokio::test]
     async fn resolves_a_retired_id_so_a_read_then_write_round_trip_cannot_400() {
         let store = FakeStore { select: Mutex::new(Some(Some("modern".into()))), ..Default::default() };
-        assert_eq!(get(&FakeCallers::token_ok(TokenScope::Full), &store).await.2["theme"], "default");
+        assert_eq!(get(&FakeCallers::token_ok(TokenScope::Full), &store).await.2["theme"], "graphite");
     }
 
     #[tokio::test]
@@ -395,8 +395,8 @@ mod tests {
             (Some("constructor"), None),
             (Some("toString"), None),
             (Some("__proto__"), Some(json!({}))),
-            (Some("nope"), Some(json!("discord"))),
-            (None, Some(json!("discord"))),
+            (Some("nope"), Some(json!("graphite"))),
+            (None, Some(json!("graphite"))),
         ] {
             let store = FakeStore { select: Mutex::new(Some(stored.map(str::to_string))), ..Default::default() };
             let (_, _, body) = get(&FakeCallers::token_ok(TokenScope::Read), &store).await;
@@ -426,10 +426,10 @@ mod tests {
 
     #[tokio::test]
     async fn stores_the_canonical_id_for_a_retired_one() {
-        let store = FakeStore { update: Mutex::new(Some(Some("default".into()))), ..Default::default() };
+        let store = FakeStore { update: Mutex::new(Some(Some("graphite".into()))), ..Default::default() };
         let (status, _, _) = put(&FakeCallers::token_ok(TokenScope::Full), &store, r#"{"theme":"modern"}"#).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(*store.written.lock().unwrap(), vec![("u1".to_string(), "default".to_string())]);
+        assert_eq!(*store.written.lock().unwrap(), vec![("u1".to_string(), "graphite".to_string())]);
     }
 
     #[tokio::test]

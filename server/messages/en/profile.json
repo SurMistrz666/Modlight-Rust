@@ -15,6 +15,10 @@
   "theme": "Theme",
   "themeNote": "Your theme is also shown to anyone who opens your links.",
   "themes": {
+    "graphite": {
+      "name": "Graphite",
+      "desc": "Deep neutrals, hairline borders, white buttons and one blue accent."
+    },
     "default": {
       "name": "Classic",
       "desc": "Clean, violet-accented and quiet. The original Modlight look."

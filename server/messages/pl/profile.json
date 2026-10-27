@@ -15,6 +15,10 @@
   "theme": "Motyw",
   "themeNote": "Twój motyw widzą też osoby otwierające Twoje linki.",
   "themes": {
+    "graphite": {
+      "name": "Grafit",
+      "desc": "Głębokie szarości, cienkie krawędzie, białe przyciski i jeden niebieski akcent."
+    },
     "default": {
       "name": "Klasyczny",
       "desc": "Czysty, fioletowy akcent, bez hałasu. Pierwotny wygląd Modlighta."

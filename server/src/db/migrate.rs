@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn reads_the_shipped_journal() {
         let files = read_migration_files(&Paths::crate_dir().migrations).unwrap();
-        assert_eq!(files.len(), 14);
+        assert_eq!(files.len(), 15);
         assert_eq!(files[0].tag, "0000_init_folders_naming");
         assert_eq!(files[0].folder_millis, 1785441450828);
         assert_eq!(files[13].tag, "0013_upload_av_metadata");

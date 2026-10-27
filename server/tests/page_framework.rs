@@ -88,7 +88,7 @@ async fn page_data_carries_route_params_layouts_props_and_meta() {
     assert_eq!(d["meta"]["title"], "alice's files - Modlight");
     let root = &d["layouts"]["root"];
     assert_eq!(root["locale"], "en");
-    assert_eq!(root["theme"], "discord");
+    assert_eq!(root["theme"], "graphite");
     assert_eq!(root["mode"], "system");
     assert!(root["messages"]["common"].is_object());
     assert_eq!(d["layouts"].as_object().unwrap().len(), 1);
@@ -222,7 +222,7 @@ async fn documents_inline_the_payload_and_the_head() {
     assert_eq!(a.status.as_u16(), 200);
     assert_eq!(a.header("content-type").as_deref(), Some("text/html; charset=utf-8"));
     let html = a.text();
-    assert_html_attrs(&html, &["lang=\"en\"", "data-mode=\"system\"", "data-theme=\"discord\""]);
+    assert_html_attrs(&html, &["lang=\"en\"", "data-mode=\"system\"", "data-theme=\"graphite\""]);
     assert!(
         html.contains("<title>alice&#x27;s files - Modlight</title>")
             || html.contains("<title>alice's files - Modlight</title>")
