@@ -342,8 +342,23 @@ impl Look {
         }
     }
 
-    /// `Button.compact.primary` / `Button.active`: the accent gradient.
+    /// `Button.compact.primary` / `Button.active`: the accent gradient; in Graphite a
+    /// solid white (dark) or near-black (light) button.
     pub fn primary(c: &Colors) -> Look {
+        if c.graphite {
+            return Look {
+                fill: Fill::Solid(c.primary()),
+                hover_fill: Fill::Solid(c.primary_hover()),
+                pressed_fill: Fill::Solid(c.primary_hover()),
+                border: Some(c.primary()),
+                hover_border: Some(c.primary_hover()),
+                text: c.primary_foreground(),
+                hover_text: c.primary_foreground(),
+                string_text: Some(c.primary_foreground()),
+                weight: Weight::Medium,
+                ..Look::compact(c)
+            };
+        }
         Look {
             fill: Fill::Accent,
             hover_fill: Fill::Accent,
@@ -655,6 +670,34 @@ pub fn paint_button(
     if let Some(label) = label {
         let size = label.size();
         layer.galley(pos2(x, cy - size.y / 2.0), label, text_color);
+    }
+}
+
+/// The chosen item of a segmented strip (tabs inside a window): the accent gradient; in
+/// Graphite a raised neutral chip with a thin border. Its text is
+/// [`Colors::selected_text`].
+pub fn paint_selected_segment(painter: &Painter, colors: &Colors, rect: Rect, radius: f32) {
+    if colors.graphite {
+        let fill = if colors.dark {
+            colors.control_background_hover()
+        } else {
+            colors.background_panel()
+        };
+        painter.rect_filled(rect, radius, fill);
+        painter.rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, colors.border()),
+            StrokeKind::Inside,
+        );
+    } else {
+        gradient_rect(
+            painter,
+            rect,
+            radius,
+            colors.accent_start(),
+            colors.accent_end(),
+        );
     }
 }
 

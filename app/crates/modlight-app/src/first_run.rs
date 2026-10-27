@@ -141,7 +141,7 @@ pub fn first_run_ui(ui: &mut Ui, window: &FirstRunWindow, colors: &Colors) -> Ve
             t(s::FirstTimeConfigWindow_Heading),
             24.0,
             Weight::SemiBold,
-            colors.accent_start(),
+            colors.heading(),
             inner.width() - 40.0,
         ),
     );
@@ -168,7 +168,7 @@ pub fn first_run_ui(ui: &mut Ui, window: &FirstRunWindow, colors: &Colors) -> Ve
     painter.galley(
         pos2(inner.left() + 28.0 + 11.0, inner.top()),
         title,
-        colors.accent_start(),
+        colors.heading(),
     );
     painter.galley(
         pos2(inner.left() + 28.0 + 11.0, inner.top() + title_h + 2.0),
@@ -346,7 +346,7 @@ pub fn selector_ui(ui: &mut Ui, window: &mut EditorSelector, colors: &Colors) ->
             t(s::ImageEditorSelectorWindow_Heading),
             19.0,
             Weight::SemiBold,
-            colors.accent_start(),
+            colors.heading(),
         ),
     );
     let subtitle = layout(
@@ -361,11 +361,7 @@ pub fn selector_ui(ui: &mut Ui, window: &mut EditorSelector, colors: &Colors) ->
     let text_h = heading.size().y + 1.0 + subtitle.size().y;
     let top = square.center().y - text_h / 2.0;
     let heading_h = heading.size().y;
-    painter.galley(
-        pos2(square.right() + 10.0, top),
-        heading,
-        colors.accent_start(),
-    );
+    painter.galley(pos2(square.right() + 10.0, top), heading, colors.heading());
     painter.galley(
         pos2(square.right() + 10.0, top + heading_h + 1.0),
         subtitle,

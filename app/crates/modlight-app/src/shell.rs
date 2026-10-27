@@ -47,12 +47,22 @@ pub fn ui(ui: &mut Ui, state: &mut AppState, logo: Option<&egui::TextureHandle>)
 
     let title = Rect::from_min_size(full.min, vec2(full.width(), TITLE_HEIGHT));
     title_band(ui, state, title, logo);
-    let strip = Rect::from_min_size(
-        pos2(full.left(), title.bottom()),
-        vec2(full.width(), STRIP_HEIGHT),
-    );
-    tab_strip(ui, state, strip);
-    let content = Rect::from_min_max(pos2(full.left(), strip.bottom()), full.max);
+    let content = if uses_side_panel(state) {
+        // The Graphite skin's layout: the navigation in a panel down the left.
+        let panel = Rect::from_min_max(
+            pos2(full.left(), title.bottom()),
+            pos2(full.left() + SIDE_PANEL_WIDTH, full.bottom()),
+        );
+        side_panel(ui, state, panel, logo);
+        Rect::from_min_max(pos2(panel.right(), title.bottom()), full.max)
+    } else {
+        let strip = Rect::from_min_size(
+            pos2(full.left(), title.bottom()),
+            vec2(full.width(), STRIP_HEIGHT),
+        );
+        tab_strip(ui, state, strip);
+        Rect::from_min_max(pos2(full.left(), strip.bottom()), full.max)
+    };
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(content)
@@ -436,6 +446,277 @@ fn tab_strip(ui: &mut Ui, state: &mut AppState, rect: Rect) {
     if state.strip.has_storage {
         storage_chip(ui, state, right, cy);
     }
+}
+
+/// The side panel's width (the Graphite layout).
+pub const SIDE_PANEL_WIDTH: f32 = 236.0;
+
+/// Whether the window lays its navigation out down the left: the Graphite skin's way.
+pub fn uses_side_panel(state: &AppState) -> bool {
+    state.theme.skin.id == "graphite"
+}
+
+/// The Graphite layout's navigation: the account and its storage on a card at the top,
+/// the tabs as rows under it, settings and the app's name at the bottom.
+fn side_panel(ui: &mut Ui, state: &mut AppState, rect: Rect, logo: Option<&egui::TextureHandle>) {
+    let colors = state.colors.clone();
+    let painter = ui.painter().clone();
+    painter.rect_filled(rect, 0.0, colors.background_toolbar());
+    painter.vline(
+        rect.right() - 0.5,
+        rect.y_range(),
+        Stroke::new(1.0, colors.border()),
+    );
+    let inner = rect.shrink2(vec2(10.0, 10.0));
+
+    // The account card, with the storage bar along its bottom when the server reports
+    // a quota.
+    let signed_in = state.account.is_signed_in();
+    let with_bar = signed_in && state.strip.has_storage_bar;
+    let card = Rect::from_min_size(
+        inner.min,
+        vec2(inner.width(), if with_bar { 66.0 } else { 56.0 }),
+    );
+    let response = ui.interact(card, Id::new("side-account"), Sense::click());
+    let fill = if response.hovered() || response.is_pointer_button_down_on() {
+        colors.control_background_hover()
+    } else {
+        colors.control_background()
+    };
+    painter.rect_filled(card, 10.0, fill);
+    painter.rect_stroke(
+        card,
+        10.0,
+        Stroke::new(1.0, colors.border()),
+        StrokeKind::Inside,
+    );
+    let circle = Rect::from_min_size(
+        pos2(card.left() + 10.0, card.top() + 12.0),
+        vec2(32.0, 32.0),
+    );
+    if signed_in {
+        let texture = state.media.avatar.texture().cloned();
+        crate::signin::paint_avatar(
+            ui,
+            &colors,
+            circle,
+            texture.as_ref(),
+            &state.account.display_name(),
+            20.0,
+            12.0,
+        );
+    } else {
+        painter.circle_filled(circle.center(), 16.0, colors.control_background_hover());
+        paint_icon(
+            ui,
+            &painter,
+            circle.center(),
+            icons::LOG_IN,
+            15.0,
+            colors.text_secondary(),
+        );
+    }
+    let text_left = circle.right() + 10.0;
+    let text_width = card.right() - 10.0 - text_left;
+    let label = if signed_in {
+        state.account_label()
+    } else {
+        t(s::SettingsWindow_AccountSignedOut).to_string()
+    };
+    let name = layout(
+        ui,
+        trimmed(&label, 13.0, Weight::SemiBold, colors.text(), text_width, 1),
+    );
+    let sub = if !signed_in {
+        t(s::MainWindow_SignIn).to_string()
+    } else if state.strip.has_storage {
+        state.strip.storage_text.clone()
+    } else {
+        String::new()
+    };
+    let sub = layout(
+        ui,
+        trimmed(
+            &sub,
+            11.0,
+            Weight::Normal,
+            colors.text_secondary(),
+            text_width,
+            1,
+        ),
+    );
+    let block = name.size().y + 2.0 + sub.size().y;
+    let top = circle.center().y - block / 2.0;
+    painter.galley(pos2(text_left, top), name.clone(), colors.text());
+    painter.galley(
+        pos2(text_left, top + name.size().y + 2.0),
+        sub,
+        colors.text_secondary(),
+    );
+    let response = response.on_hover_text(state.account_tooltip());
+    if !signed_in {
+        if response.clicked() {
+            state.push(Command::ShowSignIn);
+        }
+    } else if let Some(command) = crate::menus::popup_beside(&colors, &response, account_menu) {
+        state.push(command);
+    }
+    if with_bar {
+        let bar = Rect::from_min_max(
+            pos2(card.left() + 12.0, card.bottom() - 12.0),
+            pos2(card.right() - 12.0, card.bottom() - 9.0),
+        );
+        paint_progress(ui, &colors, bar, Some(state.strip.storage_percent / 100.0));
+        let _ = ui
+            .interact(
+                bar.expand2(vec2(0.0, 4.0)),
+                Id::new("side-storage"),
+                Sense::hover(),
+            )
+            .on_hover_text(state.strip.storage_tooltip.clone());
+    }
+    let mut y = card.bottom() + 12.0;
+
+    // The tabs.
+    let admin = state.is_admin();
+    for spec in &TABS {
+        if spec.tab == Tab::Admin && !admin {
+            continue;
+        }
+        let r = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), 36.0));
+        if side_row(
+            ui,
+            &colors,
+            r,
+            Id::new(("side-tab", spec.tab)),
+            spec.icon,
+            t(spec.label),
+            state.tab == spec.tab,
+        )
+        .clicked()
+        {
+            state.push(Command::SelectTab(spec.tab));
+        }
+        y += 36.0 + 2.0;
+    }
+
+    // Settings and the app's name, at the bottom.
+    let footer = Rect::from_min_max(pos2(inner.left(), inner.bottom() - 30.0), inner.max);
+    painter.hline(
+        rect.left() + 10.0..=rect.right() - 10.0,
+        footer.top() - 8.0,
+        Stroke::new(1.0, colors.border()),
+    );
+    let settings = Rect::from_min_size(
+        pos2(inner.left(), footer.top() - 8.0 - 8.0 - 36.0),
+        vec2(inner.width(), 36.0),
+    );
+    let response = side_row(
+        ui,
+        &colors,
+        settings,
+        Id::new("side-settings"),
+        icons::SETTINGS,
+        t(s::MainWindow_Settings),
+        false,
+    );
+    if let Some(command) = crate::menus::popup_beside(&colors, &response, || settings_menu(state)) {
+        state.push(command);
+    }
+    let mut x = footer.left() + 6.0;
+    let cy = footer.center().y;
+    if let Some(logo) = logo {
+        let r = Rect::from_min_size(pos2(x, cy - 10.0), vec2(20.0, 20.0));
+        painter.image(
+            logo.id(),
+            r,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+        x = r.right() + 8.0;
+    }
+    let name = layout(
+        ui,
+        job(
+            modlight_core::APP_NAME,
+            12.0,
+            Weight::Normal,
+            colors.text_secondary(),
+        ),
+    );
+    painter.galley(
+        pos2(x, cy - name.size().y / 2.0),
+        name,
+        colors.text_secondary(),
+    );
+}
+
+/// One row of the side panel: an icon and a label, the chosen one filled with the
+/// accent on its icon.
+fn side_row(
+    ui: &mut Ui,
+    colors: &Colors,
+    r: Rect,
+    id: Id,
+    icon: char,
+    label: &str,
+    selected: bool,
+) -> egui::Response {
+    let response = ui.interact(r, id, Sense::click());
+    let painter = ui.painter();
+    let hovered = response.hovered() || response.is_pointer_button_down_on();
+    // On the light panel (the hover colour itself) the chosen row takes the border's
+    // grey, so it still stands out.
+    let (chosen, hover) = if colors.dark {
+        (
+            colors.control_background_hover(),
+            colors.control_background(),
+        )
+    } else {
+        (
+            colors.border(),
+            crate::widgets::lerp_color(colors.background_toolbar(), colors.border(), 0.5),
+        )
+    };
+    if selected {
+        painter.rect_filled(r, 8.0, chosen);
+    } else if hovered {
+        painter.rect_filled(r, 8.0, hover);
+    }
+    let icon_color = if selected {
+        colors.accent_start()
+    } else {
+        colors.text_secondary()
+    };
+    let cy = r.center().y;
+    paint_icon(
+        ui,
+        painter,
+        pos2(r.left() + 12.0 + 8.0, cy),
+        icon,
+        16.0,
+        icon_color,
+    );
+    let weight = if selected {
+        Weight::SemiBold
+    } else {
+        Weight::Normal
+    };
+    let text_color = if selected || hovered {
+        colors.text()
+    } else {
+        colors.text_secondary()
+    };
+    let text = layout(
+        ui,
+        trimmed(label, 13.0, weight, text_color, r.width() - 50.0, 1),
+    );
+    painter.galley(
+        pos2(r.left() + 40.0, cy - text.size().y / 2.0),
+        text,
+        text_color,
+    );
+    response
 }
 
 fn account_button(ui: &mut Ui, state: &mut AppState, right: f32, cy: f32) -> Rect {

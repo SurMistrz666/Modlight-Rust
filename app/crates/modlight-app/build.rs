@@ -1,13 +1,13 @@
 //! Windows: what Explorer and the system read from Modlight.exe itself, which upstream's
-//! project sets in its `.csproj` and `app.manifest`: the icon (upstream's
-//! `Modlight_Icon.ico`, every frame as it is), the version information, and the
+//! project sets in its `.csproj` and `app.manifest`: the icon (the app's own
+//! `assets/icons/Modlight.ico`, every frame as it is), the version information, and the
 //! manifest (Windows 10 and 11, per-monitor DPI awareness v2, long paths, version 6 of
 //! the common controls for the system dialogs, no elevation). Other systems get nothing
 //! here; the macOS bundle is made by `scripts/build-app.sh`.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=../../assets/upstream/icons/Modlight_Icon.ico");
+    println!("cargo:rerun-if-changed=../../assets/icons/Modlight.ico");
     // Written as one `if` so that, on a non-Windows host where the call below is
     // compiled out, clippy does not see a needless `return`.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
@@ -71,7 +71,7 @@ mod windows {
             .join(".");
         let mut resource = winresource::WindowsResource::new();
         resource
-            .set_icon("../../assets/upstream/icons/Modlight_Icon.ico")
+            .set_icon("../../assets/icons/Modlight.ico")
             .set_manifest(&MANIFEST.replace("{VERSION}", &four))
             .set("ProductName", "Modlight")
             .set("FileDescription", "Modlight")

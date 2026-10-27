@@ -786,12 +786,11 @@ fn effect_dialog(
     {
         editor.close_effects_panel();
     }
-    if style::text_button(
+    if style::primary_text_button(
         ui,
         colors,
         apply,
         t(s::SchemaDrivenEffectDialog_Apply),
-        true,
         true,
     )
     .clicked()

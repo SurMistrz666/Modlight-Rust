@@ -951,13 +951,14 @@ fn nav_item(
     let (rect, response) = ui.allocate_exact_size(vec2(width, 32.0), Sense::click());
     ui.add_space(1.0);
     let painter = ui.painter();
+    let radius = if colors.graphite { 8.0 } else { 4.0 };
     if selected {
-        painter.rect_filled(rect, 4.0, colors.accent_start());
+        painter.rect_filled(rect, radius, colors.selected_fill());
     } else if response.hovered() {
-        painter.rect_filled(rect, 4.0, colors.control_background_hover());
+        painter.rect_filled(rect, radius, colors.control_background_hover());
     }
     let color = if selected {
-        colors.accent_foreground()
+        colors.selected_text()
     } else {
         colors.text_on_panel()
     };
@@ -1025,7 +1026,7 @@ fn header(ui: &mut Ui, colors: &Colors, rect: Rect, section_id: &str) -> f32 {
             t(section.title),
             24.0,
             Weight::SemiBold,
-            colors.accent_start(),
+            colors.heading(),
             width - icon.size().x - 10.0,
             1,
         ),
@@ -1068,7 +1069,7 @@ fn header(ui: &mut Ui, colors: &Colors, rect: Rect, section_id: &str) -> f32 {
     painter.galley(
         pos2(left + icon_w + 10.0, y + (title_row - title.size().y) / 2.0),
         title,
-        colors.accent_start(),
+        colors.heading(),
     );
     y += title_row + 5.0;
     painter.galley(pos2(left, y), description, colors.text_secondary());
@@ -1908,11 +1909,18 @@ fn theme_page(ui: &mut Ui, state: &mut AppState, colors: &Colors) {
                 t(s::ApplicationSettingsWindow_AccentColorLabel),
                 |ui| {
                     // `ColorPickerDropdown` bound to `AccentColor` (MinWidth 130).
-                    let accent = state.options.accent_color();
+                    // Graphite: the brand default stands for the skin's own accent,
+                    // which is what the window is painted with, so that is shown.
+                    let accent = if colors.graphite && state.options.is_accent_default() {
+                        colors.palette.skin_accent
+                    } else {
+                        state.options.accent_color()
+                    };
                     let (r, _) = ui.allocate_exact_size(vec2(130.0, 32.0), Sense::hover());
                     let editor_colors = modlight_editor::ui::style::Colors {
                         dark: colors.dark,
                         palette: colors.palette,
+                        graphite: colors.graphite,
                     };
                     let current = modlight_editor::color::Color::argb(
                         accent.a(),

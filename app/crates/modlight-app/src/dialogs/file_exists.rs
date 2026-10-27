@@ -83,7 +83,7 @@ impl FileExists {
                 t(s::FileExistWindow_FileAlreadyExists),
                 19.0,
                 Weight::SemiBold,
-                colors.accent_start(),
+                colors.heading(),
                 width - 18.0 - 40.0 - 10.0 - 18.0,
                 1,
             ),
@@ -119,7 +119,7 @@ impl FileExists {
         let text_left = tile.right() + 10.0;
         let text_top = header.center().y - text_height / 2.0;
         let title_h = title.size().y;
-        painter.galley(pos2(text_left, text_top), title, colors.accent_start());
+        painter.galley(pos2(text_left, text_top), title, colors.heading());
         painter.galley(
             pos2(text_left, text_top + title_h + 2.0),
             instruction,

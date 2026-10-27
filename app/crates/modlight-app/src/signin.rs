@@ -475,7 +475,7 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Option<SignInAction> {
             heading,
             19.0,
             Weight::SemiBold,
-            colors.accent_start(),
+            colors.heading(),
             text_width,
         ),
     );
@@ -509,7 +509,7 @@ pub fn ui(ui: &mut Ui, state: &mut AppState) -> Option<SignInAction> {
     );
     let mut y = header.top() + 14.0 + (stack.max(40.0) - stack) / 2.0;
     let h = heading_galley.size().y;
-    painter.galley(pos2(text_left, y), heading_galley, colors.accent_start());
+    painter.galley(pos2(text_left, y), heading_galley, colors.heading());
     y += h + 3.0;
     painter.galley(pos2(text_left, y), subtitle_galley, colors.text_secondary());
 
@@ -899,7 +899,13 @@ pub fn paint_avatar(
 ) {
     let painter = ui.painter();
     let radius = circle.width() / 2.0;
-    painter.circle_filled(circle.center(), radius, colors.control_background());
+    // Graphite: initials in white on the accent, the way its account cards show them.
+    let (fill, mark) = if colors.graphite && texture.is_none() {
+        (colors.accent_start(), colors.accent_foreground())
+    } else {
+        (colors.control_background(), colors.accent_start())
+    };
+    painter.circle_filled(circle.center(), radius, fill);
     if let Some(texture) = texture {
         let size = texture.size_vec2();
         let scale = (circle.width() / size.x).max(circle.height() / size.y);
@@ -946,23 +952,14 @@ pub fn paint_avatar(
             circle.center(),
             icons::CIRCLE_USER,
             glyph_size,
-            colors.accent_start(),
+            mark,
         );
     } else {
         let galley = layout(
             ui,
-            crate::widgets::job(
-                &initials,
-                initials_size,
-                Weight::SemiBold,
-                colors.accent_start(),
-            ),
+            crate::widgets::job(&initials, initials_size, Weight::SemiBold, mark),
         );
-        painter.galley(
-            circle.center() - galley.size() / 2.0,
-            galley,
-            colors.accent_start(),
-        );
+        painter.galley(circle.center() - galley.size() / 2.0, galley, mark);
     }
 }
 

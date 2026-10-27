@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use egui::{ViewportBuilder, vec2};
-use modlight_app::app::{MAIN_MIN_SIZE, MAIN_SIZE, Mode, ModlightApp};
+use modlight_app::app::{Mode, ModlightApp};
 use modlight_app::state::{AppState, Env};
 use modlight_app::{platform, qa};
 use modlight_core::account::{AccountStore, CredentialStore, FileCredentialStore};
@@ -346,10 +346,11 @@ fn main() -> ExitCode {
         platform::integration::receive_files(args.files.clone());
     }
 
+    let (main_size, main_min_size) = modlight_app::app::main_sizes(state.theme.skin.id);
     let mut viewport = ViewportBuilder::default()
         .with_title(modlight_core::title())
-        .with_inner_size(MAIN_SIZE)
-        .with_min_inner_size(MAIN_MIN_SIZE);
+        .with_inner_size(main_size)
+        .with_min_inner_size(main_min_size);
     // The window draws its own title band (`ExtendClientAreaToDecorationsHint`): on a Mac
     // under the traffic lights of a full-size content view; on Windows without the system
     // frame, with its own caption buttons and resize edges (`shell::caption_buttons`).
@@ -373,8 +374,8 @@ fn main() -> ExitCode {
     };
     let (remembered_size, remembered) = modlight_core::config::restore_main_window(
         &bounds,
-        (MAIN_SIZE.x, MAIN_SIZE.y),
-        (MAIN_MIN_SIZE.x, MAIN_MIN_SIZE.y),
+        (main_size.x, main_size.y),
+        (main_min_size.x, main_min_size.y),
         &screens,
     );
     let remembered_size = remembered_size.map(|(w, h)| vec2(w, h));
@@ -389,7 +390,7 @@ fn main() -> ExitCode {
     if remembered.is_none()
         && let Some((x, y, w, h)) = platform::system::visible_frame()
     {
-        let size = remembered_size.unwrap_or(MAIN_SIZE);
+        let size = remembered_size.unwrap_or(main_size);
         viewport = viewport.with_position(egui::pos2(
             (x + (w - size.x) / 2.0).max(x),
             (y + (h - size.y) / 2.0).max(y),

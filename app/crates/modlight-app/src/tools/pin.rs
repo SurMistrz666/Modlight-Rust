@@ -1201,6 +1201,7 @@ fn color_button(
     let editor_colors = modlight_editor::ui::style::Colors {
         dark: colors.dark,
         palette: colors.palette,
+        graphite: colors.graphite,
     };
     let mut picked = None;
     egui::Popup::menu(&response)

@@ -655,6 +655,7 @@ impl RegionOverlay {
             let editor_colors = modlight_editor::ui::Colors {
                 dark: colors.dark,
                 palette: colors.palette,
+                graphite: colors.graphite,
             };
             let (strip, tool) = modlight_editor::ui::toolbars::tool_strip(
                 ui,

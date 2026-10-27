@@ -556,6 +556,7 @@ fn color_flyout(
     let editor_colors = modlight_editor::ui::style::Colors {
         dark: colors.dark,
         palette: colors.palette,
+        graphite: colors.graphite,
     };
     let _ = ui;
     let mut picked = None;

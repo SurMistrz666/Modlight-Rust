@@ -12,6 +12,21 @@ use crate::state::{AppState, Effect};
 pub const MAIN_SIZE: Vec2 = Vec2::new(1040.0, 720.0);
 pub const MAIN_MIN_SIZE: Vec2 = Vec2::new(880.0, 540.0);
 
+/// The main window's size under the Graphite skin, whose navigation panel takes
+/// [`crate::shell::SIDE_PANEL_WIDTH`] down the left: the content keeps about the room
+/// it has under the tab strip.
+pub const GRAPHITE_MAIN_SIZE: Vec2 = Vec2::new(1280.0, 760.0);
+pub const GRAPHITE_MAIN_MIN_SIZE: Vec2 = Vec2::new(1120.0, 560.0);
+
+/// The main window's size and smallest size for a skin.
+pub fn main_sizes(skin: &str) -> (Vec2, Vec2) {
+    if skin == crate::theme::GRAPHITE {
+        (GRAPHITE_MAIN_SIZE, GRAPHITE_MAIN_MIN_SIZE)
+    } else {
+        (MAIN_SIZE, MAIN_MIN_SIZE)
+    }
+}
+
 /// How the app was started.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -29,7 +44,8 @@ pub enum Mode {
 pub struct ModlightApp {
     pub state: AppState,
     pub mode: Mode,
-    logo: Option<egui::TextureHandle>,
+    /// The title band's logo, and whether it is the Graphite one.
+    logo: Option<(bool, egui::TextureHandle)>,
     tray: Option<crate::tray::Tray>,
     clipboard: Option<arboard::Clipboard>,
     allow_close: bool,
@@ -64,12 +80,34 @@ pub fn window_snapshot(info: &egui::ViewportInfo) -> modlight_core::config::Wind
     }
 }
 
-/// The app icon (`ShareX/Modlight_Icon.ico`), decoded at its largest.
+/// The app icon (`assets/icons/Modlight.ico`), decoded at its largest.
 pub fn app_icon() -> Option<image::RgbaImage> {
+    let bytes = include_bytes!("../../../assets/icons/Modlight.ico");
+    image::load_from_memory_with_format(bytes, image::ImageFormat::Ico)
+        .ok()
+        .map(|i| i.to_rgba8())
+}
+
+/// The logo drawn inside the windows (title band, About): the app icon under the
+/// Graphite skin; upstream's `Modlight_Icon.ico` under the others, which keep the look
+/// they always had.
+pub fn window_logo(graphite: bool) -> Option<image::RgbaImage> {
+    if graphite {
+        return app_icon();
+    }
     let bytes = include_bytes!("../../../assets/upstream/icons/Modlight_Icon.ico");
     image::load_from_memory_with_format(bytes, image::ImageFormat::Ico)
         .ok()
         .map(|i| i.to_rgba8())
+}
+
+/// [`window_logo`] at 34 px, as a texture.
+fn title_logo(ctx: &egui::Context, graphite: bool) -> Option<egui::TextureHandle> {
+    window_logo(graphite).map(|icon| {
+        let small = image::imageops::resize(&icon, 34, 34, image::imageops::FilterType::Lanczos3);
+        let image = egui::ColorImage::from_rgba_unmultiplied([34, 34], small.as_raw());
+        ctx.load_texture("title-logo", image, egui::TextureOptions::LINEAR)
+    })
 }
 
 impl ModlightApp {
@@ -86,12 +124,8 @@ impl ModlightApp {
             "ShareXImageEffects".to_string(),
             state.image_effects_folder().to_string_lossy().into_owned(),
         )]);
-        let logo = app_icon().map(|icon| {
-            let small =
-                image::imageops::resize(&icon, 34, 34, image::imageops::FilterType::Lanczos3);
-            let image = egui::ColorImage::from_rgba_unmultiplied([34, 34], small.as_raw());
-            ctx.load_texture("title-logo", image, egui::TextureOptions::LINEAR)
-        });
+        let graphite = state.colors.graphite;
+        let logo = title_logo(ctx, graphite).map(|texture| (graphite, texture));
         let mut app = ModlightApp {
             state,
             mode,
@@ -968,7 +1002,11 @@ impl ModlightApp {
         self.track_window_bounds(&ctx);
         self.before(&ctx);
         self.handle_close(&ctx);
-        crate::shell::ui(ui, &mut self.state, self.logo.as_ref());
+        let graphite = self.state.colors.graphite;
+        if self.logo.as_ref().is_some_and(|(g, _)| *g != graphite) {
+            self.logo = title_logo(&ctx, graphite).map(|texture| (graphite, texture));
+        }
+        crate::shell::ui(ui, &mut self.state, self.logo.as_ref().map(|(_, t)| t));
         self.state.update_drag(&ctx);
         self.state.paint_drag_ghost(&ctx);
         if self.state.windows.modal_open() || self.state.uploads.modal_open() {

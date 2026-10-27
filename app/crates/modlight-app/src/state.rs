@@ -262,10 +262,23 @@ impl AppState {
 
     /// Re-resolve the skin after the options, the system appearance or the language moved.
     pub fn refresh_theme(&mut self, ctx: Option<&egui::Context>) {
+        let before = self.theme.skin.id;
         self.theme = resolve(&self.options, self.env.system_dark, None);
         self.colors = Colors::new(&self.theme);
         if let Some(ctx) = ctx {
             crate::theme::apply_style(ctx, &self.colors);
+            // A skin with another layout (Graphite's side panel) needs another
+            // smallest window; a window below it grows to it.
+            let (_, min_before) = crate::app::main_sizes(before);
+            let (_, min_after) = crate::app::main_sizes(self.theme.skin.id);
+            if min_before != min_after
+                && matches!(self.mode, crate::app::Mode::Normal | crate::app::Mode::Qa)
+            {
+                ctx.send_viewport_cmd_to(
+                    egui::ViewportId::ROOT,
+                    egui::ViewportCommand::MinInnerSize(min_after),
+                );
+            }
         }
     }
 

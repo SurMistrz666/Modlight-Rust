@@ -337,13 +337,7 @@ impl AfterUpload {
                     // (SemiBold, Text.Secondary) beats the selected item's Foreground.
                     let text_color = colors.text_secondary();
                     if selected {
-                        crate::widgets::gradient_rect(
-                            ui.painter(),
-                            row,
-                            4.0,
-                            colors.accent_start(),
-                            colors.accent_end(),
-                        );
+                        crate::widgets::paint_selected_segment(ui.painter(), colors, row, 4.0);
                     } else if response.hovered() {
                         ui.painter()
                             .rect_filled(row, 4.0, colors.control_background_hover());

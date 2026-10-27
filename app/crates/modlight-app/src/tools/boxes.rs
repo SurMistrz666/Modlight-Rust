@@ -310,7 +310,7 @@ impl ToolWindow for ErrorWindow {
             t(h::ErrorWindow_Heading),
             19.0,
             Weight::SemiBold,
-            colors.accent_start(),
+            colors.heading(),
         );
         let description = Rect::from_min_size(
             pos2(text_left, heading.bottom() + 2.0),

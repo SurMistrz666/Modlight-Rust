@@ -30,7 +30,7 @@ pub fn header_band(
             heading,
             heading_size,
             Weight::SemiBold,
-            colors.accent_start(),
+            colors.heading(),
             text_width,
             1,
         ),
@@ -77,7 +77,7 @@ pub fn header_band(
     let left = tile.right() + 10.0;
     let top = band.center().y - text_height / 2.0;
     let title_height = title.size().y;
-    painter.galley(pos2(left, top), title, colors.accent_start());
+    painter.galley(pos2(left, top), title, colors.heading());
     if let Some(sub) = sub {
         painter.galley(
             pos2(left, top + title_height + 2.0),

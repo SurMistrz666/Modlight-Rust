@@ -339,12 +339,13 @@ mod tests {
 
     #[test]
     fn every_skin_of_the_panel_is_here() {
-        assert_eq!(SKINS.len(), 14);
-        assert_eq!(DEFAULT_SKIN_ID, "discord");
+        assert_eq!(SKINS.len(), 15);
+        assert_eq!(DEFAULT_SKIN_ID, "graphite");
         let ids: Vec<&str> = SKINS.iter().map(|s| s.id).collect();
         assert_eq!(
             ids,
             vec![
+                "graphite",
                 "default",
                 "glass",
                 "synthwave",
@@ -365,7 +366,8 @@ mod tests {
         let classic = resolve_skin(Some("DEFAULT"));
         assert_eq!(classic.dark.background_main, Rgba([0x0A, 0x0A, 0x0A, 255]));
         assert_eq!(classic.dark.accent_start, Rgba::parse("#7E88FB").unwrap());
-        assert_eq!(resolve_skin(Some("not-yet")).id, "discord");
+        assert_eq!(resolve_skin(Some("not-yet")).id, "graphite");
+        assert_eq!(resolve_skin(Some("graphite")).name_polish, "Grafit");
         assert!(is_known_skin("Spotify"));
         assert!(!is_known_skin("not-yet"));
     }

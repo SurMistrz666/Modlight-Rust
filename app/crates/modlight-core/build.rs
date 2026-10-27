@@ -22,7 +22,14 @@ fn main() {
     );
 
     std::fs::write(out.join("strings.rs"), strings(&assets.join("l10n"))).unwrap();
-    std::fs::write(out.join("skins.rs"), skins(&assets.join("theming"))).unwrap();
+    std::fs::write(
+        out.join("skins.rs"),
+        skins(
+            &assets.join("theming"),
+            &manifest.join("../../assets/mac/theming/Skins.axaml"),
+        ),
+    )
+    .unwrap();
     std::fs::write(
         out.join("lucide.rs"),
         lucide(&assets.join("icons/lucide-codepoints.json")),
@@ -232,43 +239,48 @@ fn unescape_csharp(text: &str) -> String {
     out
 }
 
-fn skins(dir: &Path) -> String {
+/// The skins: upstream's, after the app's own (`extra`, the same format), which comes
+/// first and is the default.
+fn skins(dir: &Path, extra: &Path) -> String {
     let axaml_path = dir.join("Skins.axaml");
     let variants_path = dir.join("SkinVariants.g.cs");
     println!("cargo:rerun-if-changed={}", axaml_path.display());
     println!("cargo:rerun-if-changed={}", variants_path.display());
 
     // Palettes, keyed by the SkinVariants member name (e.g. "Default_Dark").
-    let text = std::fs::read_to_string(&axaml_path).unwrap();
-    let document = roxmltree::Document::parse(&text).unwrap();
+    println!("cargo:rerun-if-changed={}", extra.display());
     let mut palettes: BTreeMap<String, BTreeMap<String, [u8; 4]>> = BTreeMap::new();
-    for dictionary in document
-        .descendants()
-        .filter(|n| n.has_tag_name("ResourceDictionary"))
-    {
-        let Some(key) = dictionary
-            .attributes()
-            .find(|a| a.name() == "Key")
-            .map(|a| a.value().to_string())
-        else {
-            continue;
-        };
-        let Some(variant) = key
-            .strip_prefix("{x:Static helpers:SkinVariants.")
-            .and_then(|k| k.strip_suffix('}'))
-        else {
-            continue;
-        };
-        let mut colors = BTreeMap::new();
-        for color in dictionary.children().filter(|n| n.has_tag_name("Color")) {
-            let name = color
+    for path in [axaml_path.as_path(), extra] {
+        let text = std::fs::read_to_string(path).unwrap();
+        let document = roxmltree::Document::parse(&text).unwrap();
+        for dictionary in document
+            .descendants()
+            .filter(|n| n.has_tag_name("ResourceDictionary"))
+        {
+            let Some(key) = dictionary
                 .attributes()
                 .find(|a| a.name() == "Key")
-                .unwrap()
-                .value();
-            colors.insert(name.to_string(), parse_color(color.text().unwrap_or("")));
+                .map(|a| a.value().to_string())
+            else {
+                continue;
+            };
+            let Some(variant) = key
+                .strip_prefix("{x:Static helpers:SkinVariants.")
+                .and_then(|k| k.strip_suffix('}'))
+            else {
+                continue;
+            };
+            let mut colors = BTreeMap::new();
+            for color in dictionary.children().filter(|n| n.has_tag_name("Color")) {
+                let name = color
+                    .attributes()
+                    .find(|a| a.name() == "Key")
+                    .unwrap()
+                    .value();
+                colors.insert(name.to_string(), parse_color(color.text().unwrap_or("")));
+            }
+            palettes.insert(variant.to_string(), colors);
         }
-        palettes.insert(variant.to_string(), colors);
     }
 
     // Ids and names, in the picker's order, from SkinVariants.g.cs.
@@ -296,6 +308,18 @@ fn skins(dir: &Path) -> String {
         !skins.is_empty() && !default_id.is_empty(),
         "SkinVariants.g.cs not understood"
     );
+    // The app's own skin leads the list and is what an account starts with.
+    skins.insert(
+        0,
+        (
+            "graphite".to_string(),
+            "Graphite".to_string(),
+            "Grafit".to_string(),
+            "Graphite_Light".to_string(),
+            "Graphite_Dark".to_string(),
+        ),
+    );
+    default_id = "graphite".to_string();
 
     let palette = |variant: &str| -> String {
         let colors = palettes

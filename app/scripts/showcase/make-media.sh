@@ -27,7 +27,7 @@ snapshots="$app_root/crates/modlight-app/tests/snapshots"
 # The latin subsets: the latin-ext files hold only the extended letters.
 bold="$app_root/assets/fonts/Inter-SemiBold-latin.ttf"
 regular="$app_root/assets/fonts/Inter-Regular-latin.ttf"
-icon="$app_root/assets/upstream/icons/Modlight_Icon.ico[6]"
+icon="$app_root/assets/icons/Modlight.ico[0]"
 raw="$work/raw"
 tmp="$work/tmp"
 rm -rf "$tmp"

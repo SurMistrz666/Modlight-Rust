@@ -1143,6 +1143,10 @@ fn shot_harness(
         let state = state(look, signed_in);
         let mut app = ModlightApp::new(cc, state, Mode::Shot);
         size = prepare(screen, &mut app.state, &cc.egui_ctx);
+        // A whole main window takes the skin's own size (Graphite's is wider).
+        if size == MAIN_SIZE {
+            size = crate::app::main_sizes(app.state.theme.skin.id).0;
+        }
         ShotApp {
             app,
             screen: screen.to_string(),

@@ -71,7 +71,7 @@ impl PasteWindow {
                 t(s::Paste_WindowTitle),
                 18.0,
                 Weight::SemiBold,
-                colors.accent_start(),
+                colors.heading(),
                 text_width,
                 1,
             ),
@@ -113,7 +113,7 @@ impl PasteWindow {
         let left = tile.right() + 12.0;
         let top = header.center().y - text_height / 2.0;
         let title_h = title.size().y;
-        painter.galley(pos2(left, top), title, colors.accent_start());
+        painter.galley(pos2(left, top), title, colors.heading());
         painter.galley(
             pos2(left, top + title_h + 2.0),
             subtitle,

@@ -205,7 +205,7 @@ impl ToolWindow for PrintWindow {
             t(hp::PrintWindow_Heading),
             19.0,
             Weight::SemiBold,
-            colors.accent_start(),
+            colors.heading(),
         );
         kit::text_at(
             ui,

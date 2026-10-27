@@ -1648,7 +1648,12 @@ pub fn plan_card(
     });
     let text_h = title_g.size().y + 6.0 + body_g.size().y;
     let head_h = text_h.max(42.0);
-    let look = Look::button(colors);
+    // Graphite draws the card's one action as its primary button.
+    let look = if colors.graphite {
+        Look::primary(colors)
+    } else {
+        Look::button(colors)
+    };
     let mut h = 22.0 + head_h;
     if let Some(g) = &note_g {
         h += 14.0 + g.size().y;

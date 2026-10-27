@@ -231,7 +231,7 @@ pub fn message_ui(ui: &mut Ui, state: &mut AppState) -> Option<bool> {
             t(helpers::UpdateMessageWindow_Header),
             20.0,
             Weight::SemiBold,
-            colors.accent_start(),
+            colors.heading(),
             width - 52.0,
         ),
     );
@@ -239,7 +239,7 @@ pub fn message_ui(ui: &mut Ui, state: &mut AppState) -> Option<bool> {
     painter.galley(
         pos2(tile.right() + 10.0, tile.center().y - hh / 2.0),
         header,
-        colors.accent_start(),
+        colors.heading(),
     );
     y += 42.0_f32.max(hh) + 14.0;
     // The card: the message, the notes, the changelog link.
@@ -501,7 +501,7 @@ pub fn downloader_ui(ui: &mut Ui, state: &mut AppState) -> bool {
             t(helpers::DownloaderWindow_Heading),
             20.0,
             Weight::SemiBold,
-            colors.accent_start(),
+            colors.heading(),
             width - 52.0,
             1,
         ),
@@ -519,11 +519,7 @@ pub fn downloader_ui(ui: &mut Ui, state: &mut AppState) -> bool {
     let text_h = heading.size().y + 2.0 + description.size().y;
     let ty = tile.center().y - text_h / 2.0;
     let heading_h = heading.size().y;
-    painter.galley(
-        pos2(tile.right() + 10.0, ty),
-        heading,
-        colors.accent_start(),
-    );
+    painter.galley(pos2(tile.right() + 10.0, ty), heading, colors.heading());
     painter.galley(
         pos2(tile.right() + 10.0, ty + heading_h + 2.0),
         description,

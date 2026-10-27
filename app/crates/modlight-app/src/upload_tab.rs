@@ -1294,7 +1294,11 @@ fn empty_panel(ui: &mut Ui, state: &mut AppState, colors: &Colors, area: Rect, s
         body_galley,
         colors.text_secondary(),
     );
-    let look = Look::button(colors);
+    let look = if colors.graphite {
+        Look::primary(colors)
+    } else {
+        Look::button(colors)
+    };
     let (glyph, label, command) = if signed_out {
         (icons::LOG_IN, t(s::MainWindow_SignIn), Command::ShowSignIn)
     } else {

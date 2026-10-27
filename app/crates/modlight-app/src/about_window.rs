@@ -37,7 +37,8 @@ pub enum AboutUpdate {
 
 pub struct AboutWindow {
     pub update: AboutUpdate,
-    logo: Option<egui::TextureHandle>,
+    /// The logo, and whether it is the Graphite one.
+    logo: Option<(bool, egui::TextureHandle)>,
 }
 
 /// The Debug log window's state.
@@ -144,8 +145,15 @@ pub fn about_ui(ui: &mut Ui, window: &mut AboutWindow, colors: &Colors) -> Vec<A
     let inner = panel.shrink(24.0);
 
     // The logo (160 square, 50 down inside a 240 by 330 box) and the name under it.
-    let logo = window.logo.get_or_insert_with(|| {
-        let image = crate::app::app_icon()
+    if window
+        .logo
+        .as_ref()
+        .is_some_and(|(graphite, _)| *graphite != colors.graphite)
+    {
+        window.logo = None;
+    }
+    let (_, logo) = window.logo.get_or_insert_with(|| {
+        let image = crate::app::window_logo(colors.graphite)
             .map(|icon| {
                 image::imageops::resize(&icon, 320, 320, image::imageops::FilterType::Lanczos3)
             })
@@ -154,8 +162,10 @@ pub fn about_ui(ui: &mut Ui, window: &mut AboutWindow, colors: &Colors) -> Vec<A
             [image.width() as usize, image.height() as usize],
             image.as_raw(),
         );
-        ui.ctx()
-            .load_texture("about-logo", color, egui::TextureOptions::LINEAR)
+        let texture = ui
+            .ctx()
+            .load_texture("about-logo", color, egui::TextureOptions::LINEAR);
+        (colors.graphite, texture)
     });
     let box_rect = Rect::from_min_size(
         pos2(inner.center().x - 120.0, inner.top()),

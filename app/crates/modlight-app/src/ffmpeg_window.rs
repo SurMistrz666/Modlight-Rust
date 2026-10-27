@@ -719,18 +719,12 @@ fn tab_strip(ui: &mut Ui, window: &mut FFmpegWindow, colors: &Colors) {
         let response = ui.interact(item, ui.id().with(("ffmpeg-tab", index)), Sense::click());
         let selected = window.tab == index;
         let color = if selected {
-            colors.accent_foreground()
+            colors.selected_text()
         } else {
             colors.text_secondary()
         };
         if selected {
-            crate::widgets::gradient_rect(
-                &painter,
-                item,
-                4.0,
-                colors.accent_start(),
-                colors.accent_end(),
-            );
+            crate::widgets::paint_selected_segment(&painter, colors, item, 4.0);
         } else if response.hovered() {
             painter.rect_filled(item, 4.0, colors.control_background_hover());
         }

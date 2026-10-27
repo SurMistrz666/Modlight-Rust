@@ -342,6 +342,24 @@ pub fn popup_below(
         .and_then(|r| r.inner)
 }
 
+/// A menu that opens beside `anchor`, to its right and from its bottom up (the side
+/// panel's account card and settings row).
+pub fn popup_beside(
+    colors: &Colors,
+    anchor: &egui::Response,
+    list: impl FnOnce() -> Vec<Entry>,
+) -> Option<Command> {
+    egui::Popup::menu(anchor)
+        .frame(frame(colors))
+        .align(egui::RectAlign::RIGHT_END)
+        .gap(6.0)
+        .show(|ui| {
+            let list = list();
+            entries(ui, colors, &list)
+        })
+        .and_then(|r| r.inner)
+}
+
 /// A menu kept open by the caller (`open`), anchored under `anchor`.
 pub fn popup_open(
     colors: &Colors,

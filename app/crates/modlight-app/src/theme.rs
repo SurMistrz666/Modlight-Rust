@@ -1,6 +1,7 @@
 //! The skin as egui sees it: the `ShareX.Color.*` palette as `Color32`s, the fonts
-//! (`ShareXTheme.axaml`: Inter and the Lucide icon font) and egui's own style tuned to
-//! `ControlStyles.axaml` (menus, tooltips, scroll bars, text fields).
+//! (`ShareXTheme.axaml`: Inter and the Lucide icon font; Geist under the Graphite skin)
+//! and egui's own style tuned to `ControlStyles.axaml` (menus, tooltips, scroll bars,
+//! text fields).
 
 use std::sync::Arc;
 
@@ -53,7 +54,13 @@ pub fn rgba(color: Rgba) -> Color32 {
 pub struct Colors {
     pub dark: bool,
     pub palette: Palette,
+    /// The Graphite skin: Geist, solid black or white primary buttons, neutral
+    /// selections and headings, the accent kept for focus and what is chosen.
+    pub graphite: bool,
 }
+
+/// The id of the app's own skin, Graphite.
+pub const GRAPHITE: &str = "graphite";
 
 macro_rules! color {
     ($($name:ident),* $(,)?) => {
@@ -66,6 +73,7 @@ impl Colors {
         Colors {
             dark: theme.dark,
             palette: theme.palette,
+            graphite: theme.skin.id == GRAPHITE,
         }
     }
 
@@ -102,6 +110,63 @@ impl Colors {
     pub fn overlay_modal(&self) -> Color32 {
         Color32::from_black_alpha(0x80)
     }
+
+    /// The fill of a primary button: Graphite's white (dark) or near black (light),
+    /// otherwise the accent.
+    pub fn primary(&self) -> Color32 {
+        match (self.graphite, self.dark) {
+            (true, true) => Color32::WHITE,
+            (true, false) => Color32::from_rgb(0x17, 0x17, 0x17),
+            (false, _) => self.accent_start(),
+        }
+    }
+
+    /// A primary button under the pointer.
+    pub fn primary_hover(&self) -> Color32 {
+        match (self.graphite, self.dark) {
+            (true, true) => Color32::from_rgb(0xE5, 0xE5, 0xE5),
+            (true, false) => Color32::from_rgb(0x33, 0x33, 0x33),
+            (false, _) => self.accent_end(),
+        }
+    }
+
+    /// The text and icons on a primary button.
+    pub fn primary_foreground(&self) -> Color32 {
+        match (self.graphite, self.dark) {
+            (true, true) => Color32::BLACK,
+            (true, false) => Color32::WHITE,
+            (false, _) => self.accent_foreground(),
+        }
+    }
+
+    /// Titles of windows, dialogs and settings pages: the accent, plain text in
+    /// Graphite.
+    pub fn heading(&self) -> Color32 {
+        if self.graphite {
+            self.text()
+        } else {
+            self.accent_start()
+        }
+    }
+
+    /// The fill of a chosen row in a list (navigation): the accent, a neutral surface
+    /// in Graphite.
+    pub fn selected_fill(&self) -> Color32 {
+        if self.graphite {
+            self.control_background_hover()
+        } else {
+            self.accent_start()
+        }
+    }
+
+    /// The text on [`Colors::selected_fill`].
+    pub fn selected_text(&self) -> Color32 {
+        if self.graphite {
+            self.text()
+        } else {
+            self.accent_foreground()
+        }
+    }
 }
 
 fn static_font(bytes: &'static [u8]) -> Arc<FontData> {
@@ -111,6 +176,17 @@ fn static_font(bytes: &'static [u8]) -> Arc<FontData> {
 /// Inter in three weights (Latin, then Latin Extended for the Polish letters), the
 /// Lucide icons, and egui's own fonts behind them as a fallback.
 pub fn fonts() -> FontDefinitions {
+    font_set(false)
+}
+
+/// The fonts of the skin in `colors`: Geist (`assets/fonts/Geist-*.ttf`, regular, medium
+/// and semibold) under the Graphite skin, with Inter behind it for anything Geist lacks;
+/// Inter otherwise. The families keep their names, so every caller draws with either.
+pub fn fonts_for(colors: &Colors) -> FontDefinitions {
+    font_set(colors.graphite)
+}
+
+fn font_set(geist: bool) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let faces: [(&str, &'static [u8]); 7] = [
         (
@@ -142,6 +218,25 @@ pub fn fonts() -> FontDefinitions {
     for (name, bytes) in faces {
         fonts.font_data.insert(name.to_string(), static_font(bytes));
     }
+    if geist {
+        let faces: [(&str, &'static [u8]); 3] = [
+            (
+                "geist-regular",
+                include_bytes!("../../../assets/fonts/Geist-Regular.ttf"),
+            ),
+            (
+                "geist-medium",
+                include_bytes!("../../../assets/fonts/Geist-Medium.ttf"),
+            ),
+            (
+                "geist-semibold",
+                include_bytes!("../../../assets/fonts/Geist-SemiBold.ttf"),
+            ),
+        ];
+        for (name, bytes) in faces {
+            fonts.font_data.insert(name.to_string(), static_font(bytes));
+        }
+    }
 
     let fallback: Vec<String> = fonts
         .families
@@ -149,21 +244,30 @@ pub fn fonts() -> FontDefinitions {
         .cloned()
         .unwrap_or_default();
 
-    let chain = |first: &str, second: &str| {
-        let mut list = vec![first.to_string(), second.to_string()];
+    let chain = |geist_face: &str, first: &str, second: &str| {
+        let mut list = Vec::new();
+        if geist {
+            list.push(geist_face.to_string());
+        }
+        list.extend([first.to_string(), second.to_string()]);
         list.extend(fallback.iter().cloned());
         list
     };
     fonts.families.insert(
         FontFamily::Proportional,
-        chain("inter-regular-latin", "inter-regular-ext"),
+        chain("geist-regular", "inter-regular-latin", "inter-regular-ext"),
     );
-    fonts
-        .families
-        .insert(medium(), chain("inter-medium-latin", "inter-medium-ext"));
+    fonts.families.insert(
+        medium(),
+        chain("geist-medium", "inter-medium-latin", "inter-medium-ext"),
+    );
     fonts.families.insert(
         semibold(),
-        chain("inter-semibold-latin", "inter-semibold-ext"),
+        chain(
+            "geist-semibold",
+            "inter-semibold-latin",
+            "inter-semibold-ext",
+        ),
     );
     fonts
         .families
@@ -173,6 +277,8 @@ pub fn fonts() -> FontDefinitions {
 
 /// egui's style, made to look like `ControlStyles.axaml` where egui draws for us.
 pub fn apply_style(ctx: &egui::Context, colors: &Colors) {
+    // The skin's fonts (a no-op when they are already the ones in use).
+    ctx.set_fonts(fonts_for(colors));
     let mut visuals = if colors.dark {
         egui::Visuals::dark()
     } else {

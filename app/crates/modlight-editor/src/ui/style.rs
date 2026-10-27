@@ -58,6 +58,9 @@ pub fn rgba(color: Rgba) -> Color32 {
 pub struct Colors {
     pub dark: bool,
     pub palette: Palette,
+    /// The app's Graphite skin: primary actions are solid white (dark) or near black
+    /// (light) instead of the accent.
+    pub graphite: bool,
 }
 
 macro_rules! color {
@@ -71,12 +74,15 @@ impl Colors {
         Colors {
             dark: theme.dark,
             palette: theme.palette,
+            graphite: theme.skin.id == "graphite",
         }
     }
 
-    /// The default skin in light or dark mode (tests and QA).
+    /// Upstream's default skin (Discord) in light or dark mode (tests and QA), whatever
+    /// skin new accounts start with.
     pub fn default_skin(dark: bool) -> Colors {
         let options = modlight_core::theme::ThemeOptions {
+            skin: "discord".into(),
             theme: if dark { "Dark".into() } else { "Light".into() },
             ..Default::default()
         };
@@ -710,6 +716,63 @@ pub fn text_button(
         Weight::Normal,
         paint.foreground,
     );
+    response
+}
+
+/// A dialog's primary action: [`text_button`] drawn active, or under the Graphite skin
+/// a solid white (dark) or near-black (light) button.
+pub fn primary_text_button(
+    ui: &mut Ui,
+    colors: &Colors,
+    rect: Rect,
+    label: &str,
+    enabled: bool,
+) -> Response {
+    if !colors.graphite {
+        return text_button(ui, colors, rect, label, true, enabled);
+    }
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let response = ui.allocate_rect(rect, sense);
+    let hovered = enabled && response.hovered();
+    let pressed = enabled && response.is_pointer_button_down_on();
+    let opacity = if enabled { 1.0 } else { 0.35 };
+    let rect = if pressed {
+        Rect::from_center_size(rect.center(), rect.size() * 0.97)
+    } else {
+        rect
+    };
+    let (fill, hover, text) = if colors.dark {
+        (
+            Color32::WHITE,
+            Color32::from_rgb(0xE5, 0xE5, 0xE5),
+            Color32::BLACK,
+        )
+    } else {
+        (
+            Color32::from_rgb(0x17, 0x17, 0x17),
+            Color32::from_rgb(0x33, 0x33, 0x33),
+            Color32::WHITE,
+        )
+    };
+    let fill = if hovered || pressed { hover } else { fill };
+    ui.painter().rect_filled(rect, 10.0, fade(fill, opacity));
+    paint_text(
+        ui,
+        ui.painter(),
+        rect.shrink2(vec2(6.0, 0.0)),
+        Align2::CENTER_CENTER,
+        label,
+        FONT_SIZE,
+        Weight::SemiBold,
+        fade(text, opacity),
+    );
+    if hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
     response
 }
 
