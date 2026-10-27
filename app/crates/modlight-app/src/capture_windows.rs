@@ -312,16 +312,7 @@ impl ModlightApp {
                 |ui| a::about_ui(ui, window, &colors),
             );
             for ask in asks {
-                match ask {
-                    a::AboutAsk::Open(url) => state.open_url(&url),
-                    a::AboutAsk::Update(manifest) => {
-                        if state.updates.message.is_none() && state.updates.downloader.is_none() {
-                            state.updates.message = Some(manifest);
-                            state.updates.message_activate = true;
-                        }
-                    }
-                    a::AboutAsk::DebugLog => state.show_debug_log(),
-                }
+                state.about_ask(ask);
             }
             if close {
                 state.windows.about = None;
