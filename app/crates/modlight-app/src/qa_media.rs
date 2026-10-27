@@ -51,17 +51,27 @@ fn tools(yt_dlp: bool, ffmpeg: bool) -> ToolPaths {
 }
 
 fn manifest() -> modlight_core::update::ReleaseManifest {
-    // Windows' release is upstream's installer, when the update check takes one.
-    #[cfg(windows)]
-    if let Ok(manifest) = modlight_core::update::parse_manifest(
-        r#"{"name":"Modlight App","version":"0.8.0","url":"https://files.example.com/r/Modlight-0.8.0-setup.exe","filename":"Modlight-0.8.0-setup.exe","size":41200000,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","notes":"Download tab and screen recording on Windows. Faster uploads of large files."}"#,
-    ) {
-        return manifest;
-    }
-    modlight_core::update::parse_manifest(
-        r#"{"name":"Modlight App","version":"0.8.0","url":"https://files.example.com/r/Modlight-0.8.0.dmg","filename":"Modlight-0.8.0.dmg","size":41200000,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","notes":"Download tab and screen recording on the Mac. Faster uploads of large files."}"#,
-    )
-    .expect("the fixture manifest")
+    // A build of the server's Downloads for this system (`build-app.sh`, `build-app.ps1`).
+    let (platform, arch, notes) = if cfg!(windows) {
+        (
+            "windows",
+            "x64",
+            "Download tab and screen recording on Windows. Faster uploads of large files.",
+        )
+    } else {
+        (
+            "macos",
+            "arm64",
+            "Download tab and screen recording on the Mac. Faster uploads of large files.",
+        )
+    };
+    let file = format!("Modlight-0.8.0-9f8e7d6c-{platform}-{arch}.zip");
+    let build = modlight_api::parse_build(&format!(
+        r#"{{"id":"b8","platform":"{platform}","arch":"{arch}","version":"0.8.0","build":"9f8e7d6c","built":"2026-10-27T14:03:05Z","size":41200000,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","filename":"{file}","note":"{notes}","url":"/downloads/b8/{file}"}}"#
+    ))
+    .expect("the fixture build");
+    modlight_core::update::release_from_build(&build, "https://files.example.com")
+        .expect("the fixture manifest")
 }
 
 fn link(url: &str) -> DownloadLink {

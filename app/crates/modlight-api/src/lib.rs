@@ -7,6 +7,7 @@
 
 pub mod account;
 pub mod client;
+pub mod downloads;
 pub mod error;
 pub mod extras;
 pub mod host;
@@ -19,6 +20,10 @@ pub mod upload;
 pub mod web;
 
 pub use client::{API_KEY_HEADER, Api, Credential, REQUEST_TIMEOUT};
+pub use downloads::{
+    DOWNLOADS_PATH, DownloadsListing, DownloadsPlatform, PublishedBuild, parse_build,
+    parse_downloads,
+};
 pub use error::{ApiError, ApiResult};
 pub use extras::{
     DISK_PATH, DISK_TIMEOUT, DUPLICATE_SCAN_TIMEOUT, SETTINGS_CLIENT, SettingsAnswer,

@@ -16,7 +16,7 @@ what it did.
 |---|---|---|
 | Toolchain | Rust stable (1.99+) with the MSVC target, Visual Studio Build Tools with a Windows SDK | Nothing else to install; ONNX Runtime and WebView2's loader are linked in. |
 | Build | `cargo build --release -p modlight-app` in `app/` | `crates/modlight-app/build.rs` embeds upstream's `Modlight_Icon.ico`, the version information and a manifest (Windows 10/11, per-monitor DPI awareness v2, long paths, common controls 6, `asInvoker`). The program is a GUI program (`windows_subsystem = "windows"`); `--qa-shot`, `--help` and argument errors attach to the console they were started from. |
-| Package | `app\scripts\build-app.ps1 [-OutDir <dir>]` | `dist\Modlight\` (Modlight.exe, DirectML.dll, the licences) and `dist\Modlight-<version>-windows-<arch>.zip` with its SHA-256. No installer (upstream's Inno Setup script is not ported): the folder runs where it is. |
+| Package | `app\scripts\build-app.ps1 [-OutDir <dir>]` | `dist\Modlight\` (Modlight.exe, DirectML.dll, the licences) and `dist\Modlight-<version>-<build>-windows-<arch>.zip` with its SHA-256 and its description (`.json`), published to the server's Downloads when configured (see "Updates and publishing"). No installer (upstream's Inno Setup script is not ported): the folder runs where it is. |
 | ONNX Runtime | `ort` with the `directml` provider on Windows (`coreml` on macOS) | pyke publishes no Windows build with Core ML. `DirectML.dll` ships beside the exe (`copy-dylibs` puts it next to every build). |
 | Debug builds | `[profile.dev.package.tiny-skia] overflow-checks = false` | tiny-skia's portable u16 arithmetic (the x86_64 path) wraps by design; with overflow checks it panicked in debug builds. |
 
@@ -79,7 +79,53 @@ what it did.
 | Pictures the `image` crate cannot read | WIC, refused above the app's size limits before any pixel is decoded | |
 | YouTube sign-in (WebView2) | WebView2 (`webview2-com`, static loader) in a window of its own, an InPrivate profile in a temporary folder deleted afterwards, upstream's done-rule | Needs the WebView2 runtime (part of Windows 11 and updated Windows 10). Not yet tried with a real Google account. |
 | Components (`ModlightComponent`) | Upstream's pins for FFmpeg 8.1 and yt-dlp, by architecture; ExifTool 13.59 win64 from exiftool.org (upstream's 13.29 download no longer exists), its `exiftool(-k).exe` renamed `exiftool.exe` | Sizes and SHA-256 in `docs/handoff/win-core.md`. Tools are found beside the exe, in `<profile>\Tools`, then on PATH. |
-| App updates (`DownloaderWindow`) | Upstream's for an installer: the verified `.exe` starts with `/UPDATE` through the shell (Install starts it again after a declined elevation), then Modlight quits to make way for it. A verified `.zip` (the folder `build-app.ps1` makes) has nothing to run: the question is upstream's portable one and the file is shown in Explorer | The `.zip` is handled as the macOS port handles its `.dmg`/`.zip`. |
+| App updates (`DownloaderWindow`) | The build zip from the Downloads of the server the app is signed in to, verified, unpacked, and put in place of the program's files by a helper once Modlight has quit | See "Updates and publishing" below. Upstream's installer (`/UPDATE`) is not ported. |
+
+## Updates and publishing
+
+As on a Mac (`MACOS.md`, "Updates and publishing": which build this is, the check, the
+download), with these differences:
+
+- **Install.** The verified zip is unpacked by the app into `%TEMP%\Modlight\Update\install-*`:
+  files and folders only (a link is refused), names with `\` read as `/` (Windows
+  PowerShell 5.1's `Compress-Archive` writes them so), none that leaves the folder, at most
+  2 GiB written, and `Modlight.exe` at its top (or inside one folder that holds everything).
+  The running copy must not be a cargo build (a `target` folder) and its folder must take a
+  new file (a probe file, at once deleted); otherwise, as for any refusal, the server's
+  download page is offered. A helper (`update::helper::WINDOWS_SCRIPT`, run by
+  `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -File`, without a window, in a
+  process group of its own and out of the app's job when the job allows it) waits for
+  Modlight to quit (at most 120 s; otherwise nothing changes), then replaces only the files
+  the zip has (a file it does not have, such as `PersonalPath.cfg`, stays), keeping each
+  replaced one in the update folder until all are in place and putting them back when one
+  cannot be written (each file is tried for 5 s, for an antivirus that still holds it), and
+  starts `Modlight.exe`. Its output is the update's `update.log`, written to the debug log
+  by the next start.
+- **No publisher signature.** Windows builds are not signed, so nothing like the Mac's
+  signature check stands between the server and the program: the server the person signed
+  in to and TLS are what vouch for a build (`PORT.md`, section 5).
+- **Publish.** `build-app.ps1` writes the zip entry by entry with `/` between names, its
+  description beside it, and publishes it as `build-app.sh` does (`Invoke-WebRequest`, the
+  token only in the `Authorization` header, never printed; TLS 1.2 switched on for Windows
+  PowerShell 5.1; no redirect followed). The token comes from `MODLIGHT_PUBLISH_SERVER` and
+  `MODLIGHT_PUBLISH_TOKEN` or from `%USERPROFILE%\.config\modlight\publish.json`, which must
+  be readable by no other account than yours (SYSTEM and Administrators aside, as every
+  file in a profile):
+
+```powershell
+$env:MODLIGHT_PUBLISH_SERVER = 'https://files.example.com'
+$env:MODLIGHT_PUBLISH_TOKEN = '<publish token>'
+$env:MODLIGHT_PUBLISH_NOTE = 'What changed'        # optional
+app\scripts\build-app.ps1
+```
+
+  `MODLIGHT_PUBLISH=0` builds without publishing. A failed publish leaves the build as it
+  is and prints how to publish it again:
+  `app\scripts\build-app.ps1 -Publish app\dist\Modlight-<version>-<build>-windows-x64.zip`.
+
+Not yet run on Windows: the helper, the PowerShell publishing (both read against Windows
+PowerShell 5.1 and PowerShell 7, and the helper's text and arguments are tested on every
+system), and the install as a whole.
 
 ## Texts
 
@@ -91,7 +137,12 @@ Texts the port needs on Windows that upstream never had are in
 ## Tests on Windows
 
 - `cargo test --workspace` runs on Windows. Tests that need a POSIX shell as a fake tool
-  (the yt-dlp download flow and update) are Unix only.
+  (the yt-dlp download flow and update) are Unix only, and so are the ones that run the
+  Mac's update helper and `build-app.sh`'s publishing.
+- The snapshots of the update windows and the Language and tray page (`update-available`,
+  `update-download`, `settings-general`) changed on 2026-10-27 (the update fixture is a
+  server build now, and the Updates card shows in every build): their `windows-*.png`
+  pictures are to be made again on Windows (`UPDATE_SNAPSHOTS=1`).
 - Snapshots: every screen is first compared with the shared picture; only screens that
   really differ on Windows (the title band, paths, editor text) have a
   `windows-<palette>-<language>.png` beside it, which macOS never reads.

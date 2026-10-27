@@ -53,7 +53,7 @@ Snapshots of every screen below that is drawn live in
 | Navigation, search box, every page's header | done |
 | Account: profile, links, storage | done |
 | Appearance: theme and colours | done |
-| Application: language and tray (with tray actions, updates card when a release host is built in), macOS integration, components, local folders, backup and cleanup, print, proxy, advanced | done (print's "Image print settings" waits for printing; proxy settings are stored, not applied) |
+| Application: language and tray (with tray actions and the updates card), macOS integration, components, local folders, backup and cleanup, print, proxy, advanced | done (print's "Image print settings" waits for printing; proxy settings are stored, not applied) |
 | Sharing: copy formats (with their editor), from clipboard, upload limits, history | done |
 | Capture: region, screenshots (preconfigured region through the overlay), image format, effects, thumbnails, file names (previews) | done ("Image effects configuration..." opens the presets window, see "Image effects") |
 | Screen recording page and FFmpeg options window (`FFmpegOptionsWindow`) | done; snapshots `settings-recorder`, `ffmpeg-options*` |
@@ -159,6 +159,6 @@ The map of the crate and the effect registry contract are in `EDITOR.md`. Snapsh
 
 | Upstream | State |
 |---|---|
-| Installer | done as `scripts/build-app.sh` (`MACOS.md`) |
-| Update check (`ModlightUpdateChecker`, fixed host) | done, off unless `MODLIGHT_DEFAULT_HOST` is set at build time; `.dmg`/`.zip` only, revealed in Finder |
+| Installer | done as `scripts/build-app.sh` (`MACOS.md`) and `build-app.ps1` (`WINDOWS.md`), each making the zip the server's Downloads takes and publishing it when configured |
+| Update check and install (`ModlightUpdateChecker`, `DownloaderWindow`) | done against the Downloads of the signed-in server: on start, every 30 minutes and "Check now"; the download verified by size and SHA-256; put in place by a helper after the app quits (on a Mac only a build signed by the same developer). Snapshots `update-available`, `update-download`, `about`. Not yet run with a real signed build on a Mac, nor on Windows (`MACOS.md`, `WINDOWS.md`, "Updates and publishing") |
 | Settings backup (`SettingManager.Export/Import/ResetSettings`) | done (`modlight_core::backup`) |

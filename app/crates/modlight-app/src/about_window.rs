@@ -1,16 +1,17 @@
 //! `AboutWindow` and `DebugLogWindow`.
 //!
-//! About: the logo and name on the left, the product title, the update state (only in a
-//! build with a release channel) and the copyright; the credits on the right. Upstream's
-//! Links section points at ShareX's own website, stores and social accounts
-//! (getsharex.com and friends, which PORT.md leaves out); the port keeps the team and the
-//! project page as the credit and links the Debug log there, which upstream's menus no
-//! longer reach. The logo's clicker game is not ported.
+//! About: the logo and name on the left, the product title, the build (its commit and
+//! when it was built, `modlight_core::build_info`), the update state from the server the
+//! app is signed in to (with "Check now"; `update_window`) and the copyright; the credits
+//! on the right. Upstream's Links section points at ShareX's own website, stores and
+//! social accounts (getsharex.com and friends, which PORT.md leaves out); the port keeps
+//! the team and the project page as the credit and links the Debug log there, which
+//! upstream's menus no longer reach. The logo's clicker game is not ported.
 
 use egui::{Align, Layout, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 
 use modlight_core::icons;
-use modlight_core::l10n::{s, t};
+use modlight_core::l10n::{Arg, format, port, s, t};
 use modlight_core::update::{self, UpdateOutcome};
 
 use crate::state::AppState;
@@ -27,29 +28,43 @@ pub const LOG_MIN: (f32, f32) = (600.0, 420.0);
 /// What the About window says about updates.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AboutUpdate {
-    /// No release channel: the panel is hidden.
+    /// Nothing is said (a QA window, a headless render).
     Hidden,
+    /// Signed out: updates come from the server one is signed in to.
+    SignedOut,
     Checking,
     Failed,
     UpToDate,
-    Available(update::ReleaseManifest),
-}
-
-impl AboutUpdate {
-    /// What a completed check says.
-    pub fn from_outcome(outcome: UpdateOutcome) -> AboutUpdate {
-        match outcome {
-            UpdateOutcome::UpdateAvailable(manifest) => AboutUpdate::Available(manifest),
-            UpdateOutcome::UpToDate => AboutUpdate::UpToDate,
-            UpdateOutcome::CheckFailed(_) => AboutUpdate::Failed,
-        }
-    }
+    Available(Box<update::ReleaseManifest>),
 }
 
 pub struct AboutWindow {
     pub update: AboutUpdate,
+    /// "Build: 1a2b3c4d, 2026-10-27 14:03 UTC".
+    pub build_line: String,
     /// The logo, and whether it is the Graphite one.
     logo: Option<(bool, egui::TextureHandle)>,
+}
+
+/// What About says about updates now: the last check of `state.updates` (`update_window`).
+pub fn status_of(state: &AppState) -> AboutUpdate {
+    if state.mode != crate::app::Mode::Normal {
+        return AboutUpdate::Hidden;
+    }
+    if state.credential().is_none() {
+        return AboutUpdate::SignedOut;
+    }
+    if state.updates.checking {
+        return AboutUpdate::Checking;
+    }
+    match &state.updates.last_outcome {
+        Some(UpdateOutcome::UpdateAvailable(manifest)) => {
+            AboutUpdate::Available(Box::new(manifest.clone()))
+        }
+        Some(UpdateOutcome::UpToDate) => AboutUpdate::UpToDate,
+        Some(UpdateOutcome::CheckFailed(_)) => AboutUpdate::Failed,
+        None => AboutUpdate::Checking,
+    }
 }
 
 /// The Debug log window's state.
@@ -64,30 +79,28 @@ pub struct DebugLogWindow {
 }
 
 impl AppState {
-    /// `AboutWindowIntegration.Show`.
+    /// `AboutWindowIntegration.Show`: the window, and a check of the server's Downloads
+    /// (as upstream checks when About opens).
     pub fn show_about(&mut self) {
         if self.windows.about.is_some() {
             return;
         }
-        let checking = update::has_release_channel() && self.mode == crate::app::Mode::Normal;
+        let build = crate::update_window::this_build(self);
+        let build_line = format(
+            t(port::BuildLine),
+            &[Arg::from(modlight_core::build_info::build_text(
+                &build.build,
+                build.built,
+            ))],
+        );
+        if self.mode == crate::app::Mode::Normal {
+            crate::update_window::check_quietly(self);
+        }
         self.windows.about = Some(AboutWindow {
-            update: if checking {
-                AboutUpdate::Checking
-            } else {
-                AboutUpdate::Hidden
-            },
+            update: status_of(self),
+            build_line,
             logo: None,
         });
-        if checking {
-            self.rt.spawn(async move {
-                let outcome = update::check().await;
-                move |state: &mut AppState, _ctx: &egui::Context| {
-                    if let Some(window) = state.windows.about.as_mut() {
-                        window.update = AboutUpdate::from_outcome(outcome);
-                    }
-                }
-            });
-        }
     }
 
     /// What a click in About (the window, or the Information page under the Graphite
@@ -95,13 +108,10 @@ impl AppState {
     pub fn about_ask(&mut self, ask: AboutAsk) {
         match ask {
             AboutAsk::Open(url) => self.open_url(&url),
-            // The question of the hourly check, unless one is up or a download runs.
             AboutAsk::Update(manifest) => {
-                if self.updates.message.is_none() && self.updates.downloader.is_none() {
-                    self.updates.message = Some(manifest);
-                    self.updates.message_activate = true;
-                }
+                crate::update_window::offer(self, UpdateOutcome::UpdateAvailable(*manifest))
             }
+            AboutAsk::CheckNow => crate::update_window::check_quietly(self),
             AboutAsk::DebugLog => self.show_debug_log(),
         }
     }
@@ -206,7 +216,9 @@ pub(crate) fn link(ui: &mut Ui, colors: &Colors, text: &str) -> bool {
 /// What a click in the About window asks for.
 pub enum AboutAsk {
     Open(String),
-    Update(update::ReleaseManifest),
+    Update(Box<update::ReleaseManifest>),
+    /// "Check now".
+    CheckNow,
     DebugLog,
 }
 
@@ -273,10 +285,29 @@ pub fn about_ui(ui: &mut Ui, window: &mut AboutWindow, colors: &Colors) -> Vec<A
         job
     });
     painter.galley(pos2(inner.center().x, y), product.clone(), colors.text());
-    y += product.size().y + 14.0;
+    y += product.size().y + 4.0;
+    // The build: its commit and when it was made.
+    let build = layout(ui, {
+        let mut job = wrapped(
+            &window.build_line,
+            12.0,
+            Weight::Normal,
+            colors.text_secondary(),
+            inner.width(),
+        );
+        job.halign = Align::Center;
+        job
+    });
+    painter.galley(
+        pos2(inner.center().x, y),
+        build.clone(),
+        colors.text_secondary(),
+    );
+    y += build.size().y + 12.0;
     // The update state, centred.
     let status = match &window.update {
         AboutUpdate::Hidden => None,
+        AboutUpdate::SignedOut => Some(t(port::UpdateSignedOut)),
         AboutUpdate::Checking => Some(t(s::AboutWindow_CheckingForUpdates)),
         AboutUpdate::Failed => Some(t(s::AboutWindow_UpdateCheckFailed)),
         AboutUpdate::UpToDate => Some(t(s::AboutWindow_UpToDate)),
@@ -293,7 +324,26 @@ pub fn about_ui(ui: &mut Ui, window: &mut AboutWindow, colors: &Colors) -> Vec<A
             job.halign = Align::Center;
             job
         });
+        let height = galley.size().y;
         painter.galley(pos2(inner.center().x, y), galley, colors.text());
+        y += height + 4.0;
+    }
+    // "Check now" under a finished check.
+    if matches!(window.update, AboutUpdate::UpToDate | AboutUpdate::Failed) {
+        let text = t(port::CheckNow);
+        let width = layout(
+            ui,
+            crate::widgets::job(text, 13.0, Weight::Normal, colors.text()),
+        )
+        .size()
+        .x;
+        let mut child = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(
+            pos2(inner.center().x - width / 2.0, y),
+            vec2(width + 2.0, 20.0),
+        )));
+        if link(&mut child, colors, text) {
+            asks.push(AboutAsk::CheckNow);
+        }
     }
     if let AboutUpdate::Available(manifest) = &window.update {
         let text = t(s::AboutWindow_NewVersionAvailable);

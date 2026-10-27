@@ -8,7 +8,6 @@
 use egui::{Align, Layout, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use modlight_core::icons;
 use modlight_core::l10n::{helpers, mac, s, t};
-use modlight_core::update;
 
 use crate::about_window::{AboutAsk, AboutUpdate, credits, link, logo_texture};
 use crate::state::AppState;
@@ -26,22 +25,16 @@ const LINE: f32 = 40.0;
 
 /// The page's state while it is shown.
 pub struct InformationPage {
-    /// What the Updates card says. `Hidden`: this build has no release channel, or it is
-    /// not the real app (QA), which never asks.
+    /// What the Updates card says, read each frame from the shared update state.
+    /// `Hidden`: not the real app (QA), which never asks.
     pub update: AboutUpdate,
-    /// The check whose answer counts: "Check now" makes the answers before it stale.
-    generation: u64,
     /// The logo, and whether it is the Graphite one.
     logo: Option<(bool, egui::TextureHandle)>,
 }
 
 impl InformationPage {
     pub fn new(update: AboutUpdate) -> InformationPage {
-        InformationPage {
-            update,
-            generation: 0,
-            logo: None,
-        }
+        InformationPage { update, logo: None }
     }
 }
 
@@ -57,42 +50,29 @@ impl AppState {
         if self.side.information.is_some() {
             return;
         }
-        self.side.information = Some(InformationPage::new(AboutUpdate::Hidden));
+        let status = crate::about_window::status_of(self);
+        self.side.information = Some(InformationPage::new(status));
         self.check_for_update_now();
     }
 
-    /// Ask the release host what the newest release is ("Check now"). The real app with
-    /// a release channel only, as About; the answer lands on the page if it is still the
-    /// latest question.
+    /// "Check now": the signed-in server's Downloads, as the About window asks it; the
+    /// answer lands in the shared update state the page reads.
     pub fn check_for_update_now(&mut self) {
-        if !update::has_release_channel() || self.mode != crate::app::Mode::Normal {
+        if self.mode != crate::app::Mode::Normal {
             return;
         }
-        let Some(page) = self.side.information.as_mut() else {
-            return;
-        };
-        page.generation += 1;
-        page.update = AboutUpdate::Checking;
-        let generation = page.generation;
-        self.rt.spawn(async move {
-            let outcome = update::check().await;
-            move |state: &mut AppState, _ctx: &egui::Context| {
-                if let Some(page) = state.side.information.as_mut()
-                    && page.generation == generation
-                {
-                    page.update = AboutUpdate::from_outcome(outcome);
-                }
-            }
-        });
+        crate::update_window::check_quietly(self);
     }
 }
 
 /// The page, in the content area `rect`.
 pub fn ui(ui: &mut Ui, state: &mut AppState, rect: Rect) {
     let colors = state.colors.clone();
+    let status = crate::about_window::status_of(state);
     let Some(page) = state.side.information.as_mut() else {
         return;
     };
+    page.update = status;
     if page
         .logo
         .as_ref()
@@ -369,6 +349,11 @@ fn updates(
             colors.text_secondary(),
             t(mac::UpdatesNotChecked),
         ),
+        AboutUpdate::SignedOut => (
+            Some(icons::LOG_IN),
+            colors.text_secondary(),
+            t(modlight_core::l10n::port::UpdateSignedOut),
+        ),
         // `Checking` draws a spinner instead of a glyph.
         AboutUpdate::Checking => (
             None,
@@ -400,7 +385,7 @@ fn updates(
     let download = Look::primary(colors).height(32.0);
     let check_label = t(s::Components_CheckNow);
     let download_label = t(helpers::DownloaderWindow_Download);
-    let can_check = *update != AboutUpdate::Hidden;
+    let can_check = !matches!(update, AboutUpdate::Hidden | AboutUpdate::SignedOut);
     let available = matches!(update, AboutUpdate::Available(_));
     let check_w = if can_check {
         button_width(ui, &check, Content::label(check_label))

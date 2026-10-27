@@ -1,6 +1,7 @@
-//! Components, the yt-dlp update and the app's own update check against a stub HTTP
-//! server on 127.0.0.1 (random port). Nothing here touches the internet: the stub's
-//! origin is let through by `net::testing`, which exists only in debug builds.
+//! Components and the yt-dlp update against a stub HTTP server on 127.0.0.1 (random
+//! port); the app's own update is tested in `app_update.rs`. Nothing here touches the
+//! internet: the stub's origin is let through by `net::testing`, which exists only in
+//! debug builds.
 
 #![cfg(debug_assertions)]
 
@@ -14,7 +15,6 @@ use modlight_core::components::install::{self, InstallOutcome};
 #[cfg(unix)]
 use modlight_core::components::updates::{self, UpdateOutcome};
 use modlight_core::components::{self, ComponentSource, net};
-use modlight_core::update;
 use sha2::Digest;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -28,12 +28,11 @@ enum Answer {
     /// 200 with no Content-Length: the body ends when the connection closes.
     NoLength(Vec<u8>),
     /// Claims `claim` bytes and sends these, then closes.
-    Short {
-        bytes: Vec<u8>,
-        claim: usize,
-    },
+    Short { bytes: Vec<u8>, claim: usize },
     /// Sends these bytes and then nothing at all, holding the connection open.
     Stall(Vec<u8>),
+    /// Only the yt-dlp update's test (Unix) asks for a bare status now.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Status(u16),
 }
 
@@ -633,91 +632,4 @@ async fn yt_dlp_follows_its_publisher_only_on_two_agreeing_digests() {
     let result = updates::update(profile.path(), yt, None, true, &cancel).await;
     assert_eq!(result.outcome, UpdateOutcome::VersionUnknown);
     net::testing::set_github_api(None);
-}
-
-#[tokio::test]
-async fn the_app_update_is_offered_downloaded_and_verified() {
-    let stub = Stub::start().await;
-    let artefact = payload(70_000);
-    let digest = sha256(&artefact);
-    let manifest = |size: usize, digest: &str, file: &str| {
-        format!(
-            r#"{{"name":"Modlight App","version":"99.0.0","url":"{}/r/{file}","filename":"{file}","size":{size},"sha256":"{digest}","notes":"Notes"}}"#,
-            stub.origin
-        )
-    };
-    // This system's release, and the other system's, which is never offered here.
-    let (ours, theirs) = if cfg!(windows) {
-        ("Modlight-99-setup.exe", "Modlight-99.dmg")
-    } else {
-        ("Modlight-99.dmg", "Modlight-99-setup.exe")
-    };
-    let route = format!("/r/{ours}");
-    stub.set(&route, Answer::Bytes(artefact.clone()));
-
-    // Nothing published: up to date, not a failure.
-    stub.set("/api/releases/app", Answer::Status(404));
-    assert_eq!(
-        update::check_host(&stub.origin).await,
-        update::UpdateOutcome::UpToDate
-    );
-
-    // The other system's release is not one for this system.
-    stub.set(
-        "/api/releases/app",
-        Answer::Bytes(manifest(artefact.len(), &digest, theirs).into_bytes()),
-    );
-    assert_eq!(
-        update::check_host(&stub.origin).await,
-        update::UpdateOutcome::UpToDate
-    );
-
-    stub.set(
-        "/api/releases/app",
-        Answer::Bytes(manifest(artefact.len(), &digest, ours).into_bytes()),
-    );
-    let update::UpdateOutcome::UpdateAvailable(release) = update::check_host(&stub.origin).await
-    else {
-        panic!("no update offered");
-    };
-    assert_eq!(release.version_text, "99.0.0");
-    let folder = tempfile::tempdir().unwrap();
-    let cancel = CancellationToken::new();
-    let result = update::download(&release, folder.path(), &|_| {}, &cancel).await;
-    let update::DownloadResult::Verified(path) = result else {
-        panic!("{result:?}");
-    };
-    assert_eq!(std::fs::read(&path).unwrap(), artefact);
-    // A second time reuses the verified file.
-    stub.set(&route, Answer::Status(500));
-    assert_eq!(
-        update::download(&release, folder.path(), &|_| {}, &cancel).await,
-        update::DownloadResult::Verified(path.clone())
-    );
-
-    // Bytes that do not match the manifest are deleted.
-    std::fs::remove_file(&path).unwrap();
-    stub.set(
-        &route,
-        Answer::Bytes(payload(70_000).iter().map(|b| b ^ 1).collect()),
-    );
-    assert_eq!(
-        update::download(&release, folder.path(), &|_| {}, &cancel).await,
-        update::DownloadResult::VerificationFailed
-    );
-    assert!(std::fs::read_dir(folder.path()).unwrap().next().is_none());
-
-    // A body shorter than the manifest's size is not a download.
-    stub.set(
-        &route,
-        Answer::Short {
-            bytes: artefact[..1000].to_vec(),
-            claim: artefact.len(),
-        },
-    );
-    assert!(matches!(
-        update::download(&release, folder.path(), &|_| {}, &cancel).await,
-        update::DownloadResult::Incomplete(_)
-    ));
-    assert!(std::fs::read_dir(folder.path()).unwrap().next().is_none());
 }

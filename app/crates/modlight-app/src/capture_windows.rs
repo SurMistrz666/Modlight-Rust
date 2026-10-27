@@ -299,7 +299,16 @@ impl ModlightApp {
             }
         }
 
-        // About (CenterScreen).
+        // About (CenterScreen), saying what the last update check found.
+        if state.windows.about.is_some() {
+            let status = crate::about_window::status_of(state);
+            if let Some(window) = state.windows.about.as_mut()
+                && window.update != status
+                && status != crate::about_window::AboutUpdate::Hidden
+            {
+                window.update = status;
+            }
+        }
         if let Some(window) = state.windows.about.as_mut() {
             use crate::about_window as a;
             let (asks, close) = dialog_resizable(

@@ -1,10 +1,16 @@
 //! Generates the string tables, the skins and the icon constants from the files copied
 //! out of upstream (`app/assets/upstream`). Nothing user-visible is typed by hand: a
 //! change to a `.resx`, to `Skins.axaml` or to the Lucide map is a rebuild away.
+//!
+//! Also gives the crate this build's identity (`build_info`): the commit and the time it
+//! was built, from `MODLIGHT_BUILD` and `MODLIGHT_BUILT` when the build scripts set them
+//! (so the app knows it is exactly the build they publish), else from git and the clock.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -20,6 +26,12 @@ fn main() {
         "cargo:rerun-if-changed={}",
         manifest.join("../../assets/windows").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("../../assets/port").display()
+    );
+
+    build_identity(&manifest);
 
     std::fs::write(out.join("strings.rs"), strings(&assets.join("l10n"))).unwrap();
     std::fs::write(
@@ -35,6 +47,118 @@ fn main() {
         lucide(&assets.join("icons/lucide-codepoints.json")),
     )
     .unwrap();
+}
+
+/// `MODLIGHT_BUILD_ID` and `MODLIGHT_BUILT_AT` for `build_info`. A value the build scripts
+/// give is taken as it is (an empty `MODLIGHT_BUILD` included: built outside git); without
+/// them the commit comes from git (and the build reruns when HEAD moves) and the time is
+/// now. A value that would not fit a file name or is not a UTC time fails the build.
+fn build_identity(manifest: &Path) {
+    println!("cargo:rerun-if-env-changed=MODLIGHT_BUILD");
+    println!("cargo:rerun-if-env-changed=MODLIGHT_BUILT");
+    let build = match std::env::var("MODLIGHT_BUILD") {
+        Ok(value) => value.trim().to_string(),
+        Err(_) => git_commit(manifest),
+    };
+    assert!(
+        build.len() <= 40
+            && build
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_')),
+        "MODLIGHT_BUILD must be at most 40 letters, digits, dots, dashes or underscores, not {build:?}"
+    );
+    let built = match std::env::var("MODLIGHT_BUILT") {
+        Ok(value) => value.trim().to_string(),
+        Err(_) => utc_stamp(SystemTime::now()),
+    };
+    assert!(
+        is_utc_stamp(&built),
+        "MODLIGHT_BUILT must be a UTC time written as 2026-10-27T14:03:05Z, not {built:?}"
+    );
+    println!("cargo:rustc-env=MODLIGHT_BUILD_ID={build}");
+    println!("cargo:rustc-env=MODLIGHT_BUILT_AT={built}");
+}
+
+/// `git rev-parse --short=8 HEAD` in the crate's checkout, or empty outside git. The files
+/// that say where HEAD is are watched, so a commit or a checkout gives the next build the
+/// new commit (only files that exist: a missing one would rerun this script every time).
+fn git_commit(manifest: &Path) -> String {
+    let git = |args: &[&str]| -> Option<String> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(manifest)
+            .args(args)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (output.status.success() && !text.is_empty()).then_some(text)
+    };
+    let Some(commit) = git(&["rev-parse", "--short=8", "HEAD"]) else {
+        return String::new();
+    };
+    let mut watched = vec![git(&["rev-parse", "--git-path", "HEAD"])];
+    watched.push(git(&["rev-parse", "--git-path", "packed-refs"]));
+    if let Some(branch) = git(&["rev-parse", "--symbolic-full-name", "HEAD"])
+        && branch.starts_with("refs/")
+    {
+        watched.push(git(&["rev-parse", "--git-path", &branch]));
+    }
+    for path in watched.into_iter().flatten() {
+        let path = manifest.join(path);
+        if path.exists() {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+    commit
+}
+
+/// A moment as `2026-10-27T14:03:05Z` (UTC, whole seconds).
+fn utc_stamp(at: SystemTime) -> String {
+    let seconds = at
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let (year, month, day) = civil_from_days(seconds.div_euclid(86_400));
+    let second_of_day = seconds.rem_euclid(86_400);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        second_of_day / 3600,
+        second_of_day % 3600 / 60,
+        second_of_day % 60
+    )
+}
+
+/// The proleptic Gregorian date of a day counted from 1970-01-01 (Howard Hinnant's
+/// `civil_from_days`).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = (day_of_year - (153 * shifted_month + 2) / 5 + 1) as u32;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    } as u32;
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
+/// Whether a text has the shape `utc_stamp` writes (the app parses it as RFC 3339).
+fn is_utc_stamp(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 20
+        && bytes.iter().enumerate().all(|(i, b)| match i {
+            4 | 7 => *b == b'-',
+            10 => *b == b'T',
+            13 | 16 => *b == b':',
+            19 => *b == b'Z',
+            _ => b.is_ascii_digit(),
+        })
 }
 
 /// The projects whose tables are used, with the module each one is generated into.
@@ -54,6 +178,9 @@ const PROJECTS: &[(&str, &str)] = &[
     // The port's own texts on Windows, where upstream has none and the Mac's name macOS
     // (assets/windows/l10n).
     ("Windows", "windows"),
+    // The port's own texts on both systems, for what upstream never had (assets/port/l10n):
+    // the build line, the app's updates from the server's Downloads.
+    ("Port", "port"),
 ];
 
 fn read_resx(path: &Path) -> BTreeMap<String, String> {
@@ -94,10 +221,12 @@ fn strings(dir: &Path) -> String {
 
     let mac_dir = dir.join("../../mac/l10n");
     let windows_dir = dir.join("../../windows/l10n");
+    let port_dir = dir.join("../../port/l10n");
     for (project, module) in PROJECTS {
         let dir = match *project {
             "Mac" => mac_dir.as_path(),
             "Windows" => windows_dir.as_path(),
+            "Port" => port_dir.as_path(),
             _ => dir,
         };
         let en = read_resx(&dir.join(format!("{project}.resx")));

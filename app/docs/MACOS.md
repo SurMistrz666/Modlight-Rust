@@ -25,7 +25,7 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | `FileSystemWatcher` (watch folders) | FSEvents through the `notify` crate | Same filter rules, 1 s duplicate timer and "wait until the size stops changing" timing. FSEvents repeats flags and does not pair renames, so files are tracked by device, inode and birth time; a rename inside one folder is ignored, a move between folders or from outside is reported (as Windows' Deleted + Created). Folders and symlinks are never reported. On SMB volumes only this Mac's own changes are seen. A watched folder's "move to the screenshots folder" takes a unique name when the name exists instead of asking (nobody is at the window). |
 | Clipboard (`ClipboardHelpers`) | NSPasteboard through `arboard` | Text, images and Finder file lists. Reading asks for the file list first: Finder also puts the file's icon and name on the pasteboard, which upstream's image-then-text order would upload instead of the file. A picture is read as its PNG or TIFF bytes (PNG first, as the pasteboard holds it) and decoded under the app's limits, not by arboard. QA and headless runs never read the real clipboard (macOS may ask for paste permission). |
 | Taskbar progress (`TaskbarManager`) | Not shown | macOS has no per-window taskbar progress; the tray icon's progress and the Upload tab carry it. The setting's check box is shown disabled, as upstream shows it where the platform does not support it. |
-| Inno Setup installer | `scripts/build-app.sh`: release build, `Modlight.app` with `Info.plist`, `.icns` cut from `ShareX/Modlight_Icon.ico`, signed with the Keychain's Apple Development certificate when there is one (the same signature every build, so macOS keeps the app's permissions), ad hoc otherwise (`MODLIGHT_SIGN_IDENTITY` chooses) | Bundle id `org.modlight.Modlight` (to confirm with the owner). The script never starts the app. A DMG and components downloaded from the Components window come with phase 3. |
+| Inno Setup installer | `scripts/build-app.sh`: release build, `Modlight.app` with `Info.plist`, `.icns` cut from `ShareX/Modlight_Icon.ico`, signed with the Keychain's Apple Development certificate when there is one (the same signature every build, so macOS keeps the app's permissions), ad hoc otherwise (`MODLIGHT_SIGN_IDENTITY` chooses); then `Modlight-<version>-<build>-macos-<arch>.zip`, published to the server's Downloads when configured (see "Updates and publishing") | Bundle id `org.modlight.Modlight` (to confirm with the owner). The script never starts the app. A DMG and components downloaded from the Components window come with phase 3. |
 | Start with Windows (`StartupManager`) | Login item through `SMAppService.mainApp` | Only a copy inside an app bundle can register; the check box says why it cannot change (turned off in System Settings, waiting for approval, not an app bundle) and offers System Settings' Login Items. |
 | Explorer context menu "Upload with Modlight" and "Send to" | Finder Services: `NSServices` in `Info.plist` (`uploadFiles`, any file or folder), provider installed at start | macOS lists the service by itself; it cannot be switched on or off from the app, so the integration page and the first-run window explain where it is and open the Services shortcuts. Files arrive through `uploadFiles:userData:error:` and go through the task flow. The Polish name is upstream's "Prześlij za pomocą Modlight" (`ServicesMenu.strings`). |
 | Print Screen and global hotkeys (`RegisterHotKey`) | `global-hotkey` (Carbon `RegisterEventHotKey`, no permission) | Mapping: `Control` = Cmd, `Alt` = Option, `Win` = Control, `Shift` = Shift. Print Screen, Scroll Lock and Pause are F13, F14 and F15 (their place on Apple keyboards) and are labelled so; typing F13 stores Print Screen, so a binding means the same key on Windows. Defaults avoid the system's Cmd+Shift+3/4/5/6: region Cmd+Shift+2, full screen Cmd+Shift+1, active window Cmd+Shift+7, recording Cmd+Shift+8, GIF Cmd+Shift+9. Registered in the real app only. |
@@ -101,7 +101,81 @@ Everything not listed behaves as upstream does. The per-screen state is in
 | Tool search: beside the exe, `Tools`, PATH | Same, plus Homebrew, MacPorts and `~/.local/bin` | An app opened from Finder inherits only the system PATH. |
 | Bundled QuickJS | Not bundled; found in `Tools` or the search above | |
 | WebView2 with its own profile for the YouTube sign-in | `WKWebView` in a native window, non-persistent data store, Safari's product token in the user agent | Cookies go to a Netscape jar (folder 0700, file 0600) passed to yt-dlp only for YouTube links. Google may refuse an embedded browser: a real-window check. |
-| Update: Inno Setup `.exe` downloaded and run | `.dmg`/`.zip` downloaded, size and SHA-256 verified, revealed in Finder | Off unless `MODLIGHT_DEFAULT_HOST` is set at build time (https, no trailing slash). The server's `/api/releases/app` publishes one release, so a Mac build hides the Windows installer: a per-platform manifest is a server change. |
+| Update: Inno Setup `.exe` downloaded and run | The build zip from the Downloads of the server the app is signed in to, verified, unpacked, checked to be signed by the same developer, and put in place of the running `Modlight.app` by a helper once the app has quit | See "Updates and publishing" below. |
+
+## Updates and publishing
+
+The app updates itself from the Downloads of the server it is signed in to
+(`modlight_core::update`, `modlight-app/src/update_window.rs`), and `scripts/build-app.sh`
+publishes there. The server's side is its own: `GET /api/downloads` lists the builds per
+system, newest first, and `GET {server}{url}` with the same token returns a build's zip.
+
+- **Which build this is.** The version (Cargo), the build (the commit,
+  `git rev-parse --short=8 HEAD`, empty outside git) and the time it was built (UTC, written
+  `2026-10-27T14:03:05Z`) are compiled in (`modlight-core/build.rs`,
+  `modlight_core::build_info`). `build-app.sh` passes the values it publishes
+  (`MODLIGHT_BUILD`, `MODLIGHT_BUILT`); any other build takes them from git and the clock.
+  About shows them ("Build: 1a2b3c4d, 2026-10-27 14:03 UTC") and the update question names
+  both builds ("0.7.8 (1a2b3c4d)").
+- **Check.** On start and every 30 minutes while "Automatically check for updates" is on
+  (`AutoCheckUpdate`), and on "Check now" (About, the Information page) and when About
+  opens: `GET {server}/api/downloads` with the account's token in `x-api-key`. Signed out,
+  nothing is asked. The newest build for this system and processor (`macos`/`windows`,
+  `arm64`/`x64`) is offered when its version or commit differs from this build's and it was
+  built later: a rebuild of the same commit is not offered again, and deleting the newest
+  build on the server never sends anybody back to an older one. A build whose address is
+  not on the server (`//host`, `@host`, a scheme), whose file name is not a plain `.zip`
+  name, or that lacks a size, a SHA-256 or a build time is passed over. A server without
+  Downloads (404) is "up to date". An answer about an account that signed out meanwhile is
+  dropped.
+- **Install.** Only after Yes in the question. The zip is downloaded with the same token
+  (no redirect followed) into `$TMPDIR/Modlight/Update` and refused unless its size and
+  SHA-256 are the listing's. It is checked before it is unpacked (every entry under
+  `Modlight.app/`, no absolute names, no `..`, links only downward and nothing stored
+  through one), unpacked with `ditto` (which restores the extended attributes `ditto -c`
+  stored), and the new `Modlight.app` must be signed by the same developer as the running
+  one: the same team identifier and bundle identifier, intact (`codesign --verify --deep
+  --strict`), and satisfying the running app's designated requirement (`-R`). The running
+  copy must be an app bundle, not run by App Translocation, in a folder it may write, and
+  signed by a developer team; an ad hoc build (`MODLIGHT_SIGN_IDENTITY=-`, or no Apple
+  Development certificate in the Keychain) never installs an update: the question then
+  offers the server's Downloads page (`{server}/dashboard/downloads`), and so does every refusal. A
+  helper (`/bin/sh`, `update::helper::MACOS_SCRIPT`), started in a process group of its own,
+  waits for the app to quit (at most 120 s; otherwise nothing changes), sets the old bundle
+  aside in the update folder, moves the new one to the same path, moves the old one to the
+  Trash (NSFileManager through `osascript -l JavaScript`, which asks for no permission; a
+  move into `~/.Trash` if that fails) and opens the new one. When the new one cannot be
+  moved in, the old one goes back and is opened. Nothing is deleted. Its output goes to
+  `update.log`, which the next start writes to the debug log before it clears the update
+  folder (moving an old bundle still set aside to the Trash).
+- **Publish.** `build-app.sh` zips the signed bundle as
+  `Modlight-<version>-<build>-macos-<arch>.zip` (`ditto -c -k --keepParent`), writes its
+  description beside it (`<zip name>.json`: platform, arch, version, build, built, size,
+  sha256, filename) and, when a server and a publish token are configured, publishes it:
+  `POST {server}/api/downloads/upload` with the description and the note, `PUT
+  .../upload/{upload}/{n}` for each chunk of the server's `chunkSize` (at most 50 MiB),
+  `POST .../upload/{upload}/finish`, each with `Authorization: Bearer <publish token>`,
+  which curl reads from a file of the run's own (never a command line, never printed).
+
+```sh
+export MODLIGHT_PUBLISH_SERVER=https://files.example.com
+export MODLIGHT_PUBLISH_TOKEN='<publish token>'
+export MODLIGHT_PUBLISH_NOTE='What changed'        # optional, shown with the update
+app/scripts/build-app.sh
+```
+
+Instead of the two variables, `~/.config/modlight/publish.json`, mode 600 (the script
+refuses a file others can read): `{"server": "https://files.example.com", "token": "<publish
+token>"}`. `MODLIGHT_PUBLISH=0` builds without publishing; without a server and a token
+the build is not published either. A failed publish leaves the build as it is and prints
+the command that publishes it again:
+`app/scripts/build-app.sh --publish app/dist/Modlight-<version>-<build>-macos-arm64.zip`
+(the zip's description must be beside it). Tested against a stand-in server
+(`modlight-core/tests/publish_script.rs`).
+
+Not yet tried with a real signed build in `/Applications`: the swap was run on throwaway
+bundles signed ad hoc (`update::install` tests), the signature rule against `codesign`'s
+own output and two Developer ID apps.
 
 ## Texts
 
