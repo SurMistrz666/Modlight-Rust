@@ -27,6 +27,30 @@ fn app_windows() -> Vec<HWND> {
         .collect()
 }
 
+/// Give winit's window class a black background, so a transparent window sees through.
+/// Its windows draw through a DirectComposition visual (see `main.rs`), which DWM puts
+/// over the window's GDI surface; winit's class has no brush, so that surface stayed
+/// white under a see-through window. Painted black (alpha 0), DWM's blur-behind, which
+/// winit turns on for a transparent window, shows the desktop through it. One window of
+/// the class is enough; windows made later get the brush too. Returns whether one was
+/// found.
+pub fn transparent_window_backgrounds() -> bool {
+    use windows_sys::Win32::Graphics::Gdi::{BLACK_BRUSH, GetStockObject, InvalidateRect};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GCLP_HBRBACKGROUND, SetClassLongPtrW};
+    let windows = app_windows();
+    let Some(&first) = windows.first() else {
+        return false;
+    };
+    // SAFETY: plain calls on this app's own windows; a stock brush is never freed.
+    unsafe {
+        SetClassLongPtrW(first, GCLP_HBRBACKGROUND, GetStockObject(BLACK_BRUSH) as isize);
+        for hwnd in windows {
+            InvalidateRect(hwnd, std::ptr::null(), 1);
+        }
+    }
+    true
+}
+
 /// Show every window of this app the tray hid (and restore the minimised ones), then
 /// bring the front one forward. Must run on the main thread (menu actions of the tray
 /// do): a hidden window is never repainted, so the app could not act on the command
