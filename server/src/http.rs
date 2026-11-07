@@ -85,6 +85,7 @@ pub fn router(state: &AppState) -> Router {
         .merge(crate::routes::api::authorize_pickup::routes()) // not upstream: desktop sign-in pickup
         .merge(crate::routes::api::downloads::routes()) // not upstream: Downloads (/api/downloads*, /downloads/{id}/{filename})
         .merge(crate::routes::api::encryption::routes()) // not upstream: per-account file encryption
+        .merge(crate::routes::api::strip_metadata::routes()) // not upstream: removing metadata on upload
         .merge(crate::routes::s_code::routes()) // app/s/[code]/route.ts
         .merge(crate::routes::s_code_name::routes()) // app/s/[code]/[name]/route.ts
         .merge(crate::routes::media_action::routes()) // app/[userCode]/[mediaCode]/[action]/route.ts

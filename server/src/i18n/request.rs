@@ -69,6 +69,9 @@ pub const NAMESPACES: &[&str] = &[
     // Not upstream: per-account file encryption (src/vault/, docs/ENCRYPTION.md):
     // the Settings card, the unlock pages, the library banner, the admin notes.
     "encryption",
+    // Not upstream: removing metadata from files on upload (src/media/strip.rs):
+    // the Settings card.
+    "stripMetadata",
 ];
 
 /// The resolution rule itself, on plain values.

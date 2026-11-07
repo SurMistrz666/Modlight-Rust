@@ -173,6 +173,8 @@ pub fn prepare(screen: &str, state: &mut AppState) -> Option<Vec2> {
         if screen == "settings-copy-formats" {
             window.app_pages.selected_format = Some(0);
         }
+        // Not upstream: the account's metadata switch as the server answered it.
+        window.strip.enabled = Some(false);
         if screen == "settings-copy-format-editor" {
             let format = state
                 .config

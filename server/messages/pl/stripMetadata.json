@@ -1,0 +1,27 @@
+{
+  "settings": {
+    "title": "Metadane w wysyłanych plikach",
+    "description": "Zdjęcia, filmy i dokumenty niosą ukryte informacje o tym, gdzie, kiedy i czym powstały.",
+    "switch": "Usuwaj metadane z plików przy wysyłaniu",
+    "switchHelp": "Lokalizacja (GPS), model aparatu lub telefonu, autor, daty i historia edycji zapisane w metadanych są usuwane, zanim plik zostanie zapisany. Obraz i dźwięk zostają dokładnie takie, jakie były.",
+    "formats": "Typy plików",
+    "existing": "Pliki już wysłane zostają bez zmian.",
+    "orientation": "Zdjęcie zrobione bokiem zachowuje tylko informację o obrocie, więc dalej wyświetla się prawidłowo.",
+    "documents": "W dokumentach znikają ich właściwości (autor, firma, daty). Komentarze i śledzone zmiany w treści dokumentu zostają.",
+    "kept": "{count, plural, one {# plik zachował metadane} few {# pliki zachowały metadane} many {# plików zachowało metadane} other {# pliku zachowało metadane}}",
+    "keptHelp": "Nie dało się ich oczyścić, więc zapisano je bez zmian.",
+    "keptShown": "Na liście jest {shown} ostatnich.",
+    "reasons": {
+      "damaged": "plik uszkodzony lub nietypowy",
+      "format": "takiego pliku nie da się oczyścić",
+      "protected": "chroniony hasłem",
+      "signed": "podpisany cyfrowo",
+      "tooLarge": "za duży do oczyszczenia",
+      "busy": "serwer był zajęty",
+      "tool": "przetwarzanie nie powiodło się"
+    },
+    "turnedOn": "Metadane będą usuwane z kolejnych wysyłanych plików.",
+    "turnedOff": "Kolejne wysyłane pliki zachowają metadane.",
+    "error": "Nie udało się zapisać ustawienia. Spróbuj ponownie."
+  }
+}

@@ -83,8 +83,9 @@ async fn run(pool: &PgPool) {
     // ── migrations ──
     let dir = Paths::crate_dir().migrations;
     let report = modlight_server::db::migrate::run(pool, &dir, true).await.unwrap();
-    // 0000..0016 (not upstream: 0015 Downloads, 0016 per-account file encryption).
-    assert_eq!(report.applied.len(), 17);
+    // 0000..0017 (not upstream: 0015 Downloads, 0016 per-account file encryption,
+    // 0017 removing metadata on upload).
+    assert_eq!(report.applied.len(), 18);
     let again = modlight_server::db::migrate::run(pool, &dir, false).await.unwrap();
     assert!(again.applied.is_empty());
     let seeded: String =

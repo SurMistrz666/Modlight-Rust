@@ -50,6 +50,7 @@ pub mod serve;
 pub mod sharp_runtime;
 pub mod sniff;
 pub mod source_preview;
+pub mod strip;
 pub mod timeline;
 pub mod timeline_preview;
 pub mod transform_cost;

@@ -22,7 +22,9 @@ use crate::settings_kit::{
     Binder, card, check, compact_button, hint, list_frame, list_row, number, row, text,
 };
 use crate::theme::{Colors, Weight};
-use crate::widgets::{Field, Look, button, combo, layout, paint_icon, trimmed, wrapped};
+use crate::widgets::{
+    Field, Look, button, checkbox_weighted, combo, layout, paint_icon, trimmed, wrapped,
+};
 
 /// "Don't show the print dialog": upstream's on Windows, the Mac's own text elsewhere.
 #[cfg(windows)]
@@ -58,6 +60,9 @@ pub enum AppPageAsk {
     DisableHotkeys(bool),
     /// "Automatically check for updates" was turned on: arm the hourly check.
     UpdatesOn,
+    /// Not upstream: "Remove metadata from files on upload" was switched (the account's
+    /// setting on the server, `GET`/`PUT /api/strip-metadata`).
+    StripMetadata(bool),
 }
 
 /// Between frames: the copy format selection and editor, the export choices, the
@@ -116,6 +121,9 @@ pub struct AppPagesCtx<'a> {
     pub explorer: ExplorerMenus,
     pub updates_visible: bool,
     pub dialogs: bool,
+    /// Not upstream: the account's metadata switch, as the upload page shows it.
+    pub strip: crate::settings::StripSwitch,
+    pub signed_in: bool,
 }
 
 fn options(type_name: &str, names: &[&'static str]) -> Vec<(&'static str, String)> {
@@ -1142,6 +1150,66 @@ fn upload(ui: &mut Ui, ctx: &mut AppPagesCtx, b: &mut Binder) {
             },
         );
     });
+    strip_metadata(ui, ctx);
+}
+
+/// Not upstream: "Remove metadata from files on upload", the account's switch on the
+/// server (the server's `docs/SKELETON.md` 9.47). Read when the settings open, written
+/// at once; a refusal puts it back and says why. Signed out it stays where it is,
+/// greyed, with the reason.
+fn strip_metadata(ui: &mut Ui, ctx: &mut AppPagesCtx) {
+    use modlight_core::l10n::port;
+    let colors = ctx.colors;
+    let switch = ctx.strip.clone();
+    let usable = ctx.signed_in && switch.enabled.is_some() && !switch.busy;
+    card(ui, colors, t(port::StripMetadataTitle), true, |ui| {
+        // Signed out, the account's choice is not known here: shown off, greyed.
+        let mut value = ctx.signed_in && switch.enabled.unwrap_or(false);
+        let response = checkbox_weighted(
+            ui,
+            colors,
+            &mut value,
+            Some(t(port::StripMetadataSwitch)),
+            usable,
+            Weight::Normal,
+        );
+        if usable && response.changed() {
+            ctx.asks.push(AppPageAsk::StripMetadata(value));
+        }
+        hint(ui, colors, t(port::StripMetadataHint));
+        hint(ui, colors, t(port::StripMetadataTypes));
+        hint(ui, colors, t(port::StripMetadataExisting));
+        let status = if !ctx.signed_in {
+            Some((t(port::StripMetadataSignedOut).to_string(), false))
+        } else if let Some(error) = &switch.error {
+            Some((error.clone(), true))
+        } else if switch.busy {
+            Some((t(port::StripMetadataSaving).to_string(), false))
+        } else if switch.enabled.is_none() {
+            Some((t(port::StripMetadataLoading).to_string(), false))
+        } else {
+            None
+        };
+        if let Some((text, problem)) = status {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let (icon, color) = if problem {
+                    (icons::TRIANGLE_ALERT, colors.accent_start())
+                } else {
+                    (icons::INFO, colors.text_secondary())
+                };
+                crate::widgets::icon(ui, icon, 14.0, color);
+                ui.add_space(6.0);
+                ui.vertical(|ui| {
+                    // Read out by a screen reader: why the switch is greyed or went back.
+                    crate::widgets::text_wrapped(ui, &text, 12.0, Weight::Normal, color)
+                        .widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &text)
+                        });
+                });
+            });
+        }
+    });
 }
 
 fn history(ui: &mut Ui, ctx: &mut AppPagesCtx, b: &mut Binder) {
@@ -2026,6 +2094,7 @@ impl crate::state::AppState {
 
     pub fn app_page_ask(&mut self, ask: AppPageAsk) {
         match ask {
+            AppPageAsk::StripMetadata(enabled) => self.set_strip_metadata(enabled),
             AppPageAsk::Language(language) => {
                 self.set_language_setting(language);
                 self.save_config();

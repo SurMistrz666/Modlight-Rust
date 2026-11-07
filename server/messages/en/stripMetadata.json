@@ -1,0 +1,27 @@
+{
+  "settings": {
+    "title": "Metadata in uploads",
+    "description": "Photos, videos and documents carry hidden details about where, when and with what they were made.",
+    "switch": "Remove metadata from files on upload",
+    "switchHelp": "Location (GPS), the camera or phone model, the author, dates and editing history held in metadata are removed before the file is stored. The picture and the sound stay exactly as they were.",
+    "formats": "File types",
+    "existing": "Files you have already uploaded stay as they are.",
+    "orientation": "A photo taken sideways keeps only its orientation, so it is still shown the right way up.",
+    "documents": "Documents lose their properties (author, company, dates). Comments and tracked changes in the text of a document stay.",
+    "kept": "{count, plural, one {# file kept its metadata} other {# files kept their metadata}}",
+    "keptHelp": "They could not be cleaned, so they were stored as they came.",
+    "keptShown": "The {shown} most recent are listed.",
+    "reasons": {
+      "damaged": "damaged or unusual file",
+      "format": "this kind of file cannot be cleaned",
+      "protected": "protected with a password",
+      "signed": "digitally signed",
+      "tooLarge": "too large to clean",
+      "busy": "the server was busy",
+      "tool": "processing failed"
+    },
+    "turnedOn": "Metadata will be removed from your next uploads.",
+    "turnedOff": "Your next uploads keep their metadata.",
+    "error": "The setting could not be saved. Try again."
+  }
+}

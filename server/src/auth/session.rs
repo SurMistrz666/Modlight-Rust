@@ -547,6 +547,7 @@ mod tests {
             default_password_version: 0,
             background_key: None,
             background_dim: 70,
+            strip_metadata: false,
         };
         let json = serde_json::to_value(UserOut::from(&user)).unwrap();
         let keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();

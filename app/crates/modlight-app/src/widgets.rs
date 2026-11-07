@@ -827,6 +827,15 @@ pub fn checkbox_weighted(
         *checked = !*checked;
         response.mark_changed();
     }
+    // What a screen reader (and a test) learns about it: a check box, its label, its state.
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            enabled,
+            *checked,
+            label.unwrap_or(""),
+        )
+    });
     let box_rect = Rect::from_min_size(
         pos2(rect.left(), rect.center().y - box_size / 2.0),
         Vec2::splat(box_size),

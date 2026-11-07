@@ -154,6 +154,15 @@ pub async fn open_av_workspace(
     Ok(OpenedWorkspace::Ready(ws))
 }
 
+/// Not upstream: a private directory with no stored object behind it, for a job
+/// that works on a file it already has (`media::strip`). The caller sets `input`.
+pub async fn open_scratch(config: &Config, prefix: &str) -> anyhow::Result<AvWorkspace> {
+    let root = scratch_root(config);
+    tokio::fs::create_dir_all(&root).await?;
+    let dir = mkdtemp(&root, prefix).await?;
+    Ok(AvWorkspace { input: PathBuf::new(), dir: Some(dir) })
+}
+
 /// Output names are built from our own target table, never from a request - but
 /// the check is cheap and this is the one place a path could be formed, so it is
 /// enforced rather than assumed.

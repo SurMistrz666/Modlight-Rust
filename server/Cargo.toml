@@ -96,6 +96,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 crc32fast = "1"
 
+# Removing metadata from PDFs on upload (media/strip/pdf.rs). MIT. No default
+# features: its parallel loader and date helpers are not used.
+lopdf = { version = "0.47", default-features = false }
+
 # Misc
 dotenvy = "0.15"
 # statfs(2) for lib/upload/disk.ts (`fs.statfs` upstream); already in the lock graph.

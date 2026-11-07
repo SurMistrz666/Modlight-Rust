@@ -106,6 +106,7 @@ action errors), so upstream `.env` files keep their meaning.
 | `runtime/limits.rs` | `lib/runtime/limits.ts` | done |
 | `turnstile.rs`, `actions/turnstile.rs` | none (not upstream) | optional Cloudflare Turnstile on the public entry points and its admin card (section 9, item 43) |
 | `downloads.rs`, `routes/api/downloads.rs`, `pages/dashboard_downloads.rs` | none (not upstream) | Downloads: the desktop app's builds for macOS and Windows, published with `RELEASE_PUBLISH_TOKEN` (section 9, item 45) |
+| `media/strip.rs`, `media/strip/{jpeg,png,webp,gif,heif,raster,av,pdf,office}.rs`, `data/strip_metadata.rs`, `routes/api/strip_metadata.rs`, `actions/strip_metadata.rs` | none (not upstream) | removing metadata from files on upload, one switch per account (section 9, item 47) |
 
 Reference sources (read-only, never executed) of the exact library versions
 upstream pins are unpacked in `_scratch/srv-skeleton/src/`: better-auth 1.6.13,
@@ -783,6 +784,156 @@ Deliberate, each for a reason:
       buckets), `tests/vault_db.rs` (bearer uploads, every public surface,
       grants, the pass with an interruption and a restart, rate limits),
       `web/tests/encryption.test.tsx`.
+
+47. **Intended addition: removing metadata on upload** (2026-11-07, the
+    owner's request). One switch per account, "Remove metadata from files on
+    upload", **off by default**: an account that never turns it on sees no
+    change (its uploads are stored byte for byte, and no new query runs: the
+    switch is a column of the owner row finalize already holds).
+    - *Columns* (migration 0017, drizzle journal and snapshot like the others):
+      `user.strip_metadata boolean NOT NULL DEFAULT false` (the switch) and
+      `uploads.metadata_kept varchar(16)` (NULL, or why a file uploaded with
+      the switch on kept its metadata). Models `User::strip_metadata` and
+      `Upload::metadata_kept`, both `#[sqlx(default)]` and never serialised.
+      The TypeScript server ignores both.
+    - *Where it runs*: `upload::finalize`, right after the quota reservation and
+      before anything describes the file: the type sniffing, the dimensions and
+      blurhash, the ffprobe metadata, the checksum, the vault's encryption and
+      the row all see the cleaned copy (`media::strip::strip_upload`, which
+      works on a copy in a scratch folder of `UPLOAD_TMP_PATH`, removed with
+      it, and never changes the upload's own file). The reservation is moved
+      to the cleaned size (a larger cleaned copy that does not fit the quota is
+      not used). The cleaned copy replaces the temp file (removed after the
+      commit, as the ingest would have moved it); an S3 tus upload's object is
+      copied out, cleaned, stored under a new key and deleted after the commit,
+      as the vault does with its plaintext. The answers of every upload path
+      keep their shape.
+    - *Writers*: every upload goes through finalize, so the switch covers the
+      panel (tus `/api/files`, session), the desktop app (tus with its token,
+      and its plain `POST /upload`), ShareX and scripts (`POST /upload`,
+      `POST /api/upload`). It does not apply to the other writers, on purpose:
+      pastes (`pastes.createPaste`) store text typed in the panel, with no file
+      metadata to remove; `convert` in place or as a copy stores what libvips
+      (`keep: none`) or ffmpeg (`-map_metadata -1`) produced, which carries none
+      of the source's metadata (in place, `metadata_kept` is cleared); avatars
+      and wallpapers are re-encoded by libvips; Downloads' builds are not user
+      files; the vault's pass rewrites ciphertext of files already stored.
+      Files already uploaded are never touched.
+    - *Duplicates*: a ShareX answer's `duplicate_of` is looked up after the
+      insert with the cleaned checksum, leaving the new row out
+      (`duplicate_lookup::first_match_except`); a tus upload, which upstream
+      never hashes, gets the cleaned file's checksum on its row. Cleaning is
+      deterministic (no time stamps, `-fflags +bitexact`), so the same photo
+      uploaded twice is two copies of the same bytes.
+    - *What each format loses and keeps* (told by the bytes, never by the
+      name; the picture is never decoded where the format allows it):
+      - JPEG (segments): EXIF and XMP (APP1), IPTC/Photoshop (APP13), MPF and
+        every other APPn, comments, a JFIF thumbnail, and whatever follows the
+        end of the image (MPF's second pictures, a motion photo's video) go;
+        JFIF APP0, Adobe APP14, the ICC profile chunks, the tables and the
+        entropy-coded data stay byte for byte. A rotated photo keeps an EXIF
+        holding only Orientation.
+      - PNG and APNG (chunks): `tEXt`, `zTXt`, `iTXt`, `tIME`, `eXIf`, every
+        unknown ancillary chunk and anything after `IEND` go; `IHDR PLTE IDAT
+        IEND tRNS gAMA cHRM sRGB iCCP sBIT pHYs bKGD cICP mDCV cLLI acTL fcTL
+        fdAT` stay with their CRCs. An unknown critical chunk makes the file
+        unknown (kept).
+      - WebP (RIFF): `EXIF`, `XMP ` and unknown chunks go, the VP8X flags and
+        the RIFF size are put right; `VP8 VP8L VP8X ALPH ANIM ANMF ICCP` stay.
+      - GIF (blocks): comment, unknown and application extensions other than
+        NETSCAPE2.0/ANIMEXTS1.0 go, and anything after the trailer; frames,
+        delays, colour tables and the loop stay.
+      - HEIC and AVIF (HEIF): the EXIF and XMP items are overwritten in place
+        at the same length (EXIF by a minimal block holding only Orientation,
+        or none; XMP by an empty packet; then zeros). No box moves, so the coded
+        picture, `irot`/`imir`, `colr`, depth and gain maps are the same bytes,
+        and no codec is needed (the image's libvips cannot decode HEVC, so a
+        re-encode could never clean an iPhone photo). An item may only be
+        overwritten inside `mdat` or `idat` and away from every other item's
+        bytes. An image sequence also loses its movie times and its `udta` and
+        `meta` (renamed `free`, zeroed). An AVIF this cannot follow is saved
+        again by libvips (quality 90, 4:4:4, `keep=icc`, orientation applied):
+        the only lossy step of the feature, for unusual files.
+      - TIFF: libvips, losslessly (the same pixels in their own depth;
+        `keep=icc`; the Orientation tag carried; the compression kept, or
+        deflate for a lossy one). Camera raws (TIFF outside) are kept as they
+        came (`format`).
+      - Audio and video (MP4, MOV, M4V, 3GP, M4A, MKV, WebM, AVI, MP3, FLAC, Ogg,
+        Opus, WAV): ffmpeg 5.1 in the image, `-map 0 -map -0:d? -map_metadata
+        -1 -map_chapters -1 -c copy -fflags +bitexact -strict unofficial`, the
+        demuxer forced from the allowlist, `+faststart` and the major brand
+        kept on the mov family. Every global and stream tag (GPS, dates, device,
+        title, artist) and every chapter goes, and so do data streams (phone
+        telemetry, a GoPro GPS track, an MP4's chapter track); every audio and
+        picture stream is copied packet for packet, cover art included, and the
+        rotation of a phone video (display matrix side data) survives. The
+        result is checked with ffprobe before it is used: the same audio and
+        picture streams, the same rotation, no tag naming a place, a time or a
+        person; otherwise it is thrown away. A bare MPEG frame sync that ffprobe
+        does not read as media is left alone. Other containers (ASF, FLV,
+        MPEG-TS, AAC, APE, WavPack) are left alone.
+      - PDF (lopdf 0.47): the trailer's Info dictionary and every `Metadata`
+        (XMP) stream go, and so do older revisions of an incrementally saved
+        file (unreferenced objects are pruned); pages, fonts and pictures are
+        the same objects. Kept as they came: password-protected files
+        (`protected`), signed ones (`signed`: a rewrite would break the
+        signature), files whose cross-reference table had to be rebuilt
+        (`damaged`). A PDF/A file loses its conformance mark with its XMP.
+        Pictures inside a PDF keep any EXIF they carry.
+      - Office Open XML (docx, xlsx, pptx and relatives with a main part) and
+        OpenDocument (odt, ods, odp...): `docProps/core.xml` and
+        `docProps/app.xml` become empty property sets, `docProps/custom.xml`
+        goes with its content type and relationship, `meta.xml` becomes an
+        empty `office:meta`; every other entry is copied byte for byte, local
+        header included, so ODF's first stored `mimetype` stays first. Signed
+        packages and password-protected ODF are kept as they came. Pictures
+        inside keep any EXIF they carry; comments and tracked changes inside
+        the document body are content, not metadata, and stay.
+      - Anything else (text, archives, executables, BMP, SVG, PSD...): untouched.
+    - *Fails open*: a file that cannot be cleaned is stored exactly as it came;
+      the upload never fails because of this step. The reason is logged (with
+      the code, not the name) and stored in `uploads.metadata_kept`:
+      `damaged` (a broken or unusual layout), `format` (a camera raw, an AVIF
+      sequence libvips refuses), `protected`, `signed`, `too-large` (over a
+      limit below, a deadline, or a cleaned copy that does not fit the quota),
+      `busy` (the media queue was full or the disk had no room for a second
+      copy), `tool` (ffmpeg or libvips missing or failing). The Settings card
+      lists those files (live ones, newest first, 20 of them and the total).
+    - *Limits*: the byte-level rewriters (JPEG, PNG, WebP, GIF, HEIF, the zip
+      of a document) stream file to file in constant memory, whatever the size;
+      ffmpeg works on files (`AV_WEIGHT` on the media limiter, the 45 s copy
+      deadline, 10 s probes, 2 GiB at most: beyond, `too-large` at once);
+      libvips (TIFF, the AVIF fallback) and lopdf (64 MiB at most, decompressed
+      object streams bounded at 64 MiB) hold a conversion's slot with a 30 s
+      deadline; an S3 object is staged within 45 s; a zip is only read when the
+      end of its directory says it may be a document. The parsers are fuzzed
+      (`media::strip::fuzz`: every truncation and 3000 mutations per format
+      must end in `Ok` or `Err`, read nothing past the end, not loop, and be
+      final: cleaning a result again changes nothing).
+    - *Switch*: the Settings page (`stripMetadata` prop, the card in
+      "Appearance & security"), the RPC module `strip-metadata`
+      (`loadStripMetadata`, `setStripMetadata`), and `GET`/`PUT
+      /api/strip-metadata` for the desktop app and scripts (CONTRACT.md section
+      11; capabilities `read` and `write`). Strings:
+      `messages/<locale>/stripMetadata.json`, a 21st client namespace.
+    - *Crate*: `lopdf` 0.47 (MIT), with no default features; it brings
+      `aes`/`cbc`/`ecb`/`cipher` 0.5 (MIT or Apache-2.0, for encrypted PDFs it
+      only detects here), `rand` 0.10, `rangemap`, `brotli-decompressor`
+      (BSD-3-Clause or MIT), `weezl`, `miniz_oxide` 0.9 (flate2 still uses
+      zlib-rs: `any_zlib` wins over its default backend). All compatible with
+      AGPL-3.0. No new system package: libvips (`tiffsave`, `heifsave` with
+      AV1, `autorot`) and ffmpeg/ffprobe 5.1 are already in the image.
+    - Tests: `media::strip::*::tests` (each rewriter, the HEIF item
+      confinement, `tiff_look`, the ffmpeg arguments and checks),
+      `media::strip::fuzz`, `tests/media_strip.rs` (real files: JPEG with a
+      real ICC profile and rotated EXIF, PNG, still and animated WebP, animated
+      GIF, AVIF and HEIC from libvips, TIFF from ImageMagick, twelve audio and
+      video containers made with ffmpeg and compared packet for packet, cover
+      art, PDF; skipped when a tool is missing), `tests/strip_db.rs` (the
+      switch and token scopes, ShareX, tus from the panel and from the app,
+      checksums and duplicates of the cleaned file, a broken file kept and
+      listed, an encrypted account, a docx, the switch off storing byte for
+      byte), `routes::api::strip_metadata::tests`, `web/tests/strip-metadata.test.tsx`.
 
 ## 10. Verified on 2026-10-18
 

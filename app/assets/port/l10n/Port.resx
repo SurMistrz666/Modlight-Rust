@@ -109,4 +109,40 @@
   <data name="VaultDownloadWaits" xml:space="preserve">
     <value>Enter the file password in My space. The download starts once the files are unlocked.</value>
   </data>
+  <data name="StripMetadataTitle" xml:space="preserve">
+    <value>Metadata</value>
+  </data>
+  <data name="StripMetadataSwitch" xml:space="preserve">
+    <value>Remove metadata from files on upload</value>
+  </data>
+  <data name="StripMetadataHint" xml:space="preserve">
+    <value>The server removes the location (GPS), the camera or phone model, the author, dates and editing history held in metadata before it stores a file, for every upload of this account: from this app, the website and ShareX. The picture and the sound stay exactly as they were. Comments and tracked changes in the text of documents stay.</value>
+  </data>
+  <data name="StripMetadataTypes" xml:space="preserve">
+    <value>File types: JPEG, PNG, WebP, GIF, HEIC, AVIF, TIFF, MP4, MOV, M4V, MKV, WebM, AVI, MP3, M4A, FLAC, OGG, Opus, WAV, PDF, Word, Excel, PowerPoint and OpenDocument.</value>
+  </data>
+  <data name="StripMetadataExisting" xml:space="preserve">
+    <value>Files you have already uploaded stay as they are.</value>
+  </data>
+  <data name="StripMetadataSignedOut" xml:space="preserve">
+    <value>Sign in to change this setting. It is kept by your account on the server.</value>
+  </data>
+  <data name="StripMetadataLoading" xml:space="preserve">
+    <value>Reading the setting from the server...</value>
+  </data>
+  <data name="StripMetadataSaving" xml:space="preserve">
+    <value>Saving...</value>
+  </data>
+  <data name="StripMetadataFailed" xml:space="preserve">
+    <value>The server did not save the change: {0}</value>
+  </data>
+  <data name="StripMetadataUnreachable" xml:space="preserve">
+    <value>The server could not be reached.</value>
+  </data>
+  <data name="StripMetadataNotSupported" xml:space="preserve">
+    <value>This server cannot remove metadata yet.</value>
+  </data>
+  <data name="StripMetadataRefused" xml:space="preserve">
+    <value>The sign-in of this app may not change it.</value>
+  </data>
 </root>

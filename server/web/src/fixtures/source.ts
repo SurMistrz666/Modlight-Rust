@@ -34,15 +34,17 @@ const messageFiles = import.meta.glob<Record<string, unknown>>("../../../message
  * The 17 namespaces upstream's i18n/request.ts loads for the client (mail.json
  * is server-only), plus `turnstile` (not upstream: the optional Cloudflare
  * Turnstile widget and card), `authorizePickup` (not upstream: the desktop
- * sign-in pickup), `downloads` (not upstream: Downloads) and `encryption`
- * (not upstream: per-account file encryption), as server/src/i18n/request.rs
- * lists them.
+ * sign-in pickup), `downloads` (not upstream: Downloads), `encryption`
+ * (not upstream: per-account file encryption) and `stripMetadata` (not
+ * upstream: removing metadata on upload), as server/src/i18n/request.rs lists
+ * them.
  */
 const NAMESPACES = [
   "common", "nav", "auth", "dashboard", "profile",
   "paste", "links", "albums", "tokens", "admin",
   "public", "landing", "viewer", "files", "upload",
   "download", "authorize", "turnstile", "authorizePickup", "downloads", "encryption",
+  "stripMetadata",
 ];
 
 export function fixtureMessages(locale: string): Record<string, unknown> {

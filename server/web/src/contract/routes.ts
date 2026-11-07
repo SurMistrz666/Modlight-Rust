@@ -110,7 +110,8 @@ export type LayoutId = "root" | "(app)" | "(auth)";
  *  - the resumable upload endpoint of upstream server.ts (`/api/files*`; its
  *    POST-only ShareX paths /upload and /api/upload are pages for a GET);
  *  - not upstream: Downloads' API (`/api/downloads*`; its files,
- *    `/downloads/:id/:filename`, already match the media action pattern);
+ *    `/downloads/:id/:filename`, already match the media action pattern), and
+ *    the switch that removes metadata on upload (`/api/strip-metadata`);
  *  - files: app/icon.svg, app/apple-icon.png, public/ (brand/, fonts/) and the
  *    SPA's own build (assets/).
  *
@@ -151,6 +152,7 @@ export const SERVER_PATHS = [
   "/api/files/*", // server.ts: tus resumable uploads (any method)
   "/api/downloads", // not upstream: Downloads (server/src/routes/api/downloads.rs)
   "/api/downloads/*", // not upstream: Downloads' publishing and deleting
+  "/api/strip-metadata", // not upstream: the switch that removes metadata on upload
   "/icon.svg", // app/icon.svg
   "/apple-icon.png", // app/apple-icon.png
   "/brand/*", // public/brand

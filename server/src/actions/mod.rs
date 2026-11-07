@@ -23,6 +23,7 @@ pub mod registration;
 pub mod releases;
 pub mod shortlink_unlock;
 pub mod shortlinks;
+pub mod strip_metadata;
 pub mod tokens;
 pub mod turnstile;
 pub mod unlock;
@@ -53,4 +54,5 @@ pub fn register_all(reg: &mut RpcRegistry) {
     unlock::register(reg); // app/actions/unlock.ts
     turnstile::register(reg); // not upstream: the optional Cloudflare Turnstile card
     encryption::register(reg); // not upstream: per-account file encryption (docs/ENCRYPTION.md)
+    strip_metadata::register(reg); // not upstream: removing metadata on upload (SKELETON.md 9.47)
 }

@@ -56,6 +56,7 @@ Snapshots of every screen below that is drawn live in
 | Appearance: theme and colours | done |
 | Application: language and tray (with tray actions and the updates card), macOS integration, components, local folders, backup and cleanup, print, proxy, advanced | done (print's "Image print settings" waits for printing; proxy settings are stored, not applied) |
 | Sharing: copy formats (with their editor), from clipboard, upload limits, history | done |
+| Not upstream: Sharing -> Limits and retries, the card "Metadata": the account's "Remove metadata from files on upload" switch, kept by the server (`GET`/`PUT /api/strip-metadata`, the server's `docs/SKELETON.md` 9.47) | done: read when the settings open, set at once, put back with the server's words when refused, greyed with the reason while signed out; both skins draw it (the page is the same function). Snapshot `settings-upload-limits`; tests `modlight-api/tests/strip_metadata.rs`, `modlight-app/tests/strip_switch.rs`. Not yet tried against a real server in a window. |
 | Capture: region, screenshots (preconfigured region through the overlay), image format, effects, thumbnails, file names (previews) | done ("Image effects configuration..." opens the presets window, see "Image effects") |
 | Screen recording page and FFmpeg options window (`FFmpegOptionsWindow`) | done; snapshots `settings-recorder`, `ffmpeg-options*` |
 | Text from image | done (Vision's languages; see "ShareX tools") |

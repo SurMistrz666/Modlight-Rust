@@ -204,7 +204,9 @@ the account's sign-in password (checked against its hash when it is set).
   encrypted with the public key before the row is written: no password
   needed, nothing changes for the clients. Metadata (type, dimensions,
   duration) is read from the plaintext before it is encrypted; the blurhash
-  is not kept.
+  is not kept. With the account's "Remove metadata from files on upload"
+  switch on (SKELETON.md section 9, item 47) the plaintext is cleaned first:
+  what is described, hashed and encrypted is the cleaned file.
 - **Reads** go through a storage view that decrypts exactly the objects the
   request was allowed to read (`vault::view`). Everything above the storage
   layer (Range, thumbnails, posters, timelines, motion tiles, conversions,

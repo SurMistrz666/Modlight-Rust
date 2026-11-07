@@ -557,6 +557,10 @@ async fn commit_replace(
 }
 
 /// The `UPDATE uploads SET <patch> WHERE id = $ AND storage_key = $ RETURNING id`.
+///
+/// Not upstream: `metadata_kept` (SKELETON.md 9.47) is cleared, because the new
+/// bytes come from libvips (`keep: none`) or ffmpeg (`-map_metadata -1`) and
+/// carry nothing of the old file's metadata.
 async fn apply_patch(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     media: &Upload,
@@ -567,7 +571,7 @@ async fn apply_patch(
         r#"update "uploads" set "ext" = $1, "mime_type" = $2, "size" = $3, "storage_key" = $4, "checksum" = $5,
              "width" = $6, "height" = $7, "frames" = $8, "duration_seconds" = $9, "fps" = $10, "blurhash" = $11,
              "thumb_key" = $12, "filename" = $13, "converted_at" = $14, "original_ext" = $15, "updated_at" = $16,
-             "encryption" = $19
+             "encryption" = $19, "metadata_kept" = null
            where ("uploads"."id" = $17 and "uploads"."storage_key" = $18) returning "id""#,
     )
     .bind(&p.ext)

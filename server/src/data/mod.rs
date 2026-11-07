@@ -10,6 +10,7 @@ pub mod admin_files;
 pub mod duplicates;
 pub mod folders;
 pub mod sessions;
+pub mod strip_metadata;
 pub mod upload_query;
 pub mod uploads;
 pub mod user_prefs;

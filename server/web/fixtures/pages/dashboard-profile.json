@@ -85,6 +85,39 @@
         "since": null,
         "grants": [],
         "minLength": 8
+      },
+      "stripMetadata": {
+        "enabled": false,
+        "kept": [],
+        "keptTotal": 0,
+        "formats": [
+          "JPEG",
+          "PNG",
+          "WebP",
+          "GIF",
+          "HEIC",
+          "AVIF",
+          "TIFF",
+          "MP4",
+          "MOV",
+          "M4V",
+          "MKV",
+          "WebM",
+          "AVI",
+          "MP3",
+          "M4A",
+          "FLAC",
+          "OGG",
+          "Opus",
+          "WAV",
+          "PDF",
+          "DOCX",
+          "XLSX",
+          "PPTX",
+          "ODT",
+          "ODS",
+          "ODP"
+        ]
       }
     },
     "meta": {

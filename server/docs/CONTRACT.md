@@ -44,6 +44,7 @@ Contents
 | `src/contract/` | TypeScript types of the layout data, the route table (page ids as in `server/src/pages/table.rs`, plus the route handlers and files the server answers itself), and the drizzle row shapes that cross the wire. |
 | `src/turnstile/` | Not upstream: the optional Cloudflare Turnstile widget (`widget.tsx`: script loader, `useCaptcha()`), the admin card (`TurnstileSettings.tsx`) and the stubs of the server's `turnstile` actions (`actions.ts`). Section 11. |
 | `src/encryption/` | Not upstream: per-account file encryption (the Settings card, the unlock page, the library banner, the admin note, the stubs of the server's `encryption` actions). Section 11 and `docs/ENCRYPTION.md`. |
+| `src/strip-metadata/` | Not upstream: the Settings card "Metadata in uploads" (the account's switch that removes metadata from its uploads) and the stubs of the server's `strip-metadata` actions. Section 11. |
 | `fixtures/` | Example payloads for every page (`fixtures/pages/*.json`), shared layout data (`fixtures/layouts.json`) and canned action answers (`fixtures/actions.json`). They double as worked examples of section 6. The root layout's `messages` are filled in from `server/messages/` (the server's own copy of upstream `messages/`). |
 | `tests/` | vitest + jsdom: `smoke.test.tsx` mounts every fixture page; `runtime.test.tsx` pins the wire formats; `route-table.test.ts` checks the route table against `server/src/pages/table.rs` and the server's matching tests; `turnstile.test.tsx` the optional Turnstile widget and its header (section 11). |
 | `scripts/` | `sync-upstream.mjs`, `gen-actions.mjs`, `gen-type-mirrors.mjs`, `audit-bundle.mjs`, `size-report.mjs`. |
@@ -1572,6 +1573,8 @@ with `owner_id = uid AND deleted_at IS NULL AND folder_id IS NULL`, both `Number
    | `folders` | `{id: string; name: string; depth: number}[]` | `flattenFolders(tree)` (`:31-36`): pre-order, roots depth 0, child = parent + 1 |
    | `avatarUrl` | `string \| null` | `avatarUrl(prefs?.userCode ?? u.userCode, u.image)` (section 5.8) |
    | `backgroundUrl` | `string \| null` | `backgroundUrl(prefs?.userCode, prefs?.backgroundKey)` (`lib/background.ts:99-106`; no fallback to the session tag) |
+   | `encryption` | `VaultStatus` | not upstream: the File encryption card (section 11, `docs/ENCRYPTION.md`) |
+   | `stripMetadata` | `StripStatus` | not upstream: the "Metadata in uploads" card (section 11): `user.strip_metadata` and the live files with `uploads.metadata_kept` set |
 
    `SessionView` (`lib/data/sessions.ts:22-63`) = `{id: string, current: boolean,
    createdAt: string, renewedAt: string, expiresAt: string, ip: string | null,
@@ -4651,6 +4654,54 @@ Settings page's `encryption` prop, which is always sent.
   one import path), and the pages above (lines marked "Not upstream").
 - Translations: `server/messages/<locale>/encryption.json`, a namespace of its
   own (the 20th client namespace).
+
+**Not upstream: removing metadata on upload** (`server/src/media/strip.rs`,
+SKELETON.md section 9 item 47). One switch per account, off until the owner
+turns it on; with it off nothing anybody sees changes, except the Settings page's
+`stripMetadata` prop, which is always sent.
+
+- `src/strip-metadata/`: the Settings card (`StripMetadataSettings.tsx`, in the
+  "Appearance & security" group, full width, before File encryption) and the
+  stubs of the server's `strip-metadata` actions (`actions.ts`):
+  - `loadStripMetadata()` -> `StripStatus`;
+  - `setStripMetadata(enabled: boolean)` -> `StripStatus` after the change
+    (anything but a boolean throws `enabled must be true or false`). No
+    revalidation: the card holds the answer.
+  - `StripStatus` = `{enabled: boolean, kept: KeptFile[], keptTotal: number,
+    formats: string[]}`; `KeptFile` = `{id, code, filename, ext, reason,
+    createdAt}` (ISO string), the account's live files uploaded with the switch
+    on whose metadata could not be removed (stored as they came), newest first,
+    at most 20; `reason` is one of `damaged`, `format`, `protected`, `signed`,
+    `too-large`, `busy`, `tool`. `formats` names the file types the switch
+    cleans.
+  The switch moves at once and goes back, with a toast, when the server does
+  not take the change.
+- Payload addition: `/dashboard/profile` `stripMetadata: StripStatus` (section
+  6.18), fixtures `dashboard-profile.json` (off, nothing kept) and
+  `dashboard-profile-encrypted.json` (on, two of 23 kept files listed).
+- `SERVER_PATHS` gain `/api/strip-metadata`.
+- Translations: `server/messages/<locale>/stripMetadata.json`, a namespace of its
+  own (the 21st client namespace).
+- For the desktop app and scripts (and a browser session, which the panel does
+  not use), with the account's API token in `x-api-key` or `Authorization:
+  Bearer`, the session cookie otherwise; a token that is present and wrong is a
+  refusal, never a fall-through to the cookie (as `/api/theme`):
+
+  | Request | Capability | Answer |
+  |---|---|---|
+  | `GET /api/strip-metadata` | `read` | `200 {"enabled": false}` |
+  | `PUT /api/strip-metadata`, `Content-Type: application/json`, `{"enabled": true}` | `write` | `200 {"enabled": true}`, the value stored |
+
+  Every answer is `Cache-Control: private, no-store`. Refusals:
+  `401 {"message": "Token not specified or not found."}` (no credential, a
+  wrong or revoked token, an account that is gone), `401 {"message": "Account
+  disabled."}`, `403` for a token whose scope is too narrow (an `upload`
+  token may neither read nor change it; the app's sign-in mints a `write`
+  token, which may do both), `415 {"message": "Content-Type must be
+  application/json."}`, `413` (over 1 KiB), `400 {"message": "Body must be a
+  JSON object."}` and `400 {"message": "enabled must be true or false."}`. The
+  switch changes what happens to the next uploads only; files already uploaded
+  are never touched.
 
 **Not upstream: the Graphite skin and layout** (the default skin).
 

@@ -6,6 +6,12 @@
 //! storage write and the DB insert must not leave a file nobody can see or
 //! delete, and a crash after the insert must not leave the quota
 //! un-incremented.
+//!
+//! Not upstream (SKELETON.md 9.47): for an account with `strip_metadata` on,
+//! the upload's metadata is removed right after the reservation
+//! (`media::strip`), and everything after it (type, dimensions, checksum,
+//! encryption, the row) describes the cleaned file. A file that cannot be
+//! cleaned is stored as it came, with the reason in `uploads.metadata_kept`.
 
 use std::path::Path;
 
@@ -17,6 +23,7 @@ use crate::config::Config;
 use crate::db::models::{JsDate, User};
 use crate::media::mime::{MediaKind, media_kind};
 use crate::media::sniff::{UploadTypeInput, resolve_upload_type};
+use crate::media::strip::{Cleaned, KeptReason, Outcome, Source, strip_upload};
 use crate::media::urls::{LinkOwner, delete_url, ext_of, media_urls, storage_key_for, user_base_url};
 use crate::naming::{CodeBaseInput, allocate_code, is_naming_scheme, is_reserved_tag, local_now, plan_code};
 use crate::storage::StorageDriver;
@@ -78,6 +85,24 @@ pub struct FinalizeResult {
     pub copy_url: String,
     /// Folder the row ended up in (`None` = root).
     pub folder_id: Option<Uuid>,
+    /// Not upstream: the SHA-256 the row holds (`None` when nobody hashed it).
+    pub checksum: Option<String>,
+    /// Not upstream: what the account's metadata switch did (SKELETON.md 9.47).
+    pub metadata: MetadataStep,
+}
+
+/// Not upstream (SKELETON.md 9.47): what removing metadata did to an upload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MetadataStep {
+    /// The account has the switch off: nothing was looked at.
+    #[default]
+    Off,
+    /// Not a format with metadata to remove, or nothing in it to remove.
+    Untouched,
+    /// The stored file is the cleaned copy.
+    Cleaned,
+    /// It could not be cleaned and is stored as it came.
+    Kept(KeptReason),
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +253,6 @@ pub async fn finalize_upload(
 ) -> Result<FinalizeResult, FinalizeError> {
     let owner = input.owner;
     let filename = input.filename;
-    let size = input.size;
 
     // 1) code (custom or generated): no side effects, so it comes first.
     let ext = ext_of(filename);
@@ -257,11 +281,29 @@ pub async fn finalize_upload(
     assert_disk_headroom(config, cost).await?;
 
     // 3) quota: atomic reserve.
-    reserve_quota(db, &owner.id, size).await?;
+    reserve_quota(db, &owner.id, input.size).await?;
+    // What is reserved now, and what a failure gives back.
+    let mut reserved = input.size;
 
-    let storage_key = match (input.existing_key, sealer.is_some()) {
+    // 3b) Not upstream (SKELETON.md 9.47): the account removes metadata. From
+    // here on the cleaned copy, when there is one, IS the upload.
+    let (cleaned, metadata) = if owner.strip_metadata {
+        strip_step(db, config, storage, &input, &mut reserved).await
+    } else {
+        (None, MetadataStep::Off)
+    };
+    let (source_local, source_key): (Option<&Path>, Option<&str>) = match &cleaned {
+        Some(c) => (Some(c.path.as_path()), None),
+        None => (input.local_path, input.existing_key),
+    };
+    let size = cleaned.as_ref().map_or(input.size, |c| c.size);
+    let checksum = cleaned.as_ref().map(|c| c.checksum.clone()).or_else(|| input.checksum.clone());
+    let known_head = cleaned.as_ref().map(|c| c.head.clone()).or_else(|| input.head.clone());
+
+    let storage_key = match (source_key, sealer.is_some()) {
         (Some(k), false) => k.to_string(),
-        // The ciphertext of an object already in storage goes beside it.
+        // The ciphertext of an object already in storage, or its cleaned copy,
+        // goes beside it.
         _ => storage_key_for(owner.user_code.as_deref().unwrap_or("u"), &code, &ext),
     };
     let mut wrote_bytes = false;
@@ -271,11 +313,11 @@ pub async fn finalize_upload(
         // Not upstream: with the vault, the plaintext is described first (from
         // the temp file, or the object an S3 tus upload left) and encrypted
         // after; it never lands in storage as it is.
-        let plain = sealer.as_ref().map(|_| PlainSource::of(&input));
+        let plain = sealer.as_ref().map(|_| PlainSource::of(source_local, source_key));
 
         // 3) ingest bytes
-        if plain.is_none() && input.existing_key.is_none() {
-            let Some(local) = input.local_path else {
+        if plain.is_none() && source_key.is_none() {
+            let Some(local) = source_local else {
                 return Err(anyhow::anyhow!("finalizeUpload: no source provided").into());
             };
             storage.ingest_local_file(local, &storage_key).await?;
@@ -283,7 +325,7 @@ pub async fn finalize_upload(
         }
 
         // 4) what the file actually IS (signature, extension, client claim).
-        let head = match (input.head.as_ref().filter(|h| !h.is_empty()), &plain) {
+        let head = match (known_head.as_ref().filter(|h| !h.is_empty()), &plain) {
             (Some(h), _) => h.clone(),
             (None, Some(p)) => p.head(storage).await,
             (None, None) => crate::storage::read_head(storage, &storage_key, 4096).await,
@@ -369,6 +411,10 @@ pub async fn finalize_upload(
             Some(explicit) => explicit,
             None => owner.default_folder_id,
         };
+        let metadata_kept = match metadata {
+            MetadataStep::Kept(reason) => Some(reason.as_str()),
+            _ => None,
+        };
         // Not upstream: the vault is re-read under a lock with the insert, so a
         // switch on or off that raced with this upload is never missed.
         let mut tx = db.begin().await?;
@@ -376,8 +422,10 @@ pub async fn finalize_upload(
         let (id, folder): (Uuid, Option<Uuid>) = sqlx::query_as(
             r#"insert into "uploads" ("owner_id", "code", "filename", "ext", "mime_type", "size", "storage_key", "checksum",
                                       "width", "height", "frames", "duration_seconds", "fps", "blurhash", "published",
-                                      "delete_token", "password_hash", "password_version", "folder_id", "encryption")
-               values ($1, $2, $3, $4, $5, $6, $7, $8, $9::int, $10::int, $11::int, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                                      "delete_token", "password_hash", "password_version", "folder_id", "encryption",
+                                      "metadata_kept")
+               values ($1, $2, $3, $4, $5, $6, $7, $8, $9::int, $10::int, $11::int, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                       $21)
                returning "id", "folder_id""#,
         )
         .bind(&owner.id)
@@ -387,7 +435,7 @@ pub async fn finalize_upload(
         .bind(&mime)
         .bind(size)
         .bind(&storage_key)
-        .bind(&input.checksum)
+        .bind(&checksum)
         .bind(width)
         .bind(height)
         .bind(frames)
@@ -400,17 +448,27 @@ pub async fn finalize_upload(
         .bind(password_version)
         .bind(folder_id)
         .bind(&encryption)
+        .bind(metadata_kept)
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
-        // The plaintext an S3 tus upload left in the bucket: its ciphertext now
-        // lives at `storage_key`.
-        if encryption.is_some()
-            && let Some(existing) = input.existing_key
+        // The object an S3 tus upload left in the bucket: its ciphertext, or
+        // its cleaned copy, now lives at `storage_key`.
+        if let Some(existing) = input.existing_key
             && existing != storage_key
             && let Err(e) = storage.delete(existing).await
         {
-            tracing::error!("[finalize] plaintext object left after encrypting: {existing} {e:#}");
+            tracing::error!("[finalize] original object left after encrypting or cleaning: {existing} {e:#}");
+        }
+        // Not upstream: the cleaned copy took the temp file's place, so the
+        // temp file goes, as the ingest would have moved it.
+        if cleaned.is_some()
+            && let Some(local) = input.local_path
+        {
+            let _ = tokio::fs::remove_file(local).await;
+        }
+        if let Some(reason) = metadata_kept {
+            tracing::warn!("[strip] {code}: stored with its metadata ({reason})");
         }
 
         let uc = owner.user_code.as_deref().unwrap_or("u");
@@ -428,6 +486,8 @@ pub async fn finalize_upload(
             folder_id: folder,
             // The deletion link always carries the tag.
             deletion_url: delete_url(uc, &code, &delete_token, &base),
+            checksum: checksum.clone(),
+            metadata,
         })
     }
     .await;
@@ -439,10 +499,59 @@ pub async fn finalize_upload(
             if wrote_bytes && let Err(e) = storage.delete(&storage_key).await {
                 tracing::error!("[finalize] orphaned object left in storage: {storage_key} {e:#}");
             }
-            if let Err(e) = release_quota(db, &owner.id, size).await {
+            if let Err(e) = release_quota(db, &owner.id, reserved).await {
                 tracing::error!("[finalize] could not release quota reservation: {} {e}", owner.id);
             }
             Err(err)
+        }
+    }
+}
+
+/// Not upstream (SKELETON.md 9.47): remove the upload's metadata, and settle
+/// the quota for the cleaned copy's size. Never fails the upload: whatever goes
+/// wrong leaves the upload as it came, with the reason.
+async fn strip_step(
+    db: &PgPool,
+    config: &Config,
+    storage: &dyn StorageDriver,
+    input: &FinalizeInput<'_>,
+    reserved: &mut i64,
+) -> (Option<Cleaned>, MetadataStep) {
+    let source = match (input.existing_key, input.local_path) {
+        (Some(key), _) => Source::Stored(key),
+        (None, Some(path)) => Source::Local(path),
+        // finalize refuses this shape a moment later.
+        (None, None) => return (None, MetadataStep::Untouched),
+    };
+    let cleaned = match strip_upload(config, storage, source, input.size, input.head.as_ref()).await {
+        Outcome::Untouched => return (None, MetadataStep::Untouched),
+        Outcome::Kept(reason) => return (None, MetadataStep::Kept(reason)),
+        Outcome::Cleaned(cleaned) => cleaned,
+    };
+    // The reservation follows the file that will be stored. A cleaned copy
+    // larger than the original (a lossy TIFF saved losslessly) still has to
+    // fit the quota; when it does not, the original is stored.
+    let delta = cleaned.size - input.size;
+    let settled = if delta > 0 {
+        match reserve_quota(db, &input.owner.id, delta).await {
+            Ok(()) => Ok(true),
+            Err(FinalizeError::QuotaExceeded) => Ok(false),
+            Err(err) => Err(anyhow::anyhow!("{err}")),
+        }
+    } else if delta < 0 {
+        release_quota(db, &input.owner.id, -delta).await.map(|()| true).map_err(anyhow::Error::from)
+    } else {
+        Ok(true)
+    };
+    match settled {
+        Ok(true) => {
+            *reserved = cleaned.size;
+            (Some(cleaned), MetadataStep::Cleaned)
+        }
+        Ok(false) => (None, MetadataStep::Kept(KeptReason::TooLarge)),
+        Err(err) => {
+            tracing::error!("[strip] could not settle the quota of a cleaned upload: {err:#}");
+            (None, MetadataStep::Kept(KeptReason::Tool))
         }
     }
 }
@@ -456,8 +565,8 @@ enum PlainSource<'a> {
 }
 
 impl<'a> PlainSource<'a> {
-    fn of(input: &FinalizeInput<'a>) -> PlainSource<'a> {
-        match (input.existing_key, input.local_path) {
+    fn of(local: Option<&'a Path>, key: Option<&'a str>) -> PlainSource<'a> {
+        match (key, local) {
             (Some(key), _) => PlainSource::Stored(key),
             (None, Some(path)) => PlainSource::Local(path),
             // finalize refuses this shape before anything is read.

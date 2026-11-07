@@ -47,6 +47,8 @@ const EXPECTED: &[(&str, &[&str])] = &[
     ("src/routes/api/downloads.rs", &["admin", "identify"]),
     // Not upstream: per-account file encryption (status, the app's unlock).
     ("src/routes/api/encryption.rs", &["read", "read"]),
+    // Not upstream: the "Remove metadata from files on upload" switch.
+    ("src/routes/api/strip_metadata.rs", &["read", "write"]),
 ];
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {

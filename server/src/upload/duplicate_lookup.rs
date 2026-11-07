@@ -77,6 +77,29 @@ pub async fn first_match_for(db: &PgPool, user_id: &str, checksum: &str) -> sqlx
     .await
 }
 
+/// Not upstream (SKELETON.md 9.47): [`first_match_for`] asked after the insert,
+/// leaving out the row just written. Used when the stored bytes are not the
+/// ones that arrived (the metadata was removed), so the question could not be
+/// asked before.
+pub async fn first_match_except(
+    db: &PgPool,
+    user_id: &str,
+    checksum: &str,
+    except: Uuid,
+) -> sqlx::Result<Option<ChecksumRow>> {
+    sqlx::query_as(&format!(
+        r#"select {ROW_FIELDS} from "uploads"
+           where ("uploads"."owner_id" = $1 and "uploads"."deleted_at" is null and "uploads"."checksum" = $2
+                  and "uploads"."id" <> $3)
+           order by "uploads"."created_at" asc, "uploads"."id" asc limit 1"#
+    ))
+    .bind(user_id)
+    .bind(checksum)
+    .bind(except)
+    .fetch_optional(db)
+    .await
+}
+
 /// Live files of this account that carry no checksum, and are therefore
 /// invisible to every lookup above.
 pub async fn count_unchecksummed(db: &PgPool, user_id: &str) -> sqlx::Result<i64> {

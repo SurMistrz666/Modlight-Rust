@@ -358,6 +358,7 @@ pub(crate) mod test_support {
             default_password_version: 0,
             background_key: None,
             background_dim: 70,
+            strip_metadata: false,
         }
     }
 

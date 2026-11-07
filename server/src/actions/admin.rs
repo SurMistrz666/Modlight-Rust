@@ -1165,6 +1165,7 @@ mod tests {
             default_password_version: 0,
             background_key: None,
             background_dim: 0,
+            strip_metadata: false,
         }
     }
 

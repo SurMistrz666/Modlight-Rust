@@ -109,4 +109,40 @@
   <data name="VaultDownloadWaits" xml:space="preserve">
     <value>Wpisz hasło do plików w zakładce Moje pliki. Pobieranie ruszy po odblokowaniu plików.</value>
   </data>
+  <data name="StripMetadataTitle" xml:space="preserve">
+    <value>Metadane</value>
+  </data>
+  <data name="StripMetadataSwitch" xml:space="preserve">
+    <value>Usuwaj metadane z plików przy wysyłaniu</value>
+  </data>
+  <data name="StripMetadataHint" xml:space="preserve">
+    <value>Serwer usuwa lokalizację (GPS), model aparatu lub telefonu, autora, daty i historię edycji zapisane w metadanych, zanim zapisze plik, przy każdym wysyłaniu z tego konta: z tej aplikacji, ze strony i z ShareX. Obraz i dźwięk zostają dokładnie takie, jakie były. Komentarze i śledzone zmiany w treści dokumentów zostają.</value>
+  </data>
+  <data name="StripMetadataTypes" xml:space="preserve">
+    <value>Typy plików: JPEG, PNG, WebP, GIF, HEIC, AVIF, TIFF, MP4, MOV, M4V, MKV, WebM, AVI, MP3, M4A, FLAC, OGG, Opus, WAV, PDF, Word, Excel, PowerPoint i OpenDocument.</value>
+  </data>
+  <data name="StripMetadataExisting" xml:space="preserve">
+    <value>Pliki już wysłane zostają bez zmian.</value>
+  </data>
+  <data name="StripMetadataSignedOut" xml:space="preserve">
+    <value>Zaloguj się, aby zmienić to ustawienie. Przechowuje je Twoje konto na serwerze.</value>
+  </data>
+  <data name="StripMetadataLoading" xml:space="preserve">
+    <value>Odczytywanie ustawienia z serwera...</value>
+  </data>
+  <data name="StripMetadataSaving" xml:space="preserve">
+    <value>Zapisywanie...</value>
+  </data>
+  <data name="StripMetadataFailed" xml:space="preserve">
+    <value>Serwer nie zapisał zmiany: {0}</value>
+  </data>
+  <data name="StripMetadataUnreachable" xml:space="preserve">
+    <value>Nie udało się połączyć z serwerem.</value>
+  </data>
+  <data name="StripMetadataNotSupported" xml:space="preserve">
+    <value>Ten serwer nie potrafi jeszcze usuwać metadanych.</value>
+  </data>
+  <data name="StripMetadataRefused" xml:space="preserve">
+    <value>Logowanie tej aplikacji nie pozwala tego zmienić.</value>
+  </data>
 </root>

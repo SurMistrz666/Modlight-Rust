@@ -79,11 +79,17 @@ pub struct User {
     pub default_password_version: i32,
     pub background_key: Option<String>,
     pub background_dim: i32,
+    /// Not upstream (0017, SKELETON.md 9.47): remove metadata from this
+    /// account's files when they are uploaded (`media::strip`). Off by default.
+    /// Never sent to a client from here (the Settings card has its own prop).
+    #[sqlx(default)]
+    #[serde(default, skip_serializing)]
+    pub strip_metadata: bool,
 }
 
 impl Columns for User {
     const TABLE: &'static str = "\"user\"";
-    const COLUMNS: &'static str = "\"id\", \"name\", \"email\", \"email_verified\", \"image\", \"created_at\", \"updated_at\", \"role\", \"banned\", \"ban_reason\", \"ban_expires\", \"two_factor_enabled\", \"user_code\", \"naming_scheme\", \"naming_pattern\", \"public_profile\", \"used_quota\", \"max_quota\", \"hide_uploads\", \"copy_raw\", \"theme\", \"locale\", \"username\", \"skip_tag_in_url\", \"allow_root_short_links\", \"default_folder_id\", \"naming_word_count\", \"naming_random_length\", \"preferred_domain\", \"default_password_hash\", \"default_password_version\", \"background_key\", \"background_dim\"";
+    const COLUMNS: &'static str = "\"id\", \"name\", \"email\", \"email_verified\", \"image\", \"created_at\", \"updated_at\", \"role\", \"banned\", \"ban_reason\", \"ban_expires\", \"two_factor_enabled\", \"user_code\", \"naming_scheme\", \"naming_pattern\", \"public_profile\", \"used_quota\", \"max_quota\", \"hide_uploads\", \"copy_raw\", \"theme\", \"locale\", \"username\", \"skip_tag_in_url\", \"allow_root_short_links\", \"default_folder_id\", \"naming_word_count\", \"naming_random_length\", \"preferred_domain\", \"default_password_hash\", \"default_password_version\", \"background_key\", \"background_dim\", \"strip_metadata\"";
 }
 
 /// `user_code_aliases`: historical tags that keep resolving forever.
@@ -228,6 +234,13 @@ pub struct Upload {
     /// Never sent to a client.
     #[serde(default, skip_serializing)]
     pub encryption: Option<String>,
+    /// Not upstream (0017, SKELETON.md 9.47): why the metadata of a file
+    /// uploaded with `user.strip_metadata` on stayed in it
+    /// (`media::strip::KeptReason`), NULL otherwise. Never sent to a client from
+    /// here (the Settings card lists these files).
+    #[sqlx(default)]
+    #[serde(default, skip_serializing)]
+    pub metadata_kept: Option<String>,
     /// Not a column: the owner's file vault asks for the password (state
     /// `encrypting` or `on`), as `media::serve::lookup_media` found it. Every
     /// file of such an account is gated, cached privately and never derived
@@ -251,7 +264,7 @@ impl Upload {
 
 impl Columns for Upload {
     const TABLE: &'static str = "\"uploads\"";
-    const COLUMNS: &'static str = "\"id\", \"owner_id\", \"code\", \"filename\", \"ext\", \"kind\", \"language\", \"mime_type\", \"size\", \"storage_key\", \"checksum\", \"width\", \"height\", \"blurhash\", \"thumb_key\", \"published\", \"delete_token\", \"views\", \"downloads\", \"last_accessed_at\", \"expires_at\", \"max_views\", \"password_hash\", \"folder_id\", \"deleted_at\", \"created_at\", \"updated_at\", \"password_version\", \"frames\", \"converted_at\", \"original_ext\", \"duration_seconds\", \"fps\", \"encryption\"";
+    const COLUMNS: &'static str = "\"id\", \"owner_id\", \"code\", \"filename\", \"ext\", \"kind\", \"language\", \"mime_type\", \"size\", \"storage_key\", \"checksum\", \"width\", \"height\", \"blurhash\", \"thumb_key\", \"published\", \"delete_token\", \"views\", \"downloads\", \"last_accessed_at\", \"expires_at\", \"max_views\", \"password_hash\", \"folder_id\", \"deleted_at\", \"created_at\", \"updated_at\", \"password_version\", \"frames\", \"converted_at\", \"original_ext\", \"duration_seconds\", \"fps\", \"encryption\", \"metadata_kept\"";
 }
 
 /// `folders`: the single organisational unit (nesting via `parent_id`).

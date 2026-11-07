@@ -76,6 +76,9 @@ pub struct ProfileProps {
     pub background_url: Option<String>,
     /// Not upstream: the "File encryption" card (docs/ENCRYPTION.md).
     pub encryption: crate::vault::status::VaultStatus,
+    /// Not upstream: the "Remove metadata from files on upload" card
+    /// (SKELETON.md 9.47).
+    pub strip_metadata: crate::data::strip_metadata::StripStatus,
 }
 
 /// Depth-first flatten so the select can indent nested folders.
@@ -106,6 +109,7 @@ pub async fn load(ctx: PageCtx) -> PageResult {
         list_my_sessions(db, &session),
     )?;
     let encryption = crate::vault::status::vault_status(&ctx.state, &ctx.headers, &u.id).await?;
+    let strip_metadata = crate::data::strip_metadata::strip_status(db, &u.id).await?;
 
     let props = ProfileProps {
         u: ProfileUser {
@@ -140,6 +144,7 @@ pub async fn load(ctx: PageCtx) -> PageResult {
         sessions,
         folders: flatten_folders(&tree, 0),
         encryption,
+        strip_metadata,
     };
     PageData::new(&props, PageMeta::titled("Profile"))
 }

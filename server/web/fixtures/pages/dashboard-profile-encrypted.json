@@ -106,6 +106,56 @@
           }
         ],
         "minLength": 8
+      },
+      "stripMetadata": {
+        "enabled": true,
+        "kept": [
+          {
+            "id": "5d7e1c2a-0000-4000-8000-000000000001",
+            "code": "kx7wq2",
+            "filename": "wakacje-2026.mp4",
+            "ext": "mp4",
+            "reason": "too-large",
+            "createdAt": "2026-11-06T18:20:00.000Z"
+          },
+          {
+            "id": "5d7e1c2a-0000-4000-8000-000000000002",
+            "code": "pm4zt9",
+            "filename": "umowa-podpisana.pdf",
+            "ext": "pdf",
+            "reason": "signed",
+            "createdAt": "2026-11-05T09:12:00.000Z"
+          }
+        ],
+        "keptTotal": 23,
+        "formats": [
+          "JPEG",
+          "PNG",
+          "WebP",
+          "GIF",
+          "HEIC",
+          "AVIF",
+          "TIFF",
+          "MP4",
+          "MOV",
+          "M4V",
+          "MKV",
+          "WebM",
+          "AVI",
+          "MP3",
+          "M4A",
+          "FLAC",
+          "OGG",
+          "Opus",
+          "WAV",
+          "PDF",
+          "DOCX",
+          "XLSX",
+          "PPTX",
+          "ODT",
+          "ODS",
+          "ODP"
+        ]
       }
     },
     "meta": {

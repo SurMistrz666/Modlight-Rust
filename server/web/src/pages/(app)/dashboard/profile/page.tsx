@@ -31,6 +31,8 @@ import {
 } from "@/components/profile/TagSection";
 import { EncryptionSettings } from "../../../../encryption/EncryptionSettings";
 import type { VaultStatus } from "../../../../encryption/actions";
+import { StripMetadataSettings } from "../../../../strip-metadata/StripMetadataSettings";
+import type { StripStatus } from "../../../../strip-metadata/actions";
 
 export interface ProfilePageProps {
   /** The session user's fields the page reads (session.user) */
@@ -64,6 +66,8 @@ export interface ProfilePageProps {
   backgroundUrl: string | null;
   /** Not upstream: the "File encryption" card (docs/ENCRYPTION.md). */
   encryption?: VaultStatus;
+  /** Not upstream: "Remove metadata from files on upload" (SKELETON.md 9.47). */
+  stripMetadata?: StripStatus;
 }
 /**
  * One labelled band of settings.
@@ -187,6 +191,10 @@ export default function ProfilePage({ props }: { props: ProfilePageProps }) {
           twoFactorEnabled={Boolean(u.twoFactorEnabled)}
           emailVerified={Boolean(u.emailVerified)}
         />
+
+        {/* Not upstream: removing metadata on upload. Full width: the list of
+            file types and of the files that kept their metadata. */}
+        <StripMetadataSettings initial={props.stripMetadata} userCode={tag} />
 
         {/* Not upstream: per-account file encryption. Full width: the list of
             browsers that remember the password carries long labels. */}

@@ -281,6 +281,7 @@ async fn upload(state: &AppState, req: axum::extract::Request) -> anyhow::Result
     };
 
     // ── finalize ──
+    let streamed_checksum = checksum.clone();
     let storage = state.storage.get()?;
     let custom_code = progress.fields.get("code").and_then(Value::as_str).filter(|c| !c.is_empty()).map(str::to_string);
     let filename = progress.filename.clone().unwrap_or_else(|| "file".to_string());
@@ -304,6 +305,19 @@ async fn upload(state: &AppState, req: axum::extract::Request) -> anyhow::Result
     .await;
     match result {
         Ok(result) => {
+            // Not upstream (SKELETON.md 9.47): the stored bytes are the cleaned
+            // copy, so "an older copy" means an older copy of THOSE bytes.
+            let existing = match &result.checksum {
+                Some(stored) if *stored != streamed_checksum => {
+                    crate::upload::duplicate_lookup::first_match_except(&state.db, &owner.id, stored, result.id)
+                        .await
+                        .unwrap_or_else(|err| {
+                            tracing::error!("[sharex] duplicate lookup failed: {err}");
+                            None
+                        })
+                }
+                _ => existing,
+            };
             let mut body = Map::new();
             body.insert("message".into(), json!("OK"));
             body.insert("url".into(), json!(result.url));

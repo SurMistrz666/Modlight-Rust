@@ -6,7 +6,8 @@
 //! sends its token in the `x-api-key` header only; redirects are never followed.
 //!
 //! Not upstream: [`vault`], the calls an account whose files are encrypted needs, and the
-//! grant its content requests carry.
+//! grant its content requests carry; [`metadata`], the account's switch that removes
+//! metadata from its uploads on the server.
 
 pub mod account;
 pub mod client;
@@ -15,6 +16,7 @@ pub mod error;
 pub mod extras;
 pub mod host;
 pub mod library;
+pub mod metadata;
 pub mod mime;
 pub mod models;
 pub mod signin;
@@ -40,6 +42,7 @@ pub use library::{
     MAX_DELETE_IDS, MAX_MOTION_BYTES, MAX_THUMBNAIL_BYTES, ROOT_FOLDER, THUMBNAIL_TIMEOUT,
     UploadQuery,
 };
+pub use metadata::STRIP_METADATA_PATH;
 pub use mime::{
     DEFAULT_MIME_TYPE, is_image_mime_type, mime_type_from_extension, mime_type_from_file_name,
 };

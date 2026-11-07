@@ -211,7 +211,7 @@ pub static GROUPS: [Group; 11] = [
                 s::SettingsWindow_PageUploadLimits,
                 icons::UPLOAD,
                 s::SettingsWindow_HintUploadLimits,
-                "upload uploader retry buffer"
+                "upload uploader retry buffer metadata exif gps location privacy metadane prywatność"
             ),
             section!(
                 "application.history",
@@ -545,6 +545,41 @@ pub fn find_section(id: &str) -> Option<(&'static Group, &'static Section)> {
         .find_map(|g| g.sections.iter().find(|s| s.id == id).map(|s| (g, s)))
 }
 
+/// Not upstream: the account's "Remove metadata from files on upload" switch, kept by
+/// the server (`GET`/`PUT /api/strip-metadata`) and shown on the upload page.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StripSwitch {
+    /// What the server holds, once read (`None` before that, or signed out).
+    pub enabled: Option<bool>,
+    /// A change on its way to the server.
+    pub busy: bool,
+    /// Why the last reading or change failed, in the words the page shows.
+    pub error: Option<String>,
+    /// Which reading or change an answer belongs to.
+    pub generation: u64,
+}
+
+/// How a failed call reads on the upload page.
+pub fn strip_error_text(error: &modlight_api::ApiError) -> String {
+    use modlight_api::ApiError;
+    use modlight_core::l10n::port;
+    let detail = match error {
+        ApiError::NotSupported => return t(port::StripMetadataNotSupported).to_string(),
+        ApiError::Unauthorized => t(s::ModlightSignIn_TokenRejected).to_string(),
+        ApiError::Refused {
+            status: 403,
+            detail,
+            ..
+        } if detail.is_empty() => t(port::StripMetadataRefused).to_string(),
+        ApiError::Refused { detail, status, .. } if detail.is_empty() => format!("HTTP {status}"),
+        ApiError::Refused { detail, .. } => detail.clone(),
+        ApiError::Timeout | ApiError::Transport(_) => t(port::StripMetadataUnreachable).to_string(),
+        ApiError::Status(status) => format!("HTTP {status}"),
+        other => other.to_string(),
+    };
+    format(t(port::StripMetadataFailed), &[Arg::from(detail.as_str())])
+}
+
 /// The account page's own reading of `/api/me` (`AccountSettingsViewModel`).
 #[derive(Clone, Debug, Default)]
 pub struct AccountPage {
@@ -585,6 +620,8 @@ pub struct SettingsWindow {
     /// Drawn in the main window's content area instead of a window of its own: the
     /// Graphite skin's side panel lists the sections in place of the tree.
     pub embedded: bool,
+    /// Not upstream: the account's metadata switch (the upload page).
+    pub strip: StripSwitch,
 }
 
 impl SettingsWindow {
@@ -606,6 +643,7 @@ impl SettingsWindow {
             target: crate::task_pages::TaskTarget::Defaults,
             title: t(s::SettingsWindow_WindowTitle).to_string(),
             embedded: false,
+            strip: StripSwitch::default(),
         };
         window.reveal(section);
         window
@@ -690,6 +728,14 @@ impl AppState {
         };
         let Some(credential) = credential else {
             window.account = AccountPage::default();
+            window.strip = StripSwitch {
+                generation: window.strip.generation + 1,
+                ..StripSwitch::default()
+            };
+            return;
+        };
+        self.refresh_strip_switch(&credential);
+        let Some(window) = self.windows.settings.as_mut() else {
             return;
         };
         window.account.generation += 1;
@@ -721,6 +767,73 @@ impl AppState {
                     }
                     Err(_) => {
                         window.account.status = t(s::SettingsWindow_AccountUnreachable).to_string()
+                    }
+                }
+            })
+        });
+    }
+
+    /// Not upstream: read the account's metadata switch for the upload page.
+    fn refresh_strip_switch(&mut self, credential: &modlight_api::Credential) {
+        let Some(window) = self.windows.settings.as_mut() else {
+            return;
+        };
+        window.strip.generation += 1;
+        window.strip.busy = false;
+        window.strip.error = None;
+        let generation = window.strip.generation;
+        let (api, credential) = (self.api.clone(), credential.clone());
+        self.rt.spawn(async move {
+            let answer = api.get_strip_metadata(&credential).await;
+            Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
+                let Some(window) = state.windows.settings.as_mut() else {
+                    return;
+                };
+                if window.strip.generation != generation {
+                    return;
+                }
+                match answer {
+                    Ok(enabled) => window.strip.enabled = Some(enabled),
+                    Err(error) => window.strip.error = Some(strip_error_text(&error)),
+                }
+            })
+        });
+    }
+
+    /// Not upstream: turn the account's metadata switch on or off. The page shows the
+    /// new position at once; a refusal puts the old one back and says why.
+    pub fn set_strip_metadata(&mut self, enabled: bool) {
+        let Some(credential) = self.credential() else {
+            return;
+        };
+        let Some(window) = self.windows.settings.as_mut() else {
+            return;
+        };
+        if window.strip.busy || window.strip.enabled.is_none() {
+            return;
+        }
+        let before = window.strip.enabled;
+        window.strip.generation += 1;
+        window.strip.enabled = Some(enabled);
+        window.strip.busy = true;
+        window.strip.error = None;
+        let generation = window.strip.generation;
+        let api = self.api.clone();
+        self.rt.spawn(async move {
+            let answer = api.set_strip_metadata(&credential, enabled).await;
+            Box::new(move |state: &mut AppState, _ctx: &egui::Context| {
+                let Some(window) = state.windows.settings.as_mut() else {
+                    return;
+                };
+                if window.strip.generation != generation {
+                    return;
+                }
+                window.strip.busy = false;
+                match answer {
+                    Ok(stored) => window.strip.enabled = Some(stored),
+                    Err(error) => {
+                        window.strip.enabled = before;
+                        window.strip.error = Some(strip_error_text(&error));
                     }
                 }
             })
@@ -1318,6 +1431,7 @@ fn app_page(
     #[cfg(not(windows))]
     let personal_default = personal_folder.clone();
     let language = state.config.language();
+    let signed_in = state.account.is_signed_in();
     let Some(window) = state.windows.settings.as_mut() else {
         return;
     };
@@ -1374,6 +1488,8 @@ fn app_page(
         explorer,
         updates_visible: modlight_core::update::has_release_channel(),
         dialogs: !qa,
+        strip: window.strip.clone(),
+        signed_in,
     };
     let mut root = std::mem::take(state.config.values_mut());
     let mut binder = Binder::new(&mut root);
@@ -2017,6 +2133,10 @@ pub fn handle(state: &mut AppState, asks: Vec<SettingsAsk>) {
                 state.push(Command::SignOut);
                 if let Some(window) = state.windows.settings.as_mut() {
                     window.account = AccountPage::default();
+                    window.strip = StripSwitch {
+                        generation: window.strip.generation + 1,
+                        ..StripSwitch::default()
+                    };
                 }
             }
             SettingsAsk::AppPage(ask) => state.app_page_ask(ask),

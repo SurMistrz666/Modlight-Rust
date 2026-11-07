@@ -14,6 +14,7 @@ pub mod link_info;
 pub mod me;
 pub mod releases_app;
 pub mod shortlinks;
+pub mod strip_metadata;
 pub mod theme;
 pub mod uploads;
 pub mod uploads_check;
