@@ -73,8 +73,10 @@ both directions. The only intended differences are security and bug fixes, liste
 
 The same app, with upstream's Windows mechanisms back in place of the macOS ones
 ([`app/docs/WINDOWS.md`](app/docs/WINDOWS.md)): the token in Credential Manager; capture
-through GDI with the region overlay above the taskbar; recording with DirectShow devices
-and the NVENC, AMF and Quick Sync encoders; Windows OCR; GDI printing; the YouTube
+through GDI with the region overlay above the taskbar; screen recording through DXGI
+Desktop Duplication (fullscreen DirectX 12 and Vulkan games included, GDI as the
+fallback) with DirectShow devices and the NVENC, AMF and Quick Sync encoders; Windows
+OCR; GDI printing; the YouTube
 sign-in in WebView2; background removal on DirectML; "Start with Windows", "Upload with
 Modlight" in Explorer's context menu and "Send to"; one running copy that takes the files
 a later start is given; the tray, taskbar progress and Print Screen hotkeys.

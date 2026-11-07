@@ -7,28 +7,48 @@
 //! program: where it used a Windows mechanism, this uses the same mechanism again;
 //! `docs/WINDOWS.md` lists what differs from it and from the macOS port.
 //!
-//! The whole crate is Windows only; on any other system it is empty.
+//! The crate is Windows only: on any other system all that builds is `duplication_plan`,
+//! plain logic without a system call, so that its tests run on a Mac as well.
 
-#![cfg(windows)]
-
+#[cfg(windows)]
 pub mod ax;
+#[cfg(windows)]
 pub mod capture;
+#[cfg(windows)]
 pub mod credentials;
+#[cfg(windows)]
 pub mod editor;
+#[cfg(windows)]
 pub mod hotkeys;
+#[cfg(windows)]
 pub mod input;
+#[cfg(windows)]
 pub mod integration;
+#[cfg(windows)]
 pub mod keys;
+#[cfg(windows)]
 pub mod network;
+#[cfg(windows)]
 pub mod ocr;
+#[cfg(windows)]
 pub mod pasteboard;
+#[cfg(windows)]
 pub mod print;
+#[cfg(windows)]
 pub mod sound;
+#[cfg(windows)]
 pub mod system;
+#[cfg(windows)]
 pub mod webview;
+#[cfg(windows)]
 pub mod windows;
 
+#[cfg(windows)]
 #[allow(dead_code)]
 mod wide;
 
+#[cfg_attr(not(windows), allow(dead_code))]
+mod duplication_plan;
+
+#[cfg(windows)]
 pub use credentials::SecretStore;

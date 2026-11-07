@@ -1,6 +1,6 @@
 [package]
 name = "modlight-windows"
-description = "Windows glue for Modlight App: Credential Manager, the screen through GDI, global hotkeys, Explorer integration, sounds, printing, OCR and the other system services the app asks for."
+description = "Windows glue for Modlight App: Credential Manager, the screen through Desktop Duplication and GDI, global hotkeys, Explorer integration, sounds, printing, OCR and the other system services the app asks for."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,8 +17,8 @@ workspace = true
 
 [target.'cfg(windows)'.dependencies]
 global-hotkey = "0.9"
-# Win32 through windows-sys. The `windows` crate (WinRT: OCR, WIC) is renamed `winrt`
-# because this crate has a module called `windows` of its own.
+# Win32 through windows-sys. The `windows` crate (WinRT: OCR, WIC; COM: Direct3D and DXGI)
+# is renamed `winrt` because this crate has a module called `windows` of its own.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -66,6 +66,12 @@ winrt = { package = "windows", version = "0.62", features = [
     "Media_Ocr",
     "Storage_Streams",
     "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    # `IDXGIOutput::GetDesc`: its structure carries an HMONITOR.
+    "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",

@@ -1,6 +1,6 @@
 //! Pictures of the screen on Windows (upstream's GDI `Screenshot`, `CaptureHelpers`,
 //! `WindowsList`): monitors, the pointer and the window list from User32 and DWM, pixels
-//! from GDI, and frames for the recorder.
+//! from GDI, and frames for the recorder, which reads DXGI Desktop Duplication first.
 //!
 //! Coordinates are the app's screen points: physical pixels divided by the scale of the
 //! primary monitor (`ScreenInfo::scale`, the same for every monitor), which is how egui
@@ -14,6 +14,7 @@
 //! `modlight_core::capture::source::FakeSource`.
 
 pub(crate) mod desktop;
+mod duplication;
 mod frames;
 mod gdi;
 mod transparent;

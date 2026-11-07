@@ -203,8 +203,9 @@ pub enum ScreenRecordOutput {
 ///
 /// Upstream's screen sources are ffmpeg's own Windows devices (`gdigrab`, `ddagrab`,
 /// `screen-capture-recorder`). Here the platform delivers the screen's frames and they
-/// are piped into ffmpeg: on Windows copied with GDI (what `gdigrab` reads), on a Mac
-/// from ScreenCaptureKit. Every one of those values means "the screen", and choosing the
+/// are piped into ffmpeg: on Windows read through DXGI Desktop Duplication (what
+/// `ddagrab` reads), with GDI (what `gdigrab` reads) as the fallback; on a Mac from
+/// ScreenCaptureKit. Every one of those values means "the screen", and choosing the
 /// screen stores upstream's default `gdigrab`, so a document synced between systems
 /// records the screen on each. Cameras and microphones are ffmpeg's own devices:
 /// DirectShow (`dshow`) on Windows, AVFoundation on a Mac.

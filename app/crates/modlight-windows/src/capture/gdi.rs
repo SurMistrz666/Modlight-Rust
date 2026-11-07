@@ -4,6 +4,10 @@
 //! context into a 32-bit top-down DIB section, whose memory is BGRA in rows of
 //! `width * 4` bytes: the recorder's frame layout as it is. Coordinates are physical
 //! pixels (the caller holds [`PhysicalPixels`](super::desktop::PhysicalPixels)).
+//!
+//! GDI cannot see a game that presents past the desktop (see [`super::duplication`]): a
+//! monitor's part of a picture that comes out entirely black is taken once more through
+//! Desktop Duplication. Every other picture is GDI's alone.
 
 use image::RgbaImage;
 use modlight_core::capture::geometry::IRect;
@@ -21,6 +25,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::desktop::{monitors, virtual_bounds};
+use super::duplication::retake_black_parts;
 use crate::wide::wide;
 
 /// The screen's device context, released when dropped.
@@ -181,11 +186,12 @@ impl Drop for Dib {
 /// `Screenshot.CaptureRectangleNative`: an area of the desktop in physical pixels, with
 /// the pointer drawn in when asked. What lies outside every monitor stays black.
 pub(crate) fn capture_pixels(rect: IRect, cursor: bool) -> Result<RgbaImage, CaptureError> {
-    let part = rect.intersect(&virtual_bounds(&monitors()));
+    let screens = monitors();
+    let part = rect.intersect(&virtual_bounds(&screens));
     if !rect.has_area() || !part.has_area() {
         return Err(CaptureError::Nothing);
     }
-    let dib = Dib::new(rect.width as u32, rect.height as u32)
+    let mut dib = Dib::new(rect.width as u32, rect.height as u32)
         .ok_or_else(|| CaptureError::Failed("the picture could not be made".into()))?;
     let screen =
         ScreenDc::new().ok_or_else(|| CaptureError::Failed("the screen is not readable".into()))?;
@@ -194,6 +200,8 @@ pub(crate) fn capture_pixels(rect: IRect, cursor: bool) -> Result<RgbaImage, Cap
             "the screen could not be copied".into(),
         ));
     }
+    // Before the pointer: on black, the pointer is what would make the part not black.
+    retake_black_parts(&mut dib, rect, &screens);
     if cursor && let Some(cursor) = Cursor::current() {
         cursor.draw(dib.dc(), rect.x, rect.y);
     }

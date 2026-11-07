@@ -3,8 +3,9 @@
 //! to a shell, and every path ffmpeg reads or writes is absolute, so no file name can be
 //! mistaken for an option.
 //!
-//! The screen input is the platform's: raw BGRA frames (GDI's on Windows,
-//! ScreenCaptureKit's on a Mac) on ffmpeg's standard input, in place of upstream's
+//! The screen input is the platform's: raw BGRA frames (on Windows from DXGI Desktop
+//! Duplication, GDI where it cannot serve; ScreenCaptureKit's on a Mac) on ffmpeg's
+//! standard input, in place of upstream's
 //! `gdigrab`/`ddagrab` devices. Microphones and cameras are upstream's on Windows,
 //! ffmpeg's `dshow` device with upstream's buffer options (`video=`, `audio=`); on a Mac
 //! they come through ffmpeg's `avfoundation` device. The hardware encoders get

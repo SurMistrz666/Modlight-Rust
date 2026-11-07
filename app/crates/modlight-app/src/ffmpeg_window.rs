@@ -1,8 +1,9 @@
 //! `FFmpegOptionsWindow`: the screen recording options (sources, video, audio,
 //! advanced) for one task settings object, opened from the screen recorder page.
 //!
-//! On Windows the sources are the screen (GDI frames piped to ffmpeg, upstream's
-//! `gdigrab` title; a `ddagrab` or `screen-capture-recorder` value selects it too) and
+//! On Windows the sources are the screen (frames from DXGI Desktop Duplication, GDI where
+//! it cannot serve, piped to ffmpeg; upstream's `gdigrab` title; a `ddagrab` or
+//! `screen-capture-recorder` value selects it too) and
 //! the cameras and microphones ffmpeg's DirectShow input lists, with upstream's texts;
 //! NVENC, AMF and Quick Sync are offered with all their settings. "Get recorder devices"
 //! (the screen-capture-recorder installer) is not ported: the screen does not go
