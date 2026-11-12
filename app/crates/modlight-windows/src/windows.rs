@@ -113,6 +113,20 @@ pub fn active_window_fullscreen() -> bool {
     rect.contains_rect(&monitor.bounds)
 }
 
+/// Whether [`veil_overlay`] makes a window see-through until [`reveal_overlay`]: not
+/// here, where [`raise_overlay`] shows the window as it raises it.
+pub const OVERLAY_VEILED: bool = false;
+
+/// Nothing to do here (see [`OVERLAY_VEILED`]).
+pub fn veil_overlay(_title: &str) -> bool {
+    false
+}
+
+/// Nothing to do here (see [`OVERLAY_VEILED`]).
+pub fn reveal_overlay(_title: &str) -> bool {
+    false
+}
+
 /// Raise a window of this app, found by its title, above the taskbar (upstream's overlay
 /// is a top-most form covering it): top-most, shown and brought to the front, which is
 /// what lets a window covering a monitor go over the taskbar. Returns whether the window

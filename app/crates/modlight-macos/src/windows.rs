@@ -190,6 +190,46 @@ pub fn raise_overlay(_title: &str) -> bool {
     false
 }
 
+/// Whether [`veil_overlay`] makes a window see-through until [`reveal_overlay`].
+pub const OVERLAY_VEILED: bool = cfg!(target_os = "macos");
+
+/// Make a window of this app, found by its title, see-through until [`reveal_overlay`]:
+/// a window put on screen before the GPU has drawn it shows AppKit's own grey background,
+/// for as long as a game keeps the GPU busy. Main thread only; returns whether the window
+/// was found.
+pub fn veil_overlay(title: &str) -> bool {
+    set_alpha(title, 0.0)
+}
+
+/// Make a window [`veil_overlay`] made see-through opaque again, once it has been drawn.
+/// Main thread only; returns whether the window was found.
+pub fn reveal_overlay(title: &str) -> bool {
+    set_alpha(title, 1.0)
+}
+
+#[cfg(target_os = "macos")]
+fn set_alpha(title: &str, alpha: f64) -> bool {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    let mut found = false;
+    for window in NSApplication::sharedApplication(mtm).windows().iter() {
+        if window.title().to_string() == title {
+            window.setAlphaValue(alpha);
+            found = true;
+        }
+    }
+    found
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_alpha(_title: &str, _alpha: f64) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

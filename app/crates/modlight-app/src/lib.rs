@@ -21,6 +21,7 @@ pub mod dialogs;
 pub mod editor_window;
 pub mod ffmpeg_window;
 pub mod first_run;
+pub mod frame_strips;
 pub mod hotkey_page;
 pub mod information;
 pub mod media;

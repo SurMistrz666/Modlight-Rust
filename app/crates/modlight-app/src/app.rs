@@ -64,6 +64,8 @@ pub struct ModlightApp {
     taskbar: Option<crate::win32::TaskbarProgress>,
     /// When the main window's bounds last changed and are not on disk yet (UI seconds).
     bounds_changed_at: Option<f64>,
+    /// The GPU every window draws with, waited on before the region overlay is revealed.
+    pub(crate) gpu: Option<eframe::wgpu::Device>,
 }
 
 /// How long the main window's bounds must stay put before they are written to disk.
@@ -142,6 +144,7 @@ impl ModlightApp {
             #[cfg(windows)]
             taskbar: None,
             bounds_changed_at: None,
+            gpu: cc.wgpu_render_state.as_ref().map(|gpu| gpu.device.clone()),
         };
         if mode != Mode::Shot {
             app.start(ctx);

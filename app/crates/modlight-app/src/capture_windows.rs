@@ -8,6 +8,55 @@ use modlight_core::l10n::{capture as c, s, t};
 use crate::app::{ModlightApp, Placement, dialog, dialog_resizable};
 use crate::dialogs::after_capture::{self, AfterCaptureOutcome};
 use crate::dialogs::auto_capture;
+use crate::frame_strips::{Strip, strips};
+
+/// One strip of a frame around an area (`frame_strips`): a borderless window on top that
+/// the pointer goes through, painted whole, so it needs no transparency.
+fn strip_viewport(
+    ctx: &egui::Context,
+    key: impl std::hash::Hash + std::fmt::Debug,
+    title: &str,
+    strip: &Strip,
+    mut paint: impl FnMut(&mut egui::Ui),
+) {
+    let rect = strip.rect;
+    let builder = ViewportBuilder::default()
+        .with_title(title)
+        .with_decorations(false)
+        .with_resizable(false)
+        .with_always_on_top()
+        .with_mouse_passthrough(true)
+        .with_taskbar(false)
+        .with_position(rect.min)
+        .with_inner_size(rect.size());
+    ctx.show_viewport_immediate(ViewportId::from_hash_of(key), builder, |ui, _| {
+        ui.ctx()
+            .send_viewport_cmd(ViewportCommand::OuterPosition(rect.min));
+        ui.ctx()
+            .send_viewport_cmd(ViewportCommand::InnerSize(rect.size()));
+        paint(ui);
+    });
+}
+
+/// Wait, half a second at most, until the GPU has done everything handed to it so far:
+/// the region overlay's frames for `display` among it.
+fn wait_for_gpu(gpu: Option<&eframe::wgpu::Device>, display: u32) {
+    let Some(gpu) = gpu else {
+        return;
+    };
+    let started = std::time::Instant::now();
+    let waited = gpu.poll(eframe::wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(std::time::Duration::from_millis(500)),
+    });
+    let ms = started.elapsed().as_millis();
+    match waited {
+        Ok(_) => log::info!("Region overlay on display {display}: drawn by the GPU in {ms} ms"),
+        Err(error) => {
+            log::warn!("Region overlay on display {display}: shown after {ms} ms, {error}")
+        }
+    }
+}
 
 impl ModlightApp {
     pub(crate) fn capture_viewports(&mut self, ctx: &egui::Context, main: Option<Rect>) {
@@ -133,35 +182,25 @@ impl ModlightApp {
                 }
             }
         }
-        // The frame around the area being scrolled (`ScrollingCaptureRegionWindow`).
+        // The red frame around the area being scrolled (`ScrollingCaptureRegionWindow`),
+        // as four strips that leave the area itself uncovered.
         if let Some(region) = state.scrolling.as_ref().and_then(|w| w.region) {
-            let frame = Rect::from_min_size(
-                pos2(region.x as f32 - 1.0, region.y as f32 - 1.0),
-                vec2(region.width as f32 + 2.0, region.height as f32 + 2.0),
+            let area = Rect::from_min_size(
+                pos2(region.x as f32, region.y as f32),
+                vec2(region.width as f32, region.height as f32),
             );
-            let builder = ViewportBuilder::default()
-                .with_title("Modlight - scrolling region")
-                .with_decorations(false)
-                .with_transparent(true)
-                .with_resizable(false)
-                .with_always_on_top()
-                .with_mouse_passthrough(true)
-                .with_taskbar(false)
-                .with_position(frame.min)
-                .with_inner_size(frame.size());
-            ctx.show_viewport_immediate(
-                ViewportId::from_hash_of("scrolling-region"),
-                builder,
-                |ui, _| {
-                    let r = ui.max_rect().shrink(0.5);
-                    ui.painter().rect_stroke(
-                        r,
-                        0.0,
-                        egui::Stroke::new(1.0, egui::Color32::RED),
-                        egui::StrokeKind::Middle,
-                    );
-                },
-            );
+            for strip in strips(area, 1.0) {
+                strip_viewport(
+                    ctx,
+                    ("scrolling-region", strip.side),
+                    "Modlight - scrolling region",
+                    &strip,
+                    |ui| {
+                        ui.painter()
+                            .rect_filled(ui.max_rect(), 0.0, egui::Color32::RED);
+                    },
+                );
+            }
         }
 
         // The quick task menu's editor.
@@ -440,22 +479,36 @@ impl ModlightApp {
             let run = overlay.opened_at.to_bits();
             let raised_key = egui::Id::new(("region-overlay-raised", screen.id, run));
             let frames_key = egui::Id::new(("region-overlay-frames", screen.id, run));
-            // The window stays hidden for its first frames, while it is raised over the
-            // menu bar and the frozen desktop reaches it: shown at once it flashed dark.
+            let revealed_key = egui::Id::new(("region-overlay-revealed", screen.id, run));
             let frames = ctx.data(|d| d.get_temp::<u32>(frames_key).unwrap_or(0));
-            let shown = frames >= 2;
+            let raised = ctx.data(|d| d.get_temp::<bool>(raised_key).unwrap_or(false));
+            // The window must not show before it is drawn: the frozen desktop reaches it
+            // with its first frames, and a window shown at once flashed dark. Where the
+            // raised window is see-through (macOS), it goes on screen with its second
+            // frame and turns opaque once the GPU has drawn that one: a game keeping the
+            // GPU busy held the drawing back, and the system's grey covered the display
+            // meanwhile. Elsewhere it stays hidden for its first two frames.
+            let veiled = crate::platform::windows::OVERLAY_VEILED && raised;
+            let shown = if veiled { frames >= 1 } else { frames >= 2 };
+            let mut focus = !veiled && frames == 2;
+            if veiled
+                && frames >= 2
+                && !ctx.data(|d| d.get_temp::<bool>(revealed_key).unwrap_or(false))
+            {
+                wait_for_gpu(self.gpu.as_ref(), screen.id);
+                crate::platform::windows::reveal_overlay(&title);
+                ctx.data_mut(|d| d.insert_temp(revealed_key, true));
+                focus = true;
+            }
             let builder = builder.with_visible(shown);
             ctx.show_viewport_immediate(id, builder, |ui, _| {
                 ui.ctx()
                     .data_mut(|d| d.insert_temp(frames_key, frames.saturating_add(1)));
-                if !ui
-                    .ctx()
-                    .data(|d| d.get_temp::<bool>(raised_key).unwrap_or(false))
-                    && crate::platform::windows::raise_overlay(&title)
-                {
+                if !raised && crate::platform::windows::raise_overlay(&title) {
+                    crate::platform::windows::veil_overlay(&title);
                     ui.ctx().data_mut(|d| d.insert_temp(raised_key, true));
                 }
-                if frames == 2 {
+                if focus {
                     ui.ctx().send_viewport_cmd(ViewportCommand::Focus);
                 }
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
@@ -476,7 +529,8 @@ impl ModlightApp {
         ctx.request_repaint();
     }
 
-    /// The recording's frame (the pointer goes through it) and its toolbar.
+    /// The recording's frame (four strips around the area, the pointer goes through them)
+    /// and its toolbar.
     fn recording_viewports(&mut self, ctx: &egui::Context) {
         let state = &mut self.state;
         let Some(recording) = state.captures.recording.as_mut() else {
@@ -488,33 +542,16 @@ impl ModlightApp {
         if snapshot.state == modlight_core::recording::RecordState::Encoding || snapshot.finished {
             return;
         }
-        let frame = recording.frame_rect();
-        let builder = ViewportBuilder::default()
-            .with_title(t(c::ScreenRecordWindow_Title))
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_resizable(false)
-            .with_always_on_top()
-            .with_mouse_passthrough(true)
-            .with_taskbar(false)
-            .with_position(frame.min)
-            .with_inner_size(frame.size());
-        ctx.show_viewport_immediate(
-            ViewportId::from_hash_of("recording-frame"),
-            builder,
-            |ui, _| {
-                ui.ctx()
-                    .send_viewport_cmd(ViewportCommand::OuterPosition(frame.min));
-                ui.ctx()
-                    .send_viewport_cmd(ViewportCommand::InnerSize(frame.size()));
-                recording.frame_ui(ui);
-            },
-        );
+        let title = t(c::ScreenRecordWindow_Title);
+        for strip in recording.frame_strips() {
+            strip_viewport(ctx, ("recording-frame", strip.side), title, &strip, |ui| {
+                recording.strip_ui(ui, &strip)
+            });
+        }
         let toolbar = recording.toolbar_rect();
         let builder = ViewportBuilder::default()
             .with_title(t(c::ScreenRecordWindow_Title))
             .with_decorations(false)
-            .with_transparent(true)
             .with_resizable(false)
             .with_always_on_top()
             .with_taskbar(false)

@@ -3,14 +3,18 @@
 //! under it (timer, Start/Stop, Pause/Resume, Restart, Abort, the abort confirmation),
 //! and the finished file going through the after-capture window into a task.
 //!
-//! The frame and the toolbar are two windows: macOS cannot cut a hole into one, as
-//! upstream's window region does. The frame lets the pointer through; this app's windows
-//! are left out of the recording by ScreenCaptureKit's filter.
+//! The frame is four thin windows around the area, one per side, and the toolbar one
+//! more: macOS cannot cut a hole into a window, as upstream's window region does, and a
+//! window with a see-through middle came out black over the area (`frame_strips` says
+//! why). The strips lie outside the area and let the pointer through; this app's windows
+//! are left out of the recording as well (ScreenCaptureKit's filter on a Mac,
+//! `WDA_EXCLUDEFROMCAPTURE` on Windows). The toolbar is square for the same reason: its
+//! corners outside a rounded edge would be black.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use egui::{Color32, Rect, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Color32, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
 use modlight_core::capture::geometry::IRect;
 use modlight_core::capture::region::{RegionKind, RegionSession};
 use modlight_core::capture::source::{CaptureError, even_size};
@@ -27,6 +31,7 @@ use modlight_core::tasks::settings::TaskSettings;
 
 use crate::capture_flow::{PendingImage, RecordStartMethod};
 use crate::dialogs::message::MessageBox;
+use crate::frame_strips::{Strip, dashes, strips};
 use crate::region_overlay::{OverlayPurpose, RegionOverlay};
 use crate::state::AppState;
 use crate::theme::{Colors, Weight};
@@ -101,13 +106,23 @@ impl Recording {
         width
     }
 
-    /// The frame window: the area plus one point of border all round.
-    pub fn frame_rect(&self) -> Rect {
+    /// The area being recorded, in points.
+    fn area(&self) -> Rect {
         let r = self.control.snapshot().region;
         Rect::from_min_size(
-            pos2(r.x as f32 - 1.0, r.y as f32 - 1.0),
-            vec2(r.width as f32 + 2.0, r.height as f32 + 2.0),
+            pos2(r.x as f32, r.y as f32),
+            vec2(r.width as f32, r.height as f32),
         )
+    }
+
+    /// The frame's outline: the area plus one point of border all round.
+    pub fn frame_rect(&self) -> Rect {
+        self.area().expand(1.0)
+    }
+
+    /// The frame's four windows, one point wide, outside the area.
+    pub fn frame_strips(&self) -> [Strip; 4] {
+        strips(self.area(), 1.0)
     }
 
     /// The toolbar window: centred under the frame, three points below it.
@@ -120,36 +135,17 @@ impl Recording {
         )
     }
 
-    /// `RecordingRegionBorder`: a dark dashed line and the accent dashed over its gaps.
-    pub fn frame_ui(&self, ui: &mut Ui) {
-        let full = ui.max_rect();
+    /// `RecordingRegionBorder`, one side of it: dark and accent dashes taking turns, five
+    /// points each, running on round the corners.
+    pub fn strip_ui(&self, ui: &mut Ui, strip: &Strip) {
+        let origin = ui.max_rect().min;
         let painter = ui.painter();
-        let border = full.shrink(0.5);
-        let state = self.control.snapshot();
-        let accent = accent(&state);
-        let backdrop = Stroke::new(1.0, Color32::from_rgba_unmultiplied(20, 20, 20, 220));
-        let accent = Stroke::new(1.0, accent);
-        let corners = [
-            border.left_top(),
-            border.right_top(),
-            border.right_bottom(),
-            border.left_bottom(),
-            border.left_top(),
-        ];
-        painter.extend(Shape::dashed_line_with_offset(
-            &corners,
-            backdrop,
-            &[5.0],
-            &[5.0],
-            0.0,
-        ));
-        painter.extend(Shape::dashed_line_with_offset(
-            &corners,
-            accent,
-            &[5.0],
-            &[5.0],
-            5.0,
-        ));
+        let accent = accent(&self.control.snapshot());
+        let dark = Color32::from_rgb(20, 20, 20);
+        for (piece, second) in dashes(strip, 5.0) {
+            let color = if second { accent } else { dark };
+            painter.rect_filled(piece.translate(origin.to_vec2()), 0.0, color);
+        }
     }
 
     /// The toolbar. Returns the button pressed.
@@ -157,7 +153,7 @@ impl Recording {
         let full = ui.max_rect();
         let painter = ui.painter().clone();
         let state = self.control.snapshot();
-        painter.rect_filled(full, 8.0, colors.background_toolbar());
+        painter.rect_filled(full, 0.0, colors.background_toolbar());
         let mut action = None;
 
         if self.confirming_abort {
@@ -216,16 +212,7 @@ impl Recording {
             let mut x = full.left() + 1.0;
             if self.show_timer {
                 let timer = Rect::from_min_size(pos2(x, full.top() + 1.0), vec2(TIMER_WIDTH, 40.0));
-                painter.rect_filled(
-                    timer,
-                    egui::CornerRadius {
-                        nw: 7,
-                        sw: 7,
-                        ne: 0,
-                        se: 0,
-                    },
-                    colors.background_panel(),
-                );
+                painter.rect_filled(timer, 0.0, colors.background_panel());
                 let text = RecorderControl::timer_text(&state);
                 let galley = ui.fonts_mut(|f| {
                     f.layout_no_wrap(text, egui::FontId::monospace(14.0), colors.text_secondary())
@@ -322,7 +309,7 @@ impl Recording {
         }
         painter.rect_stroke(
             full,
-            8.0,
+            0.0,
             Stroke::new(1.0, colors.border()),
             StrokeKind::Inside,
         );
