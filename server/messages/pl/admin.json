@@ -299,7 +299,7 @@
     "scanUnsupportedTitle": "Skanowanie niedostępne",
     "scanUnsupported": "Ta instalacja trzyma pliki w magazynie obiektowym (S3). Listowanie kubełka to płatne, stronicowane API, więc skan działa tylko dla magazynu lokalnego.",
     "scanScanned": "{count, plural, one {# przeskanowany obiekt} few {# przeskanowane obiekty} many {# przeskanowanych obiektów} other {# przeskanowanego obiektu}}",
-    "scanOrphans": "{count, plural, one {# bez wiersza} other {# bez wiersza}} · {size}",
+    "scanOrphans": "{count, plural, one {# bez wiersza} few {# bez wiersza} many {# bez wiersza} other {# bez wiersza}} · {size}",
     "scanSkipped": "{count, plural, one {# zbyt świeży} few {# zbyt świeże} many {# zbyt świeżych} other {# zbyt świeżego}}",
     "scanTruncated": "Skan osiągnął limit plików i przerwał wcześniej - poniższe liczby to dolna granica.",
     "scanReportOnly": "Tylko raport. Nic tu nie jest kasowane: usunięcie obiektu, który właśnie jest finalizowany, zniszczyłoby plik przychodzący w tej chwili. Zweryfikuj ścieżkę, zanim usuniesz ją ręcznie.",
@@ -493,6 +493,8 @@
       "no-version": "Podaj wersję i link.",
       "not-found": "Nie ma pliku pod tym linkiem - sprawdź go i to, czy plik nie został usunięty.",
       "not-public": "Ten plik jest nieopublikowany albo ma hasło, więc nikt by go nie pobrał. Opublikuj go i zdejmij hasło, potem spróbuj ponownie.",
+      "encrypted": "Ten plik jest zaszyfrowany (jego konto używa szyfrowania plików), więc zainstalowane kopie nie mogłyby go pobrać. Wyślij wersję z konta bez szyfrowania plików i opublikuj ją.",
+      "view-limited": "Ten plik ma limit wyświetleń, więc po tylu sprawdzeniach aktualizacji przestałby się pobierać. Zdejmij limit, potem spróbuj ponownie.",
       "bad-version": "Wersja musi wyglądać jak 0.7, 0.7.0 albo 0.7.0.1 - same cyfry i kropki. Czegokolwiek innego zainstalowany klient nie odczyta i będzie w kółko zgłaszał nieudane sprawdzenie.",
       "version-mismatch": "Wpisano {typed}, a plik nazywa się {filename}, czyli mówi {fileVersion}. Opublikowanie wersji, której binarka nie niesie, sprawia, że każda kopia instaluje aktualizację i zaraz dostaje ją ponownie - przy każdym uruchomieniu i co godzinę. Popraw wersję albo naciśnij „Opublikuj mimo to”."
     }

@@ -1027,3 +1027,340 @@ async fn an_encrypted_write_into_a_vault_that_is_gone_is_refused() {
     tx.commit().await.unwrap();
     w.drop().await;
 }
+
+/// Hunt 2026-11-11 (SRVF-01): an album ZIP of a locked account answers the
+/// unlock gate BEFORE it spends anything. It used to consume one view of every
+/// view-capped item first, so anybody without the file password could burn the
+/// account's one-time links just by asking for the archive.
+#[tokio::test]
+async fn a_locked_album_zip_spends_no_views() {
+    let w = world!();
+    let owner = w.user("user").await;
+    let session = w.session(&owner).await;
+    let once = w.file(&owner, "once", "once.txt", "text/plain", b"a one-time file").await;
+    let folder: Uuid = sqlx::query_scalar(
+        r#"insert into "folders" ("owner_id", "name", "slug", "is_public") values ($1, 'Trip', 'trip', true) returning "id""#,
+    )
+    .bind(&owner)
+    .fetch_one(&w.pool)
+    .await
+    .unwrap();
+    sqlx::query(r#"update "uploads" set "folder_id" = $1, "max_views" = 2 where "id" = $2"#)
+        .bind(folder)
+        .bind(once)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let grant = w.enable(&owner, &session).await;
+    w.pass(u64::MAX).await;
+    assert_eq!(w.vault_state(&owner).await.as_deref(), Some("on"));
+    let views = || async {
+        sqlx::query_scalar::<_, i32>(r#"select "views" from "uploads" where "id" = $1"#)
+            .bind(once)
+            .fetch_one(&w.pool)
+            .await
+            .unwrap()
+    };
+
+    // Locked: the gate, and the budget untouched however often it is asked.
+    for _ in 0..3 {
+        let zip = w.get(&format!("/a/{owner}/trip/zip"), &[("sec-fetch-dest", "document")]).await;
+        assert_eq!(zip.status, StatusCode::UNAUTHORIZED, "{}", zip.text());
+    }
+    assert_eq!(views().await, 0, "a locked archive spent views it never delivered");
+
+    // A visitor holding a grant (no session) gets the archive and pays for
+    // the capped file once, as a download.
+    let zip = w.get(&format!("/a/{owner}/trip/zip"), &[("cookie", &grant)]).await;
+    assert_eq!(zip.status, StatusCode::OK, "{}", zip.text());
+    let entries = zip_entries(&zip.body);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].1, b"a one-time file");
+    assert_eq!(views().await, 1);
+    w.drop().await;
+}
+
+/// Waits until some session of the test database waits on a lock.
+async fn until_a_session_waits_on_a_lock(w: &World) {
+    until_sessions_wait_on_a_lock(w, 1).await;
+}
+
+/// Waits until `n` sessions of the test database wait on a lock.
+async fn until_sessions_wait_on_a_lock(w: &World, n: i64) {
+    for _ in 0..1000 {
+        let waiting: i64 = sqlx::query_scalar(
+            r#"select count(*) from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'"#,
+        )
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+        if waiting >= n {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("fewer than {n} sessions ever waited on a lock");
+}
+
+/// A row written by an upload that holds the vault row (`confirm_vault_for_write`).
+async fn write_row_in(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, owner: &str, encryption: Option<&str>) {
+    sqlx::query(
+        r#"insert into "uploads" ("owner_id", "code", "filename", "ext", "mime_type", "size", "storage_key", "delete_token", "encryption")
+           values ($1, $2, 'late.txt', 'txt', 'text/plain', 4, $1 || '/' || $2 || '.txt', 'dt' || $2, $3)"#,
+    )
+    .bind(owner)
+    .bind(format!("late{}", rand::random::<u32>()))
+    .bind(encryption)
+    .execute(&mut **tx)
+    .await
+    .unwrap();
+}
+
+/// Hunt 2026-11-11 (SRVF-02): the pass's last step of switching OFF must not
+/// delete the vault (the only copy of the private key) while an upload that
+/// already holds the vault row is committing an ENCRYPTED row. The DELETE used
+/// to decide "no encrypted row is left" on its own snapshot, wait for the
+/// writer's lock, then delete anyway: that file could never be read again.
+#[tokio::test]
+async fn switching_off_never_strands_an_encrypted_row_written_meanwhile() {
+    let w = world!();
+    let owner = w.user("user").await;
+    let session = w.session(&owner).await;
+    w.enable(&owner, &session).await;
+    let (res, _) = w.rpc(&session, "192.0.2.1", "encryption", "disableEncryption", json!([FILE_PASSWORD])).await;
+    assert_eq!(res["ok"], json!({ "ok": true }), "{res}");
+    assert_eq!(w.vault_state(&owner).await.as_deref(), Some("decrypting"));
+
+    // The upload: it holds the vault row (FOR SHARE) and is about to insert.
+    let mut writer = w.pool.begin().await.unwrap();
+    modlight_server::vault::write::confirm_vault_for_write(&mut writer, &owner, true).await.unwrap();
+    // The pass, finishing meanwhile.
+    let (pool, id) = (w.pool.clone(), owner.clone());
+    let pass = tokio::spawn(async move { modlight_server::vault::pass::finish_decrypting(&pool, &id).await });
+    until_a_session_waits_on_a_lock(&w).await;
+    write_row_in(&mut writer, &owner, Some("v1.65536.4.AAAA.AAAA")).await;
+    writer.commit().await.unwrap();
+
+    assert!(!pass.await.unwrap().unwrap(), "the vault was deleted under an encrypted row");
+    assert_eq!(w.vault_state(&owner).await.as_deref(), Some("decrypting"));
+    w.drop().await;
+}
+
+/// SRVF-02, the other direction: switching ON must not declare the vault `on`
+/// while a plaintext row is being committed by an upload that holds the vault
+/// row (the file would stay unencrypted until the next restart's audit).
+#[tokio::test]
+async fn switching_on_never_finishes_over_a_plaintext_row_written_meanwhile() {
+    let w = world!();
+    let owner = w.user("user").await;
+    let session = w.session(&owner).await;
+    w.enable(&owner, &session).await;
+    assert_eq!(w.vault_state(&owner).await.as_deref(), Some("encrypting"));
+
+    let mut writer = w.pool.begin().await.unwrap();
+    modlight_server::vault::write::confirm_vault_for_write(&mut writer, &owner, false).await.unwrap();
+    let (pool, id) = (w.pool.clone(), owner.clone());
+    let pass = tokio::spawn(async move { modlight_server::vault::pass::finish_encrypting(&pool, &id).await });
+    until_a_session_waits_on_a_lock(&w).await;
+    write_row_in(&mut writer, &owner, None).await;
+    writer.commit().await.unwrap();
+
+    assert!(!pass.await.unwrap().unwrap(), "the vault went `on` over a plaintext row");
+    assert_eq!(w.vault_state(&owner).await.as_deref(), Some("encrypting"));
+    w.drop().await;
+}
+
+/// Hunt round 2 (SRVF-N5): two plaintext uploads that reach a vault that is
+/// already `on` at the same moment. Each used to hold the row `FOR SHARE` and
+/// then wait for the other's share to turn its own into an UPDATE: a
+/// deadlock, and Postgres failed one of the uploads. A third transaction holds
+/// the row first, so both writers line up behind it and start together.
+#[tokio::test]
+async fn two_plaintext_writes_into_an_on_vault_do_not_deadlock() {
+    let w = world!();
+    let owner = w.user("user").await;
+    let session = w.session(&owner).await;
+    w.enable(&owner, &session).await;
+    sqlx::query(r#"update "file_vaults" set "state" = 'on' where "user_id" = $1"#)
+        .bind(&owner)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+
+    let mut gate = w.pool.begin().await.unwrap();
+    sqlx::query(r#"select 1 from "file_vaults" where "user_id" = $1 for no key update"#)
+        .bind(&owner)
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+    let writer = |pool: PgPool, owner: String| async move {
+        let mut tx = pool.begin().await?;
+        modlight_server::vault::write::confirm_vault_for_write(&mut tx, &owner, false).await?;
+        write_row_in(&mut tx, &owner, None).await;
+        tx.commit().await?;
+        anyhow::Ok(())
+    };
+    let first = tokio::spawn(writer(w.pool.clone(), owner.clone()));
+    let second = tokio::spawn(writer(w.pool.clone(), owner.clone()));
+    until_sessions_wait_on_a_lock(&w, 2).await;
+    gate.commit().await.unwrap();
+    let (first, second) = (first.await.unwrap(), second.await.unwrap());
+    assert!(first.is_ok() && second.is_ok(), "{first:?} / {second:?}");
+    assert_eq!(w.vault_state(&owner).await.as_deref(), Some("encrypting"));
+    w.drop().await;
+}
+
+/// Hunt round 2 (SRVF-N2): once the server key changed, the vault's public key
+/// no longer carries the server's seal and nothing can be encrypted for the
+/// account. Uploads used to answer a bare 500 ("Upload failed.", which tus
+/// clients retried again and again); they are refused now in the person's
+/// language with what to do, and switching encryption off, which needs only
+/// the file password, lets uploads through again.
+#[tokio::test]
+async fn uploads_into_a_vault_whose_seal_is_gone_are_refused_in_words() {
+    let w = world!();
+    let owner = w.user("user").await;
+    let session = w.session(&owner).await;
+    w.enable(&owner, &session).await;
+    let token = create_api_token(&w.pool, &owner, "ShareX", TokenScope::Full).await.unwrap();
+    // What a new AUTH_SECRET / SETTINGS_ENCRYPTION_KEY does to the stored seal.
+    sqlx::query(r#"update "file_vaults" set "public_key_mac" = sha256("public_key_mac") where "user_id" = $1"#)
+        .bind(&owner)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let pl = w.state.messages.t(modlight_server::i18n::Locale::Pl, "encryption", "upload.keyChanged", &[]);
+    let en = w.state.messages.t(modlight_server::i18n::Locale::En, "encryption", "upload.keyChanged", &[]);
+    assert!(pl.contains("Ustawieniach") && en.contains("Settings"), "{pl} / {en}");
+
+    // ShareX, from a Polish client.
+    let boundary = "----vault";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(b"some words");
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let refused = call(
+        &w.app,
+        Request::post("/upload")
+            .header("host", HOST)
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .header("x-api-key", &token)
+            .header("accept-language", "pl-PL,pl;q=0.9,en;q=0.8")
+            .body(Body::from(body))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text());
+    assert_eq!(refused.json()["message"], json!(pl));
+
+    // tus, from a client that names no language.
+    let server = modlight_server::upload::tus::create_tus_server(&w.state);
+    let b64 = |s: &str| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, s);
+    let created = server
+        .handle(
+            Request::post("/api/files")
+                .header("host", HOST)
+                .header("tus-resumable", "1.0.0")
+                .header("upload-length", "10")
+                .header("upload-metadata", format!("filename {},filetype {}", b64("b.txt"), b64("text/plain")))
+                .header("x-api-key", &token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let location = created.headers()["location"].to_str().unwrap().to_string();
+    let path = location.split_once(HOST).map(|(_, p)| p.to_string()).unwrap();
+    let finished = server
+        .handle(
+            Request::patch(path.as_str())
+                .header("host", HOST)
+                .header("tus-resumable", "1.0.0")
+                .header("upload-offset", "0")
+                .header("content-type", "application/offset+octet-stream")
+                .body(Body::from(&b"some words"[..]))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(finished.status(), StatusCode::FORBIDDEN);
+    use http_body_util::BodyExt;
+    let text = finished.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(String::from_utf8_lossy(&text), en);
+    let (count,): (i64,) = sqlx::query_as(r#"select count(*) from "uploads" where "owner_id" = $1"#)
+        .bind(&owner)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+
+    // What the sentence says to do works: off with the file password, then uploads go through.
+    let (off, _) = w.rpc(&session, "192.0.2.1", "encryption", "disableEncryption", json!([FILE_PASSWORD])).await;
+    assert_eq!(off["ok"], json!({ "ok": true }), "{off}");
+    let landed = sharex(&w, &token, "c.txt", "text/plain", b"some words").await;
+    assert_eq!(landed.status, StatusCode::CREATED, "{}", landed.text());
+    // The pass finishes switching off, and on again seals the key afresh.
+    w.pass(u64::MAX).await;
+    assert_eq!(w.vault_state(&owner).await, None);
+    w.enable(&owner, &session).await;
+    let sealed = sharex(&w, &token, "d.txt", "text/plain", b"some words").await;
+    assert_eq!(sealed.status, StatusCode::CREATED, "{}", sealed.text());
+    let header: Option<String> =
+        sqlx::query_scalar(r#"select "encryption" from "uploads" where "owner_id" = $1 and "filename" = 'd.txt'"#)
+            .bind(&owner)
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert!(header.is_some(), "stored in plain after switching on again");
+    w.drop().await;
+}
+
+/// Hunt 2026-11-11 (SRVF-09): a password change that lost a race with another
+/// one (two browsers, the same old password) used to report success while the
+/// stored password was the OTHER browser's: that person would type a password
+/// that opens nothing. The loser is refused now; the winner's password stands.
+#[tokio::test]
+async fn a_password_change_that_lost_a_race_is_refused() {
+    let w = world!();
+    let owner = w.user("user").await;
+    let session = w.session(&owner).await;
+    w.enable(&owner, &session).await;
+    let stale = modlight_server::vault::store::load(&w.pool, &owner).await.unwrap().unwrap();
+    let secret = modlight_server::vault::unlock::open_with_password(&stale, FILE_PASSWORD).await.unwrap().unwrap();
+    let first = modlight_server::vault::unlock::change_password(&w.state, &stale, &secret, "first new password").await;
+    assert!(first.is_ok());
+    // The second browser read the vault before the first change landed.
+    let second =
+        modlight_server::vault::unlock::change_password(&w.state, &stale, &secret, "second new password").await;
+    assert!(second.is_err(), "the losing change was reported as done");
+    let now = modlight_server::vault::store::load(&w.pool, &owner).await.unwrap().unwrap();
+    assert!(modlight_server::vault::unlock::open_with_password(&now, "first new password").await.unwrap().is_ok());
+    assert!(modlight_server::vault::unlock::open_with_password(&now, "second new password").await.unwrap().is_err());
+    w.drop().await;
+}
+
+/// The avatar picker on an encrypted file (SRVF-10): read through the owner's
+/// grant at the key of the row the view was built from; refused while locked.
+#[tokio::test]
+async fn an_avatar_is_made_from_an_encrypted_file_only_with_a_grant() {
+    let w = world!();
+    let owner = w.user("user").await;
+    let session = w.session(&owner).await;
+    let pic = w.file(&owner, "face", "face.png", "image/png", &png(32, 32)).await;
+    let grant = w.enable(&owner, &session).await;
+    w.pass(u64::MAX).await;
+    assert!(w.row(pic).await.1.is_some(), "the picture is encrypted");
+    let (locked, _) = w.rpc(&session, "192.0.2.1", "avatar", "setAvatarFromUpload", json!([pic.to_string()])).await;
+    assert_eq!(locked["ok"], json!({ "ok": false, "error": "not-found" }), "{locked}");
+    let (res, _) =
+        w.rpc(&with(&[&session, &grant]), "192.0.2.1", "avatar", "setAvatarFromUpload", json!([pic.to_string()])).await;
+    assert_eq!(res["ok"]["ok"], true, "{res}");
+    let image: Option<String> = sqlx::query_scalar(r#"select "image" from "user" where "id" = $1"#)
+        .bind(&owner)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert!(image.is_some_and(|k| k.starts_with(&format!("avatars/{owner}-"))));
+    w.drop().await;
+}

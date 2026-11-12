@@ -39,7 +39,7 @@ use crate::api_token::{TokenAuth, UserRow, authenticate_api_token, token_refusal
 use crate::config::{Config, js_number};
 use crate::state::AppState;
 use crate::upload::busboy::{BodyType, PartKind, body_type, classify_part, decode_field};
-use crate::upload::disk::{fits_on_disk, has_room_for};
+use crate::upload::disk::{has_room_for, still_has_room};
 use crate::upload::finalize::{FinalizeError, FinalizeInput, finalize_upload, remaining_quota};
 use crate::upload::folder_target::{FOLDER_KEY, FolderTarget, resolve_folder_target};
 
@@ -71,6 +71,9 @@ pub const ANON_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// The exact wording for "no such token", kept because ShareX users' configs
 /// have been matching on it since v1.
 const UNKNOWN_TOKEN: &str = "Token specified not found.";
+
+/// The 413 of a body that outgrew [`anon_max_bytes`] before a token was seen.
+const ANON_TOO_LARGE: &str = "File too large for an unauthenticated upload. Send your token in the x-api-key header (regenerate your ShareX config) to upload files of any size.";
 
 /// `send(res, status, body)`: `{ version, ...body }`.
 fn send(status: u16, body: Value) -> Response {
@@ -148,6 +151,8 @@ struct Progress {
     filename: Option<String>,
     mime: String,
     size: u64,
+    /// Bytes of every other part read so far (field values, skipped parts).
+    other_bytes: u64,
     got_file: bool,
     head: Vec<u8>,
     over_hard_limit: bool,
@@ -177,6 +182,7 @@ async fn upload(state: &AppState, req: axum::extract::Request) -> anyhow::Result
         filename: None,
         mime: "application/octet-stream".to_string(),
         size: 0,
+        other_bytes: 0,
         got_file: false,
         head: Vec::with_capacity(HEAD_BYTES),
         over_hard_limit: false,
@@ -356,29 +362,17 @@ async fn upload(state: &AppState, req: axum::extract::Request) -> anyhow::Result
         }
         Err(err @ (FinalizeError::QuotaExceeded | FinalizeError::OutOfSpace)) => Ok(message(507, &err.to_string())),
         Err(err @ FinalizeError::CodeTaken) => Ok(message(409, &err.to_string())),
+        // Not upstream (hunt SRVF-N2): a refusal the person can act on, in
+        // their language, rather than "Upload failed." on every attempt.
+        Err(FinalizeError::VaultKeyChanged) => {
+            let locale = crate::i18n::request::request_locale(&headers);
+            Ok(message(403, &state.messages.t(locale, "encryption", "upload.keyChanged", &[])))
+        }
         Err(FinalizeError::Other(err)) => {
             tracing::error!("[sharex] finalize failed: {err:#}");
             Ok(message(500, "Upload failed."))
         }
     }
-}
-
-/// Free space is still above the reserve on the staging and storage
-/// filesystems (`fitsOnDisk(0, free, reserve)` on each).
-async fn still_has_room(config: &Config) -> bool {
-    if config.storage.driver != "local" || config.uploads.min_free_bytes <= 0 {
-        // Without a reserve, only a completely full disk refuses (the write
-        // fails by itself then).
-        return true;
-    }
-    let reserve = config.uploads.min_free_bytes as f64;
-    for path in [&config.uploads.tmp_path, &config.storage.local_path] {
-        let free = crate::upload::disk::filesystem_space_at(std::path::Path::new(path)).map(|s| s.free_bytes as f64);
-        if !fits_on_disk(0.0, free, reserve) {
-            return false;
-        }
-    }
-    true
 }
 
 async fn stream_multipart(
@@ -402,11 +396,12 @@ async fn stream_multipart(
         let disposition = field.headers().get(header::CONTENT_DISPOSITION).map(|v| v.as_bytes().to_vec());
         let part_type = field.headers().get(header::CONTENT_TYPE).map(|v| v.as_bytes().to_vec());
         match classify_part(disposition.as_deref(), part_type.as_deref()) {
-            PartKind::Skip => drain(field).await?,
+            PartKind::Skip => drain(field, p, anon_max).await?,
             PartKind::Field { name, charset } => {
                 let mut field = field;
                 let mut bytes: Vec<u8> = Vec::new();
                 while let Some(chunk) = field.chunk().await.map_err(|_| Abort::StreamFailed)? {
+                    count_other(p, chunk.len(), anon_max)?;
                     let room = FIELD_SIZE_LIMIT.saturating_sub(bytes.len());
                     bytes.extend_from_slice(&chunk[..chunk.len().min(room)]);
                 }
@@ -433,7 +428,7 @@ async fn stream_multipart(
             PartKind::File { filename, mime_type, .. } => {
                 if p.got_file {
                     // busboy's files:1 limit skips these.
-                    drain(field).await?;
+                    drain(field, p, anon_max).await?;
                     continue;
                 }
                 p.got_file = true;
@@ -463,11 +458,8 @@ async fn stream_multipart(
                     }
                     p.size += chunk.len() as u64;
                     match &p.owner {
-                        None if p.size > anon_max => {
-                            return Err(Abort::Respond(Box::new(message(
-                                413,
-                                "File too large for an unauthenticated upload. Send your token in the x-api-key header (regenerate your ShareX config) to upload files of any size.",
-                            ))));
+                        None if p.size + p.other_bytes > anon_max => {
+                            return Err(Abort::Respond(Box::new(message(413, ANON_TOO_LARGE))));
                         }
                         Some(owner) => {
                             // Security fix 2: the quota, as the bytes arrive.
@@ -484,7 +476,7 @@ async fn stream_multipart(
                     if !first_check_done || since_check >= SPACE_CHECK_EVERY {
                         first_check_done = true;
                         since_check = 0;
-                        if !still_has_room(config).await {
+                        if !still_has_room(config, &config.uploads.tmp_path).await {
                             return Err(Abort::Respond(Box::new(message(
                                 507,
                                 "Server is low on disk space; upload rejected.",
@@ -500,8 +492,23 @@ async fn stream_multipart(
     Ok(())
 }
 
-async fn drain(mut field: multer::Field<'_>) -> Result<(), Abort> {
-    while field.chunk().await.map_err(|_| Abort::StreamFailed)?.is_some() {}
+/// Not upstream (security fix 2): bytes of a part that is not the file count
+/// towards the same unauthenticated ceiling as the file. busboy kept every
+/// field value (up to 1 MiB each, any number of names) in memory until the
+/// body ended, so a request with no token could otherwise make the server
+/// hold whatever it sent.
+fn count_other(p: &mut Progress, len: usize, anon_max: u64) -> Result<(), Abort> {
+    p.other_bytes += len as u64;
+    if p.owner.is_none() && p.size + p.other_bytes > anon_max {
+        return Err(Abort::Respond(Box::new(message(413, ANON_TOO_LARGE))));
+    }
+    Ok(())
+}
+
+async fn drain(mut field: multer::Field<'_>, p: &mut Progress, anon_max: u64) -> Result<(), Abort> {
+    while let Some(chunk) = field.chunk().await.map_err(|_| Abort::StreamFailed)? {
+        count_other(p, chunk.len(), anon_max)?;
+    }
     Ok(())
 }
 

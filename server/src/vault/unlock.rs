@@ -296,8 +296,17 @@ pub async fn create_vault(
     Ok(Some((vault, granted)))
 }
 
+/// The vault's password was changed by somebody else between reading the
+/// vault and writing the new one: nothing was changed by this call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the file password was changed meanwhile")]
+pub struct PasswordChangedMeanwhile;
+
 /// Re-wrap the private key under a new password; every grant is revoked and
-/// the generation goes up. Returns the vault as it is now.
+/// the generation goes up. Returns the vault as it is now, or the error
+/// [`PasswordChangedMeanwhile`] when another change won the race (then the
+/// stored password is the other one, and saying "changed" would lock the
+/// caller out of their files).
 pub async fn change_password(
     state: &AppState,
     vault: &FileVault,
@@ -311,7 +320,7 @@ pub async fn change_password(
         .map_err(|e: KeyError| anyhow::anyhow!("key derivation failed: {e}"))?;
     let wrapped = wrap_with_password_key(secret, &key, &vault.user_id, &vault.public_key);
     let mut tx = state.db.begin().await?;
-    sqlx::query(
+    let changed = sqlx::query(
         r#"update "file_vaults" set "wrapped_key" = $1, "kdf_salt" = $2, "kdf_memory_kib" = $3, "kdf_iterations" = $4,
              "kdf_parallelism" = $5, "generation" = "generation" + 1, "updated_at" = now()
            where "user_id" = $6 and "generation" = $7"#,
@@ -324,7 +333,12 @@ pub async fn change_password(
     .bind(&vault.user_id)
     .bind(vault.generation)
     .execute(&mut *tx)
-    .await?;
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        tx.rollback().await?;
+        return Err(PasswordChangedMeanwhile.into());
+    }
     store::delete_all_grants(&mut *tx, &vault.user_id).await?;
     tx.commit().await?;
     store::load(&state.db, &vault.user_id).await?.ok_or_else(|| anyhow::anyhow!("vault vanished"))

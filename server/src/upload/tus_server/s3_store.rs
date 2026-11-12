@@ -772,6 +772,25 @@ impl DataStore for S3Store {
         })
     }
 
+    /// A complete upload whose finish failed: the object `<id>`, its record
+    /// and a parked part. Not `remove`, which aborts the multipart upload
+    /// first, and a complete one has none left to abort (NoSuchUpload). The
+    /// expiry sweep lists only unfinished multipart uploads, so without this
+    /// the object stayed in the bucket for good.
+    fn discard_finished<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(async move {
+            let objects = [id.to_string(), self.info_key(id), self.part_key(id, true)]
+                .into_iter()
+                .map(|key| ObjectIdentifier::builder().key(key).build())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(anyhow::Error::from)?;
+            let delete = Delete::builder().set_objects(Some(objects)).build().map_err(anyhow::Error::from)?;
+            self.client.delete_objects().bucket(&self.bucket).delete(delete).send().await.map_err(sdk_err)?;
+            self.clear_cache(id);
+            Ok(())
+        })
+    }
+
     fn read<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<ByteStream, StoreError>> {
         Box::pin(async move { S3Store::read(self, id).await.map_err(StoreError::Other) })
     }

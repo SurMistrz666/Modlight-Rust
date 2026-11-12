@@ -39,6 +39,11 @@ pub enum FinalizeError {
     OutOfSpace,
     #[error("Custom url code already exists.")]
     CodeTaken,
+    /// Not upstream: the account's file vault no longer carries this server's
+    /// seal (the server key changed), so nothing can be encrypted for it.
+    /// Callers answer with the translated `encryption.upload.keyChanged`.
+    #[error("File encryption of this account no longer matches the server's key.")]
+    VaultKeyChanged,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -126,7 +131,7 @@ pub fn quota_fits(used: Option<i64>, max: Option<i64>, size: i64) -> bool {
 
 /// Reserve `size` bytes against the owner's quota, atomically: the predicate
 /// is in the UPDATE's WHERE, so two concurrent uploads cannot both pass.
-async fn reserve_quota(db: &PgPool, user_id: &str, size: i64) -> Result<(), FinalizeError> {
+pub(crate) async fn reserve_quota(db: &PgPool, user_id: &str, size: i64) -> Result<(), FinalizeError> {
     let reserved: Option<Option<i64>> = sqlx::query_scalar(
         r#"update "user" set "used_quota" = coalesce("user"."used_quota", 0) + $1, "updated_at" = $2
            where ("user"."id" = $3 and (
@@ -147,7 +152,7 @@ async fn reserve_quota(db: &PgPool, user_id: &str, size: i64) -> Result<(), Fina
 }
 
 /// Give a reservation back when the upload it was made for never landed.
-async fn release_quota(db: &PgPool, user_id: &str, size: i64) -> sqlx::Result<()> {
+pub(crate) async fn release_quota(db: &PgPool, user_id: &str, size: i64) -> sqlx::Result<()> {
     sqlx::query(
         r#"update "user" set "used_quota" = greatest(coalesce("user"."used_quota", 0) - $1, 0), "updated_at" = $2 where "user"."id" = $3"#,
     )
@@ -244,7 +249,7 @@ const IMAGE_META_MAX: i64 = 64 * 1024 * 1024;
 /// Finalize an upload whose bytes have arrived: code, headroom, quota, ingest,
 /// type, metadata, row, links. Every step after the reservation is undone on
 /// failure; only bytes WE wrote are removed (with `existing_key` the object is
-/// still the upload's own tus artifact, and the client may resume onto it).
+/// still the upload's own tus artifact, which the tus hook then discards).
 pub async fn finalize_upload(
     db: &PgPool,
     config: &Config,
@@ -269,7 +274,11 @@ pub async fn finalize_upload(
 
     // Not upstream: an account with file encryption on stores its uploads
     // encrypted with its public key (docs/ENCRYPTION.md section 5).
-    let sealer = crate::vault::write::sealer_for(db, &config.auth.secret, &owner.id).await?;
+    let sealer = match crate::vault::write::sealer_for(db, &config.auth.secret, &owner.id).await {
+        Ok(sealer) => sealer,
+        Err(err) if crate::vault::write::is_unsealed_vault(&err) => return Err(FinalizeError::VaultKeyChanged),
+        Err(err) => return Err(err.into()),
+    };
 
     // 2) host headroom, before the per-user quota. An encrypted ingest writes a
     // whole new copy, never a rename.

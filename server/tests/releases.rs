@@ -305,3 +305,69 @@ async fn run(pool: &PgPool) {
         sqlx::query_scalar("select value from settings where key = 'release_app'").fetch_optional(pool).await.unwrap();
     assert_eq!(stored, Some(None), "unpublishing keeps the row with a NULL value");
 }
+
+/// srv-auth hunt NF-2: an upload installed copies could not fetch (encrypted,
+/// its owner's file vault on, or a view limit) is refused with its own reason
+/// and nothing is published; a release whose owner turns file encryption on
+/// afterwards reads as "no release" instead of a manifest every updater fails on.
+#[tokio::test]
+async fn the_channel_refuses_uploads_installed_copies_could_not_fetch() {
+    let Ok(url) = std::env::var("MODLIGHT_TEST_DATABASE_URL") else {
+        eprintln!("MODLIGHT_TEST_DATABASE_URL is not set: skipping the database tests");
+        return;
+    };
+    let db = TempDb::create(&url).await;
+    let result = std::panic::AssertUnwindSafe(refuses_undownloadable(&db.pool));
+    let outcome = futures_util::FutureExt::catch_unwind(result).await;
+    db.drop().await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn refuses_undownloadable(pool: &PgPool) {
+    modlight_server::db::migrate::run(pool, &Paths::crate_dir().migrations, true).await.unwrap();
+    sql(pool, "insert into \"user\" (id, name, email, role, user_code, theme) values ('adm', 'Alicja Admin', 'alicja@example.test', 'admin', 'alicja', 'modern')").await;
+    sql(pool, "insert into \"user\" (id, name, email, role, user_code, theme) values ('enc', 'Ewa', 'ewa@example.test', 'user', 'ewa', 'modern')").await;
+    let insert = |owner: &str, code: &str, extra_cols: &str, extra_vals: &str| {
+        format!(
+            "insert into uploads (owner_id, code, filename, ext, mime_type, size, storage_key, delete_token{extra_cols}) \
+             values ('{owner}', '{code}', 'Modlight-0.7.0-setup-x64.exe', 'exe', 'application/octet-stream', 1, \
+             '{owner}/{code}.exe', 'dt-{code}'{extra_vals})"
+        )
+    };
+    sql(pool, &insert("adm", "limit1", ", max_views", ", 5")).await;
+    sql(pool, &insert("adm", "cipher1", ", encryption", ", 'v1'")).await;
+    sql(pool, &insert("enc", "vault1", "", "")).await;
+    sql(pool, &insert("adm", "plain1", "", "")).await;
+    let token = create_api_token(pool, "adm", "release script", TokenScope::Full).await.unwrap();
+    let admin = session_for(pool, "adm", "admintoken0123456789abcdefghijkl").await;
+    let app = app_with(pool.clone());
+
+    // The owner of `vault1` has file encryption on.
+    sql(pool, "insert into file_vaults (user_id, state, public_key, public_key_mac, wrapped_key, kdf_salt, kdf_memory_kib, kdf_iterations, kdf_parallelism) values ('enc', 'on', '\\x00', '\\x00', '\\x00', '\\x00', 1, 1, 1)").await;
+
+    for (code, reason) in [("limit1", "view-limited"), ("cipher1", "encrypted"), ("vault1", "encrypted")] {
+        let body = json!({ "version": "0.7.0", "code": code }).to_string();
+        let a = post_release(&app, &body, "application/json", &token).await;
+        assert_eq!(a.status, StatusCode::BAD_REQUEST, "{code}: {}", a.text());
+        assert_eq!(a.json()["reason"], reason, "{code}");
+        assert!(a.json()["message"].as_str().unwrap().len() > 20, "{code}: a sentence, not a code");
+        // The panel's action answers the same reason (its toast reads release.errors.<reason>).
+        let args = json!([{ "version": "0.7.0", "code": code }]);
+        let r = call(&app, rpc("publishAppRelease", args, Some(&admin))).await.json();
+        assert_eq!(r["ok"], json!({ "ok": false, "reason": reason }), "{code}");
+    }
+    let stored: Option<Option<String>> =
+        sqlx::query_scalar("select value from settings where key = 'release_app'").fetch_optional(pool).await.unwrap();
+    assert_eq!(stored.flatten(), None, "nothing was published");
+
+    // A plain upload publishes; when its owner later turns encryption on, the
+    // manifest goes away rather than pointing every updater at a 401.
+    let body = json!({ "version": "0.7.0", "code": "plain1" }).to_string();
+    assert_eq!(post_release(&app, &body, "application/json", &token).await.status, StatusCode::OK);
+    assert_eq!(get(&app, "/api/releases/app", None).await.status, StatusCode::OK);
+    sql(pool, "insert into file_vaults (user_id, state, public_key, public_key_mac, wrapped_key, kdf_salt, kdf_memory_kib, kdf_iterations, kdf_parallelism) values ('adm', 'encrypting', '\\x00', '\\x00', '\\x00', '\\x00', 1, 1, 1)").await;
+    assert_eq!(get(&app, "/api/releases/app", None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(get(&app, "/download/app", None).await.status, StatusCode::NOT_FOUND);
+}

@@ -109,13 +109,23 @@ pub async fn delete_media_bulk(
             }
             removable.push(row.id);
             bytes += row.size;
-            if let Some(owner) = &row.owner_id {
-                *refunds.entry(owner.clone()).or_insert(0) += row.size;
-            }
         }
     }
+    // Refunds follow the rows THIS statement removed, never the rows the caller
+    // read: two deletes of the same files at once (a double-clicked "Empty
+    // trash", two API calls) both get this far, and refunding what was read
+    // credited the owner twice, a quota that went down by more than was freed.
     for batch in removable.chunks(ROW_BATCH) {
-        sqlx::query(r#"delete from "uploads" where "uploads"."id" = any($1)"#).bind(batch).execute(db).await?;
+        let gone: Vec<(Option<String>, i64)> =
+            sqlx::query_as(r#"delete from "uploads" where "uploads"."id" = any($1) returning "owner_id", "size""#)
+                .bind(batch)
+                .fetch_all(db)
+                .await?;
+        for (owner, size) in gone {
+            if let Some(owner) = owner {
+                *refunds.entry(owner).or_insert(0) += size;
+            }
+        }
     }
     for (owner, amount) in &refunds {
         refund_quota(db, owner, *amount).await?;
@@ -131,10 +141,16 @@ pub async fn delete_media_hard(db: &PgPool, storage: &dyn StorageDriver, media: 
         let _ = storage.delete(thumb).await;
     }
     purge_derived(storage, &media.id.to_string()).await;
-    sqlx::query(r#"delete from "uploads" where "uploads"."id" = $1"#).bind(media.id).execute(db).await?;
+    // Refunded only when this call removed the row (see `delete_media_bulk`):
+    // a second delete of the same file credits nothing.
+    let gone: Option<(Option<String>, i64)> =
+        sqlx::query_as(r#"delete from "uploads" where "uploads"."id" = $1 returning "owner_id", "size""#)
+            .bind(media.id)
+            .fetch_optional(db)
+            .await?;
     // No owner means the file outlived its account: no quota counter to credit.
-    if let Some(owner) = &media.owner_id {
-        refund_quota(db, owner, media.size).await?;
+    if let Some((Some(owner), size)) = gone {
+        refund_quota(db, &owner, size).await?;
     }
     Ok(())
 }

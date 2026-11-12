@@ -493,6 +493,8 @@
       "no-version": "Give both a version and a link.",
       "not-found": "No file with that link - check it, and that the file has not been deleted.",
       "not-public": "That file is unpublished or password-protected, so nobody could download it. Publish it and clear its password, then try again.",
+      "encrypted": "That file is encrypted (its account uses file encryption), so installed copies could not download it. Upload the build from an account without file encryption and publish that one.",
+      "view-limited": "That file has a view limit, so it would stop downloading after that many checks for updates. Remove the limit, then try again.",
       "bad-version": "The version must look like 0.7 or 0.7.0 or 0.7.0.1 - digits and dots only. Anything else cannot be read by an installed client, which would then report a failed check forever.",
       "version-mismatch": "You typed {typed}, but the file is called {filename}, which says {fileVersion}. Publishing a version the binary does not carry makes every copy install the update and then be offered it again, at every launch. Fix the version, or press Publish anyway."
     }

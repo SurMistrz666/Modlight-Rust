@@ -152,6 +152,24 @@ pub async fn has_room_for(config: &Config, size: f64, staging_path: &str) -> boo
     true
 }
 
+/// Not upstream (security fix 2): free space is still above the reserve on the
+/// staging and storage filesystems (`fitsOnDisk(0, free, reserve)` on each),
+/// asked again and again while an upload's bytes stream in. Without a reserve,
+/// only a completely full disk refuses (the write fails by itself then).
+pub async fn still_has_room(config: &Config, staging_path: &str) -> bool {
+    if config.storage.driver != "local" || config.uploads.min_free_bytes <= 0 {
+        return true;
+    }
+    let reserve = config.uploads.min_free_bytes as f64;
+    for path in [staging_path, config.storage.local_path.as_str()] {
+        let free = filesystem_space(PathBuf::from(path)).await.map(|s| s.free_bytes as f64);
+        if !fits_on_disk(0.0, free, reserve) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Device id of the nearest existing ancestor of `path` (storage and staging
 /// directories are created lazily, and a missing directory must not be
 /// mistaken for "a different disk").
@@ -227,6 +245,33 @@ mod tests {
         assert_eq!(disk_pressure(Some(f64::NAN), total, RESERVE), DiskPressure::Unknown);
         assert_eq!(disk_pressure(Some(-1.0), total, RESERVE), DiskPressure::Unknown);
         assert_eq!(disk_pressure(Some(0.0), total, RESERVE), DiskPressure::Critical);
+    }
+
+    /// SRVF-08: the reserve check the streaming upload paths ask again and again.
+    #[tokio::test]
+    async fn still_has_room_follows_the_reserve() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        let config = |reserve: &str, driver: &str| {
+            let vars: std::collections::HashMap<String, String> = [
+                ("STORAGE_LOCAL_PATH", path),
+                ("MIN_FREE_DISK_BYTES", reserve),
+                ("STORAGE_DRIVER", driver),
+                ("S3_BUCKET", "b"),
+                ("S3_ACCESS_KEY_ID", "a"),
+                ("S3_SECRET_ACCESS_KEY", "s"),
+            ]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+            Config::from_env_map(&vars).unwrap()
+        };
+        // No disk holds an exabyte beyond what it uses.
+        assert!(!still_has_room(&config("1000000000000000000", "local"), path).await);
+        assert!(still_has_room(&config("1", "local"), path).await);
+        assert!(still_has_room(&config("0", "local"), path).await);
+        // Not our disk.
+        assert!(still_has_room(&config("1000000000000000000", "s3"), path).await);
     }
 
     #[tokio::test]

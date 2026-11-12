@@ -132,3 +132,21 @@ async fn unported_handlers_and_malformed_paths() {
     assert!(missing.text().contains("<meta name=\"robots\" content=\"noindex\"/>"));
     assert!(missing.text().contains("{\"notFound\":true"));
 }
+
+/// `/api/auth/*` reads at most 1 MiB of body (srv-auth hunt NF-1): a larger
+/// one is refused with 413 before it reaches an endpoint (no database needed).
+#[tokio::test]
+async fn auth_bodies_over_one_mebibyte_are_refused() {
+    let app = App::new(state());
+    let big = format!("{{\"name\":\"{}\"}}", "a".repeat(2 * 1024 * 1024));
+    let a = call(
+        &app,
+        Request::post("/api/auth/update-user")
+            .header("host", "127.0.0.1:8421")
+            .header("content-type", "application/json")
+            .body(Body::from(big))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::PAYLOAD_TOO_LARGE);
+}

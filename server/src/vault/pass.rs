@@ -170,14 +170,7 @@ async fn work_locked(state: &AppState, user_id: &str, stop: &Stop, limit: u64) -
                 }
             }
             if failed.is_empty() && !stop.stopped() && moved < limit {
-                sqlx::query(
-                    r#"update "file_vaults" set "state" = 'on', "job_error" = null, "updated_at" = now()
-                       where "user_id" = $1 and "state" = 'encrypting'
-                         and not exists (select 1 from "uploads" where "owner_id" = $1 and "encryption" is null)"#,
-                )
-                .bind(user_id)
-                .execute(&state.db)
-                .await?;
+                finish_encrypting(&state.db, user_id).await?;
             }
         }
         VaultState::Decrypting => {
@@ -194,19 +187,7 @@ async fn work_locked(state: &AppState, user_id: &str, stop: &Stop, limit: u64) -
                 }
             }
             if failed.is_empty() && !stop.stopped() && moved < limit {
-                let mut tx = state.db.begin().await?;
-                let gone = sqlx::query(
-                    r#"delete from "file_vaults" where "user_id" = $1 and "state" = 'decrypting'
-                         and not exists (select 1 from "uploads" where "owner_id" = $1 and "encryption" is not null)"#,
-                )
-                .bind(user_id)
-                .execute(&mut *tx)
-                .await?
-                .rows_affected();
-                if gone > 0 {
-                    store::delete_all_grants(&mut *tx, user_id).await?;
-                }
-                tx.commit().await?;
+                finish_decrypting(&state.db, user_id).await?;
             }
         }
     }
@@ -216,6 +197,71 @@ async fn work_locked(state: &AppState, user_id: &str, stop: &Stop, limit: u64) -
         set_error(state, user_id, None).await;
     }
     Ok(moved)
+}
+
+/// Lock the vault row in `state` for the rest of `tx`; false when there is no
+/// such row. An upload holds the row (`FOR SHARE`, or `FOR NO KEY UPDATE` for
+/// a plaintext one: `confirm_vault_for_write`)
+/// until its own row is committed, so taking the lock in a statement of its
+/// own is what lets the NEXT statement's snapshot see that row: a single
+/// `UPDATE ... WHERE NOT EXISTS (...)` decides on the snapshot it took before
+/// waiting for the lock, and so missed the row being committed meanwhile.
+async fn lock_vault_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: &str,
+    state: &str,
+) -> sqlx::Result<bool> {
+    let row: Option<String> =
+        sqlx::query_scalar(r#"select "user_id" from "file_vaults" where "user_id" = $1 and "state" = $2 for update"#)
+            .bind(user_id)
+            .bind(state)
+            .fetch_optional(&mut **tx)
+            .await?;
+    Ok(row.is_some())
+}
+
+/// The last step of switching on: the vault is `on` once no plaintext row of
+/// the account is left. True when it switched.
+pub async fn finish_encrypting(db: &sqlx::PgPool, user_id: &str) -> sqlx::Result<bool> {
+    let mut tx = db.begin().await?;
+    if !lock_vault_in(&mut tx, user_id, "encrypting").await? {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    let n = sqlx::query(
+        r#"update "file_vaults" set "state" = 'on', "job_error" = null, "updated_at" = now()
+           where "user_id" = $1 and "state" = 'encrypting'
+             and not exists (select 1 from "uploads" where "owner_id" = $1 and "encryption" is null)"#,
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(n > 0)
+}
+
+/// The last step of switching off: the vault, its grants and its key go once
+/// no encrypted row of the account is left. True when it was deleted.
+pub async fn finish_decrypting(db: &sqlx::PgPool, user_id: &str) -> sqlx::Result<bool> {
+    let mut tx = db.begin().await?;
+    if !lock_vault_in(&mut tx, user_id, "decrypting").await? {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    let gone = sqlx::query(
+        r#"delete from "file_vaults" where "user_id" = $1 and "state" = 'decrypting'
+             and not exists (select 1 from "uploads" where "owner_id" = $1 and "encryption" is not null)"#,
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if gone > 0 {
+        store::delete_all_grants(&mut *tx, user_id).await?;
+    }
+    tx.commit().await?;
+    Ok(gone > 0)
 }
 
 fn job_secret(state: &AppState, vault: &FileVault) -> anyhow::Result<AccountSecret> {

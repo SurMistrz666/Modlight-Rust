@@ -53,9 +53,13 @@ use crate::state::AppState;
 
 pub const BASE_PATH: &str = "/api/auth";
 
-/// The largest body read (upstream's handler buffers whatever arrives; this is
-/// a safety ceiling far above any real request).
-const BODY_MAX: usize = 32 * 1024 * 1024;
+/// The largest body read. Upstream's handler buffers whatever arrives. Every
+/// request a client of this server sends here is a few hundred bytes (avatars
+/// and wallpapers go to their own routes, `image` in `/update-user` is a key
+/// or a URL), and nothing counts a request against the rate limiter until it
+/// is answered, so a large ceiling let slow anonymous uploads pin memory: 1 MiB,
+/// the limit of a server action (srv-auth hunt, NF-1; was 32 MiB).
+pub const BODY_MAX: usize = 1024 * 1024;
 
 /// Handlers for `/api/auth/{*all}`.
 pub fn routes() -> Router<AppState> {
@@ -368,6 +372,20 @@ mod tests {
         assert!(is_json_content_type("application/jsonx"));
         assert!(is_json_content_type("application/vnd.api+json"));
         assert!(!is_json_content_type("text/json"));
+    }
+
+    /// A body over 1 MiB is refused with 413 and stops being read there; 1 MiB
+    /// itself is read.
+    #[tokio::test]
+    async fn bodies_are_capped_at_one_mebibyte() {
+        assert_eq!(BODY_MAX, 1024 * 1024);
+        let ok = read_body(Body::from(vec![b' '; BODY_MAX])).await.expect("1 MiB is read");
+        assert_eq!(ok.len(), BODY_MAX);
+        let refused = read_body(Body::from(vec![b' '; BODY_MAX + 1])).await.expect_err("over 1 MiB");
+        assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        // Two mebibytes, as an attacker would send: refused just the same.
+        let refused = read_body(Body::from(vec![b' '; 2 * BODY_MAX])).await.expect_err("2 MiB");
+        assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[test]

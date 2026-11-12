@@ -73,7 +73,7 @@
     "unknownDevice": "Nieznane urządzenie",
     "created": "Odblokowano {date}",
     "lastUsed": "ostatnio {date}",
-    "expires": "do {date}",
+    "expires": "wygasa {date}",
     "revoke": "Cofnij",
     "revokeAll": "Cofnij wszystkie",
     "pending": "Części plików nie udało się jeszcze przetworzyć. Za chwilę nastąpi kolejna próba.",
@@ -108,5 +108,8 @@
   "admin": {
     "badge": "Zaszyfrowane",
     "notice": "Pliki tego konta są zaszyfrowane. Administratorzy nie mogą ich otwierać, podglądać ani pobierać; nazwy, rozmiary i daty pozostają widoczne."
+  },
+  "upload": {
+    "keyChanged": "Szyfrowanie Twoich plików nie pasuje już do klucza tego serwera, więc nowych plików nie da się zaszyfrować. Wyłącz szyfrowanie plików w Ustawieniach, aby znów wysyłać pliki; gdy wyłączanie się zakończy, możesz je włączyć ponownie."
   }
 }

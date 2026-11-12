@@ -229,6 +229,26 @@ async fn unique_user_code(tx: &mut Transaction<'_, Postgres>) -> anyhow::Result<
 /// schema defaults. `Err` is any failure (hooks or database), which callers
 /// map the way their endpoint does.
 pub async fn create_user(db: &PgPool, default_user_quota: i64, data: NewUser) -> anyhow::Result<User> {
+    create_user_with(db, default_user_quota, data, false).await
+}
+
+/// Why [`create_user_with`] refused: the account was allowed in only as the
+/// install's first one, and another account was created meanwhile.
+#[derive(Debug, thiserror::Error)]
+#[error("an account exists already: this sign-up was allowed only as the first one")]
+pub struct NotFirstAccount;
+
+/// [`create_user`]; with `only_as_first`, refused ([`NotFirstAccount`])
+/// unless the table is still empty under the creation lock. The sign-up gate
+/// counts accounts outside this transaction, so a sign-up it let through only
+/// because the install was empty (registration closed) is re-checked here, as
+/// FIX 3 re-decides the role.
+pub async fn create_user_with(
+    db: &PgPool,
+    default_user_quota: i64,
+    data: NewUser,
+    only_as_first: bool,
+) -> anyhow::Result<User> {
     let mut data = data;
     let now = JsDate::now();
     // internalAdapter.createUser: { createdAt, updatedAt, ...user, email: lower }
@@ -251,6 +271,10 @@ pub async fn create_user(db: &PgPool, default_user_quota: i64, data: NewUser) ->
     sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(USER_CREATE_LOCK_KEY).execute(&mut *tx).await?;
     let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM \"user\"").fetch_one(&mut *tx).await?;
     let is_first = n == 0;
+    if only_as_first && !is_first {
+        // Dropping the transaction rolls it back (nothing was written).
+        return Err(NotFirstAccount.into());
+    }
     let supplied = ordered.get("role").cloned();
     let role = if is_first {
         "admin".to_string()

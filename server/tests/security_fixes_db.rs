@@ -265,3 +265,204 @@ async fn fix3_concurrent_first_sign_ups_make_exactly_one_admin() {
     assert_eq!(admins, 1, "{admins} administrators out of {accounts} accounts");
     db.drop().await;
 }
+
+/// Fix 3, the gate's half (srv-auth hunt 2026-11-11, AUTH-02): with
+/// registration CLOSED the sign-up gate lets a request through only because no
+/// account exists yet, and it counts the accounts outside the transaction
+/// that creates one. Sign-ups racing on a fresh install all passed it, and
+/// every one but the first became an ordinary account on an install that
+/// accepts no strangers. Now the count is checked again under the creation
+/// lock: exactly one account (the administrator), the rest refused as the
+/// gate refuses them once an account exists.
+#[tokio::test]
+async fn racing_first_sign_ups_on_a_closed_install_make_exactly_one_account() {
+    let db = db_or_skip!(false);
+    let root = tempfile::tempdir().unwrap();
+    let app = app_on(&db, root.path());
+    let mut tasks = Vec::new();
+    for i in 0..12 {
+        let app = app.clone();
+        tasks.push(tokio::spawn(async move {
+            let body = json!({ "email": format!("racer{i}@example.test"), "password": "correct horse battery", "name": format!("Racer {i}") });
+            let answer = call(
+                &app,
+                Request::post("/api/auth/sign-up/email")
+                    .header("host", "127.0.0.1:8421")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await;
+            (answer.status, answer.text())
+        }));
+    }
+    let mut created = 0;
+    let mut refused = 0;
+    for t in tasks {
+        let (status, text) = t.await.unwrap();
+        match status {
+            StatusCode::OK => created += 1,
+            StatusCode::FORBIDDEN => {
+                assert!(text.contains("REGISTRATION_DISABLED"), "{text}");
+                refused += 1;
+            }
+            other => panic!("unexpected {other}: {text}"),
+        }
+    }
+    let accounts: i64 = sqlx::query_scalar(r#"select count(*) from "user""#).fetch_one(&db.pool).await.unwrap();
+    let admins: i64 =
+        sqlx::query_scalar(r#"select count(*) from "user" where "role" = 'admin'"#).fetch_one(&db.pool).await.unwrap();
+    let orphans: i64 =
+        sqlx::query_scalar(r#"select count(*) from "account" where "user_id" not in (select "id" from "user")"#)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!((created, refused), (1, 11), "{created} sign-ups went through on a closed install");
+    assert_eq!((accounts, admins, orphans), (1, 1, 0));
+    db.drop().await;
+}
+
+/// Hunt 2026-11-11 (SRVF-07): fix 2 capped what an unauthenticated ShareX
+/// request may make the server take at 8 MiB of FILE, but form fields were
+/// unbounded: busboy's 1 MiB per value, any number of names, every value kept
+/// in memory until the body ended. A request with no token at all could make
+/// the server hold as many megabytes as it cared to send. Fields (and parts
+/// that are skipped) now count towards the same ceiling.
+#[tokio::test]
+async fn fix2_an_unauthenticated_body_of_fields_is_capped_too() {
+    let db = db_or_skip!(false);
+    let root = tempfile::tempdir().unwrap();
+    let app = app_on(&db, root.path());
+    let boundary = "----fields";
+    let value = Bytes::from(vec![b'v'; 1024 * 1024]);
+    let mut parts: Vec<Bytes> = Vec::new();
+    for i in 0..64 {
+        parts.push(Bytes::from(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"f{i}\"\r\n\r\n")));
+        parts.push(value.clone());
+        parts.push(Bytes::from_static(b"\r\n"));
+    }
+    parts.push(Bytes::from(format!("--{boundary}--\r\n")));
+    let pulled = Arc::new(AtomicU64::new(0));
+    let counter = pulled.clone();
+    let stream = futures_util::stream::unfold(parts.into_iter(), move |mut parts| {
+        let counter = counter.clone();
+        async move {
+            tokio::task::yield_now().await;
+            let b = parts.next()?;
+            counter.fetch_add(b.len() as u64, Ordering::SeqCst);
+            Some((Ok::<Bytes, std::io::Error>(b), parts))
+        }
+    });
+    let res = call(
+        &app,
+        Request::post("/upload")
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .body(Body::from_stream(stream))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", res.text());
+    assert!(pulled.load(Ordering::SeqCst) < 16 * 1024 * 1024, "pulled {}", pulled.load(Ordering::SeqCst));
+    db.drop().await;
+}
+
+/// srv-auth hunt NF-4: a ban written through Better Auth's own
+/// `/api/auth/admin/update-user` (`data.banned`) ends the account's sessions,
+/// as `/admin/ban-user` (the panel's ban) does, and refuses the caller's own
+/// account. Before, the column changed and every live session kept working.
+#[tokio::test]
+async fn a_ban_through_admin_update_user_ends_the_sessions() {
+    let db = db_or_skip!(true);
+    let root = tempfile::tempdir().unwrap();
+    let app = app_on(&db, root.path());
+    for (id, role) in [("adm", "admin"), ("vic", "user"), ("eve", "user")] {
+        sqlx::query(
+            r#"insert into "user" ("id", "name", "email", "email_verified", "created_at", "updated_at", "user_code", "role", "theme")
+               values ($1, $1, $1 || '@example.test', true, now(), now(), $1, $2, 'modern')"#,
+        )
+        .bind(id)
+        .bind(role)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+    let session = |token: &'static str, user: &'static str| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query(
+                r#"insert into "session" ("id", "token", "user_id", "created_at", "updated_at", "expires_at")
+                   values ($1, $1, $2, now() at time zone 'utc', now() at time zone 'utc', (now() at time zone 'utc') + interval '7 days')"#,
+            )
+            .bind(token)
+            .bind(user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    session("tok-adm", "adm").await;
+    session("tok-vic-1", "vic").await;
+    session("tok-vic-2", "vic").await;
+    session("tok-eve", "eve").await;
+    let cookie =
+        format!("better-auth.session_token={}", modlight_server::auth::cookies::sign_cookie_value("tok-adm", SECRET));
+    let update = |body: serde_json::Value| {
+        let app = app.clone();
+        let cookie = cookie.clone();
+        async move {
+            call(
+                &app,
+                Request::post("/api/auth/admin/update-user")
+                    .header("host", "127.0.0.1:8421")
+                    .header("origin", "http://127.0.0.1:8421")
+                    .header("content-type", "application/json")
+                    .header("cookie", cookie)
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    let sessions_of = |user: &'static str| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(r#"select count(*) from "session" where "user_id" = $1"#)
+                .bind(user)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+
+    // Another field: the sessions stay.
+    let a = update(json!({ "userId": "vic", "data": { "name": "Victor" } })).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text());
+    assert_eq!(sessions_of("vic").await, 2);
+
+    // The ban: written, and every session of the account gone (only its own).
+    let a = update(json!({ "userId": "vic", "data": { "banned": true, "banReason": "spam" } })).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text());
+    assert_eq!(a.json()["banned"], true);
+    assert_eq!(sessions_of("vic").await, 0);
+    assert_eq!((sessions_of("adm").await, sessions_of("eve").await), (1, 1));
+
+    // Postgres decides what the text means: "1" is a ban too.
+    let a = update(json!({ "userId": "eve", "data": { "banned": "1" } })).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text());
+    assert_eq!(sessions_of("eve").await, 0);
+
+    // Lifting a ban ends nothing.
+    session("tok-vic-3", "vic").await;
+    let a = update(json!({ "userId": "vic", "data": { "banned": false } })).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text());
+    assert_eq!(sessions_of("vic").await, 1);
+
+    // The caller's own account cannot be banned here either.
+    let a = update(json!({ "userId": "adm", "data": { "banned": true } })).await;
+    assert_eq!(a.status, StatusCode::BAD_REQUEST, "{}", a.text());
+    assert_eq!(a.json()["code"], "YOU_CANNOT_BAN_YOURSELF");
+    let banned: Option<bool> =
+        sqlx::query_scalar(r#"select "banned" from "user" where "id" = 'adm'"#).fetch_one(&db.pool).await.unwrap();
+    assert_eq!((banned, sessions_of("adm").await), (Some(false), 1));
+    db.drop().await;
+}

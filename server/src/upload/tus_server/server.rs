@@ -80,7 +80,7 @@ pub fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
 }
 
 /// What `onUploadFinish` may change about the response.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FinishPatch {
     pub status_code: Option<u16>,
     pub body: Option<String>,
@@ -103,7 +103,19 @@ pub trait TusHooks: Send + Sync {
         req: &'a TusRequest,
         upload: &'a Upload,
     ) -> BoxFuture<'a, Result<FinishPatch, StoreError>>;
+    /// Not in `@tus/server`: may more bytes be written? Asked before a body's
+    /// first byte and again every [`SPACE_CHECK_EVERY`] bytes; `false` stops
+    /// the body with [`NO_ROOM`] and keeps what arrived (resumable).
+    fn has_room(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async { true })
+    }
 }
+
+/// How often (in bytes received) [`TusHooks::has_room`] is asked again.
+pub const SPACE_CHECK_EVERY: u64 = 8 * 1024 * 1024;
+
+/// The refusal of a body the disk has no room for (the creation's own wording).
+pub const NO_ROOM: TusError = TusError::fixed(507, "Server is low on disk space; upload rejected.");
 
 /// `ServerOptions`
 pub struct ServerOptions {
@@ -128,7 +140,19 @@ pub struct TusServer {
     pub options: ServerOptions,
     hooks: Arc<dyn TusHooks>,
     locker: Arc<MemoryLocker>,
+    finishes: Arc<Finishes>,
 }
+
+/// How long a finished upload's answer is kept for a repeated final request.
+const FINISH_MEMORY: Duration = Duration::from_secs(10 * 60);
+
+/// One finish slot per upload id: the answer of the finish that succeeded,
+/// or nothing while none has (yet).
+type FinishSlot = Arc<tokio::sync::Mutex<Option<FinishPatch>>>;
+
+/// Not in `@tus/server`: the finishes in progress or recently done.
+#[derive(Default)]
+struct Finishes(Mutex<HashMap<String, FinishSlot>>);
 
 /// A request's abort state (`createContext()`): `abort()` now, or `cancel()`
 /// = abort after the lock drain timeout.
@@ -340,7 +364,7 @@ fn utc_string(ms: i64) -> String {
 impl TusServer {
     pub fn new(datastore: Arc<dyn DataStore>, options: ServerOptions, hooks: Arc<dyn TusHooks>) -> TusServer {
         let locker = Arc::new(MemoryLocker::new(options.lock_timeout));
-        TusServer { datastore, options, hooks, locker }
+        TusServer { datastore, options, hooks, locker, finishes: Arc::default() }
     }
 
     /// `server.handle(req, res)`
@@ -413,6 +437,38 @@ impl TusServer {
         }
     }
 
+    /// `onUploadFinish`, once per upload. Not in `@tus/server`, which calls it
+    /// after releasing the upload's lock: a second request at the final offset
+    /// (an empty PATCH, a client retrying a final PATCH whose answer timed out
+    /// while the file was being processed) finished the same upload again.
+    /// Here a second request waits for the first and gets its answer; a finish
+    /// that FAILED is not remembered, so a retry may finish for real.
+    async fn finish_once(&self, req: &TusRequest, upload: &Upload) -> Result<FinishPatch, StoreError> {
+        let slot = {
+            let mut slots = self.finishes.0.lock().unwrap_or_else(|e| e.into_inner());
+            slots.entry(upload.id.clone()).or_default().clone()
+        };
+        let mut done = slot.lock().await;
+        if let Some(patch) = done.as_ref() {
+            return Ok(patch.clone());
+        }
+        let result = self.hooks.on_upload_finish(req, upload).await;
+        if let Ok(patch) = &result {
+            *done = Some(patch.clone());
+        }
+        drop(done);
+        // Forget the slot once nobody can ask for this upload any more.
+        let (finishes, id) = (self.finishes.clone(), upload.id.clone());
+        tokio::spawn(async move {
+            tokio::time::sleep(FINISH_MEMORY).await;
+            let mut slots = finishes.0.lock().unwrap_or_else(|e| e.into_inner());
+            if slots.get(&id).is_some_and(|s| Arc::ptr_eq(s, &slot)) {
+                slots.remove(&id);
+            }
+        });
+        result
+    }
+
     fn on_error(&self, ctx: &Context, headers: Headers, err: StoreError) -> Response {
         if let StoreError::Other(e) = &err {
             tracing::error!("[tus] handler error: {e:#}");
@@ -425,13 +481,21 @@ impl TusServer {
 
     /// `getFileIdFromRequest(req)`: the last path segment of the URL, unless
     /// it is part of the server path.
+    ///
+    /// Not upstream: the decoded id is refused when it could name a path of
+    /// its own (a `/` or `\` from `%2F`/`%5C`, `.`, `..`, a NUL). The stores
+    /// join it to their directory, so `..%2F` reached files outside it. Ids
+    /// are 32 hex characters (`Uid.rand()`, both servers), so no upload is
+    /// lost by this.
     fn file_id(&self, req: &TusRequest) -> Option<String> {
         let url = req.url.strip_suffix('/').unwrap_or(&req.url);
         let last = url.rsplit('/').next().filter(|s| !s.is_empty())?;
         if self.options.path.contains(last) {
             return None;
         }
-        crate::http::cookies::decode_uri_component(last)
+        let id = crate::http::cookies::decode_uri_component(last)?;
+        let walks = id == "." || id == ".." || id.contains(['/', '\\', '\0']);
+        (!walks).then_some(id)
     }
 
     /// `generateUrl(req, id)`
@@ -502,8 +566,12 @@ impl TusServer {
         }
         let exceeded = Arc::new(AtomicBool::new(false));
         let flag = exceeded.clone();
+        let no_room = Arc::new(AtomicBool::new(false));
+        let full = no_room.clone();
+        let hooks = self.hooks.clone();
         let token = ctx.token.clone();
         let mut total: u64 = 0;
+        let mut checked_at: Option<u64> = None;
         let mut data = body.into_data_stream();
         let stream = async_stream_from(move |tx| async move {
             loop {
@@ -518,6 +586,18 @@ impl TusServer {
                 let Ok(chunk) = chunk else {
                     break;
                 };
+                // Not upstream (security fix 2, as on ShareX): the room on the
+                // machine was judged at creation for THIS upload alone; uploads
+                // running side by side (the panel sends several) each passed
+                // that check and together filled the disk past the reserve.
+                if checked_at.is_none_or(|at| total - at >= SPACE_CHECK_EVERY) {
+                    checked_at = Some(total);
+                    if !hooks.has_room().await {
+                        full.store(true, Ordering::SeqCst);
+                        let _ = tx.send(Err(std::io::Error::other("Server is low on disk space"))).await;
+                        break;
+                    }
+                }
                 total += chunk.len() as u64;
                 if total > max {
                     flag.store(true, Ordering::SeqCst);
@@ -532,6 +612,9 @@ impl TusServer {
         let result = self.datastore.write(stream, &upload.id, upload.offset).await;
         if exceeded.load(Ordering::SeqCst) {
             return Err(errors::ERR_MAX_SIZE_EXCEEDED.into());
+        }
+        if no_room.load(Ordering::SeqCst) {
+            return Err(NO_ROOM.into());
         }
         result
     }
@@ -632,7 +715,7 @@ impl TusServer {
         }
 
         if is_final {
-            let patch = self.hooks.on_upload_finish(req, &upload).await?;
+            let patch = self.finish_once(req, &upload).await?;
             if let Some(s) = patch.status_code {
                 status = s;
             }
@@ -758,7 +841,7 @@ impl TusServer {
         let mut response_headers = headers;
         response_headers.set("Upload-Offset", new_offset.to_string());
         if Some(new_offset) == upload.size {
-            let patch = self.hooks.on_upload_finish(req, &upload).await?;
+            let patch = self.finish_once(req, &upload).await?;
             if let Some(s) = patch.status_code {
                 status = s;
             }
@@ -1030,6 +1113,212 @@ mod tests {
         assert_eq!(send(&modlight, terminate).await.0, 204);
         let head = Request::head(partial.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap();
         assert_eq!(send(&modlight, head).await.0, 404);
+    }
+
+    /// Hunt 2026-11-11 (SRVF-06): the upload id is the URL's last segment,
+    /// DECODED, and the file store joins it to its directory: `..%2F` walked
+    /// out of the tus directory, so HEAD read, PATCH wrote and DELETE removed
+    /// any `<path>` that has a `<path>.json` beside it (a record parses from
+    /// any JSON object with an `id`). An id never holds a path separator.
+    #[tokio::test]
+    async fn an_upload_id_cannot_walk_out_of_the_store() {
+        let root = tempfile::tempdir().unwrap();
+        let tus = root.path().join("tus");
+        std::fs::create_dir_all(&tus).unwrap();
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("victim"), b"0123").unwrap();
+        std::fs::write(outside.join("victim.json"), br#"{"id":"victim","size":10,"offset":0}"#).unwrap();
+        let server = server(&tus, true);
+        for id in ["..%2Foutside%2Fvictim", "..%5Coutside%5Cvictim", "%2E%2E", "."] {
+            let path = format!("/api/files/{id}");
+            let head = Request::head(path.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap();
+            assert_eq!(send(&server, head).await.0, 404, "HEAD {id}");
+            let patch = Request::patch(path.as_str())
+                .header("tus-resumable", "1.0.0")
+                .header("upload-offset", "4")
+                .header("content-type", "application/offset+octet-stream")
+                .body(Body::from("XXXXXX"))
+                .unwrap();
+            assert_eq!(send(&server, patch).await.0, 404, "PATCH {id}");
+            let delete = Request::delete(path.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap();
+            assert_eq!(send(&server, delete).await.0, 404, "DELETE {id}");
+        }
+        assert_eq!(std::fs::read(outside.join("victim")).unwrap(), b"0123");
+        assert!(outside.join("victim.json").exists());
+    }
+
+    /// Room for `left` more checks, then the disk is "full".
+    struct Room(std::sync::atomic::AtomicU32);
+
+    impl TusHooks for Room {
+        fn max_size<'a>(&'a self, _req: &'a TusRequest) -> BoxFuture<'a, u64> {
+            Box::pin(async { 0 })
+        }
+        fn on_upload_create<'a>(
+            &'a self,
+            _req: &'a TusRequest,
+            _upload: &'a Upload,
+        ) -> BoxFuture<'a, Result<Option<Metadata>, StoreError>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn on_upload_finish<'a>(
+            &'a self,
+            _req: &'a TusRequest,
+            _upload: &'a Upload,
+        ) -> BoxFuture<'a, Result<FinishPatch, StoreError>> {
+            Box::pin(async { Ok(FinishPatch::default()) })
+        }
+        fn has_room(&self) -> BoxFuture<'_, bool> {
+            let left = self.0.load(Ordering::SeqCst);
+            if left > 0 {
+                self.0.store(left - 1, Ordering::SeqCst);
+            }
+            Box::pin(async move { left > 0 })
+        }
+    }
+
+    /// Hunt 2026-11-11 (SRVF-08): a PATCH asks for room before its first byte
+    /// and every 8 MiB; once there is none it stops with 507, and what arrived
+    /// stays for the client to resume onto.
+    #[tokio::test]
+    async fn a_body_stops_when_the_disk_has_no_room_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let options = |_| ServerOptions {
+            path: "/api/files".into(),
+            respect_forwarded_headers: false,
+            lock_drain_timeout: Duration::from_millis(100),
+            lock_timeout: Duration::from_secs(5),
+            disable_termination_for_finished_uploads: true,
+            serve_finished_uploads: false,
+        };
+        let store = || Arc::new(super::super::file_store::FileStore::new(dir.path().to_str().unwrap(), 0));
+        let mib = 1024 * 1024;
+        // Room for the first check only: 8 MiB arrive, then 507.
+        let server = TusServer::new(store(), options(()), Arc::new(Room(std::sync::atomic::AtomicU32::new(1))));
+        let path = upload(&server, 20 * mib, 0).await;
+        let chunks: Vec<Result<Bytes, std::io::Error>> = (0..20).map(|_| Ok(Bytes::from(vec![b'x'; mib]))).collect();
+        let patch = Request::patch(path.as_str())
+            .header("tus-resumable", "1.0.0")
+            .header("upload-offset", "0")
+            .header("content-type", "application/offset+octet-stream")
+            .body(Body::from_stream(futures_util::stream::iter(chunks)))
+            .unwrap();
+        assert_eq!(send(&server, patch).await, (507, "Server is low on disk space; upload rejected.".into()));
+        let head = server
+            .handle(Request::head(path.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap())
+            .await;
+        assert_eq!(head.headers().get("upload-offset").unwrap().to_str().unwrap(), (8 * mib).to_string());
+        // No room at all: not a byte.
+        let server = TusServer::new(store(), options(()), Arc::new(Room(std::sync::atomic::AtomicU32::new(0))));
+        let path = upload(&server, 10, 0).await;
+        let patch = Request::patch(path.as_str())
+            .header("tus-resumable", "1.0.0")
+            .header("upload-offset", "0")
+            .header("content-type", "application/offset+octet-stream")
+            .body(Body::from("0123456789"))
+            .unwrap();
+        assert_eq!(send(&server, patch).await.0, 507);
+        let head = server
+            .handle(Request::head(path.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap())
+            .await;
+        assert_eq!(head.headers().get("upload-offset").unwrap(), "0");
+    }
+
+    /// Finishes are counted; the first one waits until the test lets it go.
+    struct SlowFinish {
+        calls: std::sync::atomic::AtomicU32,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    impl TusHooks for SlowFinish {
+        fn max_size<'a>(&'a self, _req: &'a TusRequest) -> BoxFuture<'a, u64> {
+            Box::pin(async { 0 })
+        }
+        fn on_upload_create<'a>(
+            &'a self,
+            _req: &'a TusRequest,
+            _upload: &'a Upload,
+        ) -> BoxFuture<'a, Result<Option<Metadata>, StoreError>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn on_upload_finish<'a>(
+            &'a self,
+            _req: &'a TusRequest,
+            _upload: &'a Upload,
+        ) -> BoxFuture<'a, Result<FinishPatch, StoreError>> {
+            Box::pin(async move {
+                let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+                if n == 1 {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                Ok(FinishPatch {
+                    status_code: Some(200),
+                    body: None,
+                    headers: vec![("X-Media-Url".into(), format!("https://example.test/finish-{n}"))],
+                })
+            })
+        }
+    }
+
+    /// Hunt 2026-11-11 round 2 (SRVF-N3): `onUploadFinish` runs after the
+    /// upload's lock is released, so a second PATCH at the final offset (an
+    /// empty body; a client retrying a final PATCH whose answer timed out while
+    /// a large file was being stripped or encrypted) finished the same upload a
+    /// second time: two rows with the file vault, a 500 otherwise. Finishing is
+    /// single-shot now; the second request gets the first one's answer.
+    #[tokio::test]
+    async fn an_upload_is_finished_once_however_often_its_last_offset_is_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = Arc::new(SlowFinish {
+            calls: std::sync::atomic::AtomicU32::new(0),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        let server = Arc::new(TusServer::new(
+            Arc::new(super::super::file_store::FileStore::new(dir.path().to_str().unwrap(), 0)),
+            ServerOptions {
+                path: "/api/files".into(),
+                respect_forwarded_headers: false,
+                lock_drain_timeout: Duration::from_millis(100),
+                lock_timeout: Duration::from_secs(5),
+                disable_termination_for_finished_uploads: true,
+                serve_finished_uploads: false,
+            },
+            hooks.clone(),
+        ));
+        let path = upload(&server, 5, 0).await;
+        let patch = |offset: &str, body: &'static str| {
+            Request::patch(path.as_str())
+                .header("tus-resumable", "1.0.0")
+                .header("upload-offset", offset)
+                .header("content-type", "application/offset+octet-stream")
+                .body(Body::from(body))
+                .unwrap()
+        };
+        let first = {
+            let (server, req) = (server.clone(), patch("0", "12345"));
+            tokio::spawn(async move { server.handle(req).await })
+        };
+        hooks.entered.notified().await;
+        let second = {
+            let (server, req) = (server.clone(), patch("5", ""));
+            tokio::spawn(async move { server.handle(req).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        hooks.release.notify_one();
+        let (first, second) = (first.await.unwrap(), second.await.unwrap());
+        assert_eq!(hooks.calls.load(Ordering::SeqCst), 1, "the upload was finished twice");
+        for res in [&first, &second] {
+            assert_eq!(res.status().as_u16(), 200);
+            assert_eq!(res.headers().get("x-media-url").unwrap(), "https://example.test/finish-1");
+        }
+        // A late repeat gets the same answer as well.
+        let third = server.handle(patch("5", "")).await;
+        assert_eq!(third.headers().get("x-media-url").unwrap(), "https://example.test/finish-1");
+        assert_eq!(hooks.calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

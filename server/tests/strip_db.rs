@@ -181,13 +181,26 @@ impl World {
     /// (the process-wide one belongs to whichever test made it first).
     async fn tus(&self, auth: (&str, &str), filename: &str, mime: &str, bytes: &[u8]) -> Answer {
         let server = modlight_server::upload::tus::create_tus_server(&self.state);
+        let path = self.tus_create(&server, auth, filename, mime, bytes.len()).await;
+        self.tus_send(&server, Request::patch(&path).header("upload-offset", "0"), bytes).await
+    }
+
+    /// POST a tus upload of `length` bytes; returns its path.
+    async fn tus_create(
+        &self,
+        server: &modlight_server::upload::tus_server::server::TusServer,
+        auth: (&str, &str),
+        filename: &str,
+        mime: &str,
+        length: usize,
+    ) -> String {
         let b64 = |s: &str| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, s);
         let created = server
             .handle(
                 Request::post("/api/files")
                     .header("host", HOST)
                     .header("tus-resumable", "1.0.0")
-                    .header("upload-length", bytes.len().to_string())
+                    .header("upload-length", length.to_string())
                     .header("upload-metadata", format!("filename {},filetype {}", b64(filename), b64(mime)))
                     .header(auth.0, auth.1)
                     .body(Body::empty())
@@ -197,19 +210,19 @@ impl World {
         let created = answer(created).await;
         assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
         let location = created.header("location").unwrap();
-        let path = location.split_once(HOST).map(|(_, p)| p.to_string()).unwrap_or(location);
-        let patched = server
-            .handle(
-                Request::patch(path)
-                    .header("host", HOST)
-                    .header("tus-resumable", "1.0.0")
-                    .header("upload-offset", "0")
-                    .header("content-type", "application/offset+octet-stream")
-                    .body(Body::from(bytes.to_vec()))
-                    .unwrap(),
-            )
-            .await;
-        answer(patched).await
+        location.split_once(HOST).map(|(_, p)| p.to_string()).unwrap_or(location)
+    }
+
+    /// One more request to a tus upload (PATCH bytes, a HEAD).
+    async fn tus_send(
+        &self,
+        server: &modlight_server::upload::tus_server::server::TusServer,
+        req: axum::http::request::Builder,
+        bytes: &[u8],
+    ) -> Answer {
+        let req = req.header("host", HOST).header("tus-resumable", "1.0.0");
+        let req = if bytes.is_empty() { req } else { req.header("content-type", "application/offset+octet-stream") };
+        answer(server.handle(req.body(Body::from(bytes.to_vec())).unwrap()).await).await
     }
 
     async fn newest(&self, owner: &str) -> Row {
@@ -649,5 +662,37 @@ async fn documents_lose_their_properties_and_keep_their_words() {
         assert!(!contains(data, b"custom.xml"), "{name} still points at the custom properties");
     }
     assert!(contains(&part("docProps/core.xml").unwrap(), b"coreProperties"));
+    w.drop().await;
+}
+
+/// Hunt round 2 (SRVF-N4): a tus upload whose finish fails is dropped, so its
+/// URL answers 404 and a client that retries sends it again. Before, it stayed
+/// complete: a retry's HEAD found nothing left to send and the client reported
+/// a success with no file, and on S3 the object never left the bucket.
+#[tokio::test]
+async fn a_tus_upload_whose_finish_fails_is_dropped() {
+    let w = world!();
+    let owner = w.user().await;
+    let token = w.token(&owner, TokenScope::Upload).await;
+    let server = modlight_server::upload::tus::create_tus_server(&w.state);
+    let bytes = b"a few plain words, too many for the quota".to_vec();
+    let path = w.tus_create(&server, ("x-api-key", &token), "note.txt", "text/plain", bytes.len()).await;
+    // The quota shrinks while the bytes are on their way.
+    let set_max = |max: Option<i64>| {
+        sqlx::query(r#"update "user" set "max_quota" = $1 where "id" = $2"#).bind(max).bind(&owner).execute(&w.pool)
+    };
+    set_max(Some(4)).await.unwrap();
+    let done = w.tus_send(&server, Request::patch(&path).header("upload-offset", "0"), &bytes).await;
+    assert_eq!(done.status, StatusCode::INSUFFICIENT_STORAGE, "{}", done.text());
+    assert!(w.left_in("tus").is_empty(), "tus leftovers: {:?}", w.left_in("tus"));
+    let head = w.tus_send(&server, Request::head(&path), &[]).await;
+    assert_eq!(head.status, StatusCode::NOT_FOUND, "{:?}", head.headers);
+    assert_eq!(w.used_quota(&owner).await, 0);
+    // With room again, the upload starts over and lands.
+    set_max(None).await.unwrap();
+    let again = w.tus(("x-api-key", &token), "note.txt", "text/plain", &bytes).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.text());
+    assert_eq!(w.used_quota(&owner).await, bytes.len() as i64);
+    assert!(w.left_in("tus").is_empty(), "tus leftovers: {:?}", w.left_in("tus"));
     w.drop().await;
 }

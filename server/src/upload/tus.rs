@@ -19,7 +19,7 @@ use axum::response::Response;
 use futures_util::future::BoxFuture;
 use sqlx::PgPool;
 
-use super::finalize::{FinalizeError, FinalizeInput, finalize_upload, remaining_quota};
+use super::finalize::{FinalizeError, FinalizeInput, FinalizeResult, finalize_upload, remaining_quota};
 use super::folder_target::{FOLDER_KEY, FolderTarget, ROOT_FOLDER, resolve_folder_from_metadata};
 use super::tus_server::file_store::FileStore;
 use super::tus_server::s3_store::S3Store;
@@ -28,6 +28,7 @@ use super::tus_server::store::{DataStore, Metadata, StoreError, TusError, Upload
 use crate::api_scopes::TokenCapability;
 use crate::api_token::{TokenAuth, UserRow, authenticate_api_token, bearer_from_request, token_refusal};
 use crate::auth::session::{RefreshPolicy, find_user, get_session};
+use crate::db::models::User;
 use crate::db::types::JsDate;
 use crate::state::AppState;
 
@@ -211,70 +212,49 @@ impl TusHooks for ModlightHooks {
         })
     }
 
+    /// Not upstream (security fix 2, as on ShareX): the reserve is re-checked
+    /// while the bytes of a PATCH stream in, not only at creation.
+    fn has_room(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            let config = &self.state.config;
+            super::disk::still_has_room(config, &config.uploads.tus_tmp_path).await
+        })
+    }
+
     /// Finalize into our storage + DB.
     fn on_upload_finish<'a>(
         &'a self,
-        _req: &'a TusRequest,
+        req: &'a TusRequest,
         upload: &'a Upload,
     ) -> BoxFuture<'a, Result<FinishPatch, StoreError>> {
         Box::pin(async move {
+            let (owner, result) = match self.finalize(req, upload).await {
+                Ok(done) => done,
+                Err(err) => {
+                    // Not upstream: nothing adopted the upload, and nothing
+                    // else ever would. It stayed complete, so a client that
+                    // retried found nothing left to send and reported a
+                    // success with no file; and on S3 the expiry sweep, which
+                    // lists only unfinished multipart uploads, never removed
+                    // its object. Dropped, its URL answers 404 and the client
+                    // sends the file again.
+                    if let Err(e) = self.datastore.discard_finished(&upload.id).await {
+                        tracing::warn!("[tus] could not drop unfinished upload {}: {e}", upload.id);
+                    }
+                    return Err(err);
+                }
+            };
             let state = &self.state;
-            let Some(user_id) = upload.meta("userId").filter(|u| !u.is_empty()) else {
-                return Err(refusal(401, "Missing user."));
-            };
-            let Some(owner) = find_user(&state.db, user_id).await? else {
-                return Err(refusal(401, "Missing user."));
-            };
-            let filename = upload
-                .meta("filename")
-                .filter(|f| !f.is_empty())
-                .or_else(|| upload.meta("name").filter(|f| !f.is_empty()))
-                .unwrap_or("file")
-                .to_string();
-            let mime = upload
-                .meta("filetype")
-                .filter(|f| !f.is_empty())
-                .or_else(|| upload.meta("type").filter(|f| !f.is_empty()))
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            let storage_info = upload.storage.clone();
-            let is_local = storage_info.as_ref().is_some_and(|s| s.kind == "file");
-            let path = storage_info.as_ref().map(|s| s.path.clone());
-            let local_path = if is_local { path.as_ref().map(PathBuf::from) } else { None };
-            let storage = state.storage.get()?;
-            let result = finalize_upload(
-                &state.db,
-                &state.config,
-                storage.as_ref(),
-                FinalizeInput {
-                    owner: &owner,
-                    filename: &filename,
-                    mime: &mime,
-                    size: upload.size.unwrap_or(upload.offset) as i64,
-                    head: None,
-                    local_path: local_path.as_deref(),
-                    existing_key: if is_local { None } else { path.as_deref() },
-                    checksum: None,
-                    custom_code: None,
-                    folder_id: None,
-                },
-            )
-            .await;
-            let result = match result {
-                Ok(r) => r,
-                Err(e @ (FinalizeError::QuotaExceeded | FinalizeError::OutOfSpace)) => {
-                    return Err(refusal(507, &e.to_string()));
-                }
-                Err(FinalizeError::CodeTaken) => {
-                    return Err(StoreError::Other(anyhow::anyhow!("Custom url code already exists.")));
-                }
-                Err(FinalizeError::Other(e)) => return Err(StoreError::Other(e)),
-            };
             // Drag-and-drop semantics: a file dropped while a folder is open
-            // lands in THAT folder.
-            apply_target_folder(&state.db, &owner.id, result.id, upload.metadata.as_ref()).await?;
+            // lands in THAT folder. Not upstream: a failure here no longer
+            // fails the request, since the file is stored by now; the client
+            // would only have retried into a duplicate or a success without
+            // links.
+            if let Err(e) = apply_target_folder(&state.db, &owner.id, result.id, upload.metadata.as_ref()).await {
+                tracing::warn!("[tus] could not move upload {} into its folder: {e:#}", result.id);
+            }
             // FileStore still holds a sidecar .json describing a finished upload.
-            if is_local {
+            if upload.storage.as_ref().is_some_and(|s| s.kind == "file") {
                 discard_tus_upload(self.datastore.as_ref(), &upload.id).await;
             } else if let Err(err) = self.datastore.delete_record(&upload.id).await {
                 // S3: the object now belongs to the media row; drop only its
@@ -292,6 +272,67 @@ impl TusHooks for ModlightHooks {
                 ],
             })
         })
+    }
+}
+
+impl ModlightHooks {
+    /// The finish proper: the owner, then the file into storage and the
+    /// database.
+    async fn finalize(&self, req: &TusRequest, upload: &Upload) -> Result<(User, FinalizeResult), StoreError> {
+        let state = &self.state;
+        let Some(user_id) = upload.meta("userId").filter(|u| !u.is_empty()) else {
+            return Err(refusal(401, "Missing user."));
+        };
+        let Some(owner) = find_user(&state.db, user_id).await? else {
+            return Err(refusal(401, "Missing user."));
+        };
+        let filename = upload
+            .meta("filename")
+            .filter(|f| !f.is_empty())
+            .or_else(|| upload.meta("name").filter(|f| !f.is_empty()))
+            .unwrap_or("file")
+            .to_string();
+        let mime = upload
+            .meta("filetype")
+            .filter(|f| !f.is_empty())
+            .or_else(|| upload.meta("type").filter(|f| !f.is_empty()))
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let storage_info = upload.storage.clone();
+        let is_local = storage_info.as_ref().is_some_and(|s| s.kind == "file");
+        let path = storage_info.as_ref().map(|s| s.path.clone());
+        let local_path = if is_local { path.as_ref().map(PathBuf::from) } else { None };
+        let storage = state.storage.get()?;
+        let result = finalize_upload(
+            &state.db,
+            &state.config,
+            storage.as_ref(),
+            FinalizeInput {
+                owner: &owner,
+                filename: &filename,
+                mime: &mime,
+                size: upload.size.unwrap_or(upload.offset) as i64,
+                head: None,
+                local_path: local_path.as_deref(),
+                existing_key: if is_local { None } else { path.as_deref() },
+                checksum: None,
+                custom_code: None,
+                folder_id: None,
+            },
+        )
+        .await;
+        match result {
+            Ok(r) => Ok((owner, r)),
+            Err(e @ (FinalizeError::QuotaExceeded | FinalizeError::OutOfSpace)) => Err(refusal(507, &e.to_string())),
+            Err(FinalizeError::CodeTaken) => Err(StoreError::Other(anyhow::anyhow!("Custom url code already exists."))),
+            // Not upstream (hunt SRVF-N2): a 4xx, so the client shows it and does
+            // not send the file again and again.
+            Err(FinalizeError::VaultKeyChanged) => {
+                let locale = crate::i18n::request::request_locale(&req.headers);
+                Err(refusal(403, &state.messages.t(locale, "encryption", "upload.keyChanged", &[])))
+            }
+            Err(FinalizeError::Other(e)) => Err(StoreError::Other(e)),
+        }
     }
 }
 

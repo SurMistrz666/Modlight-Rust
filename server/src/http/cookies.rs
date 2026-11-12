@@ -32,6 +32,11 @@ pub fn decode_uri_component(s: &str) -> Option<String> {
     while i < bytes.len() {
         if bytes[i] == b'%' {
             let hex = bytes.get(i + 1..i + 3)?;
+            // Two hex digits exactly: `from_str_radix` alone would also take
+            // a sign (`%+1`), where JavaScript throws a URIError.
+            if !hex.iter().all(u8::is_ascii_hexdigit) {
+                return None;
+            }
             let h = std::str::from_utf8(hex).ok()?;
             let b = u8::from_str_radix(h, 16).ok()?;
             out.push(b);
@@ -255,5 +260,8 @@ mod tests {
         assert_eq!(decode_uri_component("a%20b%2Fc%2Bd%3D%C3%A9").unwrap(), "a b/c+d=é");
         assert!(decode_uri_component("%ZZ").is_none());
         assert!(decode_uri_component("%C3").is_none());
+        // decodeURIComponent("%+1") is a URIError, not "\u0001".
+        assert!(decode_uri_component("%+1").is_none());
+        assert!(decode_uri_component("a%+fb").is_none());
     }
 }

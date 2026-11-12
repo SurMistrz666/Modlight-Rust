@@ -45,6 +45,7 @@ use axum::routing::{delete, get, post, put};
 use serde_json::{Value, json};
 
 use crate::api_json::{JSON_BODY_MAX, PRIVATE_NO_STORE, json_private, read_json_object};
+use crate::api_scopes::scope_for;
 use crate::api_token::{TokenAuth, TokenCapability, authenticate_api_token, bearer_from_request, scope_refusal_body};
 use crate::auth_helpers::{RequestSession, Sessions};
 use crate::db::models::{JsDate, Release, User};
@@ -52,6 +53,7 @@ use crate::downloads::{
     self, Assembled, Build, CHUNK_SIZE, ChunkError, FinishGuard, KEEP, MAX_PENDING_UPLOADS, Refusal, StagedUpload,
     TOKEN_UPLOADER,
 };
+use crate::i18n::{Arg, Locale};
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -111,9 +113,55 @@ fn token_refusal(auth: &TokenAuth, unknown: &str) -> Refusal {
 fn respond(result: anyhow::Result<Response>) -> Response {
     result.unwrap_or_else(|err| {
         tracing::error!(error = ?err, "[downloads] request failed");
-        Refusal::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "Something went wrong on the server; try again.")
-            .into_response()
+        internal().into_response()
     })
+}
+
+fn internal() -> Refusal {
+    Refusal::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "Something went wrong on the server; try again.")
+}
+
+/// Not upstream (hunt round 2): the refusals of `DELETE /api/downloads/{id}`,
+/// the one route of these the panel calls, in the request's language
+/// (`downloads.refusal.*`, chosen as the unlock gate chooses: the locale
+/// cookie, then Accept-Language). The panel shows the text under its own
+/// translated title. The publish routes, which build scripts call, keep their
+/// English texts, and no refusal's `code` changes.
+struct DeleteTexts<'a> {
+    state: &'a AppState,
+    locale: Locale,
+}
+
+impl<'a> DeleteTexts<'a> {
+    fn of(state: &'a AppState, headers: &HeaderMap) -> DeleteTexts<'a> {
+        DeleteTexts { state, locale: crate::i18n::request::request_locale(headers) }
+    }
+
+    fn text(&self, key: &str, args: &[(&str, Arg)]) -> String {
+        self.state.messages.t(self.locale, "downloads", &format!("refusal.{key}"), args)
+    }
+
+    /// `refusal` with its text in the request's language; `auth` names the
+    /// scopes of an `insufficient_scope`.
+    fn localize(&self, refusal: Refusal, auth: Option<&TokenAuth>) -> Refusal {
+        let message = match (refusal.code, auth) {
+            ("insufficient_scope", Some(TokenAuth::Scope { scope, required, .. })) => self.text(
+                "insufficientScope",
+                &[
+                    ("scope", Arg::Str(scope.as_str().to_string())),
+                    ("needed", Arg::Str(scope_for(*required).as_str().to_string())),
+                ],
+            ),
+            ("unauthorized", _) => self.text("signIn", &[]),
+            ("account_disabled", _) => self.text("disabled", &[]),
+            ("forbidden", _) => self.text("notAdmin", &[]),
+            ("invalid_scope", _) => self.text("invalidScope", &[]),
+            ("not_found", _) => self.text("notFound", &[]),
+            ("internal", _) => self.text("internal", &[]),
+            _ => return refusal,
+        };
+        Refusal { message, ..refusal }
+    }
 }
 
 // ── Who is calling ──────────────────────────────────────────────────────────
@@ -194,6 +242,12 @@ async fn publisher(
     let (sign_in, not_admin) =
         if with_token { (SIGN_IN_TO_PUBLISH, NOT_ADMIN_PUBLISH) } else { (SIGN_IN, NOT_ADMIN_DELETE) };
     let forbidden = || Refusal::new(StatusCode::FORBIDDEN, "forbidden", not_admin);
+    // Deleting is the panel's: its refusals go out in the request's language.
+    let texts = (!with_token).then(|| DeleteTexts::of(state, headers));
+    let local = |refusal: Refusal, auth: Option<&TokenAuth>| match &texts {
+        Some(texts) => texts.localize(refusal, auth),
+        None => refusal,
+    };
     if let Some(token) = bearer_from_request(headers) {
         if with_token && state.config.release_publish_token.matches(&token) {
             return Ok(Ok(Publisher::Token));
@@ -202,17 +256,17 @@ async fn publisher(
             TokenAuth::Ok { user, .. } if is_admin(&user) => {
                 Ok(Publisher::Admin { user: Box::new(user), via: "api-token" })
             }
-            TokenAuth::Ok { .. } => Err(forbidden()),
+            TokenAuth::Ok { .. } => Err(local(forbidden(), None)),
             // A narrower token of a regular account is refused for the account, not the scope.
-            TokenAuth::Scope { user, .. } if !is_admin(&user) => Err(forbidden()),
-            other => Err(token_refusal(&other, sign_in)),
+            TokenAuth::Scope { user, .. } if !is_admin(&user) => Err(local(forbidden(), None)),
+            other => Err(local(token_refusal(&other, sign_in), Some(&other))),
         });
     }
     Ok(match session.get().await? {
-        Some(s) if s.user.banned == Some(true) => Err(disabled()),
+        Some(s) if s.user.banned == Some(true) => Err(local(disabled(), None)),
         Some(s) if s.is_admin() => Ok(Publisher::Admin { user: Box::new(s.user), via: "session" }),
-        Some(_) => Err(forbidden()),
-        None => Err(unauthorized(sign_in)),
+        Some(_) => Err(local(forbidden(), None)),
+        None => Err(local(unauthorized(sign_in), None)),
     })
 }
 
@@ -575,7 +629,11 @@ async fn remove(
     Sessions(session): Sessions,
     req: Request,
 ) -> Response {
-    respond(remove_build(&state, &session, &id, req).await)
+    let texts = DeleteTexts::of(&state, req.headers());
+    remove_build(&state, &session, &id, req).await.unwrap_or_else(|err| {
+        tracing::error!(error = ?err, "[downloads] request failed");
+        texts.localize(internal(), None).into_response()
+    })
 }
 
 async fn remove_build(state: &AppState, session: &RequestSession, id: &str, req: Request) -> anyhow::Result<Response> {
@@ -585,7 +643,8 @@ async fn remove_build(state: &AppState, session: &RequestSession, id: &str, req:
         Err(refusal) => return Ok(refusal.into_response()),
     };
     let Some(release) = downloads::delete_release(&state.db, id).await? else {
-        return Ok(not_found("No such build.").into_response());
+        let refusal = DeleteTexts::of(state, &parts.headers).localize(not_found("No such build."), None);
+        return Ok(refusal.into_response());
     };
     let storage = state.storage.get()?;
     downloads::delete_files(storage.as_ref(), &release.id).await;

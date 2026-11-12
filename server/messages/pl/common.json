@@ -66,5 +66,10 @@
     },
     "home": "Przejdź na stronę główną",
     "dashboard": "Otwórz moje pliki"
+  },
+  "loadFailed": {
+    "title": "Nie udało się wczytać tej strony",
+    "body": "Część panelu nie dotarła, nawet po ponownym wczytaniu strony. Sprawdź połączenie i spróbuj ponownie.",
+    "retry": "Spróbuj ponownie"
   }
 }

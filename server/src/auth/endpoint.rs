@@ -114,6 +114,10 @@ pub struct EndpointCtx {
     pub session: Option<AuthSession>,
     /// `ctx.context.newSession` (`setSessionCookie` sets it).
     pub new_session: Option<AuthSession>,
+    /// Not upstream: the registration gate let this sign-up through only
+    /// because no account existed yet, so the account is created only if
+    /// that is still true (`adapter::create_user_with`).
+    pub sign_up_only_as_first: bool,
     request_cookies: IndexMap<String, String>,
 }
 
@@ -148,6 +152,7 @@ impl EndpointCtx {
             location: None,
             session: None,
             new_session: None,
+            sign_up_only_as_first: false,
             request_cookies,
         }
     }

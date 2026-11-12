@@ -85,6 +85,42 @@ async fn without_credentials_everything_is_refused_before_the_body() {
     }
 }
 
+/// Hunt round 2: the refusals of DELETE, the route the panel calls, are in
+/// the person's language (the locale cookie, then Accept-Language); the
+/// publish routes, which build scripts call, stay in English. Before, the
+/// Polish panel showed the English text under its Polish title.
+#[tokio::test]
+async fn delete_refusals_follow_the_language_and_publish_refusals_stay_english() {
+    let app = no_database();
+    let id = "0123456789abcdef0123456789abcdef";
+    let delete = |extra: Option<(&'static str, &'static str)>| {
+        let mut b = request("DELETE", &format!("/api/downloads/{id}"));
+        if let Some((name, value)) = extra {
+            b = b.header(name, value);
+        }
+        b.body(Body::empty()).unwrap()
+    };
+    let polish = "Zaloguj się albo wyślij token API (nagłówek Authorization: Bearer i token).";
+    let english = "Sign in, or send an API token (Authorization: Bearer followed by the token).";
+    for (extra, text) in [
+        (None, english),
+        (Some(("cookie", "ml_locale=pl")), polish),
+        (Some(("accept-language", "pl-PL,pl;q=0.9")), polish),
+        (Some(("cookie", "ml_locale=en")), english),
+    ] {
+        let a = call(&app, delete(extra)).await;
+        assert_refusal(&a, StatusCode::UNAUTHORIZED, "unauthorized");
+        assert_eq!(a.json()["error"], text, "{extra:?}");
+    }
+    let publish = call(
+        &app,
+        request("POST", "/api/downloads/upload").header("cookie", "ml_locale=pl").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_refusal(&publish, StatusCode::UNAUTHORIZED, "unauthorized");
+    assert!(publish.json()["error"].as_str().unwrap().starts_with("Send the publish token"));
+}
+
 #[tokio::test]
 async fn the_routes_answer_only_their_methods() {
     let app = no_database();
@@ -646,11 +682,31 @@ async fn run(pool: &PgPool, dir: &std::path::Path) {
     assert_refusal(&send(As::Cookie(&user)).await, StatusCode::FORBIDDEN, "forbidden");
     assert_refusal(&send(As::Bearer(&user_full)).await, StatusCode::FORBIDDEN, "forbidden");
     assert_refusal(&send(As::Bearer(&admin_write)).await, StatusCode::FORBIDDEN, "insufficient_scope");
+    // The same refusals in Polish (the panel's language cookie, a client's Accept-Language).
+    let polish_cookie = format!("{user}; ml_locale=pl");
+    let a = send(As::Cookie(&polish_cookie)).await;
+    assert_refusal(&a, StatusCode::FORBIDDEN, "forbidden");
+    assert_eq!(a.json()["error"], "Tylko administratorzy mogą usuwać wydania.");
+    let a = call(
+        &env.app,
+        with(request("DELETE", &doomed), As::Bearer(&admin_write))
+            .header("accept-language", "pl")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_refusal(&a, StatusCode::FORBIDDEN, "insufficient_scope");
+    let text = a.json()["error"].as_str().unwrap().to_string();
+    assert!(text.starts_with("Ten token API ma zakres „write”") && text.contains("„full”"), "{text}");
     let a = send(As::Cookie(&admin)).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.text());
     assert_eq!(a.json(), json!({ "id": windows[1]["id"], "deleted": true }));
     assert!(env.stored(&windows[1]).is_none());
     assert_refusal(&send(As::Cookie(&admin)).await, StatusCode::NOT_FOUND, "not_found");
+    let admin_polish = format!("{admin}; ml_locale=pl");
+    let a = send(As::Cookie(&admin_polish)).await;
+    assert_refusal(&a, StatusCode::NOT_FOUND, "not_found");
+    assert_eq!(a.json()["error"], "Nie ma takiego wydania.");
     let gone = env.get(windows[1]["url"].as_str().unwrap(), As::Cookie(&user)).await;
     assert_eq!(gone.status, StatusCode::NOT_FOUND);
     let deleted = env.audit("downloads.deleted").await;

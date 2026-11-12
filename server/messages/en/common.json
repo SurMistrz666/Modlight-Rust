@@ -66,5 +66,10 @@
     },
     "home": "Go to home page",
     "dashboard": "Open my files"
+  },
+  "loadFailed": {
+    "title": "This page could not be loaded",
+    "body": "Part of the panel did not arrive, even after reloading the page. Check your connection and try again.",
+    "retry": "Try again"
   }
 }

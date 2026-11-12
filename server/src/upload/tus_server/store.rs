@@ -237,6 +237,19 @@ pub trait DataStore: Send + Sync {
         Box::pin(async { Ok(()) })
     }
 
+    /// Not in `@tus/server`: drop a complete upload that nothing adopted (its
+    /// finish failed), payload and record alike, so its URL answers 404 and
+    /// a client that retries starts over instead of finding it complete. The
+    /// file store's `remove` does that; without a payload, only the record.
+    fn discard_finished<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(async move {
+            if self.remove(id).await.is_ok() {
+                return Ok(());
+            }
+            self.delete_record(id).await
+        })
+    }
+
     /// Whether the store can stream a finished upload back (`'read' in store`,
     /// what `@tus/server`'s GET handler checks).
     fn supports_read(&self) -> bool {

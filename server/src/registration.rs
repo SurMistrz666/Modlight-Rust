@@ -183,6 +183,30 @@ pub async fn evaluate_sign_up(
     client_ip: &str,
     supplied_key: Option<&str>,
 ) -> anyhow::Result<SignUpDecision> {
+    Ok(evaluate_sign_up_gate(db, auth_secret, env_registration_enabled, client_ip, supplied_key).await?.decision)
+}
+
+/// What the sign-up gate decided, and on what grounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignUpVerdict {
+    pub decision: SignUpDecision,
+    /// Allowed ONLY because no account existed yet (the bootstrap exception):
+    /// with one account in the table the same request would be refused. The
+    /// count was taken outside the transaction that creates the account, so
+    /// that transaction has to find the table still empty (not upstream: two
+    /// sign-ups racing on a fresh install with registration closed both
+    /// passed the gate, and the second became an ordinary account).
+    pub only_as_first_account: bool,
+}
+
+/// [`evaluate_sign_up`] with the grounds of an allowed sign-up.
+pub async fn evaluate_sign_up_gate(
+    db: &PgPool,
+    auth_secret: &str,
+    env_registration_enabled: bool,
+    client_ip: &str,
+    supplied_key: Option<&str>,
+) -> anyhow::Result<SignUpVerdict> {
     let bootstrap = is_first_account(db).await?;
     let enabled = is_registration_enabled(db, env_registration_enabled).await?;
     let key_state = registration_key_state(db, auth_secret).await?;
@@ -196,7 +220,7 @@ pub async fn evaluate_sign_up(
     // Digested unconditionally: a correct key and a wrong key of any length must cost the same.
     let supplied_digest = secret_digest(auth_secret, &supplied, SecretPurpose::RegistrationKey)?;
 
-    let decision = decide_sign_up(&SignUpFacts {
+    let facts = SignUpFacts {
         is_first_account: bootstrap,
         registration_enabled: enabled,
         expected_key_digest: match &expected_key {
@@ -206,14 +230,21 @@ pub async fn evaluate_sign_up(
         key_unreadable: key_state == RegistrationKeyState::Undecryptable,
         supplied_key_digest: if supplied.is_empty() { None } else { Some(supplied_digest) },
         rate_limited,
-    });
+    };
+    let decision = decide_sign_up(&facts);
+    // Would the same request pass once an account exists? (The throttle is
+    // left out: it only ever counts attempts on an install that has one.)
+    let only_as_first_account = bootstrap
+        && decision == SignUpDecision::Allow
+        && decide_sign_up(&SignUpFacts { is_first_account: false, rate_limited: false, ..facts })
+            != SignUpDecision::Allow;
 
     // A correct key clears the budget, so onboarding colleagues from one office
     // does not lock out the sixth.
     if decision == SignUpDecision::Allow && expected_key.is_some() {
         reset_rate_limit(&throttle_key);
     }
-    Ok(decision)
+    Ok(SignUpVerdict { decision, only_as_first_account })
 }
 
 #[cfg(test)]

@@ -221,19 +221,50 @@ fn truthy(value: Option<&str>) -> bool {
     value.is_some_and(|v| !v.is_empty())
 }
 
+/// Not upstream: why an upload that passes upstream's checks (published, no
+/// password, no expiry) still cannot be the release, or `None`. Installed
+/// copies fetch the manifest's URL with no session, no password and no file
+/// password, again and again:
+///
+/// - an encrypted file (its stored bytes are ciphertext) or any file of an
+///   account whose file vault is `encrypting`/`on` (docs/ENCRYPTION.md) asks
+///   for the file password: every updater gets 401/423, a failed check
+///   forever;
+/// - a file with a view limit stops downloading after `max_views` fetches
+///   (and each check spends one), so the channel would die by itself.
+fn undownloadable(
+    encryption: Option<&str>,
+    vault_state: Option<&str>,
+    max_views: Option<i32>,
+) -> Option<PublishResult> {
+    let vault_gated = vault_state.and_then(crate::vault::VaultState::parse).is_some_and(|s| s.is_gated());
+    if truthy(encryption) || vault_gated {
+        return Some(PublishResult::Encrypted);
+    }
+    if max_views.is_some() {
+        return Some(PublishResult::ViewLimited);
+    }
+    None
+}
+
 // ── Database ────────────────────────────────────────────────────────────────
 
 /// The upload `publishRelease` inspects.
-#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+#[derive(Debug, Clone, Default, PartialEq, sqlx::FromRow)]
 pub struct PublishRow {
     pub id: Uuid,
     pub published: bool,
     pub password_hash: Option<String>,
     pub filename: String,
+    /// Not upstream (see [`undownloadable`]): the view limit, the file's
+    /// encryption, and the state of its owner's file vault.
+    pub max_views: Option<i32>,
+    pub encryption: Option<String>,
+    pub vault_state: Option<String>,
 }
 
 /// The upload `currentRelease` resolves the pointer against.
-#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+#[derive(Debug, Clone, Default, PartialEq, sqlx::FromRow)]
 pub struct ManifestRow {
     pub code: String,
     pub ext: String,
@@ -244,6 +275,10 @@ pub struct ManifestRow {
     pub owner_id: Option<String>,
     pub expires_at: Option<JsDate>,
     pub password_hash: Option<String>,
+    /// Not upstream (see [`undownloadable`]).
+    pub max_views: Option<i32>,
+    pub encryption: Option<String>,
+    pub vault_state: Option<String>,
 }
 
 /// The owner columns the download URL is built from.
@@ -289,7 +324,7 @@ impl ReleaseDb for PgReleaseDb<'_> {
 
     async fn publish_row(&self, code: &str) -> anyhow::Result<Option<PublishRow>> {
         Ok(sqlx::query_as::<_, PublishRow>(
-            "SELECT \"id\", \"published\", \"password_hash\", \"filename\" FROM \"uploads\" WHERE (\"uploads\".\"code\" = $1 AND \"uploads\".\"deleted_at\" IS NULL) LIMIT 1",
+            "SELECT \"id\", \"published\", \"password_hash\", \"filename\", \"max_views\", \"encryption\", (SELECT \"state\" FROM \"file_vaults\" WHERE \"file_vaults\".\"user_id\" = \"uploads\".\"owner_id\" LIMIT 1) AS \"vault_state\" FROM \"uploads\" WHERE (\"uploads\".\"code\" = $1 AND \"uploads\".\"deleted_at\" IS NULL) LIMIT 1",
         )
         .bind(code)
         .fetch_optional(self.0)
@@ -298,7 +333,7 @@ impl ReleaseDb for PgReleaseDb<'_> {
 
     async fn manifest_row(&self, code: &str) -> anyhow::Result<Option<ManifestRow>> {
         Ok(sqlx::query_as::<_, ManifestRow>(
-            "SELECT \"code\", \"ext\", \"filename\", \"size\", \"checksum\", \"published\", \"owner_id\", \"expires_at\", \"password_hash\" FROM \"uploads\" WHERE (\"uploads\".\"code\" = $1 AND \"uploads\".\"deleted_at\" IS NULL) LIMIT 1",
+            "SELECT \"code\", \"ext\", \"filename\", \"size\", \"checksum\", \"published\", \"owner_id\", \"expires_at\", \"password_hash\", \"max_views\", \"encryption\", (SELECT \"state\" FROM \"file_vaults\" WHERE \"file_vaults\".\"user_id\" = \"uploads\".\"owner_id\" LIMIT 1) AS \"vault_state\" FROM \"uploads\" WHERE (\"uploads\".\"code\" = $1 AND \"uploads\".\"deleted_at\" IS NULL) LIMIT 1",
         )
         .bind(code)
         .fetch_optional(self.0)
@@ -347,6 +382,12 @@ pub async fn current_release_with<D: ReleaseDb>(db: &D, config: &Config) -> anyh
     if !row.published || truthy(row.password_hash.as_deref()) || row.expires_at.is_some() {
         return Ok(None);
     }
+    // Not upstream: a pointer published before the file became one apps cannot
+    // fetch (its owner turned file encryption on, a view limit was set) reads
+    // as "no release", like a dangling one.
+    if undownloadable(row.encryption.as_deref(), row.vault_state.as_deref(), row.max_views).is_some() {
+        return Ok(None);
+    }
     let Some(owner) = db.owner(owner_id).await? else {
         return Ok(None);
     };
@@ -384,7 +425,15 @@ pub enum PublishResult {
     BadVersion,
     NotFound,
     NotPublic,
-    VersionMismatch { file_version: String, filename: String },
+    /// Not upstream ([`undownloadable`]): the file is encrypted, or its owner's
+    /// file vault asks for the file password.
+    Encrypted,
+    /// Not upstream ([`undownloadable`]): the file has a view limit.
+    ViewLimited,
+    VersionMismatch {
+        file_version: String,
+        filename: String,
+    },
 }
 
 impl PublishResult {
@@ -400,6 +449,8 @@ impl PublishResult {
             PublishResult::BadVersion => Some("bad-version"),
             PublishResult::NotFound => Some("not-found"),
             PublishResult::NotPublic => Some("not-public"),
+            PublishResult::Encrypted => Some("encrypted"),
+            PublishResult::ViewLimited => Some("view-limited"),
             PublishResult::VersionMismatch { .. } => Some("version-mismatch"),
         }
     }
@@ -481,6 +532,9 @@ pub async fn publish_release_with<D: ReleaseDb>(
     };
     if !row.published || truthy(row.password_hash.as_deref()) {
         return Ok(PublishResult::NotPublic);
+    }
+    if let Some(refusal) = undownloadable(row.encryption.as_deref(), row.vault_state.as_deref(), row.max_views) {
+        return Ok(refusal);
     }
 
     // The binary's own name is the cheapest second opinion available, and the
@@ -610,6 +664,7 @@ pub(crate) mod test_support {
                 published: true,
                 password_hash: None,
                 filename: filename.to_string(),
+                ..Default::default()
             });
             self.manifest_rows.lock().unwrap().push_back(ManifestRow {
                 code: "saluy6".into(),
@@ -621,6 +676,7 @@ pub(crate) mod test_support {
                 owner_id: Some("admin".into()),
                 expires_at: None,
                 password_hash: None,
+                ..Default::default()
             });
             self.owners.lock().unwrap().push_back(OwnerRow {
                 user_code: Some("tag".into()),
@@ -764,6 +820,7 @@ mod tests {
             published: true,
             password_hash: None,
             filename: INSTALLER.into(),
+            ..Default::default()
         });
         let result = publish_release_with(&db, &config(), input("0.7.1", "saluy6")).await.unwrap();
         assert_eq!(result, PublishResult::VersionMismatch { file_version: "0.7.0".into(), filename: INSTALLER.into() });
@@ -860,6 +917,7 @@ mod tests {
                 published,
                 password_hash: password.map(str::to_string),
                 filename: INSTALLER.into(),
+                ..Default::default()
             });
             assert_eq!(
                 publish_release_with(&db, &config(), input("0.7.0", "saluy6")).await.unwrap(),
@@ -881,6 +939,55 @@ mod tests {
             PublishResult::NotPublic
         );
         assert!(db.setting(RELEASE_APP).flatten().is_some());
+    }
+
+    /// Not upstream (srv-auth hunt NF-2): an upload installed copies could not
+    /// fetch is refused with its own reason, and nothing is written; a pointer
+    /// to one that became so later reads as "no release".
+    #[tokio::test]
+    async fn encrypted_or_view_limited_uploads_cannot_be_the_release() {
+        let db = FakeReleaseDb::default();
+        // (encryption, vault state, max_views, expected)
+        let cases = [
+            (Some("v1"), None, None, PublishResult::Encrypted),
+            (None, Some("on"), None, PublishResult::Encrypted),
+            (None, Some("encrypting"), None, PublishResult::Encrypted),
+            (None, None, Some(10), PublishResult::ViewLimited),
+        ];
+        for (encryption, vault, max_views, expected) in cases {
+            db.publish_rows.lock().unwrap().push_back(PublishRow {
+                published: true,
+                filename: INSTALLER.into(),
+                encryption: encryption.map(str::to_string),
+                vault_state: vault.map(str::to_string),
+                max_views,
+                ..Default::default()
+            });
+            let result = publish_release_with(&db, &config(), input("0.7.0", "saluy6")).await.unwrap();
+            assert_eq!(result, expected);
+            assert_eq!(result.to_json(), json!({ "ok": false, "reason": expected.reason() }));
+        }
+        assert_eq!(db.setting(RELEASE_APP), None, "nothing written");
+        // A vault being switched OFF (decrypting) no longer gates the account:
+        // only the files still encrypted are refused, by their own column.
+        db.queue_happy_path(INSTALLER, None);
+        db.publish_rows.lock().unwrap().front_mut().unwrap().vault_state = Some("decrypting".into());
+        assert!(publish_release_with(&db, &config(), input("0.7.0", "saluy6")).await.unwrap().is_ok());
+
+        // Published, then the owner turned encryption on / a limit was set.
+        for (vault, max_views) in [(Some("on"), None), (None, Some(3))] {
+            db.manifest_rows.lock().unwrap().push_back(ManifestRow {
+                code: "saluy6".into(),
+                ext: "exe".into(),
+                filename: INSTALLER.into(),
+                published: true,
+                owner_id: Some("admin".into()),
+                vault_state: vault.map(str::to_string),
+                max_views,
+                ..Default::default()
+            });
+            assert_eq!(current_release_with(&db, &config()).await.unwrap(), None);
+        }
     }
 
     // ── currentRelease ──

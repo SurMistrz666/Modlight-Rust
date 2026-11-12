@@ -339,7 +339,26 @@ pub fn check_rate_limit_default(key: &str) -> RateLimitResult {
     check_rate_limit(key, MAX_ATTEMPTS, WINDOW_MS)
 }
 
+/// The longest key a bucket is stored under as written.
+pub const BUCKET_KEY_MAX: usize = 256;
+
+/// The key a bucket is stored under: as written, or, when longer than
+/// [`BUCKET_KEY_MAX`], its SHA-256 (`#<hex>`). Not upstream (storage only, the
+/// answers are the same): some keys carry what a caller typed
+/// (`verify-resend:<address>`, up to an RPC body of 1 MiB), and up to
+/// [`BUCKET_HARD_LIMIT`] live buckets each holding such a key pinned
+/// gigabytes for the whole window.
+fn bucket_key(key: &str) -> std::borrow::Cow<'_, str> {
+    if key.len() <= BUCKET_KEY_MAX {
+        return std::borrow::Cow::Borrowed(key);
+    }
+    use sha2::Digest;
+    std::borrow::Cow::Owned(format!("#{}", hex::encode(sha2::Sha256::digest(key.as_bytes()))))
+}
+
 pub fn check_rate_limit_at(key: &str, max: u32, window_ms: i64, now: i64) -> RateLimitResult {
+    let key = bucket_key(key);
+    let key = key.as_ref();
     let mut guard = BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
     let b = guard.get_or_insert_with(|| Buckets { map: IndexMap::new(), last_sweep: 0 });
     maintain(b, now);
@@ -366,10 +385,18 @@ pub fn check_rate_limit_at(key: &str, max: u32, window_ms: i64, now: i64) -> Rat
 
 /// `resetRateLimit(key)`: clear the bucket after a success.
 pub fn reset_rate_limit(key: &str) {
+    let key = bucket_key(key);
     let mut guard = BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(b) = guard.as_mut() {
-        b.map.shift_remove(key);
+        b.map.shift_remove(key.as_ref());
     }
+}
+
+/// The longest key the buckets hold (for the tests of the key bound).
+#[cfg(test)]
+fn longest_bucket_key() -> usize {
+    let guard = BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().map_or(0, |b| b.map.keys().map(String::len).max().unwrap_or(0))
 }
 
 #[cfg(test)]
@@ -503,6 +530,23 @@ mod tests {
         reset_rate_limit(key);
         assert!(check_rate_limit_at(key, 1, 1000, t0 + 1001).allowed);
         assert!(!check_rate_limit_at(key, 1, 1000, t0 + 1002).allowed);
+    }
+
+    /// A key carrying what a caller typed (`verify-resend:<address>`, an RPC
+    /// argument of up to 1 MiB) is stored by its digest: a bucket stays small
+    /// and still counts, refuses and resets like any other.
+    #[test]
+    fn a_long_key_is_stored_small_and_counted_alike() {
+        let key = format!("verify-resend:{}@example.test", "a".repeat(500_000));
+        let t0 = 2_000_000;
+        for _ in 0..3 {
+            assert!(check_rate_limit_at(&key, 3, 1000, t0).allowed);
+        }
+        assert!(!check_rate_limit_at(&key, 3, 1000, t0 + 1).allowed);
+        assert!(check_rate_limit_at(&format!("{key}x"), 3, 1000, t0 + 1).allowed);
+        assert!(longest_bucket_key() < 2 * BUCKET_KEY_MAX, "{} bytes", longest_bucket_key());
+        reset_rate_limit(&key);
+        assert!(check_rate_limit_at(&key, 3, 1000, t0 + 2).allowed);
     }
 }
 

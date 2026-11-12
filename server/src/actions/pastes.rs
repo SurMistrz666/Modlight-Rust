@@ -140,112 +140,120 @@ async fn create_paste(ctx: ActionCtx) -> ActionResult {
     let buf = Bytes::from(content.into_bytes());
     let size = buf.len() as i64;
 
-    let max_quota = session.user.max_quota;
-    let used = session.user.used_quota.unwrap_or(0);
-    if let Some(max) = max_quota
-        && max != -1
-        && used + size > max
-    {
-        return Err(ActionError::thrown("Quota exceeded"));
+    // Not upstream: the bytes are reserved against the quota in one statement,
+    // as an upload reserves them (`finalize::reserve_quota`). Upstream compared
+    // the session's numbers with the size and added them after the insert, so
+    // pastes sent side by side all passed and the account went over its quota.
+    // Whatever fails after this point gives the reservation back.
+    let db = &ctx.state.db;
+    match crate::upload::finalize::reserve_quota(db, &session.user.id, size).await {
+        Ok(()) => {}
+        Err(crate::upload::finalize::FinalizeError::QuotaExceeded) => {
+            return Err(ActionError::thrown("Quota exceeded"));
+        }
+        Err(err) => return Err(ActionError::Internal(anyhow::Error::from(err))),
     }
+    let stored: Result<_, ActionError> = async {
+        let code = unique_code(&ctx.state.db).await?;
+        let user_code = session.user.user_code.clone().unwrap_or_else(|| "u".to_string());
+        let key = crate::media::urls::storage_key_for(&user_code, &code, ext);
+        let checksum = crate::media::derived_cache::content_hash(&buf);
+        let storage = ctx.state.storage.get()?;
+        // Not upstream: an account with file encryption on stores the paste
+        // encrypted with its public key (docs/ENCRYPTION.md section 5).
+        let sealer =
+            crate::vault::write::sealer_for(&ctx.state.db, &ctx.state.config.auth.secret, &session.user.id).await?;
+        let encryption = match &sealer {
+            Some(sealer) => Some(sealer.write_bytes(storage.as_ref(), &key, buf.clone()).await?),
+            None => {
+                let body = buf.clone();
+                storage.write(&key, Box::pin(futures_util::stream::once(async move { Ok(body) }))).await?;
+                None
+            }
+        };
 
-    let code = unique_code(&ctx.state.db).await?;
-    let user_code = session.user.user_code.clone().unwrap_or_else(|| "u".to_string());
-    let key = crate::media::urls::storage_key_for(&user_code, &code, ext);
-    let checksum = crate::media::derived_cache::content_hash(&buf);
-    let storage = ctx.state.storage.get()?;
-    // Not upstream: an account with file encryption on stores the paste
-    // encrypted with its public key (docs/ENCRYPTION.md section 5).
-    let sealer =
-        crate::vault::write::sealer_for(&ctx.state.db, &ctx.state.config.auth.secret, &session.user.id).await?;
-    let encryption = match &sealer {
-        Some(sealer) => Some(sealer.write_bytes(storage.as_ref(), &key, buf.clone()).await?),
-        None => {
-            let body = buf.clone();
-            storage.write(&key, Box::pin(futures_util::stream::once(async move { Ok(body) }))).await?;
+        let filename = format!("{}.{ext}", file_stem(prop(input, "title"))?);
+
+        let minutes = lifetime_minutes(input);
+        let expires_at = if minutes.is_nan() || minutes == 0.0 {
             None
-        }
-    };
+        } else {
+            let ms = JsDate::now().millis() as f64 + minutes * 60_000.0;
+            if !ms.is_finite() || ms.abs() > JS_DATE_MAX_MS {
+                // An Invalid Date: drizzle's `toISOString()` throws.
+                return Err(ActionError::thrown("Invalid time value"));
+            }
+            JsDate::from_millis(ms as i64)
+        };
 
-    let filename = format!("{}.{ext}", file_stem(prop(input, "title"))?);
+        // A password typed here is a decision about THIS paste: it wins and
+        // stores no generation, which is what stops an account-wide "remember for
+        // 30 days" consent from opening it. Otherwise the account default applies.
+        let password = prop(input, "password");
+        let chosen = if truthy(password) {
+            match password {
+                Some(Value::String(p)) => Some(crate::password::hash_password(p).await?),
+                _ => return Err(ActionError::thrown("The \"password\" argument must be of type string")),
+            }
+        } else {
+            None
+        };
+        let (password_hash, password_version) = match chosen {
+            Some(hash) => (Some(hash), None),
+            None => {
+                let stamp = crate::data::user_prefs::default_password_stamp(&ctx.state.db, &session.user.id).await?;
+                (stamp.password_hash, stamp.password_version)
+            }
+        };
+        let max_views = normalise_max_views(prop(input, "maxViews"));
 
-    let minutes = lifetime_minutes(input);
-    let expires_at = if minutes.is_nan() || minutes == 0.0 {
-        None
-    } else {
-        let ms = JsDate::now().millis() as f64 + minutes * 60_000.0;
-        if !ms.is_finite() || ms.abs() > JS_DATE_MAX_MS {
-            // An Invalid Date: drizzle's `toISOString()` throws.
-            return Err(ActionError::thrown("Invalid time value"));
+        let mime_type = crate::media::paste_type::paste_mime_type(Some(&lang))
+            .unwrap_or_else(|| "text/plain; charset=utf-8".into());
+        let published = !session.user.hide_uploads.unwrap_or(false);
+        let mut tx = ctx.state.db.begin().await?;
+        if let Err(err) =
+            crate::vault::write::confirm_vault_for_write(&mut tx, &session.user.id, encryption.is_some()).await
+        {
+            let _ = storage.delete(&key).await;
+            return Err(err.into());
         }
-        JsDate::from_millis(ms as i64)
-    };
-
-    // A password typed here is a decision about THIS paste: it wins and
-    // stores no generation, which is what stops an account-wide "remember for
-    // 30 days" consent from opening it. Otherwise the account default applies.
-    let password = prop(input, "password");
-    let chosen = if truthy(password) {
-        match password {
-            Some(Value::String(p)) => Some(crate::password::hash_password(p).await?),
-            _ => return Err(ActionError::thrown("The \"password\" argument must be of type string")),
-        }
-    } else {
-        None
-    };
-    let (password_hash, password_version) = match chosen {
-        Some(hash) => (Some(hash), None),
-        None => {
-            let stamp = crate::data::user_prefs::default_password_stamp(&ctx.state.db, &session.user.id).await?;
-            (stamp.password_hash, stamp.password_version)
-        }
-    };
-    let max_views = normalise_max_views(prop(input, "maxViews"));
-
-    let mime_type =
-        crate::media::paste_type::paste_mime_type(Some(&lang)).unwrap_or_else(|| "text/plain; charset=utf-8".into());
-    let published = !session.user.hide_uploads.unwrap_or(false);
-    let mut tx = ctx.state.db.begin().await?;
-    if let Err(err) =
-        crate::vault::write::confirm_vault_for_write(&mut tx, &session.user.id, encryption.is_some()).await
-    {
-        let _ = storage.delete(&key).await;
-        return Err(err.into());
-    }
-    sqlx::query(
-        r#"insert into "uploads" ("owner_id", "code", "filename", "ext", "kind", "language", "mime_type", "size",
+        sqlx::query(
+            r#"insert into "uploads" ("owner_id", "code", "filename", "ext", "kind", "language", "mime_type", "size",
              "checksum", "storage_key", "published", "delete_token", "expires_at", "password_hash",
              "password_version", "max_views", "encryption")
            values ($1, $2, $3, $4, 'paste', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"#,
-    )
-    .bind(&session.user.id)
-    .bind(&code)
-    .bind(&filename)
-    .bind(ext)
-    .bind(&lang)
-    .bind(&mime_type)
-    .bind(size)
-    .bind(&checksum)
-    .bind(&key)
-    .bind(published)
-    .bind(crate::ids::secure_token(16))
-    .bind(expires_at)
-    .bind(&password_hash)
-    .bind(password_version)
-    .bind(max_views.map(|v| v as i32))
-    .bind(&encryption)
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    // drizzle's `$onUpdate` stamps `updated_at` on every user update.
-    sqlx::query(
-        r#"update "user" set "used_quota" = "user"."used_quota" + $1, "updated_at" = $2 where "user"."id" = $3"#,
-    )
-    .bind(size)
-    .bind(JsDate::now())
-    .bind(&session.user.id)
-    .execute(&ctx.state.db)
-    .await?;
+        )
+        .bind(&session.user.id)
+        .bind(&code)
+        .bind(&filename)
+        .bind(ext)
+        .bind(&lang)
+        .bind(&mime_type)
+        .bind(size)
+        .bind(&checksum)
+        .bind(&key)
+        .bind(published)
+        .bind(crate::ids::secure_token(16))
+        .bind(expires_at)
+        .bind(&password_hash)
+        .bind(password_version)
+        .bind(max_views.map(|v| v as i32))
+        .bind(&encryption)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((code, user_code, expires_at, max_views, password_hash.is_some()))
+    }
+    .await;
+    let (code, user_code, expires_at, max_views, has_password) = match stored {
+        Ok(stored) => stored,
+        Err(err) => {
+            if let Err(e) = crate::upload::finalize::release_quota(db, &session.user.id, size).await {
+                tracing::error!("[pastes] could not release quota reservation: {} {e}", session.user.id);
+            }
+            return Err(err);
+        }
+    };
 
     ctx.revalidate_path("/dashboard");
     // Same hostname the user's uploads are handed out on.
@@ -260,7 +268,7 @@ async fn create_paste(ctx: ActionCtx) -> ActionResult {
         "rawUrl": crate::media::urls::raw_url(&user_code, &code, ext, &base),
         "expiresAt": expires_at.map(|d| d.to_iso_string()),
         "maxViews": max_views,
-        "hasPassword": password_hash.is_some(),
+        "hasPassword": has_password,
     }))
 }
 

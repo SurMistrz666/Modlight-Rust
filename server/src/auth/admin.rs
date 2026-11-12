@@ -365,8 +365,27 @@ fn admin_update_user(ctx: &mut EndpointCtx) -> BoxFuture<'_, HandlerResult> {
                 (k.clone(), value)
             })
             .collect();
+        // Not upstream (srv-auth hunt NF-4): a ban written here is a ban like
+        // `/admin/ban-user`'s, which refuses the caller's own account and ends
+        // the account's sessions. Upstream only wrote the column, so a banned
+        // account kept every session it had until they expired.
+        let user_id = body_user_id(ctx);
+        let bans = data
+            .get("banned")
+            .and_then(pg_text)
+            .and_then(|t| crate::actions::account::js::pg_parse_bool(&t))
+            .unwrap_or(false);
+        if bans && ctx.session.as_ref().is_some_and(|s| s.user.id == user_id) {
+            return Err(ApiError::from("BAD_REQUEST", codes::YOU_CANNOT_BAN_YOURSELF).into());
+        }
         let patch_refs: Vec<(&str, SqlValue)> = patch.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
-        let user = adapter::update_user(ctx.db(), &body_user_id(ctx), &patch_refs).await?;
+        let user = adapter::update_user(ctx.db(), &user_id, &patch_refs).await?;
+        // Decided on the row as written (Postgres read the value as a boolean).
+        if data.contains_key("banned")
+            && let Some(u) = user.as_ref().filter(|u| u.banned == Some(true))
+        {
+            adapter::delete_user_sessions(ctx.db(), &u.id).await?;
+        }
         ctx.json(user_json(user.as_ref()))
     })
 }
@@ -545,6 +564,22 @@ pub async fn unban(db: &sqlx::PgPool, user_id: &str) -> sqlx::Result<Option<User
     .await
 }
 
+/// `new Date(now + secs * 1000)` (better-auth's `getDate(secs, "sec")`), or
+/// `None` for an Invalid Date: a time value JavaScript cannot represent
+/// (beyond 8.64e15 ms either side of the epoch), where upstream's write fails.
+/// Before, an overlong ban saturated or overflowed into a date that chrono
+/// rejected, and fell back to NOW: the account was banned until its next
+/// sign-in, which lifts an expired ban.
+pub fn ban_expiry(now_ms: i64, secs: f64) -> Option<JsDate> {
+    const JS_DATE_LIMIT_MS: f64 = 8.64e15;
+    let at = now_ms as f64 + secs * 1000.0;
+    if !at.is_finite() || at.abs() > JS_DATE_LIMIT_MS {
+        return None;
+    }
+    // `new Date(x)` keeps the integer part of the time value (TimeClip).
+    JsDate::from_millis(at.trunc() as i64)
+}
+
 fn ban_user(ctx: &mut EndpointCtx) -> BoxFuture<'_, HandlerResult> {
     Box::pin(async move {
         if !can(ctx, "user", "ban") {
@@ -561,7 +596,11 @@ fn ban_user(ctx: &mut EndpointCtx) -> BoxFuture<'_, HandlerResult> {
         let mut patch = vec![("banned", SqlValue::Bool(true)), ("banReason", SqlValue::Text(reason))];
         if let Some(secs) = ctx.body_field("banExpiresIn").and_then(Value::as_f64).filter(|s| *s != 0.0 && !s.is_nan())
         {
-            let at = JsDate::from_millis(JsDate::now().millis() + (secs * 1000.0) as i64).unwrap_or_else(JsDate::now);
+            // `getDate(banExpiresIn, "sec")`: a date JavaScript cannot hold is an
+            // Invalid Date upstream, the write fails and nobody is banned.
+            let Some(at) = ban_expiry(JsDate::now().millis(), secs) else {
+                return Err(anyhow::anyhow!("Invalid time value").into());
+            };
             patch.push(("banExpires", SqlValue::Date(at)));
         }
         patch.push(("updatedAt", SqlValue::Date(JsDate::now())));
@@ -777,5 +816,17 @@ mod tests {
         assert!(!has_permission(Some("toString"), &user("list")));
         assert!(!has_permission(Some("admin"), &[("files", vec!["x".into()])]));
         assert!(!has_permission(Some("admin"), &[("user", vec![])]));
+    }
+
+    /// `banExpiresIn` too large for a JavaScript date is an error (upstream's
+    /// write fails), never a ban that expires at once.
+    #[test]
+    fn a_ban_too_long_for_a_date_is_refused_not_lifted() {
+        let now = 1_760_000_000_000;
+        assert_eq!(ban_expiry(now, 3600.0).map(|d| d.millis()), Some(now + 3_600_000));
+        assert_eq!(ban_expiry(now, -60.5).map(|d| d.millis()), Some(now - 60_500));
+        for secs in [1e13, 1e16, 1e300, f64::INFINITY, -1e300] {
+            assert_eq!(ban_expiry(now, secs), None, "{secs}");
+        }
     }
 }

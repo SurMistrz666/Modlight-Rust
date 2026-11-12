@@ -9,7 +9,7 @@ use bytes::Bytes;
 
 use super::VaultState;
 use super::cipher::{CipherHeader, ObjectCipher, encrypt_stream};
-use super::keys::{seal_file_key, server_key, trusted_public_key};
+use super::keys::{KeyError, seal_file_key, server_key, trusted_public_key};
 use super::store;
 use crate::db::models::FileVault;
 use crate::storage::{ByteStream, StorageDriver, bytes_stream};
@@ -77,6 +77,14 @@ impl Sealer {
     }
 }
 
+/// Whether `err` (from [`sealer_for`] or [`Sealer::from_vault`]) says the
+/// account's public key no longer carries this server's seal: the server key
+/// changed (docs/ENCRYPTION.md section 3.4). Nothing can be encrypted for the
+/// account until its owner switches encryption off (and on again).
+pub fn is_unsealed_vault(err: &anyhow::Error) -> bool {
+    matches!(err.downcast_ref::<KeyError>(), Some(KeyError::UntrustedPublicKey))
+}
+
 /// The sealer of `user_id` when new files of that account must be encrypted
 /// (vault `encrypting` or `on`); None otherwise.
 pub async fn sealer_for(db: &sqlx::PgPool, auth_secret: &str, user_id: &str) -> anyhow::Result<Option<Sealer>> {
@@ -97,12 +105,22 @@ pub async fn sealer_for(db: &sqlx::PgPool, auth_secret: &str, user_id: &str) -> 
 ///   the client);
 /// - a plaintext object written into a vault that is already `on` sends the
 ///   vault back to `encrypting`, so the pass picks the row up.
+///
+/// Not upstream (hunt SRVF-N5): a plaintext writer, which may have to update
+/// the row, locks it as an update does from the start. Holding `FOR SHARE`
+/// and then updating deadlocked two plaintext writers of the same `on` vault.
+/// Every writer takes this lock first in its transaction, so writers of one
+/// account queue here for the moment of their insert, in one order.
 pub async fn confirm_vault_for_write(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     owner_id: &str,
     encrypted: bool,
 ) -> anyhow::Result<()> {
-    let vault = store::load_shared(&mut **tx, owner_id).await?;
+    let vault = if encrypted {
+        store::load_shared(&mut **tx, owner_id).await?
+    } else {
+        store::load_for_update(&mut **tx, owner_id).await?
+    };
     match (vault, encrypted) {
         (None, true) => anyhow::bail!("file encryption was switched off during the upload; try again"),
         (Some(v), false) if store::state_of(&v) == Some(VaultState::On) => {

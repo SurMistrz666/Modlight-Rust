@@ -53,6 +53,20 @@ pub async fn load_shared(db: impl PgExecutor<'_>, user_id: &str) -> sqlx::Result
     sqlx::query_as(&sql).bind(user_id).fetch_optional(db).await
 }
 
+/// The row under the lock its own UPDATE would take (`FOR NO KEY UPDATE`),
+/// for a writer that may have to change it. Two writers holding `FOR SHARE`
+/// that both go on to update deadlock; this lock lets one at a time through.
+/// It conflicts with `FOR SHARE` and with the pass's `FOR UPDATE` as `FOR
+/// SHARE` does, so the pass still waits for the writer's row.
+pub async fn load_for_update(db: impl PgExecutor<'_>, user_id: &str) -> sqlx::Result<Option<FileVault>> {
+    let sql = format!(
+        r#"select {} from {} where "user_id" = $1 limit 1 for no key update"#,
+        FileVault::COLUMNS,
+        FileVault::TABLE
+    );
+    sqlx::query_as(&sql).bind(user_id).fetch_optional(db).await
+}
+
 pub fn state_of(vault: &FileVault) -> Option<VaultState> {
     VaultState::parse(&vault.state)
 }

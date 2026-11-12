@@ -134,15 +134,15 @@ async fn set_avatar_from_upload(ctx: ActionCtx) -> ActionResult {
         return refused("not-found");
     };
     let db = &ctx.state.db;
-    let row: Option<(String, String, String, i64)> = sqlx::query_as(
-        r#"select "storage_key", "mime_type", "ext", "size" from "uploads"
+    let row: Option<(String, String, i64)> = sqlx::query_as(
+        r#"select "mime_type", "ext", "size" from "uploads"
            where ("uploads"."id" = $1::uuid and "uploads"."owner_id" = $2 and "uploads"."deleted_at" is null) limit 1"#,
     )
     .bind(id)
     .bind(&session.user.id)
     .fetch_optional(db)
     .await?;
-    let Some((storage_key, mime, ext, size)) = row else {
+    let Some((mime, ext, size)) = row else {
         return refused("not-found");
     };
     if !is_pickable_image(Some(&mime), Some(&ext)) {
@@ -164,11 +164,14 @@ async fn set_avatar_from_upload(ctx: ActionCtx) -> ActionResult {
         }
         None => None,
     };
-    let Some(readable) = readable else {
+    let (Some(readable), Some(full)) = (readable, full.as_ref()) else {
         return refused("not-found");
     };
     let reader = readable.storage.get()?;
-    let Ok(input) = reader.read_buffer(&storage_key).await else {
+    // The key of the row the view was built from: the vault's pass may have
+    // moved the object since the first read, and the old key then holds no
+    // bytes, or not the ones this view decrypts.
+    let Ok(input) = reader.read_buffer(&full.storage_key).await else {
         // The row exists but its bytes do not.
         return refused("not-found");
     };

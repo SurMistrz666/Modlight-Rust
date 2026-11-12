@@ -283,3 +283,172 @@ async fn duplicates_scan_and_dismissals() {
     assert_eq!(restore_checksums(db, "u1", std::slice::from_ref(&sum)).await.unwrap(), 1);
     t.drop().await;
 }
+
+/// What somebody else does to ANOTHER trashed row at the moment the sweep
+/// deletes its first object.
+enum Race {
+    /// Purges it (its row and its owner's refund): the owner's own "Empty
+    /// trash", or a second server process, running beside the sweep.
+    Purge(Uuid),
+    /// Restores it from the trash.
+    Restore(Uuid),
+}
+
+/// A storage that lets [`Race`] happen in the middle of a sweep.
+struct RacedStorage {
+    inner: LocalDriver,
+    pool: PgPool,
+    race: Race,
+    raced: std::sync::atomic::AtomicBool,
+}
+
+impl StorageDriver for RacedStorage {
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+    fn write<'a>(
+        &'a self,
+        path: &'a str,
+        body: modlight_server::storage::ByteStream,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<()>> {
+        self.inner.write(path, body)
+    }
+    fn ingest_local_file<'a>(
+        &'a self,
+        local: &'a std::path::Path,
+        path: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<()>> {
+        self.inner.ingest_local_file(local, path)
+    }
+    fn read_stream<'a>(
+        &'a self,
+        path: &'a str,
+        range: Option<modlight_server::storage::ByteRange>,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<modlight_server::storage::ByteStream>> {
+        self.inner.read_stream(path, range)
+    }
+    fn read_buffer<'a>(&'a self, path: &'a str) -> futures_util::future::BoxFuture<'a, anyhow::Result<bytes::Bytes>> {
+        self.inner.read_buffer(path)
+    }
+    fn stat<'a>(
+        &'a self,
+        path: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<modlight_server::storage::StatResult>>> {
+        self.inner.stat(path)
+    }
+    fn delete<'a>(&'a self, path: &'a str) -> futures_util::future::BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            if !self.raced.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                match self.race {
+                    Race::Purge(other) => {
+                        let size: i64 = sqlx::query_scalar(r#"delete from "uploads" where "id" = $1 returning "size""#)
+                            .bind(other)
+                            .fetch_one(&self.pool)
+                            .await?;
+                        sqlx::query(
+                            r#"update "user" set "used_quota" = greatest(0, "used_quota" - $1) where "id" = 'racer'"#,
+                        )
+                        .bind(size)
+                        .execute(&self.pool)
+                        .await?;
+                    }
+                    Race::Restore(other) => {
+                        modlight_server::media::actions::restore_media(&self.pool, other).await?;
+                    }
+                }
+            }
+            self.inner.delete(path).await
+        })
+    }
+    fn delete_prefix<'a>(&'a self, prefix: &'a str) -> futures_util::future::BoxFuture<'a, anyhow::Result<()>> {
+        self.inner.delete_prefix(prefix)
+    }
+}
+
+/// Hunt 2026-11-11 (SRVF-05): the trash sweep refunds the quota of the rows IT
+/// deleted, not of every row it read. A row purged by somebody else in between
+/// was refunded twice, so an account could store more than its quota (two
+/// "Empty trash" calls racing the sweep, or each other, lower `used_quota`
+/// below what the account really holds).
+#[tokio::test]
+async fn the_trash_sweep_refunds_only_what_it_deleted() {
+    let db = db_or_skip!();
+    user(&db.pool, "racer", "racer").await;
+    sqlx::query(r#"update "user" set "used_quota" = 1000 where "id" = 'racer'"#).execute(&db.pool).await.unwrap();
+    let a = upload(&db.pool, "racer", "a", 100, None, None).await;
+    let _b = upload(&db.pool, "racer", "b", 200, None, None).await;
+    // `b` is swept first; `a` is purged by somebody else meanwhile.
+    sqlx::query(
+        r#"update "uploads" set "deleted_at" = now() - case when "code" = 'b' then interval '41 days' else interval '40 days' end
+           where "owner_id" = 'racer'"#,
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let storage = RacedStorage {
+        inner: LocalDriver::new(dir.path().to_str().unwrap()),
+        pool: db.pool.clone(),
+        race: Race::Purge(a),
+        raced: std::sync::atomic::AtomicBool::new(false),
+    };
+    let swept =
+        modlight_server::maintenance::trash::purge_expired_trash_with(&db.pool, &storage, JsDate::now()).await.unwrap();
+    let used: i64 = sqlx::query_scalar(r#"select "used_quota" from "user" where "id" = 'racer'"#)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    // 1000 - 100 (refunded by whoever purged `a`) - 200 (the sweep's own `b`).
+    assert_eq!(used, 700, "a row purged by somebody else was refunded again");
+    assert_eq!((swept.deleted, swept.bytes), (1, 200));
+    db.drop().await;
+}
+
+/// Hunt 2026-11-11 round 2 (SRVF-N8): a file restored while the sweep is
+/// working through the trash stays restored, bytes and all. The sweep used to
+/// delete every object of the batch it had read and then every row, so a file
+/// restored in between came back as nothing (its row deleted after the
+/// restore succeeded, or pointing at a deleted object).
+#[tokio::test]
+async fn a_file_restored_during_the_sweep_survives_it() {
+    let db = db_or_skip!();
+    user(&db.pool, "racer", "racer").await;
+    sqlx::query(r#"update "user" set "used_quota" = 300 where "id" = 'racer'"#).execute(&db.pool).await.unwrap();
+    let _a = upload(&db.pool, "racer", "a", 100, None, None).await;
+    let b = upload(&db.pool, "racer", "b", 200, None, None).await;
+    sqlx::query(
+        r#"update "uploads" set "deleted_at" = now() - case when "code" = 'a' then interval '41 days' else interval '40 days' end
+           where "owner_id" = 'racer'"#,
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    for key in ["racer/a.png", "racer/b.png"] {
+        std::fs::create_dir_all(dir.path().join("racer")).unwrap();
+        std::fs::write(dir.path().join(key), b"bytes").unwrap();
+    }
+    let storage = RacedStorage {
+        inner: LocalDriver::new(dir.path().to_str().unwrap()),
+        pool: db.pool.clone(),
+        race: Race::Restore(b),
+        raced: std::sync::atomic::AtomicBool::new(false),
+    };
+    let swept =
+        modlight_server::maintenance::trash::purge_expired_trash_with(&db.pool, &storage, JsDate::now()).await.unwrap();
+    let restored: Option<Option<JsDate>> = sqlx::query_scalar(r#"select "deleted_at" from "uploads" where "id" = $1"#)
+        .bind(b)
+        .fetch_optional(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(restored, Some(None), "the restored file's row was swept away");
+    assert!(dir.path().join("racer/b.png").exists(), "the restored file's bytes were swept away");
+    assert!(!dir.path().join("racer/a.png").exists());
+    assert_eq!((swept.deleted, swept.bytes), (1, 100));
+    let used: i64 = sqlx::query_scalar(r#"select "used_quota" from "user" where "id" = 'racer'"#)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(used, 200);
+    db.drop().await;
+}

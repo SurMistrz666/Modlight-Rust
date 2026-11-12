@@ -739,3 +739,34 @@ async fn short_links_and_the_unlock_cookie() {
     assert_eq!(h.scalar_i64(r#"select count(*) from "short_links""#).await, 0);
     h.drop().await;
 }
+
+/// Hunt 2026-11-11 round 2 (SRVF-N6): a paste reserves its bytes against the
+/// quota in one statement, as an upload does. It used to compare the quota
+/// numbers of the session with its size and add them afterwards, so pastes
+/// sent side by side all passed the check and the account went over.
+#[tokio::test]
+async fn parallel_pastes_cannot_overrun_the_quota() {
+    let Some(h) = Harness::new().await else { return };
+    h.user("me", "me", "user").await;
+    sqlx::query(r#"update "user" set "max_quota" = 10, "used_quota" = 0 where "id" = 'me'"#)
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    let me = h.session("me").await;
+    let paste = || h.rpc(Some(&me), "pastes", "createPaste", json!([{ "content": "12345678" }]));
+    let (a, b, c) = tokio::join!(paste(), paste(), paste());
+    let made = [&a, &b, &c].iter().filter(|r| r["ok"]["code"].is_string()).count() as i64;
+    assert_eq!(made, 1, "{a} {b} {c}");
+    for r in [&a, &b, &c] {
+        if !r["ok"]["code"].is_string() {
+            assert_eq!(r["error"]["message"], "Quota exceeded", "{r}");
+        }
+    }
+    assert_eq!(h.scalar_i64(r#"select "used_quota" from "user" where "id" = 'me'"#).await, 8);
+    assert_eq!(h.scalar_i64(r#"select count(*) from "uploads" where "owner_id" = 'me'"#).await, 1);
+    // A paste that throws after reserving (a title that is not text) gives its bytes back.
+    let thrown = h.rpc(Some(&me), "pastes", "createPaste", json!([{ "content": "12", "title": 5 }])).await;
+    assert!(thrown["error"]["message"].is_string(), "{thrown}");
+    assert_eq!(h.scalar_i64(r#"select "used_quota" from "user" where "id" = 'me'"#).await, 8);
+    h.drop().await;
+}

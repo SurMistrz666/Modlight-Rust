@@ -71,5 +71,14 @@
     "script": "The same as a shell script (curl):",
     "copy": "Copy",
     "copied": "Copied."
+  },
+  "refusal": {
+    "signIn": "Sign in, or send an API token (Authorization: Bearer followed by the token).",
+    "disabled": "This account is disabled.",
+    "notAdmin": "Only administrators may delete builds.",
+    "invalidScope": "This API token carries a scope this server does not recognise. Create a new token in Integrations.",
+    "insufficientScope": "This API token is scoped to \"{scope}\" and this call needs \"{needed}\". Create a token with the \"{needed}\" scope (or wider) in Integrations.",
+    "notFound": "No such build.",
+    "internal": "Something went wrong on the server; try again."
   }
 }

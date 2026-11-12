@@ -537,10 +537,23 @@ pub fn is_guessable(scheme: &str) -> bool {
     matches!(scheme, "filename" | "date-filename" | "custom")
 }
 
+/// `uploads.code` is a varchar(64): the longest code a row can hold.
+pub const CODE_MAX: usize = 64;
+
+/// `base` cut so that `suffix` still fits after it inside [`CODE_MAX`].
+fn with_suffix(base: &str, suffix: &str) -> String {
+    format!("{}{suffix}", js_slice(base, CODE_MAX.saturating_sub(suffix.len())))
+}
+
 /// Resolve a base into a code that is free, given a predicate that reports
 /// whether a candidate is already taken. With `regenerate` (random schemes):
 /// keep drawing fresh, wider codes; without it (name-derived schemes): exact
 /// base, then -2..-20, then a random suffix.
+///
+/// Not upstream: every candidate is cut to [`CODE_MAX`], suffix included.
+/// Upstream cut at 100 characters, so a long file name under a name-derived
+/// scheme (an 80-character slug, `date-` plus one, a custom pattern) made a
+/// code the column refuses, and the whole upload failed.
 pub async fn allocate_code<F, Fut>(
     base: &str,
     mut is_taken: F,
@@ -550,7 +563,7 @@ where
     F: FnMut(String) -> Fut,
     Fut: Future<Output = anyhow::Result<bool>>,
 {
-    let sliced = js_slice(base, 100);
+    let sliced = js_slice(base, CODE_MAX);
     let clean = if sliced.is_empty() { human_code(10) } else { sliced.to_string() };
 
     if !is_taken(clean.clone()).await? {
@@ -558,7 +571,7 @@ where
     }
     if let Some(regenerate) = regenerate {
         for i in 1..=24 {
-            let candidate = js_slice(&regenerate(i), 100).to_string();
+            let candidate = js_slice(&regenerate(i), CODE_MAX).to_string();
             if !candidate.is_empty() && !is_taken(candidate.clone()).await? {
                 return Ok(candidate);
             }
@@ -566,13 +579,13 @@ where
         anyhow::bail!("Could not allocate a unique code for \"{clean}\"");
     }
     for i in 2..=20 {
-        let candidate = format!("{clean}-{i}");
+        let candidate = with_suffix(&clean, &format!("-{i}"));
         if !is_taken(candidate.clone()).await? {
             return Ok(candidate);
         }
     }
     for _ in 0..20 {
-        let candidate = format!("{clean}-{}", short_random(5));
+        let candidate = with_suffix(&clean, &format!("-{}", short_random(5)));
         if !is_taken(candidate.clone()).await? {
             return Ok(candidate);
         }
@@ -798,6 +811,40 @@ mod tests {
         assert_eq!(code, "raport-2");
         let plan = plan_code(&input("random-chars", "a.png"));
         assert!(allocate_code(&plan.base, |_| async { Ok(true) }, plan.regenerate.as_ref()).await.is_err());
+    }
+
+    /// SRVF-04: every candidate fits `uploads.code` (varchar(64)), suffix included.
+    #[tokio::test]
+    async fn every_candidate_fits_the_code_column() {
+        let long = "a".repeat(90);
+        assert_eq!(allocate_code(&long, |_| async { Ok(false) }, None).await.unwrap().len(), CODE_MAX);
+        let tried = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = tried.clone();
+        let code = allocate_code(
+            &long,
+            move |c| {
+                let log = log.clone();
+                async move {
+                    log.lock().unwrap().push(c.clone());
+                    Ok(!c.ends_with("-20") && c.len() == CODE_MAX)
+                }
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(code.ends_with("-20") && code.len() == CODE_MAX, "{code}");
+        assert!(tried.lock().unwrap().iter().all(|c| c.len() <= CODE_MAX));
+        // The random tail of the last resort, too.
+        let code = allocate_code(&long, |c| async move { Ok(!re("-[a-z0-9]{5}$").is_match(&c)) }, None).await.unwrap();
+        assert_eq!(code.len(), CODE_MAX);
+        // Every name scheme's first candidate for a long file name.
+        let name = format!("{}.pdf", "Raport kwartalny zespolu infrastruktury ".repeat(4));
+        for scheme in ["filename", "filename-random", "date-filename", "custom"] {
+            let plan = plan_code(&CodeBaseInput { pattern: Some("{name}-{name}"), ..input(scheme, &name) });
+            let code = allocate_code(&plan.base, |_| async { Ok(false) }, plan.regenerate.as_ref()).await.unwrap();
+            assert!(code.len() <= CODE_MAX, "{scheme}: {code}");
+        }
     }
 
     #[test]

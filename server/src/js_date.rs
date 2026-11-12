@@ -52,6 +52,11 @@ fn digits(s: &str, n: usize) -> Option<u32> {
 
 /// The Date Time String Format (ECMA-262 21.4.1.32).
 fn parse_iso_format(s: &str) -> Option<JsDate> {
+    // The format is ASCII only, and everything below cuts at byte offsets:
+    // other text belongs to the legacy parser (which reads characters).
+    if !s.is_ascii() {
+        return None;
+    }
     let (date_part, time_part) = match s.find('T') {
         Some(i) => (&s[..i], Some(&s[i + 1..])),
         None => (s, None),
@@ -205,7 +210,9 @@ fn parse_legacy(s: &str) -> Option<JsDate> {
             let n = &tokens[i + 1];
             let v: i32 = n.replace(':', "").parse().ok()?;
             let (hh, mm) = if n.len() <= 2 { (v, 0) } else { (v / 100, v % 100) };
-            offset = Some(if t == "-" { -1 } else { 1 } * (hh * 3600 + mm * 60));
+            // Checked: the hours are whatever number the text spelled.
+            let secs = hh.checked_mul(3600)?.checked_add(mm * 60)?;
+            offset = Some(if t == "-" { -secs } else { secs });
             i += 1;
         } else if t == "am" || t == "pm" {
             let tm = time?;
@@ -358,5 +365,24 @@ mod tests {
             iso("Tue Oct 20 2026 12:00:00 GMT+0200 (Central European Summer Time)").as_deref(),
             Some("2026-10-20T10:00:00.000Z")
         );
+    }
+
+    /// A query string (`/dashboard?from=`) or an API body can carry any text:
+    /// non-ASCII where the ISO parser cuts at byte offsets, and offsets far
+    /// beyond any time zone, are an Invalid Date, never a panic.
+    #[test]
+    fn hostile_text_is_an_invalid_date_not_a_panic() {
+        for s in [
+            "2026-a\u{e9}xy",
+            "2026-\u{e9}\u{e9}a",
+            "2026-01-01T10:00+a\u{e9}:b",
+            "2026-01-01T10:00-\u{e9}a:bc",
+            "+0\u{e9}026-01-01",
+        ] {
+            assert!(iso(s).is_none(), "{s:?}");
+        }
+        // `+2147483647` is a number of hours V8 rejects; here it must not overflow.
+        assert!(iso("Oct 20 2026 10:00 +2147483647").is_none());
+        assert!(iso("Oct 20 2026 10:00 -2147483647").is_none());
     }
 }

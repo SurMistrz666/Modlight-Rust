@@ -391,7 +391,7 @@
       "files": "Plików w zestawach",
       "reclaimable": "Miejsce do odzyskania"
     },
-    "unchecksummed": "{count, plural, one {# plik nie ma} other {# pliki/plików nie ma}} zapisanej sumy kontrolnej, więc to wyszukiwanie ich nie widzi. Duże pliki dostają ją przy pierwszym pełnym odczycie, więc ta liczba spada sama.",
+    "unchecksummed": "{count, plural, one {# plik nie ma} few {# pliki nie mają} many {# plików nie ma} other {# pliku nie ma}} zapisanej sumy kontrolnej, więc to wyszukiwanie ich nie widzi. Duże pliki dostają ją przy pierwszym pełnym odczycie, więc ta liczba spada sama.",
     "truncated": "Pokazano {shown} największych zestawów z {total}. Uporządkuj te i przeskanuj ponownie, żeby zobaczyć resztę.",
     "selection": "Zaznaczono {count, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}}, {size}",
     "emptiedWarning": "W {count, plural, one {jednym zestawie} few {# zestawach} many {# zestawach} other {# zestawu}} zaznaczono wszystkie kopie, więc nic nie zostanie.",

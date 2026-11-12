@@ -21,6 +21,20 @@ use super::{RewriteError, pass, read_all};
 /// kilobytes.
 const MAX_BOX_IN_MEMORY: u64 = 16 * 1024 * 1024;
 
+/// Items `iinf` and `iloc` may list. A grid photo with its tiles, thumbnails,
+/// depth and gain maps has a few hundred; the checks below compare items with
+/// items, so a meta box of millions of empty ones never finished.
+const MAX_ITEMS: usize = 4096;
+
+/// Extents `iloc` may list, all items together. A grid photo has a few dozen;
+/// with offset and length fields of size 0 an extent costs no bytes of the
+/// file, so without a ceiling eight bytes of `iloc` asked for a megabyte.
+const MAX_EXTENTS: usize = 16_384;
+
+/// Top-level boxes a picture may have. A HEIC has four or five; every one is
+/// remembered, and a box costs only eight bytes of the file.
+const MAX_TOP_LEVEL_BOXES: usize = 4096;
+
 /// An empty XMP packet.
 const EMPTY_XMP: &[u8] = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"/>"#;
 
@@ -57,7 +71,10 @@ fn boxes_in(buf: &[u8], base: u64) -> Result<Vec<BoxHeader>, RewriteError> {
             n => (n, 8),
         };
         let header_len = if &kind == b"uuid" { header_len + 16 } else { header_len };
-        if length < header_len as u64 || at as u64 + length > buf.len() as u64 {
+        // A 64-bit size near the top wraps the sum: checked, or the walk would
+        // jump back to an earlier box and go round for ever.
+        let fits = (at as u64).checked_add(length).is_some_and(|end| end <= buf.len() as u64);
+        if length < header_len as u64 || !fits {
             return Err(RewriteError::Malformed("HEIF: a box does not fit its parent"));
         }
         out.push(BoxHeader {
@@ -173,6 +190,9 @@ fn item_kinds(iinf: &[u8]) -> Result<Vec<(u32, ItemKind)>, RewriteError> {
             (id, if is_xmp_type(f.string()?) { ItemKind::Xmp } else { ItemKind::Other })
         };
         out.push((id, kind));
+        if out.len() > MAX_ITEMS {
+            return Err(RewriteError::Malformed("HEIF: more items than a picture has"));
+        }
     }
     Ok(out)
 }
@@ -205,13 +225,21 @@ fn locations(iloc: &[u8]) -> Result<Vec<Location>, RewriteError> {
     let base_size = sizes >> 4;
     let index_size = if version >= 1 { sizes & 0x0F } else { 0 };
     let count = if version < 2 { u32::from(f.u16()?) } else { f.u32()? };
+    if u64::from(count) > MAX_ITEMS as u64 {
+        return Err(RewriteError::Malformed("HEIF: more items than a picture has"));
+    }
     let mut out = Vec::new();
+    let mut listed = 0usize;
     for _ in 0..count {
         let id = if version < 2 { u32::from(f.u16()?) } else { f.u32()? };
         let method = if version >= 1 { (f.u16()? & 0x0F) as u8 } else { 0 };
         f.u16()?; // data reference index
         let base = f.sized(base_size)?;
         let extent_count = f.u16()?;
+        listed += usize::from(extent_count);
+        if listed > MAX_EXTENTS {
+            return Err(RewriteError::Malformed("HEIF: more extents than a picture has"));
+        }
         let mut extents = Vec::with_capacity(usize::from(extent_count).min(64));
         for _ in 0..extent_count {
             f.sized(index_size)?;
@@ -327,6 +355,10 @@ fn meta_patches(
     }
 
     let mut patches = Vec::new();
+    // What all the replacements hold together. Each item is bounded, but items
+    // may name the same bytes (overlaps are refused only once every patch is
+    // made), so thousands of them over one region asked for thousands of copies.
+    let mut held: u64 = 0;
     for (id, kind) in kinds.iter().copied().filter(|(_, k)| *k != ItemKind::Other) {
         let Some(location) = locations.iter().find(|l| l.id == id) else {
             continue;
@@ -344,7 +376,8 @@ fn meta_patches(
             spans.push((start, length));
         }
         let total: u64 = spans.iter().map(|s| s.1).sum();
-        if total > MAX_BOX_IN_MEMORY {
+        held = held.saturating_add(total);
+        if total > MAX_BOX_IN_MEMORY || held > MAX_BOX_IN_MEMORY {
             return Err(RewriteError::Malformed("HEIF: a metadata item too large"));
         }
         // The item as one run of bytes, to read the orientation out of it.
@@ -423,6 +456,9 @@ fn top_level<R: Read + Seek>(input: &mut R, length: u64) -> Result<Vec<BoxHeader
     let mut out = Vec::new();
     let mut at = 0u64;
     while at < length {
+        if out.len() >= MAX_TOP_LEVEL_BOXES {
+            return Err(RewriteError::Malformed("HEIF: more boxes than a picture has"));
+        }
         input.seek(SeekFrom::Start(at))?;
         let mut header = [0u8; 16];
         let available = (length - at).min(16) as usize;
@@ -713,6 +749,115 @@ pub(crate) mod tests {
         onto_boxes[at..at + 4].copy_from_slice(&(iinf - 4).to_be_bytes());
         assert!(matches!(run(&onto_boxes), Err(RewriteError::Malformed(m)) if m.contains("outside the media data")));
         assert_eq!(file, heif(b"heic", false, 1), "the input is never written to");
+    }
+
+    #[test]
+    fn a_box_size_that_wraps_around_is_refused() {
+        // At offset 8, a box of 2^64 - 8 bytes: the sum wraps to 0, which
+        // a release build took as "fits", and the walk went back to the first
+        // box and round again for ever, collecting headers until memory ran out.
+        let mut children = bx(b"free", &[]);
+        children.extend_from_slice(&1u32.to_be_bytes());
+        children.extend_from_slice(b"free");
+        children.extend_from_slice(&(u64::MAX - 7).to_be_bytes());
+        assert!(matches!(boxes_in(&children, 0), Err(RewriteError::Malformed(_))));
+
+        // The same inside the meta box of a whole file.
+        let ftyp = bx(b"ftyp", b"heic\0\0\0\0mif1heic");
+        let hdlr = full(b"hdlr", 0, &[0, 0, 0, 0, b'p', b'i', b'c', b't', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut wrap = 1u32.to_be_bytes().to_vec();
+        wrap.extend_from_slice(b"free");
+        wrap.extend_from_slice(&(u64::MAX - hdlr.len() as u64 + 1).to_be_bytes());
+        let meta = full(b"meta", 0, &[hdlr, wrap].concat());
+        let input = [ftyp, meta, bx(b"mdat", PICTURE)].concat();
+        assert!(matches!(run(&input), Err(RewriteError::Malformed(_))));
+    }
+
+    #[test]
+    fn extents_that_cost_no_bytes_are_bounded() {
+        // iloc v1 with offset, length, base and index sizes all 0: every item
+        // takes eight bytes and lists 65535 extents that take none. Twenty items
+        // were 1.3 million extents (21 MB) out of 172 bytes; a 16 MB meta box
+        // asked for terabytes.
+        let items = 20u16;
+        let mut iloc = vec![1, 0, 0, 0, 0x00, 0x00];
+        iloc.extend_from_slice(&items.to_be_bytes());
+        for id in 1..=items {
+            iloc.extend_from_slice(&id.to_be_bytes());
+            iloc.extend_from_slice(&[0, 0, 0, 0]); // construction method, data reference
+            iloc.extend_from_slice(&u16::MAX.to_be_bytes());
+        }
+        assert!(matches!(locations(&iloc), Err(RewriteError::Malformed(_))));
+        // A real picture's handful of extents is read as before.
+        let file = heif(b"heic", false, 1);
+        assert!(plan(&mut Cursor::new(file.clone()), file.len() as u64).is_ok());
+    }
+
+    #[test]
+    fn items_are_bounded_in_number() {
+        // iloc v1, every field size 0: an item with no extent costs eight bytes.
+        let items = (MAX_ITEMS + 1) as u16;
+        let mut iloc = vec![1, 0, 0, 0, 0x00, 0x00];
+        iloc.extend_from_slice(&items.to_be_bytes());
+        for id in 1..=items {
+            iloc.extend_from_slice(&id.to_be_bytes());
+            iloc.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+        }
+        assert!(matches!(locations(&iloc), Err(RewriteError::Malformed(_))));
+        let mut iinf = vec![0, 0, 0, 0];
+        iinf.extend_from_slice(&items.to_be_bytes());
+        for id in 1..=items {
+            iinf.extend(infe(id, b"hvc1", b""));
+        }
+        assert!(matches!(item_kinds(&iinf), Err(RewriteError::Malformed(_))));
+    }
+
+    #[test]
+    fn metadata_items_over_the_same_bytes_cannot_multiply_the_memory() {
+        // Forty XMP items, each over the same megabyte of mdat: each became a
+        // megabyte of replacement before the overlap was noticed at the end.
+        let (k, region) = (40u16, 1024 * 1024usize);
+        let ftyp = bx(b"ftyp", b"heic\0\0\0\0mif1heic");
+        let hdlr = full(b"hdlr", 0, &[0, 0, 0, 0, b'p', b'i', b'c', b't', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut iinf_body = k.to_be_bytes().to_vec();
+        for id in 1..=k {
+            iinf_body.extend(infe(id, b"mime", b"\0application/rdf+xml\0"));
+        }
+        let iinf = full(b"iinf", 0, &iinf_body);
+        let iloc_len = 8 + 4 + 2 + 2 + usize::from(k) * 16;
+        let meta_len = 12 + hdlr.len() + iinf.len() + iloc_len;
+        let region_at = (ftyp.len() + meta_len + 8) as u32;
+        let mut iloc_body = vec![0x44, 0x00];
+        iloc_body.extend_from_slice(&k.to_be_bytes());
+        for id in 1..=k {
+            iloc_body.extend_from_slice(&id.to_be_bytes());
+            iloc_body.extend_from_slice(&[0, 0, 0, 0, 0, 1]);
+            iloc_body.extend_from_slice(&region_at.to_be_bytes());
+            iloc_body.extend_from_slice(&(region as u32).to_be_bytes());
+        }
+        let iloc = full(b"iloc", 1, &iloc_body);
+        assert_eq!(iloc.len(), iloc_len);
+        let meta = full(b"meta", 0, &[hdlr, iinf, iloc].concat());
+        assert_eq!(meta.len(), meta_len);
+        let file = [ftyp, meta, bx(b"mdat", &vec![0u8; region])].concat();
+
+        let mut input = Cursor::new(file.clone());
+        let boxes = top_level(&mut input, file.len() as u64).unwrap();
+        let meta = *boxes.iter().find(|b| &b.kind == b"meta").unwrap();
+        let bytes = read_box(&mut input, &meta).unwrap();
+        let payloads: Vec<(u64, u64)> = boxes.iter().filter(|b| &b.kind == b"mdat").map(|b| (b.body, b.end)).collect();
+        let mut read_at = |_: u64, _: u64| -> Result<Vec<u8>, RewriteError> { Ok(Vec::new()) };
+        assert!(matches!(meta_patches(&bytes, &meta, &payloads, &mut read_at), Err(RewriteError::Malformed(_))));
+    }
+
+    #[test]
+    fn a_file_of_endless_tiny_boxes_is_refused_without_remembering_them_all() {
+        let mut file = bx(b"ftyp", b"heic\0\0\0\0mif1heic");
+        for _ in 0..MAX_TOP_LEVEL_BOXES + 10 {
+            file.extend(bx(b"free", &[]));
+        }
+        let length = file.len() as u64;
+        assert!(matches!(top_level(&mut Cursor::new(file), length), Err(RewriteError::Malformed(_))));
     }
 
     #[test]

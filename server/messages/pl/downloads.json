@@ -71,5 +71,14 @@
     "script": "To samo jako skrypt powłoki (curl):",
     "copy": "Kopiuj",
     "copied": "Skopiowano."
+  },
+  "refusal": {
+    "signIn": "Zaloguj się albo wyślij token API (nagłówek Authorization: Bearer i token).",
+    "disabled": "To konto jest zablokowane.",
+    "notAdmin": "Tylko administratorzy mogą usuwać wydania.",
+    "invalidScope": "Ten token API ma zakres, którego ten serwer nie rozpoznaje. Utwórz nowy token w Integracjach.",
+    "insufficientScope": "Ten token API ma zakres „{scope}”, a to wywołanie wymaga zakresu „{needed}”. Utwórz w Integracjach token z zakresem „{needed}” (albo szerszym).",
+    "notFound": "Nie ma takiego wydania.",
+    "internal": "Coś poszło nie tak po stronie serwera. Spróbuj ponownie."
   }
 }

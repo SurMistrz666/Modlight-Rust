@@ -289,6 +289,32 @@ async fn termination_and_expiration() {
     });
 }
 
+/// Hunt round 2 (SRVF-N4): a complete upload whose finish failed goes whole
+/// (object, record, a parked part), with no multipart upload left to abort,
+/// also from a store that never saw it and when it is already gone.
+#[tokio::test]
+async fn a_finished_upload_that_nothing_adopted_is_discarded() {
+    with_bucket!(|b| {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = modlight_store(&b.config, tmp.path());
+        let done = new_id();
+        store.create(Upload::new(done.clone(), Some(10), 0, None)).await.unwrap();
+        store.write(body(0, 10), &done, 0).await.unwrap();
+        assert_eq!(b.raw_keys().await, vec![done.clone(), format!("{done}.info")]);
+        store.discard_finished(&done).await.unwrap();
+        assert!(b.raw_keys().await.is_empty(), "{:?}", b.raw_keys().await);
+        assert_eq!(store.get_upload(&done).await.unwrap_err().status_and_body().0, 404);
+        store.discard_finished(&done).await.unwrap();
+
+        let other = new_id();
+        store.create(Upload::new(other.clone(), Some(10), 0, None)).await.unwrap();
+        store.write(body(0, 10), &other, 0).await.unwrap();
+        modlight_store(&b.config, tmp.path()).discard_finished(&other).await.unwrap();
+        assert!(b.raw_keys().await.is_empty(), "{:?}", b.raw_keys().await);
+        assert!(b.pending_multipart_uploads().await.is_empty());
+    });
+}
+
 #[tokio::test]
 async fn parked_tail_round_trip_through_bytes() {
     // Many tiny PATCHes (each under 5 MiB) accumulate in the parked part.

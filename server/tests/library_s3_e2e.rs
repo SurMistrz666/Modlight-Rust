@@ -164,6 +164,41 @@ async fn uploads_land_in_s3_and_leave_it_again() {
     assert_eq!(storage.read_buffer(&key).await.unwrap().as_ref(), data.as_slice());
     assert_eq!(storage.stat(&format!("{key}.info")).await.unwrap(), None);
 
+    // ── Hunt round 2 (SRVF-N4): an upload whose finish fails leaves nothing in
+    // the bucket (the expiry sweep lists only unfinished multipart uploads) ──
+    let small = payload(4096);
+    let refused_meta = format!("filename {},filetype {}", b64("refused.bin"), b64("application/octet-stream"));
+    let created = common::call(
+        &app,
+        Request::post("/api/files")
+            .header("host", "127.0.0.1:8421")
+            .header("tus-resumable", "1.0.0")
+            .header("upload-length", small.len().to_string())
+            .header("upload-metadata", refused_meta)
+            .header("x-api-key", &token)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text());
+    let refused_path = url::Url::parse(&created.header("location").unwrap()).unwrap().path().to_string();
+    let refused_id = refused_path.rsplit('/').next().unwrap().to_string();
+    let set_max = |max: Option<i64>| {
+        sqlx::query(r#"update "user" set "max_quota" = $1 where "id" = 's3owner'"#).bind(max).execute(&db.pool)
+    };
+    set_max(Some(1)).await.unwrap();
+    let refused = patch(&app, &refused_path, 0, &small).await;
+    assert_eq!(refused.status, StatusCode::INSUFFICIENT_STORAGE, "{}", refused.text());
+    let keys = bucket.raw_keys().await;
+    assert!(!keys.iter().any(|k| k.starts_with(&refused_id)), "{keys:?}");
+    let head = common::call(
+        &app,
+        Request::head(refused_path.as_str()).header("tus-resumable", "1.0.0").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(head.status, StatusCode::NOT_FOUND);
+    set_max(None).await.unwrap();
+
     // ── ShareX into the same bucket ──
     let boundary = "----e2e";
     let mut body = format!(

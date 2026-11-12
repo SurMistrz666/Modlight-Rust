@@ -1003,3 +1003,53 @@ async fn replacing_avatar_or_wallpaper_deletes_the_previous_object() {
     }
     db.drop().await;
 }
+
+/// Hunt 2026-11-11 (SRVF-04): `uploads.code` is a varchar(64), but the name
+/// schemes made codes from an 80-character slug (plus `-2`.. or a random
+/// suffix, or a 100-character custom pattern), so with "filename",
+/// "filename-random", "date-filename" or "custom" a file with a long name was
+/// refused by Postgres and the whole upload failed with a 500.
+#[tokio::test]
+async fn uploads_with_long_names_get_codes_that_fit_the_column() {
+    let db = db_or_skip!();
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app_on(&db, &[("UPLOAD_TMP_PATH", tmp.path().to_str().unwrap())]);
+    user(&db.pool, "longnames", Some("longnames"), "user").await;
+    let key = token(&db.pool, "longnames", TokenScope::Upload).await;
+    let long = format!("{} {}.txt", "Quarterly report of the infrastructure team".repeat(2), "final version");
+    for (scheme, pattern) in
+        [("filename", None), ("filename-random", None), ("date-filename", None), ("custom", Some("{name}-{name}"))]
+    {
+        sqlx::query(r#"update "user" set "naming_scheme" = $1, "naming_pattern" = $2 where "id" = 'longnames'"#)
+            .bind(scheme)
+            .bind(pattern)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        // Twice: the second one walks the collision ladder.
+        for _ in 0..2 {
+            let boundary = "----long";
+            let body = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{long}\"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--{boundary}--\r\n"
+            );
+            let res = call(
+                &app,
+                Request::post("/upload")
+                    .header("host", "host.example.com")
+                    .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                    .header("x-api-key", &key)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(res.status, StatusCode::CREATED, "{scheme}: {}", res.text());
+        }
+    }
+    let codes: Vec<String> = sqlx::query_scalar(r#"select "code" from "uploads" where "owner_id" = 'longnames'"#)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(codes.len(), 8);
+    assert!(codes.iter().all(|c| c.chars().count() <= 64), "{codes:?}");
+    db.drop().await;
+}

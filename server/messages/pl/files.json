@@ -74,13 +74,13 @@
     "download": "Pobierz",
     "downloadAs": "Pobierz jako…",
     "moveToFolder": "Przenieś do folderu…",
-    "moveManyToFolder": "Przenieś {count} plików do folderu…",
+    "moveManyToFolder": "Przenieś {count, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}} do folderu…",
     "makePrivate": "Ustaw jako prywatny",
     "makePublic": "Ustaw jako publiczny",
     "customUrl": "Własny adres…",
     "linkSettings": "Ustawienia linku…",
     "moveToTrash": "Przenieś do kosza",
-    "trashMany": "Przenieś {count} plików do kosza"
+    "trashMany": "Przenieś {count, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}} do kosza"
   },
   "move": {
     "title": "Przenieś do folderu",

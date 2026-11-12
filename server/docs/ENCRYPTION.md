@@ -150,9 +150,29 @@ file password drops every grant (the browser that changed it gets a new one).
 An account keeps at most 20 owner/app grants and 200 visitor grants; the oldest
 of the same kind goes first. Expired grants are deleted by the job.
 
-Rotating `AUTH_SECRET` / `SETTINGS_ENCRYPTION_KEY` invalidates every grant
-(people type the file password once more) and nothing else: the wrapped private
-key does not depend on it.
+**Rotating the server key** (`AUTH_SECRET`, or `SETTINGS_ENCRYPTION_KEY` when
+it is set) is not harmless for an account with a vault. What does not depend
+on it: the stored files and the wrapped private key (only the file password
+opens that). What does:
+
+- every grant: people type the file password once more;
+- the seal on each account's public key (`public_key_mac`): it no longer
+  verifies, so nothing can be encrypted for an account whose vault is
+  `encrypting` or `on`. Uploads (ShareX and tus) are refused with 403 and a
+  translated sentence telling the owner to switch encryption off; pastes and
+  in-place conversions fail; the pass of an `encrypting` vault stops and
+  shows its error on the Settings card. The way out: switch encryption off
+  with the file password (that boxes a new job key under the new server key),
+  wait for the pass to decrypt, and switch it on again (a new key pair with a
+  fresh seal). Reading keeps working meanwhile;
+- the job key of a `decrypting` vault (`job_key`): the pass can no longer
+  decrypt, the account's encrypted files answer as locked for everybody, and
+  nothing the owner can do in the panel resumes it (unlocking refuses a vault
+  that is not gated, switching on answers "busy"). Only the old secret, put
+  back until the pass has finished, gets the account out.
+
+So: never rotate the key while a vault is `decrypting`, and tell owners of
+encrypted accounts to switch encryption off and on again after a rotation.
 
 ## 4. Who must unlock, and what they see
 

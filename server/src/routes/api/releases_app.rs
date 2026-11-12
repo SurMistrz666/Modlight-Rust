@@ -144,6 +144,14 @@ fn refusal_message(result: &PublishResult) -> String {
         PublishResult::NotPublic => {
             "That upload is not publicly downloadable (unpublished, password-protected or expiring).".to_string()
         }
+        // Not upstream (srv-auth hunt NF-2): uploads installed copies could
+        // not fetch.
+        PublishResult::Encrypted => "That upload is encrypted (its account uses file encryption), so installed copies \
+            could not download it. Publish a build uploaded from an account without file encryption."
+            .to_string(),
+        PublishResult::ViewLimited => "That upload has a view limit, so it would stop downloading after that many \
+            fetches. Remove the limit, then try again."
+            .to_string(),
         PublishResult::BadVersion => {
             "version must be Major.Minor[.Build[.Revision]] - that is all an installed client can parse.".to_string()
         }

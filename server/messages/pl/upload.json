@@ -38,7 +38,7 @@
     "checking": "Sprawdzam Twoją bibliotekę...",
     "title": "{count, plural, one {Ten plik już tu jest} few {# z tych plików już tu są} many {# z tych plików już tu jest} other {# z tych plików już tu jest}}",
     "body": "{count, plural, one {Plik o dokładnie takiej zawartości już jest w Twojej bibliotece.} few {# z wybranych plików mają dokładnie taką samą zawartość jak pliki, które już masz.} many {# z wybranych plików ma dokładnie taką samą zawartość jak pliki, które już masz.} other {# z wybranych plików ma dokładnie taką samą zawartość jak pliki, które już masz.}}",
-    "bodyPartial": "{count} z {total} wybranych plików ma dokładnie taką samą zawartość jak pliki, które już masz.",
+    "bodyPartial": "{count, plural, one {# z {total} wybranych plików ma} few {# z {total} wybranych plików mają} many {# z {total} wybranych plików ma} other {# z {total} wybranych plików ma}} dokładnie taką samą zawartość jak pliki, które już masz.",
     "existing": "Już tu jest, {size}, wysłany {date}",
     "inFolder": "w folderze {folder}",
     "inLibrary": "poza folderami",
@@ -47,14 +47,14 @@
     "openExisting": "Otwórz {name} w nowej karcie",
     "uncompared": "{count, plural, one {# pliku nie dało się porównać, więc też może być kopią.} few {# plików nie dało się porównać, więc też mogą być kopiami.} many {# plików nie dało się porównać, więc też mogą być kopiami.} other {# plików nie dało się porównać, więc też mogą być kopiami.}}",
     "hint": "Nic nie zostanie usunięte. Pominięcie tylko wyłącza plik z tego wysyłania.",
-    "uploadAnyway": "{count, plural, one {Wyślij mimo to} other {Wyślij mimo to}}",
+    "uploadAnyway": "{count, plural, one {Wyślij mimo to} few {Wyślij mimo to} many {Wyślij mimo to} other {Wyślij mimo to}}",
     "skip": "{count, plural, one {Pomiń go} few {Pomiń te #} many {Pomiń te #} other {Pomiń te #}}",
     "skipped": "{count, plural, one {# plik był już w Twojej bibliotece, więc go pominięto} few {# pliki były już w Twojej bibliotece, więc je pominięto} many {# plików było już w Twojej bibliotece, więc je pominięto} other {# plików było już w Twojej bibliotece, więc je pominięto}}"
   },
   "toast": {
     "one": "Wysłano plik",
     "copied": "Link skopiowany do schowka.",
-    "many": "Wysłano {count} plików",
+    "many": "Wysłano {count, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}}",
     "failed": "{count, plural, one {Jeden plik się nie wysłał} few {# pliki się nie wysłały} many {# plików się nie wysłało} other {# plików się nie wysłało}}",
     "failedHint": "Postęp został zachowany. Ponów z panelu transferów."
   },
@@ -64,7 +64,7 @@
     "viewFiles": "Zobacz pliki",
     "copyOne": "Kopiuj link do {name}",
     "copyFailed": "Nie udało się skopiować do schowka",
-    "copiedAll": "Skopiowano {count} linków",
+    "copiedAll": "Skopiowano {count, plural, one {# link} few {# linki} many {# linków} other {# linku}}",
     "failed": "{count, plural, one {Jeden plik się nie dokończył.} few {# pliki się nie dokończyły.} many {# plików się nie dokończyło.} other {# plików się nie dokończyło.}} Postęp został zapisany, więc możesz ponowić bez zaczynania od zera."
   },
   "dock": {
@@ -88,7 +88,7 @@
     "overallAria": "Łączny postęp wysyłania",
     "fileAria": "Postęp wysyłania pliku {name}",
     "live": "Wysyłanie, ukończono {done} z {total}.",
-    "liveDone": "{failed, plural, =0 {Zakończono wysyłanie {total} plików.} other {Wysyłanie zakończone, # nieudanych.}}",
+    "liveDone": "{failed, plural, =0 {Zakończono wysyłanie {total, plural, one {# pliku} few {# plików} many {# plików} other {# pliku}}.} one {Wysyłanie zakończone, # plik nie został wysłany.} few {Wysyłanie zakończone, # pliki nie zostały wysłane.} many {Wysyłanie zakończone, # plików nie zostało wysłanych.} other {Wysyłanie zakończone, # pliku nie zostało wysłane.}}",
     "copy": "Kopiuj link",
     "copied": "Link skopiowany",
     "open": "Otwórz plik",
@@ -128,7 +128,7 @@
     },
     "dashboardNote": "Szyfrowane w Twojej przeglądarce, zanim wyjdzie z niej choćby jeden bajt. Dowolny rozmiar, dowolny typ.",
     "copyFailed": "Nie udało się skopiować do schowka",
-    "copiedAll": "Skopiowano {count} linków",
+    "copiedAll": "Skopiowano {count, plural, one {# link} few {# linki} many {# linków} other {# linku}}",
     "results": {
       "title": "{count, plural, one {Zaszyfrowano i wysłano plik} few {Zaszyfrowano i wysłano # pliki} many {Zaszyfrowano i wysłano # plików} other {Zaszyfrowano i wysłano # plików}}",
       "copyAll": "Kopiuj wszystkie",

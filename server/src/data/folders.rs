@@ -127,6 +127,11 @@ pub async fn unfiled_stats(db: &PgPool, user_id: &str) -> sqlx::Result<CountSize
     .await
 }
 
+/// How deep the tree nests. Creating a folder stops at
+/// `folders::MAX_FOLDER_DEPTH`, but moving one checks only its new parent, so
+/// a chain can be built to any length.
+pub const MAX_TREE_DEPTH: usize = 64;
+
 /// Build the sidebar tree. Rows whose parent is missing (or which point at
 /// themselves) are attached at the root rather than vanishing; nodes inside a
 /// longer parent cycle are reachable from no root and so are absent.
@@ -151,12 +156,18 @@ pub fn build_folder_tree(rows: &[FolderRow]) -> Vec<FolderNode> {
         }
     }
     // Roll direct counts and bytes up into the totals, depth-first; a per-root
-    // `seen` set stops cycles.
+    // `seen` set stops cycles. Not upstream: below `MAX_TREE_DEPTH` the
+    // children are not nested any further but become roots of their own (after
+    // the real roots), so a chain of any length neither overflows the stack
+    // (here, in the layouts that walk the tree, in the JSON that carries it)
+    // nor loses a folder.
     fn build(
         id: Uuid,
         by_id: &HashMap<Uuid, &FolderRow>,
         children_of: &HashMap<Uuid, Vec<Uuid>>,
         seen: &mut HashSet<Uuid>,
+        depth: usize,
+        deferred: &mut Vec<Uuid>,
     ) -> FolderNode {
         let r = by_id[&id];
         let first_visit = seen.insert(id);
@@ -177,10 +188,15 @@ pub fn build_folder_tree(rows: &[FolderRow]) -> Vec<FolderNode> {
         if !first_visit {
             return node;
         }
+        let children = children_of.get(&id).map(Vec::as_slice).unwrap_or(&[]);
+        if depth >= MAX_TREE_DEPTH {
+            deferred.extend_from_slice(children);
+            return node;
+        }
         let mut count = r.count;
         let mut size = r.size;
-        for child in children_of.get(&id).map(Vec::as_slice).unwrap_or(&[]) {
-            let sub = build(*child, by_id, children_of, seen);
+        for child in children {
+            let sub = build(*child, by_id, children_of, seen, depth + 1, deferred);
             count += sub.total_count;
             size += sub.total_size;
             node.children.push(sub);
@@ -189,7 +205,21 @@ pub fn build_folder_tree(rows: &[FolderRow]) -> Vec<FolderNode> {
         node.total_size = size;
         node
     }
-    roots.into_iter().map(|id| build(id, &by_id, &children_of, &mut HashSet::new())).collect()
+    let mut out = Vec::new();
+    let mut deferred: Vec<Uuid> = Vec::new();
+    for id in roots {
+        out.push(build(id, &by_id, &children_of, &mut HashSet::new(), 1, &mut deferred));
+    }
+    // A subtree cut at the ceiling continues as a root of its own; its walk
+    // remembers what this chain already holds (no cycle can bring it back).
+    let mut seen_deep: HashSet<Uuid> = HashSet::new();
+    let mut next = 0;
+    while next < deferred.len() {
+        let id = deferred[next];
+        next += 1;
+        out.push(build(id, &by_id, &children_of, &mut seen_deep, 1, &mut deferred));
+    }
+    out
 }
 
 pub async fn folder_tree(db: &PgPool, user_id: &str) -> sqlx::Result<Vec<FolderNode>> {
@@ -381,6 +411,45 @@ mod tests {
         assert_eq!(tree[0].total_size, 60);
         assert_eq!(tree[0].children[0].total_count, 5);
         assert_eq!(tree[1].total_count, 4);
+    }
+
+    /// Hunt 2026-11-11 (SRVF-03): moving folders only checks the depth of the
+    /// NEW PARENT, so a chain of any length can be built through the API. The
+    /// tree is recursive (here, in the layouts that walk it, and in the JSON
+    /// that carries it), and a stack overflow aborts the whole server, not one
+    /// request. Every folder stays in the tree; nesting stops at a ceiling.
+    #[test]
+    fn a_pathologically_deep_chain_neither_overflows_nor_loses_folders() {
+        const CHAIN: u128 = 100_000;
+        let rows: Vec<FolderRow> = (1..=CHAIN).map(|i| row(i, (i > 1).then(|| i - 1), 1)).collect();
+        // A tokio worker's stack.
+        let built = std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                let tree = build_folder_tree(&rows);
+                let json = serde_json::to_value(&tree).unwrap();
+                (tree, json)
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        let (tree, _json) = built;
+        fn walk(nodes: &[FolderNode], depth: usize, seen: &mut usize, deepest: &mut usize) {
+            for n in nodes {
+                *seen += 1;
+                *deepest = (*deepest).max(depth);
+                walk(&n.children, depth + 1, seen, deepest);
+            }
+        }
+        let (mut seen, mut deepest) = (0, 0);
+        walk(&tree, 1, &mut seen, &mut deepest);
+        assert_eq!(seen as u128, CHAIN, "every folder is still in the tree");
+        assert!(deepest <= MAX_TREE_DEPTH, "nested {deepest} deep");
+        // A tree within the ceiling is untouched.
+        let shallow: Vec<FolderRow> = (1..=20).map(|i| row(i, (i > 1).then(|| i - 1), 1)).collect();
+        let tree = build_folder_tree(&shallow);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].total_count, 20);
     }
 
     #[test]

@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 
 use super::set_session_cookie;
 use super::sign_in::banned_error;
-use crate::auth::adapter::{self, CreateSessionError, NewUser, SqlValue, USER_INPUT_FIELDS, pg_text};
+use crate::auth::adapter::{self, CreateSessionError, NewUser, NotFirstAccount, SqlValue, USER_INPUT_FIELDS, pg_text};
 use crate::auth::endpoint::{Endpoint, EndpointCtx, HandlerResult, Middleware};
 use crate::auth::error::{ApiError, EndpointError, base};
 use crate::auth::session::{AuthSession, UserOut};
@@ -58,25 +58,56 @@ pub fn endpoints() -> Vec<Endpoint> {
 
 /// lib/auth.ts `hooks.before` for `/sign-up/email` (runs on the RAW body,
 /// before validation).
-pub async fn registration_gate(ctx: &EndpointCtx) -> Result<(), EndpointError> {
+///
+/// Not upstream: a sign-up let through only because no account exists yet is
+/// marked on `ctx` ([`EndpointCtx::sign_up_only_as_first`]), and the account
+/// is then created only if the table is still empty under the creation lock.
+pub async fn registration_gate(ctx: &mut EndpointCtx) -> Result<(), EndpointError> {
+    let verdict = gate_verdict(ctx).await?;
+    let refusal = match verdict.decision {
+        SignUpDecision::Allow => {
+            ctx.sign_up_only_as_first = verdict.only_as_first_account;
+            return Ok(());
+        }
+        SignUpDecision::Refuse(r) => r,
+    };
+    Err(refusal_error(refusal))
+}
+
+/// The refusal for a sign-up the gate allowed only as the first account, once
+/// another account won that race: what the gate answers now that an account
+/// exists (registration closed, or a key missing), never a second account.
+async fn late_refusal(ctx: &EndpointCtx) -> EndpointError {
+    match gate_verdict(ctx).await {
+        Ok(v) => match v.decision {
+            SignUpDecision::Refuse(r) => refusal_error(r),
+            // Opened in the meantime: still not this request's account.
+            SignUpDecision::Allow => refusal_error(SignUpRefusal::Closed),
+        },
+        Err(e) => EndpointError::Internal(e),
+    }
+}
+
+/// `evaluateSignUp` for this request (the RAW body's `registrationKey`).
+async fn gate_verdict(ctx: &EndpointCtx) -> anyhow::Result<crate::registration::SignUpVerdict> {
     let supplied = match ctx.body.as_ref().and_then(|b| b.get("registrationKey")) {
         Some(Value::String(s)) => Some(s.clone()),
         _ => None,
     };
     let ip = crate::password::client_ip(&ctx.headers, ctx.peer, ctx.state.config.trust_proxy);
-    let decision = crate::registration::evaluate_sign_up(
+    crate::registration::evaluate_sign_up_gate(
         &ctx.state.db,
         &ctx.state.config.auth.secret,
         ctx.state.config.auth.registration_enabled,
         &ip,
         supplied.as_deref(),
     )
-    .await?;
-    let refusal = match decision {
-        SignUpDecision::Allow => return Ok(()),
-        SignUpDecision::Refuse(r) => r,
-    };
-    Err(match refusal {
+    .await
+}
+
+/// The gate's APIError for a refusal.
+fn refusal_error(refusal: SignUpRefusal) -> EndpointError {
+    match refusal {
         SignUpRefusal::RateLimited => {
             ApiError::with_message("TOO_MANY_REQUESTS", "SIGNUP_RATE_LIMITED", "Too many attempts. Try again later.")
         }
@@ -90,7 +121,7 @@ pub async fn registration_gate(ctx: &EndpointCtx) -> Result<(), EndpointError> {
             ApiError::with_message("BAD_REQUEST", "REGISTRATION_KEY_INVALID", "That registration key is not valid.")
         }
     }
-    .into())
+    .into()
 }
 
 /// `parseUserInput(options, rest, "create")` over lib/auth.ts's user schema:
@@ -188,13 +219,21 @@ fn sign_up_email(ctx: &mut EndpointCtx) -> BoxFuture<'_, HandlerResult> {
             data.set(&f, v);
         }
         data.set("emailVerified", SqlValue::Bool(false));
-        let user = match adapter::create_user(ctx.db(), ctx.state.config.default_user_quota, data).await {
-            Ok(u) => u,
-            Err(e) => {
-                tracing::error!("Failed to create user: {e:#}");
-                return Err(ApiError::from("UNPROCESSABLE_ENTITY", base::FAILED_TO_CREATE_USER).into());
-            }
-        };
+        let only_as_first = ctx.sign_up_only_as_first;
+        let user =
+            match adapter::create_user_with(ctx.db(), ctx.state.config.default_user_quota, data, only_as_first).await {
+                Ok(u) => u,
+                Err(e) if e.is::<NotFirstAccount>() => {
+                    // Another sign-up created the first account in the meantime:
+                    // answer what the gate answers now that one exists.
+                    tracing::info!("Sign-up allowed as the first account lost the race to another one");
+                    return Err(late_refusal(ctx).await);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create user: {e:#}");
+                    return Err(ApiError::from("UNPROCESSABLE_ENTITY", base::FAILED_TO_CREATE_USER).into());
+                }
+            };
         adapter::create_account(ctx.db(), &user.id, "credential", &user.id, Some(&hash)).await?;
         // sendOnSignUp
         let callback = body.get("callbackURL").and_then(Value::as_str).filter(|c| !c.is_empty()).unwrap_or("/");

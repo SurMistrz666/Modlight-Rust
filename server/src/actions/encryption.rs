@@ -195,7 +195,12 @@ async fn change_file_password(ctx: ActionCtx) -> ActionResult {
             return unlock_refusal(e);
         }
     };
-    let vault = unlock::change_password(&ctx.state, &vault, &secret, &next).await?;
+    let vault = match unlock::change_password(&ctx.state, &vault, &secret, &next).await {
+        Ok(vault) => vault,
+        // Another browser changed it first: its password stands, this one did not.
+        Err(e) if e.is::<unlock::PasswordChangedMeanwhile>() => return refusal("failed"),
+        Err(e) => return Err(e.into()),
+    };
     // Every grant is gone; this browser keeps working with a new one.
     let label = label_of(&ctx);
     let granted =

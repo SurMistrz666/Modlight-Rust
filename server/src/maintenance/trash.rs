@@ -65,7 +65,7 @@ pub async fn purge_expired_trash_with(
     storage: &dyn crate::storage::StorageDriver,
     now: JsDate,
 ) -> anyhow::Result<TrashSweepResult> {
-    use crate::media::actions::{DeletableMedia, is_missing_object_error};
+    use crate::media::actions::DeletableMedia;
     let cutoff = JsDate::from_millis(now.millis() - TRASH_RETENTION_MS).unwrap_or(now);
     let mut skipped: indexmap::IndexSet<uuid::Uuid> = indexmap::IndexSet::new();
     let mut deleted = 0u64;
@@ -86,48 +86,94 @@ pub async fn purge_expired_trash_with(
         if batch.is_empty() {
             break;
         }
-        let mut removable: Vec<uuid::Uuid> = Vec::new();
-        let mut refunds: indexmap::IndexMap<String, i64> = indexmap::IndexMap::new();
+        let mut removed = 0usize;
         for row in &batch {
-            if let Err(err) = storage.delete(&row.storage_key).await
-                && !is_missing_object_error(&err)
-            {
+            match purge_one(db, storage, row.id, cutoff).await? {
+                Purged::Gone { size } => {
+                    removed += 1;
+                    deleted += 1;
+                    bytes += size.max(0) as u64;
+                }
                 // Storage is unhappy: leave the row for the next run.
-                skipped.insert(row.id);
-                continue;
+                Purged::Kept => {
+                    skipped.insert(row.id);
+                }
+                // Restored, or purged by somebody else, since the batch was read.
+                Purged::NotDue => {}
             }
-            if let Some(thumb) = row.thumb_key.as_deref() {
-                // A stale thumbnail is cosmetic.
-                let _ = storage.delete(thumb).await;
-            }
-            crate::media::derived_cache::purge_derived(storage, &row.id.to_string()).await;
-            removable.push(row.id);
-            // `owner_id` is null for an orphan: no quota left to refund.
-            if let Some(owner) = &row.owner_id {
-                *refunds.entry(owner.clone()).or_insert(0) += row.size;
-            }
-            bytes += row.size.max(0) as u64;
-        }
-        if !removable.is_empty() {
-            sqlx::query(r#"delete from "uploads" where "uploads"."id" = any($1)"#).bind(&removable).execute(db).await?;
-            for (owner, amount) in &refunds {
-                sqlx::query(
-                    r#"update "user" set "used_quota" = GREATEST(0, "user"."used_quota" - $1), "updated_at" = $2 where "user"."id" = $3"#,
-                )
-                .bind(*amount)
-                .bind(JsDate::now())
-                .bind(owner)
-                .execute(db)
-                .await?;
-            }
-            deleted += removable.len() as u64;
         }
         // Everything in this batch was skipped: keep going only while progress happens.
-        if removable.is_empty() && (batch.len() as i64) < BATCH_SIZE {
+        if removed == 0 && (batch.len() as i64) < BATCH_SIZE {
             break;
         }
     }
     Ok(TrashSweepResult { deleted, bytes, skipped: skipped.len() as u64 })
+}
+
+/// What happened to one row of a sweep.
+enum Purged {
+    /// Object, row and refund are gone.
+    Gone { size: i64 },
+    /// Storage refused to delete the object; the row stays for a retry.
+    Kept,
+    /// No longer trashed and expired (restored, or purged elsewhere).
+    NotDue,
+}
+
+/// Purge one row, holding its lock from the moment it is claimed until its row
+/// is deleted. Not upstream, which deleted every object of a batch it had read
+/// and then every row: a file restored in between came back as nothing (its
+/// row deleted after the restore succeeded, or left pointing at a deleted
+/// object), and a row purged elsewhere meanwhile was refunded twice. Here a
+/// restore that came first leaves nothing to claim, one that comes later
+/// waits for the row and finds it gone, and the refund is in the same
+/// transaction as the row it is for.
+async fn purge_one(
+    db: &sqlx::PgPool,
+    storage: &dyn crate::storage::StorageDriver,
+    id: uuid::Uuid,
+    cutoff: JsDate,
+) -> anyhow::Result<Purged> {
+    use crate::media::actions::{DeletableMedia, is_missing_object_error};
+    let mut tx = db.begin().await?;
+    let claimed: Option<DeletableMedia> = sqlx::query_as(
+        r#"select "id", "owner_id", "size", "storage_key", "thumb_key" from "uploads"
+           where ("uploads"."id" = $1 and "uploads"."deleted_at" is not null and "uploads"."deleted_at" < $2)
+           for update"#,
+    )
+    .bind(id)
+    .bind(cutoff)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(row) = claimed else {
+        tx.rollback().await?;
+        return Ok(Purged::NotDue);
+    };
+    if let Err(err) = storage.delete(&row.storage_key).await
+        && !is_missing_object_error(&err)
+    {
+        tx.rollback().await?;
+        return Ok(Purged::Kept);
+    }
+    if let Some(thumb) = row.thumb_key.as_deref() {
+        // A stale thumbnail is cosmetic.
+        let _ = storage.delete(thumb).await;
+    }
+    crate::media::derived_cache::purge_derived(storage, &row.id.to_string()).await;
+    sqlx::query(r#"delete from "uploads" where "uploads"."id" = $1"#).bind(row.id).execute(&mut *tx).await?;
+    // `owner_id` is null for an orphan: no quota left to refund.
+    if let Some(owner) = &row.owner_id {
+        sqlx::query(
+            r#"update "user" set "used_quota" = GREATEST(0, "user"."used_quota" - $1), "updated_at" = $2 where "user"."id" = $3"#,
+        )
+        .bind(row.size)
+        .bind(JsDate::now())
+        .bind(owner)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Purged::Gone { size: row.size })
 }
 
 #[cfg(test)]
