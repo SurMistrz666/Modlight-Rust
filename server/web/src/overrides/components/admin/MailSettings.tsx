@@ -1,5 +1,13 @@
 "use client";
 
+// Port of upstream components/admin/MailSettings.tsx. Everything is upstream's,
+// line for line, except one fix marked "No answer": a save, a reset to the
+// environment, forgetting the password or the confirmation switch whose request
+// fails outright is caught and shown in its card. Thrown out of the transition,
+// it replaced the whole admin page with the error page and lost what was typed
+// (bug hunt 2026-11-11, WEB-08; the Turnstile card copies this card).
+// @upstream components/admin/MailSettings.tsx
+
 import { useState, useTransition } from "react";
 import {
   Mail,
@@ -38,6 +46,7 @@ import {
   sendTestMail,
   setVerificationRequired,
   type MailTestResult,
+  type SaveMailResult,
 } from "@/app/actions/mail";
 import type { MailStatus, SmtpSecurity } from "@/lib/mail-settings";
 
@@ -100,6 +109,9 @@ export function MailSettings({
   const [testTo, setTestTo] = useState("");
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<MailTestResult | null>(null);
+  // No answer: which card's last change got none, shown there until the next try.
+  const tc = useTranslations("common");
+  const [failed, setFailed] = useState<"smtp" | "verification" | null>(null);
 
   const locked = !editing;
 
@@ -113,23 +125,36 @@ export function MailSettings({
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
+  // No answer
+  function noAnswer(card: "smtp" | "verification") {
+    setFailed(card);
+    toast.error(card === "smtp" ? t("saveErrorTitle") : tc("error"));
+  }
+
   function onSave() {
     const port = Number(draft.port);
+    setFailed(null);
     startSaving(async () => {
-      const res = await saveSmtpSettings({
-        host: draft.host,
-        port,
-        security: draft.security,
-        user: draft.user,
-        password: draft.password || undefined,
-        from: draft.from,
-        fromName: draft.fromName,
-        // The confirmation switch is NOT sent from here. It has its own action,
-        // and the value this card holds is the EFFECTIVE one, which is masked to
-        // false whenever the block cannot currently send. Sending it back would
-        // write "off" over a stored "on" on the first save of any new SMTP
-        // configuration.
-      });
+      let res: SaveMailResult;
+      try {
+        res = await saveSmtpSettings({
+          host: draft.host,
+          port,
+          security: draft.security,
+          user: draft.user,
+          password: draft.password || undefined,
+          from: draft.from,
+          fromName: draft.fromName,
+          // The confirmation switch is NOT sent from here. It has its own action,
+          // and the value this card holds is the EFFECTIVE one, which is masked to
+          // false whenever the block cannot currently send. Sending it back would
+          // write "off" over a stored "on" on the first save of any new SMTP
+          // configuration.
+        });
+      } catch {
+        noAnswer("smtp");
+        return;
+      }
       if (!res.ok) {
         toast.error(t("saveErrorTitle"), { description: t(`invalid.${res.reason}`) });
         return;
@@ -141,23 +166,46 @@ export function MailSettings({
   }
 
   function onUseEnvironment() {
+    setFailed(null);
     startSaving(async () => {
-      apply(await clearSmtpSettings());
+      let next: MailStatus;
+      try {
+        next = await clearSmtpSettings();
+      } catch {
+        noAnswer("smtp");
+        return;
+      }
+      apply(next);
       setResult(null);
       toast.success(t("revertedTitle"), { description: t("revertedDesc") });
     });
   }
 
   function onForgetPassword() {
+    setFailed(null);
     startSaving(async () => {
-      apply(await clearSmtpPassword());
+      let next: MailStatus;
+      try {
+        next = await clearSmtpPassword();
+      } catch {
+        noAnswer("smtp");
+        return;
+      }
+      apply(next);
       toast.success(t("passwordCleared"));
     });
   }
 
   function onToggleVerification(required: boolean) {
+    setFailed(null);
     startSaving(async () => {
-      const next = await setVerificationRequired(required);
+      let next: MailStatus;
+      try {
+        next = await setVerificationRequired(required);
+      } catch {
+        noAnswer("verification");
+        return;
+      }
       setStatus(next);
       toast.success(required ? t("verificationOn") : t("verificationOff"));
     });
@@ -360,6 +408,12 @@ export function MailSettings({
           </p>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* No answer */}
+            {failed === "smtp" ? (
+              <p role="alert" className="text-destructive mr-auto text-xs leading-relaxed">
+                {t("saveErrorTitle")}. {tc("error")}
+              </p>
+            ) : null}
             {status.source === "panel" && status.passwordState !== "unset" ? (
               <Button
                 type="button"
@@ -473,6 +527,12 @@ export function MailSettings({
               <p className="text-muted-foreground mt-1.5 flex items-start gap-1.5 text-xs leading-relaxed">
                 <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
                 {t("verificationNeedsMail")}
+              </p>
+            ) : null}
+            {/* No answer */}
+            {failed === "verification" ? (
+              <p role="alert" className="text-destructive mt-1.5 text-xs leading-relaxed">
+                {tc("error")}
               </p>
             ) : null}
           </div>

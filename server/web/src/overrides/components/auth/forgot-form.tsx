@@ -4,7 +4,9 @@
 // Turnstile check added (server/src/turnstile.rs; not upstream). Everything
 // else is upstream's, line for line; the additions are marked "Turnstile".
 // With no site key configured `captcha.enabled` is false, no widget renders,
-// no header is sent and the form behaves exactly as upstream's.
+// no header is sent and the form behaves exactly as upstream's. One fix, marked
+// "No answer": a request that fails outright, or that the rate limit refused,
+// is no longer confirmed as sent.
 // @upstream components/auth/forgot-form.tsx
 
 import { useState } from "react";
@@ -29,6 +31,15 @@ export function ForgotForm() {
   // Turnstile
   const captcha = useCaptcha();
   const tCaptcha = useTranslations("turnstile.widget");
+  // No answer: Better Auth's client throws when fetch does (no connection, a
+  // server restarting behind its proxy). Upstream awaited it without a catch,
+  // so the form stayed disabled until a reload.
+  const tc = useTranslations("common");
+  function failed(msg: string) {
+    setError(msg);
+    toast.error(msg);
+    setPending(false);
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -41,12 +52,20 @@ export function ForgotForm() {
     }
     setPending(true);
 
-    const { error: err } = await authClient.requestPasswordReset({
-      email: email.trim(),
-      redirectTo: "/reset",
-      // Turnstile: the token travels in a header; it is spent either way.
-      fetchOptions: { headers: captcha.headers() },
-    });
+    let err: unknown;
+    try {
+      ({ error: err } = await authClient.requestPasswordReset({
+        email: email.trim(),
+        redirectTo: "/reset",
+        // Turnstile: the token travels in a header; it is spent either way.
+        fetchOptions: { headers: captcha.headers() },
+      }));
+    } catch {
+      // No answer
+      captcha.reset();
+      failed(tc("error"));
+      return;
+    }
     captcha.reset();
 
     // Turnstile: a refused check is no confirmation (403 and 503 included).
@@ -56,6 +75,14 @@ export function ForgotForm() {
       setError(msg);
       toast.error(msg);
       setPending(false);
+      return;
+    }
+
+    // No answer: the rate limit (3 a minute) refuses before the address is
+    // looked at, so saying so tells nobody whether the account exists, and
+    // "check your inbox" would promise a link that was never sent.
+    if (err && (err as { status?: number }).status === 429) {
+      failed(t("login.tooManyAttempts"));
       return;
     }
 

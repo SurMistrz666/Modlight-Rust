@@ -1,5 +1,11 @@
 "use client";
 
+// Port of upstream components/auth/two-factor-form.tsx. Everything is
+// upstream's, line for line, except one fix marked "No answer": a check whose
+// request fails outright no longer leaves the form disabled (bug hunt
+// 2026-11-11, WEB-07; the four other sign-in forms got it as WEB-03).
+// @upstream components/auth/two-factor-form.tsx
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -20,6 +26,10 @@ export function TwoFactorForm({ next }: { next: string }) {
   const [useBackup, setUseBackup] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // No answer: Better Auth's client throws when fetch does (no connection, a
+  // server restarting behind its proxy). Upstream awaited it without a catch,
+  // so the form stayed on "Verifying" until the page was reloaded.
+  const tc = useTranslations("common");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -27,9 +37,19 @@ export function TwoFactorForm({ next }: { next: string }) {
     setError(null);
     setPending(true);
 
-    const { error: err } = useBackup
-      ? await authClient.twoFactor.verifyBackupCode({ code: code.trim() })
-      : await authClient.twoFactor.verifyTotp({ code: code.trim(), trustDevice });
+    let err: unknown;
+    try {
+      ({ error: err } = useBackup
+        ? await authClient.twoFactor.verifyBackupCode({ code: code.trim() })
+        : await authClient.twoFactor.verifyTotp({ code: code.trim(), trustDevice }));
+    } catch {
+      // No answer
+      const msg = tc("error");
+      setError(msg);
+      toast.error(msg);
+      setPending(false);
+      return;
+    }
 
     if (err) {
       const msg = authErrorMessage(err, t("twoFactor.codeMismatch"));

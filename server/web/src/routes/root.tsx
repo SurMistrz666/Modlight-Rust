@@ -3,7 +3,8 @@
  * boundary), app/not-found.tsx, plus what Next does around them in the browser:
  * <html> attributes, <head> metadata, scroll restoration.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createTranslator } from "next-intl";
 import { Outlet, ScrollRestoration, useLoaderData, useRouteError } from "react-router";
 import GlobalRouteError from "@/app/error";
 import RootLayout from "../pages/layout";
@@ -11,6 +12,7 @@ import NotFound from "../pages/not-found";
 import type { RootLayoutData } from "../contract/layouts";
 import { isNotFound, isNotImplemented, type HeadMeta, type PagePayload } from "../runtime/payload";
 import { messagesFor } from "../runtime/messages";
+import { getRootData } from "../runtime/root-data";
 import { SegmentErrorBoundary } from "./boundary";
 import { NotImplemented } from "./not-implemented";
 
@@ -140,10 +142,13 @@ export function HydrateFallback() {
  * The router's own error element: only reached when the loader itself threw
  * (a page chunk that no longer exists after a deploy, a network failure while
  * loading code). Next falls back to a document navigation in that situation;
- * so does this, once per URL, before showing anything.
+ * so does this, once per URL, before showing anything. When it fails again
+ * after that reload, the page says so and offers another try (it used to stay
+ * empty; bug hunt 2026-11-11, WEB-11).
  */
 export function RouterError() {
   const error = useRouteError();
+  const [failedAgain, setFailedAgain] = useState(false);
   useEffect(() => {
     const key = `ml-reload:${window.location.pathname}${window.location.search}`;
     let reloaded = false;
@@ -154,7 +159,50 @@ export function RouterError() {
       /* storage unavailable: reload anyway, at most once per mount */
     }
     if (!reloaded) window.location.reload();
-    else console.error(error);
+    else {
+      console.error(error);
+      setFailedAgain(true);
+    }
   }, [error]);
-  return null;
+  return failedAgain ? <LoadFailed /> : null;
+}
+
+const LOAD_FAILED_EN = {
+  title: "This page could not be loaded",
+  body: "Part of the panel did not arrive, even after reloading the page. Check your connection and try again.",
+  retry: "Try again",
+};
+
+/**
+ * What RouterError shows. It renders outside the root layout (no translation
+ * provider), so the words come from the dictionary this tab already received
+ * (`common.loadFailed`), in English when there is none.
+ */
+function LoadFailed() {
+  let text = LOAD_FAILED_EN;
+  const root = getRootData();
+  if (root) {
+    try {
+      // The dictionary is untyped here (it arrives as JSON with the page data).
+      const t = createTranslator({
+        locale: root.locale,
+        messages: messagesFor(root),
+        namespace: "common.loadFailed",
+      }) as unknown as (key: string) => string;
+      text = { title: t("title"), body: t("body"), retry: t("retry") };
+    } catch {
+      /* no dictionary held, or an older one without these words */
+    }
+  }
+  return (
+    <main role="alert" className="grid min-h-dvh place-items-center p-6 text-center text-sm">
+      <div className="max-w-sm space-y-3">
+        <p className="font-semibold">{text.title}</p>
+        <p className="text-muted-foreground">{text.body}</p>
+        <button type="button" className="underline underline-offset-4" onClick={() => window.location.reload()}>
+          {text.retry}
+        </button>
+      </div>
+    </main>
+  );
 }

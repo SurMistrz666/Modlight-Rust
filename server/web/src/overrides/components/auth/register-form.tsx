@@ -4,7 +4,8 @@
 // Turnstile check added (server/src/turnstile.rs; not upstream). Everything
 // else is upstream's, line for line; the additions are marked "Turnstile".
 // With no site key configured `captcha.enabled` is false, no widget renders,
-// no header is sent and the form behaves exactly as upstream's.
+// no header is sent and the form behaves exactly as upstream's. One fix, marked
+// "No answer": a request that fails outright no longer leaves the form disabled.
 // @upstream components/auth/register-form.tsx
 
 import { useState } from "react";
@@ -56,6 +57,10 @@ export function RegisterForm({
   // Turnstile
   const captcha = useCaptcha();
   const tCaptcha = useTranslations("turnstile.widget");
+  // No answer: the request failed outright (Better Auth's client throws when
+  // fetch does: no connection, a server restarting behind its proxy). Upstream
+  // awaited it without a catch, so the form stayed disabled until a reload.
+  const tc = useTranslations("common");
 
   /** Send the confirmation link again. Throttled by caller on the server. */
   async function onResend(address: string) {
@@ -85,16 +90,28 @@ export function RegisterForm({
     }
 
     setPending(true);
-    const { data, error: err } = await signUp.email({
-      name: name.trim(),
-      email: email.trim(),
-      password,
-      // Extra fields reach the endpoint handler but are dropped before the user
-      // row is written, so the key is checked and never stored on the account.
-      ...(keyRequired ? { registrationKey: registrationKey.trim() } : {}),
-      // Turnstile: the token travels in a header; it is spent either way.
-      fetchOptions: { headers: captcha.headers() },
-    });
+    let answer: Awaited<ReturnType<typeof signUp.email>>;
+    try {
+      answer = await signUp.email({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        // Extra fields reach the endpoint handler but are dropped before the user
+        // row is written, so the key is checked and never stored on the account.
+        ...(keyRequired ? { registrationKey: registrationKey.trim() } : {}),
+        // Turnstile: the token travels in a header; it is spent either way.
+        fetchOptions: { headers: captcha.headers() },
+      });
+    } catch {
+      // No answer
+      captcha.reset();
+      const msg = tc("error");
+      setError(msg);
+      toast.error(msg);
+      setPending(false);
+      return;
+    }
+    const { data, error: err } = answer;
     captcha.reset();
 
     if (err) {

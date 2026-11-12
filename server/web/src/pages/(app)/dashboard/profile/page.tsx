@@ -32,6 +32,8 @@ import {
 import { EncryptionSettings } from "../../../../encryption/EncryptionSettings";
 import type { VaultStatus } from "../../../../encryption/actions";
 import { StripMetadataSettings } from "../../../../strip-metadata/StripMetadataSettings";
+// Not upstream (WEB-09): `(u.name || u.email).slice(0, 2)` could split a character.
+import { initials } from "../../../../avatar/initials";
 import type { StripStatus } from "../../../../strip-metadata/actions";
 
 export interface ProfilePageProps {
@@ -177,7 +179,7 @@ export default function ProfilePage({ props }: { props: ProfilePageProps }) {
       <SettingsGroup title={t("groups.personal")}>
         <AvatarSection
           url={props.avatarUrl}
-          initials={(u.name || u.email).slice(0, 2).toUpperCase()}
+          initials={initials(u.name || u.email)}
         />
 
         <AppearanceSection theme={u.theme ?? DEFAULT_THEME} locale={u.locale ?? null} />

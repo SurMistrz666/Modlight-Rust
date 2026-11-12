@@ -22,6 +22,7 @@ import { FileList } from "@/components/dashboard/FileList";
 import { TrashList } from "@/components/dashboard/TrashList";
 import { Pagination } from "@/components/dashboard/Pagination";
 import { AdminVaultNotice } from "../../../../../../../encryption/VaultBanner";
+import { initials as initialsOf } from "../../../../../../../avatar/initials";
 
 export interface AdminUserFilesPageProps {
   /** first(sp.search)?.trim() || undefined */
@@ -44,7 +45,8 @@ export default function AdminUserFilesPage({ props }: { props: AdminUserFilesPag
   const t = useTranslations("admin.files");
   const { search, sort, kind, view, trashed, data } = props;
   const { target, items } = data;
-  const initials = (target.name?.trim() || target.email).slice(0, 2).toUpperCase();
+  // Not upstream (WEB-09): whole characters, not UTF-16 units.
+  const initials = initialsOf(target.name?.trim() || target.email);
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">

@@ -1,14 +1,17 @@
 // Port of upstream components/admin/UserManager.tsx, verbatim except for one
-// badge and one import path.
+// badge, one import path and one fix.
 // @upstream components/admin/UserManager.tsx
 // Deviations (not upstream, docs/ENCRYPTION.md): an account that keeps its
 // files encrypted carries an "Encrypted" badge in the status column (the row's
 // `encryption` field is the vault state the server adds to AdminUserRow); the
 // row menu is imported as "@/components/admin/UserRowMenu", because this file
-// does not live next to it.
+// does not live next to it. Fix (bug hunt 2026-11-11, WEB-02): the edit and
+// delete dialogs drop an answer that arrives after they were reopened for
+// another account (`editRequest`, `removeRequest`). WEB-09: initials are whole
+// characters (src/avatar/initials.ts).
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   UserPlus,
   Search,
@@ -92,10 +95,12 @@ import {
   type UserFieldIssue,
 } from "@/app/actions/admin";
 import { UserRowContextMenu, UserRowDropdown } from "@/components/admin/UserRowMenu";
+import { initials } from "../../../avatar/initials";
 
 function initialsOf(u: AdminUserRow) {
   const src = u.name?.trim() || u.email;
-  return src.slice(0, 2).toUpperCase();
+  // Not upstream (WEB-09): whole characters, not UTF-16 units.
+  return initials(src);
 }
 
 function errMessage(error: unknown, fallback: string): string {
@@ -247,6 +252,13 @@ export function UserManager({
   const [impact, setImpact] = useState<UserDeletionImpact | null>(null);
   const [impactLoading, setImpactLoading] = useState(false);
   const [disposition, setDisposition] = useState<FileDisposition>("delete");
+
+  // Not upstream (WEB-02): which opening of each dialog the answer in flight
+  // belongs to. Closing a dialog and opening it for another account leaves the
+  // first read running; when it comes back last, it must not fill the second
+  // dialog with the first account (and send its edits to that account).
+  const editRequest = useRef(0);
+  const removeRequest = useRef(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -477,6 +489,8 @@ export function UserManager({
    * or a quota is how two admins silently overwrite each other.
    */
   function openEdit(u: AdminUserRow) {
+    const request = ++editRequest.current;
+    const current = () => editRequest.current === request;
     setEditTarget(u);
     setDetail(null);
     setDraft(null);
@@ -484,14 +498,20 @@ export function UserManager({
     setDetailLoading(true);
     void loadUserDetail(u.id)
       .then((data) => {
+        if (!current()) return;
         setDetail(data);
         if (data) setDraft(draftFrom(data));
       })
-      .catch(() => setDetail(null))
-      .finally(() => setDetailLoading(false));
+      .catch(() => {
+        if (current()) setDetail(null);
+      })
+      .finally(() => {
+        if (current()) setDetailLoading(false);
+      });
   }
 
   function closeEdit() {
+    editRequest.current++;
     setEditTarget(null);
     setDetail(null);
     setDraft(null);
@@ -582,14 +602,22 @@ export function UserManager({
    * over an account that now holds 3000 is not a confirmation.
    */
   function openRemove(u: AdminUserRow) {
+    const request = ++removeRequest.current;
+    const current = () => removeRequest.current === request;
     setRemoveTarget(u);
     setDisposition("delete");
     setImpact(null);
     setImpactLoading(true);
     void loadDeletionImpact(u.id)
-      .then((data) => setImpact(data))
-      .catch(() => setImpact(null))
-      .finally(() => setImpactLoading(false));
+      .then((data) => {
+        if (current()) setImpact(data);
+      })
+      .catch(() => {
+        if (current()) setImpact(null);
+      })
+      .finally(() => {
+        if (current()) setImpactLoading(false);
+      });
   }
 
   async function confirmRemove() {

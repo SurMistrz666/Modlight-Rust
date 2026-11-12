@@ -6,7 +6,6 @@
     "app/globals.css": "617cd6ca7dcc00a3fa7b069d46d3d548f899d313eb247a05f21c8fb3a01bb3f0",
     "app/s/[code]/unlock/unlock-form.tsx": "e25f4f08ab075b0c51aa1b9bf7a2fde024d640c25c0c56499418a7e08743a5b8",
     "components/admin/AdminFileToolbar.tsx": "24761e3a0146660738b8e816fa6096455c8f1a42b4b302a7a41704ee01d7fb89",
-    "components/admin/MailSettings.tsx": "92ae9357ceebd69ef0865ccbddf8a37278af210b64d4685beafacd03feb419cf",
     "components/admin/Maintenance.tsx": "7ce110f6db08810995c2267eb5c8bd2f50d8cc0abca6ae4310effabbd19277df",
     "components/admin/OrphanFiles.tsx": "90367354c85ece3d4b0a9953b28a465de116321718bd65f72217e8090313cc29",
     "components/admin/ReleaseChannel.tsx": "964ff82451980b3467e06bb1e80a59e0da737bb0aec82a335f0d2cb3a919c67f",
@@ -18,9 +17,7 @@
     "components/auth/auth-error.ts": "8772de7af8144d44454be627d24914efeff0a3d48bb9834541845d2f3c3d4c9a",
     "components/auth/form-bits.tsx": "bd6d8b25daf44c0366767a5fe500ed570a9067c2861fc26093b181eb37e1773b",
     "components/auth/password-input.tsx": "a96eb968f4c6886b8b6df9e2df27e8ef711da83a0f5dac3701a8417c5eec28fa",
-    "components/auth/reset-form.tsx": "bfa04fae9b1ea94c6eb097a269270d405226468ae87cd3ad40c17c1dd001c245",
     "components/auth/submit-button.tsx": "98ca0ed7bfb05376bccfc25138d898b27053e78aaf964cb418ebc379669b6614",
-    "components/auth/two-factor-form.tsx": "8b4a58997720fb675f394df52af3d1b1bc961d345f56092a20986ea773e01517",
     "components/dashboard/BulkBar.tsx": "a28020d20df0193a0d4df67b8e4115ca3e43ae2663c6679182a80d43c67adbf5",
     "components/dashboard/ConvertDialog.tsx": "3570644dee20bed28aed6f146ed4b0ef01632b14b36c5afcf3e6348171021d01",
     "components/dashboard/DeleteFolderDialog.tsx": "34bf276c5d5f2eb85e5ff44b2d3dd7cfc9bfdd45fd4ea8be4093bca88be9d345",
@@ -464,6 +461,12 @@
         "src/pages/welcome/page.tsx"
       ]
     },
+    "components/admin/MailSettings.tsx": {
+      "sha256": "92ae9357ceebd69ef0865ccbddf8a37278af210b64d4685beafacd03feb419cf",
+      "ports": [
+        "src/overrides/components/admin/MailSettings.tsx"
+      ]
+    },
     "components/admin/ServerDisk.tsx": {
       "sha256": "2d8dbf8ff5c69b6cb48cbeda2353eeede0fe4c7582da70d87e254df5fc768d58",
       "ports": [
@@ -510,6 +513,18 @@
       "sha256": "77e6b47e2a12de70d5530de94646edeb301b0d56dbd3a8687898c5eb34f6221f",
       "ports": [
         "src/overrides/components/auth/register-form.tsx"
+      ]
+    },
+    "components/auth/reset-form.tsx": {
+      "sha256": "bfa04fae9b1ea94c6eb097a269270d405226468ae87cd3ad40c17c1dd001c245",
+      "ports": [
+        "src/overrides/components/auth/reset-form.tsx"
+      ]
+    },
+    "components/auth/two-factor-form.tsx": {
+      "sha256": "8b4a58997720fb675f394df52af3d1b1bc961d345f56092a20986ea773e01517",
+      "ports": [
+        "src/overrides/components/auth/two-factor-form.tsx"
       ]
     },
     "components/authorize/authorize-prompt.tsx": {

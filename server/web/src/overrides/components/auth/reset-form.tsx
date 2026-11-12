@@ -1,5 +1,11 @@
 "use client";
 
+// Port of upstream components/auth/reset-form.tsx. Everything is upstream's,
+// line for line, except one fix marked "No answer": a new password whose
+// request fails outright no longer leaves the form disabled (bug hunt
+// 2026-11-11, WEB-07; the four other sign-in forms got it as WEB-03).
+// @upstream components/auth/reset-form.tsx
+
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -20,6 +26,10 @@ export function ResetForm({ token }: { token: string }) {
   const [confirm, setConfirm] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // No answer: Better Auth's client throws when fetch does (no connection, a
+  // server restarting behind its proxy). Upstream awaited it without a catch,
+  // so the form stayed on "Updating" until the page was reloaded.
+  const tc = useTranslations("common");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -36,10 +46,20 @@ export function ResetForm({ token }: { token: string }) {
     }
 
     setPending(true);
-    const { error: err } = await authClient.resetPassword({
-      newPassword: password,
-      token,
-    });
+    let err: unknown;
+    try {
+      ({ error: err } = await authClient.resetPassword({
+        newPassword: password,
+        token,
+      }));
+    } catch {
+      // No answer
+      const msg = tc("error");
+      setError(msg);
+      toast.error(msg);
+      setPending(false);
+      return;
+    }
 
     if (err) {
       const msg = authErrorMessage(err, t("reset.invalidLink"));

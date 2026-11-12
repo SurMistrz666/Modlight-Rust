@@ -2,8 +2,8 @@
  * Admin -> Settings: the "Cloudflare Turnstile" card. Not upstream (see
  * widget.tsx and server/src/turnstile.rs).
  *
- * Built like the SMTP card (components/admin/MailSettings.tsx), for the same
- * reasons:
+ * Built like the SMTP card (src/overrides/components/admin/MailSettings.tsx),
+ * for the same reasons:
  *
  *  1. **The secret key is write-only.** The server reports a state ("set",
  *     "unset", "undecryptable") and never the value; a blank field keeps the
@@ -12,6 +12,11 @@
  *     environment and no panel block, the fields are read-only until the
  *     operator takes the configuration over; "use the environment" deletes the
  *     panel block again.
+ *
+ * As in that card (and unlike upstream's), a request that fails outright is
+ * caught: the card says so and keeps what was typed. Thrown out of the
+ * transition, it replaced the whole admin page with the error page (bug hunt
+ * 2026-11-11, WEB-08).
  */
 import { useState, useTransition } from "react";
 import {
@@ -41,6 +46,7 @@ import {
   clearTurnstileSettings,
   saveTurnstileSettings,
   testTurnstileSecret,
+  type SaveTurnstileResult,
   type TurnstileStatus,
   type TurnstileTestResult,
 } from "./actions";
@@ -60,12 +66,15 @@ const DASHBOARD = "https://dash.cloudflare.com/?to=/:account/turnstile";
 
 export function TurnstileSettings({ initial }: { initial: TurnstileStatus }) {
   const t = useTranslations("turnstile.admin");
+  const tc = useTranslations("common");
   const [status, setStatus] = useState<TurnstileStatus>(initial);
   const [draft, setDraft] = useState<Draft>(() => draftFrom(initial));
   const [editing, setEditing] = useState(initial.source !== "env");
   const [saving, startSaving] = useTransition();
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<TurnstileTestResult | null>(null);
+  /** A save that got no answer: shown in the card, the fields keep what was typed. */
+  const [failed, setFailed] = useState(false);
   const locked = !editing;
   const host = typeof window === "undefined" ? "" : window.location.hostname;
 
@@ -79,13 +88,25 @@ export function TurnstileSettings({ initial }: { initial: TurnstileStatus }) {
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
+  function noAnswer() {
+    setFailed(true);
+    toast.error(t("saveErrorTitle"), { description: tc("error") });
+  }
+
   function onSave() {
+    setFailed(false);
     startSaving(async () => {
-      const res = await saveTurnstileSettings({
-        enabled: draft.enabled,
-        siteKey: draft.siteKey.trim(),
-        secret: draft.secret.trim() || undefined,
-      });
+      let res: SaveTurnstileResult;
+      try {
+        res = await saveTurnstileSettings({
+          enabled: draft.enabled,
+          siteKey: draft.siteKey.trim(),
+          secret: draft.secret.trim() || undefined,
+        });
+      } catch {
+        noAnswer();
+        return;
+      }
       if (!res.ok) {
         toast.error(t("saveErrorTitle"), { description: t(`invalid.${res.reason}`) });
         return;
@@ -97,8 +118,16 @@ export function TurnstileSettings({ initial }: { initial: TurnstileStatus }) {
   }
 
   function onUseEnvironment() {
+    setFailed(false);
     startSaving(async () => {
-      apply(await clearTurnstileSettings());
+      let next: TurnstileStatus;
+      try {
+        next = await clearTurnstileSettings();
+      } catch {
+        noAnswer();
+        return;
+      }
+      apply(next);
       setResult(null);
       toast.success(t("revertedTitle"), { description: t("revertedDesc") });
     });
@@ -239,6 +268,11 @@ export function TurnstileSettings({ initial }: { initial: TurnstileStatus }) {
         </p>
 
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {failed ? (
+            <p role="alert" className="text-destructive mr-auto text-xs leading-relaxed">
+              {t("saveErrorTitle")}. {tc("error")}
+            </p>
+          ) : null}
           <Button type="button" disabled={saving || locked} onClick={onSave}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             {t("save")}

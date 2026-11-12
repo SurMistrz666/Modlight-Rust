@@ -6,8 +6,9 @@
 // section into that footer. All of the panel's chrome lives in the rail: there
 // is no top bar on wide screens, and on a phone the bar only opens the rail (as
 // a drawer) and names the page; the theme toggle and the account menu that sat
-// at its right are in the drawer. Not upstream: Downloads (/dashboard/downloads)
-// in the Account section.
+// at its right are in the drawer, and a link followed from the account menu or
+// the app name there closes the drawer, as its navigation rows do. Not upstream:
+// Downloads (/dashboard/downloads) in the Account section.
 "use client";
 
 import Link from "next/link";
@@ -50,6 +51,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { humanFileSize } from "@/lib/format";
 import { BrandTile } from "@/components/auth/brand-mark";
+import { initials as initialsOf } from "../../avatar/initials";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import {
@@ -794,11 +796,12 @@ function SidebarNav({
 }
 
 /** The app name, closing the rail (and the mobile drawer). */
-function Brand({ collapsed }: { collapsed?: boolean }) {
+function Brand({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
   const t = useTranslations("nav");
   return (
     <Link
       href="/dashboard"
+      onClick={onNavigate}
       className={cn(
         "group/brand flex min-w-0 items-center py-3",
         collapsed ? "justify-center px-2" : "gap-2.5 px-4",
@@ -838,7 +841,8 @@ export function AppShell({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const isAdmin = user.role === "admin";
-  const initials = (user.name || user.email).slice(0, 2).toUpperCase();
+  // Not upstream (WEB-09): whole characters, not UTF-16 units.
+  const initials = initialsOf(user.name || user.email);
 
   // Lifted so the rail and the mobile drawer always show the same folds.
   const sections = {
@@ -862,18 +866,21 @@ export function AppShell({
     router.refresh();
   }
 
-  const accountMenu = (
+  // `onNavigate` closes the phone drawer, as its navigation rows do: the account
+  // card sits in the drawer there (upstream had it in the top bar), and a link
+  // followed from it otherwise left the drawer open over the new page.
+  const accountMenu = (onNavigate?: () => void) => (
     <>
       <DropdownMenuLabel className="truncate font-normal">{user.email}</DropdownMenuLabel>
       <DropdownMenuSeparator />
       <DropdownMenuItem asChild>
-        <Link href="/dashboard/profile">
+        <Link href="/dashboard/profile" onClick={onNavigate}>
           <UserRound className="size-4" /> {t("profile")}
         </Link>
       </DropdownMenuItem>
       {isAdmin && (
         <DropdownMenuItem asChild>
-          <Link href="/dashboard/admin">
+          <Link href="/dashboard/admin" onClick={onNavigate}>
             <ShieldCheck className="size-4" /> {t("admin")}
           </Link>
         </DropdownMenuItem>
@@ -886,7 +893,7 @@ export function AppShell({
   );
 
   /** The account card that closes the rail (and the mobile drawer). */
-  const accountCard = (railCollapsed: boolean) => (
+  const accountCard = (railCollapsed: boolean, onNavigate?: () => void) => (
     <div className="p-3">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -919,7 +926,7 @@ export function AppShell({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="bottom" align="start" className="w-[15.5rem]">
-          {accountMenu}
+          {accountMenu(onNavigate)}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -948,7 +955,7 @@ export function AppShell({
       </div>
       <div className="border-foreground/10 mt-2 flex items-center border-t">
         <div className="min-w-0 flex-1">
-          <Brand collapsed={railCollapsed} />
+          <Brand collapsed={railCollapsed} onNavigate={onNavigate} />
         </div>
         {withCollapse && !railCollapsed ? (
           <button
@@ -1032,7 +1039,7 @@ export function AppShell({
             <SheetContent side="left" className="bg-card flex flex-col gap-0 p-0">
               <SheetTitle className="sr-only">{t("navigation")}</SheetTitle>
               {/* Room on the right for the drawer's close button. */}
-              <div className="shrink-0 pr-10">{accountCard(false)}</div>
+              <div className="shrink-0 pr-10">{accountCard(false, () => setMobileOpen(false))}</div>
               <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-4">
                 <SidebarNav
                   scope="sheet"

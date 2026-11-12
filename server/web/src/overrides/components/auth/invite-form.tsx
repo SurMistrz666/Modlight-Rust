@@ -4,7 +4,8 @@
 // Turnstile check added (server/src/turnstile.rs; not upstream). Everything
 // else is upstream's, line for line; the additions are marked "Turnstile".
 // With no site key configured `captcha.enabled` is false, no widget renders,
-// no header is sent and the form behaves exactly as upstream's.
+// no header is sent and the form behaves exactly as upstream's. One fix, marked
+// "No answer": a request that fails outright no longer leaves the form disabled.
 // @upstream components/auth/invite-form.tsx
 
 import { useState } from "react";
@@ -40,6 +41,16 @@ export function InviteForm({ token, email }: { token: string; email: string }) {
   // Turnstile
   const captcha = useCaptcha();
   const tCaptcha = useTranslations("turnstile.widget");
+  // No answer: the request failed outright (no connection, a proxy's error page
+  // while the server restarts, a server error). Upstream awaited it without a
+  // catch, so the form stayed disabled until the page was reloaded.
+  const tc = useTranslations("common");
+  function noAnswer() {
+    const msg = tc("error");
+    setError(msg);
+    toast.error(msg);
+    setPending(false);
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -62,10 +73,15 @@ export function InviteForm({ token, email }: { token: string; email: string }) {
 
     setPending(true);
     // Turnstile: the token travels in a header; it is spent either way.
-    const res: AcceptInvitationResult | { ok: false; reason: CaptchaRefusal } = await withActionHeaders(
-      captcha.headers(),
-      () => acceptInvitation(token, password),
-    );
+    let res: AcceptInvitationResult | { ok: false; reason: CaptchaRefusal };
+    try {
+      res = await withActionHeaders(captcha.headers(), () => acceptInvitation(token, password));
+    } catch {
+      // No answer
+      captcha.reset();
+      noAnswer();
+      return;
+    }
     captcha.reset();
 
     const captchaKey = res.ok ? null : captchaRefusalKey(res.reason);

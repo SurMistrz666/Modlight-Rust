@@ -203,6 +203,28 @@ describe("the Settings card", () => {
       args: ["0b9a3c4e-0000-4000-8000-000000000002"],
     });
   });
+
+  // The expiry is a relative time in the future ("in 29 days", "za 29 dni"):
+  // it used to be put after "until" / "do", which read "until in 29 days".
+  for (const [locale, expected, wrong] of [
+    ["en", "expires in 29 days", "until in"],
+    ["pl", "wygasa za 29 dni", "do za"],
+  ] as const) {
+    it(`says when a grant expires in a sentence that reads (${locale})`, async () => {
+      answer({});
+      const inDays = (days: number) => new Date(Date.now() + days * 86_400_000 + 60_000).toISOString();
+      const view = await mount("dashboard-profile-encrypted", (p) => {
+        const root = (p as unknown as { layouts: { root: Record<string, unknown> } }).layouts.root;
+        root.locale = locale;
+        root.messages = fixtureMessages(locale);
+        const props = (p as unknown as { props: { encryption: { grants: { expiresAt: string }[] } } }).props;
+        for (const g of props.encryption.grants) g.expiresAt = inDays(29);
+      });
+      const row = view.container.querySelector("[data-grant-kind=owner]")!.textContent ?? "";
+      expect(row).toContain(expected);
+      expect(row).not.toContain(wrong);
+    });
+  }
 });
 
 describe("the library", () => {

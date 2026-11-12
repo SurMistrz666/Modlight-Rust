@@ -2,23 +2,19 @@
 // @upstream app/(auth)/login/page.tsx
 //
 // Server (Rust): registrationPageState() (only `open` is read). `next` comes
-// from the URL and is sanitized here as upstream does (safeNext).
+// from the URL and is sanitized here (safeNext), more strictly than upstream:
+// see src/pages/_lib/safe-next.ts.
 // generateMetadata: { title: t("auth.login.title") }.
 import { useTranslations } from "next-intl";
 import { AuthCard } from "@/components/auth/auth-card";
 import { LoginForm } from "@/components/auth/login-form";
 import { config } from "@/lib/config";
 import { useNextSearchParams } from "../../_lib/search-params";
+import { safeNext } from "../../_lib/safe-next";
 
 export interface LoginPageProps {
   /** registrationPageState(), the field the page reads */
   registration: { open: boolean };
-}
-/** Sanitize ?next= to an in-app path so it can't be used as an open redirect. */
-function safeNext(value: string | string[] | undefined): string {
-  const raw = Array.isArray(value) ? value[0] : value;
-  if (raw && raw.startsWith("/") && !raw.startsWith("//")) return raw;
-  return "/dashboard";
 }
 
 export default function LoginPage({ props }: { props: LoginPageProps }) {
