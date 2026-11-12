@@ -77,6 +77,11 @@ impl Api {
     /// `DownloadFileAsync`: the body of `url` into `path`, streamed. A status that is
     /// not a success is an error here (upstream wrote nothing and went on), and so is a
     /// server that stops sending for [`STALL_TIMEOUT`].
+    ///
+    /// `path` is written only once the whole body is there (a part file beside it is
+    /// renamed over it), as upstream's `GetAsync` read the whole answer before it opened
+    /// the file: a download that fails leaves no half file under the name, and a file
+    /// the person agreed to overwrite stays as it was.
     pub async fn download_url_to_file(&self, url: &str, path: &Path) -> Result<(), String> {
         download_to_file(url, path, STALL_TIMEOUT).await
     }
@@ -136,15 +141,30 @@ async fn download_to_file(url: &str, path: &Path, stall: Duration) -> Result<(),
             .await
             .map_err(|e| e.to_string())?;
     }
-    let mut file = tokio::fs::File::create(path)
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| ApiError::from_reqwest(e).to_string())?;
-        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+    let part = crate::library::part_path(path);
+    let written = async {
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&part)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| ApiError::from_reqwest(e).to_string())?;
+            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        }
+        file.flush().await.map_err(|e| e.to_string())?;
+        drop(file);
+        tokio::fs::rename(&part, path)
+            .await
+            .map_err(|e| e.to_string())
     }
-    file.flush().await.map_err(|e| e.to_string())
+    .await;
+    if written.is_err() {
+        let _ = tokio::fs::remove_file(&part).await;
+    }
+    written
 }
 
 /// Decoding stays out of this crate's dependencies: the bytes are handed back and the
@@ -224,5 +244,59 @@ mod tests {
         .await;
         let result = ended.expect("the download ends when the server stops sending");
         assert!(result.is_err());
+    }
+
+    /// Upload from URL onto a name that is taken, after the person said "overwrite": a
+    /// body that ends short is a failure that leaves the old file as it was and no half
+    /// file under the name (upstream's `GetAsync` read the whole answer before it opened
+    /// the file). A whole body replaces it.
+    #[tokio::test]
+    async fn a_failed_download_leaves_the_file_it_would_replace() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn answer_once(reply: &'static [u8]) -> String {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/shot.png", listener.local_addr().unwrap());
+            tokio::spawn(async move {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let _ = stream.write_all(reply).await;
+                let _ = stream.shutdown().await;
+            });
+            url
+        }
+        let names = |dir: &Path| {
+            let mut names: Vec<String> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+        std::fs::write(&path, b"the old picture").unwrap();
+
+        // Promised 100 bytes, sent 10, hung up.
+        let url = answer_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n0123456789",
+        )
+        .await;
+        let cut = download_to_file(&url, &path, Duration::from_secs(5)).await;
+        assert!(cut.is_err(), "a short body is a failure: {cut:?}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"the old picture");
+        assert_eq!(names(dir.path()), ["shot.png"]);
+
+        let url = answer_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\nnew picture",
+        )
+        .await;
+        download_to_file(&url, &path, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new picture");
+        assert_eq!(names(dir.path()), ["shot.png"]);
     }
 }

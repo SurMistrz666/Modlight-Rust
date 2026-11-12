@@ -674,12 +674,37 @@ impl Canvas {
             .mask_blur
             .unwrap_or(0.0)
             .max(paint.image_blur.map_or(0.0, |(sx, sy)| sx.max(sy)));
-        let pad = blur::blur_outset(sigma_max).clamp(0, 128) as u32;
-        let (lw, lh) = (w + 2 * pad, h + 2 * pad);
-        let lm = Transform::from_translate(pad as f32, pad as f32).pre_concat(matrix);
+        let pad = blur::blur_outset(sigma_max).clamp(0, 128);
+        let (w, h) = (w as i32, h as i32);
+        let mut region = (-pad, -pad, w + pad, h + pad);
+        // When the layer's transparent pixels leave the canvas as it is (no colour filter,
+        // a blend that keeps the destination under a transparent source), only the part
+        // the blurred shape reaches matters, as Skia blurs a mask the size of the shape.
+        // Effects draw thousands of small glowing shapes (glyphs, stars, sparks): a
+        // canvas-sized blur for each made them take minutes on a screenshot.
+        if paint.color_filter.is_none()
+            && matches!(paint.blend, Blend::SrcOver | Blend::Plus | Blend::Screen)
+        {
+            let Some((l, t, r, b)) = device_bounds(&outlines, hairline.then_some(path), matrix)
+            else {
+                return;
+            };
+            let reach = blur_reach(paint);
+            region = (
+                region.0.max(l.saturating_sub(reach)),
+                region.1.max(t.saturating_sub(reach)),
+                region.2.min(r.saturating_add(reach)),
+                region.3.min(b.saturating_add(reach)),
+            );
+            if region.0.max(0) >= region.2.min(w) || region.1.max(0) >= region.3.min(h) {
+                return;
+            }
+        }
+        let (lw, lh) = (region.2 - region.0, region.3 - region.1);
+        let lm = Transform::from_translate(-region.0 as f32, -region.1 as f32).pre_concat(matrix);
         let mut lp = ts_paint.clone();
         lp.blend_mode = tiny_skia::BlendMode::SourceOver;
-        let saved = std::mem::replace(&mut self.pm, Pixmap::new(lw, lh).unwrap());
+        let saved = std::mem::replace(&mut self.pm, Pixmap::new(lw as u32, lh as u32).unwrap());
         for o in &outlines {
             self.fill_outline(o, &lp, lm, None, paint.aa);
         }
@@ -688,23 +713,28 @@ impl Canvas {
         }
         let layer = std::mem::replace(&mut self.pm, saved);
         let mut px = pixmap_pixels(&layer);
-        let (lwi, lhi) = (lw as i32, lh as i32);
         if let Some(sigma) = paint.mask_blur {
-            px = blur::mask_blur_layer(&px, lwi, lhi, sigma);
+            px = blur::mask_blur_layer(&px, lw, lh, sigma);
         }
         if let Some((sx, sy)) = paint.image_blur {
-            px = blur::blur_premul(&px, lwi, lhi, 0, 0, lwi, lhi, sx, sy);
+            px = blur::blur_premul(&px, lw, lh, 0, 0, lw, lh, sx, sy);
         }
-        if pad > 0 {
-            let (pad, lw) = (pad as usize, lw as usize);
-            px = (0..h as usize)
-                .flat_map(|y| {
-                    let row = (y + pad) * lw + pad;
-                    px[row..row + w as usize].to_vec()
-                })
-                .collect();
-        }
-        self.composite(&px, paint.blend, paint.color_filter.as_ref(), 1.0);
+        // The part of the layer on the canvas.
+        let (x0, y0) = (region.0.max(0), region.1.max(0));
+        let (x1, y1) = (region.2.min(w), region.3.min(h));
+        let px: Vec<[u8; 4]> = (y0..y1)
+            .flat_map(|y| {
+                let row = ((y - region.1) * lw + (x0 - region.0)) as usize;
+                px[row..row + (x1 - x0) as usize].to_vec()
+            })
+            .collect();
+        self.composite_rect(
+            &px,
+            (x0, y0, x1 - x0),
+            paint.blend,
+            paint.color_filter.as_ref(),
+            1.0,
+        );
     }
 
     /// Fills one outline (local coordinates, mapped by `matrix`) with a tiny-skia paint:
@@ -956,10 +986,27 @@ impl Canvas {
         filter: Option<&ColorFilter>,
         alpha: f32,
     ) {
-        let clip = self.state.clip.clone();
+        let w = self.width();
+        self.composite_rect(src, (0, 0, w), mode, filter, alpha);
+    }
+
+    /// [`Canvas::composite`] of the rows of `src`, `at.2` pixels wide, placed with their
+    /// top-left corner at (`at.0`, `at.1`) inside the canvas.
+    fn composite_rect(
+        &mut self,
+        src: &[[u8; 4]],
+        at: (i32, i32, i32),
+        mode: Blend,
+        filter: Option<&ColorFilter>,
+        alpha: f32,
+    ) {
+        let (x0, y0, sw) = (at.0 as usize, at.1 as usize, at.2.max(1) as usize);
+        let cw = self.pm.width() as usize;
+        let clip = self.state.clip.as_ref();
         let data = self.pm.data_mut();
-        for (i, s) in src.iter().enumerate() {
-            let cov = clip.as_ref().map_or(1.0, |m| m.data()[i] as f32 / 255.0);
+        for (k, s) in src.iter().enumerate() {
+            let i = (y0 + k / sw) * cw + x0 + k % sw;
+            let cov = clip.map_or(1.0, |m| m.data()[i] as f32 / 255.0);
             if cov == 0.0 {
                 continue;
             }
@@ -1703,6 +1750,57 @@ fn is_axis_rect(path: &Path) -> bool {
     let b = path.bounds();
     pts.iter()
         .all(|p| (p.x == b.left() || p.x == b.right()) && (p.y == b.top() || p.y == b.bottom()))
+}
+
+/// The device pixels (left, top, right, bottom; right and bottom exclusive) that the
+/// outlines and a hairline stroke of `hairline` cover, after `m`.
+fn device_bounds(
+    outlines: &[Path],
+    hairline: Option<&Path>,
+    m: Transform,
+) -> Option<(i32, i32, i32, i32)> {
+    let mut bounds: Option<(f32, f32, f32, f32)> = None;
+    let mut add = |path: &Path, outset: f32| {
+        let Some(device) = path.clone().transform(m) else {
+            return;
+        };
+        let b = device.bounds();
+        let (l, t, r, bt) = (
+            b.left() - outset,
+            b.top() - outset,
+            b.right() + outset,
+            b.bottom() + outset,
+        );
+        bounds = Some(match bounds {
+            Some(u) => (u.0.min(l), u.1.min(t), u.2.max(r), u.3.max(bt)),
+            None => (l, t, r, bt),
+        });
+    };
+    for o in outlines {
+        add(o, 0.0);
+    }
+    if let Some(path) = hairline {
+        // A hairline covers up to a pixel on each side, and its caps reach a little further.
+        add(path, 2.0);
+    }
+    bounds.map(|(l, t, r, b)| {
+        (
+            l.floor() as i32,
+            t.floor() as i32,
+            (r.ceil() as i32).saturating_add(1),
+            (b.ceil() as i32).saturating_add(1),
+        )
+    })
+}
+
+/// How far the paint's blurs spread a shape, in pixels (at least the reach of the box
+/// passes, about 2.8 sigma, and of the small-sigma Gaussian kernel, 7 taps).
+fn blur_reach(paint: &Paint) -> i32 {
+    let mask = paint.mask_blur.map_or(0.0, |s| s.clamp(0.0, 135.0));
+    let image = paint
+        .image_blur
+        .map_or(0.0, |(sx, sy)| sx.max(sy).clamp(0.0, 532.0));
+    (blur::blur_outset(mask.max(image)) + 2).max(9)
 }
 
 fn pixmap_pixels(pm: &Pixmap) -> Vec<[u8; 4]> {

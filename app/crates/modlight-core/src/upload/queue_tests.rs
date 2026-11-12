@@ -488,6 +488,58 @@ async fn the_quota_is_checked_before_a_byte_moves() {
     assert_eq!(b.queue.count(), 0);
 }
 
+/// "Send now" after freeing space asks the server again: the answer that stopped the
+/// item a moment ago is the one the person just made untrue.
+#[tokio::test]
+async fn send_now_asks_for_the_room_again() {
+    let b = bench();
+    b.take_over("a.png", None);
+    b.fake.quota_answer(Ok(QuotaAnswer::Remaining(Some(4))));
+    b.pump_now().await;
+    assert_eq!(b.item().reason, QueueReason::OutOfSpace);
+
+    // Seconds later, after deleting files on the website.
+    b.advance(5);
+    b.fake.quota_answer(Ok(QuotaAnswer::Remaining(Some(1_000))));
+    b.fake.answer(success);
+    let id = b.item().id;
+    b.queue.send_now(&id);
+    b.queue.pump().await;
+    assert_eq!(b.queue.count(), 0, "it went with the room there is now");
+    assert_eq!(*b.fake.sent_names.lock().unwrap(), ["a.png"]);
+}
+
+/// A quota answer is about one account: another account signed in a moment later is
+/// asked about its own room, not stopped with the previous account's figures.
+#[tokio::test]
+async fn the_room_of_one_account_is_not_another_ones() {
+    let b = bench();
+    b.take_over("alex.png", None);
+    b.fake.quota_answer(Ok(QuotaAnswer::Remaining(Some(4))));
+    b.pump_now().await;
+    assert_eq!(b.item().reason, QueueReason::OutOfSpace);
+
+    *b.account.write().unwrap() = Some(QueueAccount {
+        tag: "sam".into(),
+        token: "s".into(),
+        display_name: "Sam".into(),
+        ..alex()
+    });
+    b.take_over("sam.png", None);
+    b.advance(20);
+    b.fake.quota_answer(Ok(QuotaAnswer::Remaining(Some(1_000))));
+    b.fake.answer(success);
+    b.queue.pump().await;
+    let names: Vec<String> = b
+        .queue
+        .snapshot()
+        .into_iter()
+        .map(|item| item.file_name)
+        .collect();
+    assert_eq!(names, ["alex.png"], "Sam's file went, Alex's waits for him");
+    assert_eq!(*b.fake.sent_names.lock().unwrap(), ["sam.png"]);
+}
+
 #[tokio::test]
 async fn a_vanished_or_changed_file() {
     let b = bench();

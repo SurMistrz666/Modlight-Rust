@@ -58,7 +58,16 @@ impl Default for AppConfig {
 }
 
 fn read_object(path: &Path) -> Option<Map<String, Value>> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let bytes = std::fs::read(path).ok()?;
+    parse_object(&bytes)
+}
+
+/// A settings document as Newtonsoft reads one through a `StreamReader`: a byte order
+/// mark picks UTF-8, UTF-16 or UTF-32 and is not part of the text (Windows tools write
+/// one: Notepad before 1903 and `Set-Content -Encoding UTF8` the UTF-8 mark, Windows
+/// PowerShell's `>` UTF-16), anything else is UTF-8.
+pub fn parse_object(bytes: &[u8]) -> Option<Map<String, Value>> {
+    let text = crate::names::helpers::decode_text(bytes);
     match serde_json::from_str::<Value>(&text) {
         Ok(Value::Object(map)) => Some(map),
         _ => None,
@@ -83,9 +92,12 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// `JsonHelpers.QuickVerifyJsonFile`: the text starts with `{` and ends with `}`.
+/// The text is read as the load reads it (a file a Windows tool wrote may start with a
+/// byte order mark).
 fn quick_verify_json(bytes: &[u8]) -> bool {
-    let text = bytes.trim_ascii();
-    text.len() > 1 && text.first() == Some(&b'{') && text.last() == Some(&b'}')
+    let text = crate::names::helpers::decode_text(bytes);
+    let text = text.trim_ascii();
+    text.len() > 1 && text.starts_with('{') && text.ends_with('}')
 }
 
 /// `SettingsBase.Load` with fallback support: the file itself, then what a save cut
@@ -320,10 +332,12 @@ impl AppConfig {
         self.bool_or("DevMode", false)
     }
 
+    /// `ThemeOptions`, member by member: one that does not read keeps its default and
+    /// costs the others nothing ([`ThemeOptions::from_value`]).
     pub fn theme_options(&self) -> ThemeOptions {
         self.values
             .get("ThemeOptions")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .map(ThemeOptions::from_value)
             .unwrap_or_default()
     }
 
@@ -691,6 +705,61 @@ mod tests {
         assert!(!config.library_panel());
     }
 
+    /// Newtonsoft reads a settings file through a `StreamReader`, which takes a UTF-8 byte
+    /// order mark off. Windows tools put one there (Notepad before 1903, Windows
+    /// PowerShell's `Set-Content -Encoding UTF8`): such a file is the person's settings,
+    /// not a broken file to replace with a backup (and then with defaults at the next save).
+    #[test]
+    fn a_settings_file_with_a_byte_order_mark_is_read() {
+        use crate::l10n::LanguageSetting;
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path();
+        let backup = profile.join(BACKUP_FOLDER);
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::write(
+            backup.join(APPLICATION_CONFIG_FILE),
+            r#"{"Language":"English"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            profile.join(APPLICATION_CONFIG_FILE),
+            "\u{feff}{\"Language\":\"Polish\",\"ModlightPageSize\":30}",
+        )
+        .unwrap();
+        std::fs::write(
+            profile.join(HOTKEYS_CONFIG_FILE),
+            "\u{feff}{\"Hotkeys\":[{\"HotkeyInfo\":{\"Hotkey\":\"F13\"}}]}",
+        )
+        .unwrap();
+        let config = AppConfig::load(profile);
+        assert_eq!(config.language(), LanguageSetting::Polish);
+        assert_eq!(config.page_size(), 30);
+        assert_eq!(
+            config.hotkeys().unwrap()["Hotkeys"][0]["HotkeyInfo"]["Hotkey"],
+            json!("F13")
+        );
+        // A reset reads without fallbacks, and the mark is no reason for the defaults.
+        assert_eq!(
+            AppConfig::load_with(profile, false).language(),
+            LanguageSetting::Polish
+        );
+        // Windows PowerShell's `>` writes UTF-16 with its mark; a StreamReader reads it.
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in "{\"Language\":\"Polish\",\"ModlightPageSize\":60}".encode_utf16() {
+            utf16.extend(unit.to_le_bytes());
+        }
+        std::fs::write(profile.join(APPLICATION_CONFIG_FILE), utf16).unwrap();
+        let config = AppConfig::load(profile);
+        assert_eq!(config.language(), LanguageSetting::Polish);
+        assert_eq!(config.page_size(), 60);
+        // The file a save replaces is kept as the backup copy when it reads.
+        config.save().unwrap();
+        assert_eq!(
+            read_object(&profile.join(BACKUP_FOLDER).join(APPLICATION_CONFIG_FILE)).unwrap()["ModlightPageSize"],
+            json!(60)
+        );
+    }
+
     /// `SettingsBase.SaveInternal` as `SettingManager` sets it up (`CreateBackup`,
     /// `CreateWeeklyBackup`): each save keeps the file it replaces in `Backup`, and the
     /// first save of a week leaves a dated copy there too.
@@ -885,6 +954,48 @@ mod tests {
             restore_main_window(&bounds((1200, 800), (5000, 5000)), default, min, &[]),
             (Some((1200.0, 800.0)), Some((5000.0, 5000.0)))
         );
+    }
+
+    /// One member of `ThemeOptions` that does not read (a `null` where a switch belongs,
+    /// text where a number does) costs that member only, as Newtonsoft's error handler in
+    /// `SettingsBase` has it: the skin, the theme and the accent the person chose stay.
+    /// Read as one struct, the whole block went back to the defaults, and the next save
+    /// wrote them over the person's choice.
+    #[test]
+    fn a_bad_member_of_the_theme_options_costs_only_itself() {
+        let mut config = AppConfig::in_memory();
+        config.set(
+            "ThemeOptions",
+            json!({
+                "Skin": "nebula",
+                "SkinConfirmed": "nebula",
+                "BrandVersion": "one",
+                "Theme": "Light",
+                "UseSystemTheme": false,
+                "AccentColorHex": "#FF10893E",
+                "UseSystemAccentColor": null
+            }),
+        );
+        let options = config.theme_options();
+        assert_eq!(options.skin, "nebula");
+        assert_eq!(options.skin_confirmed, "nebula");
+        assert_eq!(options.theme, "Light");
+        assert!(!options.use_system_theme);
+        assert_eq!(options.accent_color_hex, "#FF10893E");
+        let defaults = crate::theme::ThemeOptions::default();
+        assert_eq!(options.brand_version, defaults.brand_version);
+        assert_eq!(
+            options.use_system_accent_color,
+            defaults.use_system_accent_color
+        );
+        // A blank or missing skin reads as the default skin, like the property setter.
+        config.set("ThemeOptions", json!({ "Skin": null, "Theme": "Light" }));
+        let options = config.theme_options();
+        assert_eq!(options.skin, defaults.skin);
+        assert_eq!(options.theme, "Light");
+        // Not an object at all: the defaults.
+        config.set("ThemeOptions", json!("Dark"));
+        assert_eq!(config.theme_options(), defaults);
     }
 
     #[test]

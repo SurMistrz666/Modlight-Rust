@@ -60,7 +60,7 @@ snapshot the editor reads on every use, so effects registered later still show u
 preview did on the dispatcher), once per change of a dialog value while previewing
 (`context.is_preview == true`) and once more on Apply on the image as it was before the
 preview started (`is_preview == false`). It must not panic; an `Err` is logged and the
-image stays as it was. Expensive effects should keep previews fast (upstream's effects
+image stays as it was, and so does an empty (0-pixel) picture. Expensive effects should keep previews fast (upstream's effects
 do the same work in both modes; a cheaper preview is allowed when `is_preview` is set).
 
 ### Parameters (`ParamDef`, `ParamKind`)

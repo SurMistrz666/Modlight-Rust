@@ -1568,24 +1568,42 @@ pub fn parse_pair(text: Option<&str>) -> Option<(f32, f32)> {
     (a != 0.0 || b != 0.0).then_some((a, b))
 }
 
-/// The window's spec with the remembered size and place.
+/// The window's spec with the size, place and maximised state remembered when it opened
+/// (`ApplySavedWindowState`; `None` when it does not remember). The spec stays as it opened:
+/// one that followed the place and size tracked every frame would have the window moved
+/// and sized again to where it was a frame ago while it is dragged.
 pub fn remembered_spec(
     title: String,
     size: egui::Vec2,
     min: egui::Vec2,
-    remember: bool,
-    state: &modlight_tools::settings::WindowState,
+    opened: Option<&modlight_tools::settings::WindowState>,
 ) -> super::WindowSpec {
     let mut spec = super::WindowSpec::resizable(&title, size, min);
-    if remember {
+    if let Some(state) = opened {
         if let Some((w, h)) = parse_pair(state.size.as_deref()) {
             spec.size = vec2(w.max(min.x), h.max(min.y));
         }
         if let Some((x, y)) = parse_pair(state.location.as_deref()) {
             spec.position = Some(pos2(x, y));
         }
+        spec.maximized = state.is_maximized;
     }
     spec
+}
+
+/// `Screens.ScreenFromPoint(position) != null`: a remembered place no display shows any
+/// more (one unplugged, or arranged otherwise) is forgotten, so the window opens centred
+/// instead of out of reach.
+pub fn keep_on_screen(state: &mut modlight_tools::settings::WindowState, screens: &[Rect]) {
+    let Some((x, y)) = parse_pair(state.location.as_deref()) else {
+        return;
+    };
+    let shown = screens
+        .iter()
+        .any(|s| x >= s.left() && x < s.right() && y >= s.top() && y < s.bottom());
+    if !shown {
+        state.location = None;
+    }
 }
 
 /// Keep the window's current size and place for the next time.
@@ -1621,11 +1639,79 @@ impl AppState {
     pub fn history_store(&self) -> Option<Arc<HistoryStore>> {
         self.uploads.tasks.history.clone()
     }
+
+    /// The displays, in desktop points (`Screens.All`).
+    pub fn display_rects(&self) -> Vec<Rect> {
+        self.captures
+            .source
+            .screens()
+            .iter()
+            .map(|s| {
+                Rect::from_min_size(
+                    pos2(s.bounds.x as f32, s.bounds.y as f32),
+                    vec2(s.bounds.width as f32, s.bounds.height as f32),
+                )
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `ApplySavedWindowState`: the remembered size, the place when a display still shows
+    /// it, and the maximised state (which the port did not restore); the window does not
+    /// follow the place tracked while it is open.
+    #[test]
+    fn a_remembered_window_opens_where_it_can_be_seen() {
+        use modlight_tools::settings::{HistorySettings, WindowState};
+        let screens = [
+            Rect::from_min_size(pos2(0.0, 0.0), vec2(1440.0, 900.0)),
+            Rect::from_min_size(pos2(-1920.0, -200.0), vec2(1920.0, 1080.0)),
+        ];
+        let mut gone = WindowState {
+            location: Some("3000, 120".into()),
+            size: Some("1200, 700".into()),
+            is_maximized: false,
+        };
+        keep_on_screen(&mut gone, &screens);
+        assert_eq!(gone.location, None);
+        assert_eq!(gone.size.as_deref(), Some("1200, 700"));
+        let mut left = WindowState {
+            location: Some("-1500, -100".into()),
+            ..WindowState::default()
+        };
+        keep_on_screen(&mut left, &screens);
+        assert_eq!(left.location.as_deref(), Some("-1500, -100"));
+
+        let settings = HistorySettings {
+            window_state: WindowState {
+                location: Some("100, 60".into()),
+                size: Some("1000, 640".into()),
+                is_maximized: true,
+            },
+            ..HistorySettings::default()
+        };
+        let mut window = super::super::history_list::HistoryWindow::new(1, None, settings.clone());
+        let spec = super::super::ToolWindow::spec(&window);
+        assert!(spec.maximized);
+        assert_eq!(spec.position, Some(pos2(100.0, 60.0)));
+        assert_eq!(spec.size, vec2(1000.0, 640.0));
+        // Moved and resized by the person: the spec stays as the window opened.
+        window.settings.window_state.location = Some("400, 300".into());
+        window.settings.window_state.size = Some("900, 600".into());
+        window.settings.window_state.is_maximized = false;
+        assert_eq!(super::super::ToolWindow::spec(&window), spec);
+
+        let forgetful = HistorySettings {
+            remember_window_state: false,
+            ..settings
+        };
+        let window = super::super::history_list::HistoryWindow::new(2, None, forgetful);
+        let spec = super::super::ToolWindow::spec(&window);
+        assert!(!spec.maximized && spec.position.is_none());
+    }
 
     #[test]
     fn pairs() {

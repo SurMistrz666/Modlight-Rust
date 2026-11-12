@@ -153,7 +153,11 @@ impl SignInWindow {
                 self.has_quota_bar = false;
             }
             Some(max) => {
-                let remaining = quota.remaining.unwrap_or((max - quota.used).max(0));
+                // The server's numbers: an absurd `used` must not overflow (a panic on
+                // the window's thread in a debug build).
+                let remaining = quota
+                    .remaining
+                    .unwrap_or_else(|| max.saturating_sub(quota.used).max(0));
                 self.quota_text = format(
                     t(s::SignInWindow_QuotaUsed),
                     &[
@@ -978,6 +982,42 @@ mod tests {
             role: Some("admin".into()),
             ..Default::default()
         }
+    }
+
+    /// The account card's quota is the server's: an absurd `used` must not overflow the
+    /// "left" figure (computed even when the server sent one), which panicked the window's
+    /// thread in a debug build.
+    #[test]
+    fn an_absurd_quota_does_not_overflow_the_card() {
+        let mut window = SignInWindow::new("https://files.example.com");
+        for used in [i64::MIN, -1] {
+            let info = AccountInfo {
+                quota: Some(modlight_api::Quota {
+                    used,
+                    max: Some(i64::MAX),
+                    remaining: None,
+                    unlimited: false,
+                }),
+                ..admin_info("T")
+            };
+            window.show_account(&info, "https://files.example.com");
+            assert!(window.has_quota_bar);
+        }
+        let info = AccountInfo {
+            quota: Some(modlight_api::Quota {
+                used: 1024,
+                max: Some(4096),
+                remaining: None,
+                unlimited: false,
+            }),
+            ..admin_info("T")
+        };
+        window.show_account(&info, "https://files.example.com");
+        assert!(
+            window.quota_text.contains(&cloud_size(3072)),
+            "{}",
+            window.quota_text
+        );
     }
 
     /// An `/api/me` answer that set out before somebody else signed in (the storage chip

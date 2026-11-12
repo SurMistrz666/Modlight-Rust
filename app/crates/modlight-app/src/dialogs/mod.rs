@@ -43,6 +43,9 @@ pub struct Windows {
     pub link_settings: Option<link_settings::LinkSettings>,
     pub duplicates: Option<duplicates::Duplicates>,
     pub confirm: Option<confirm::Confirm>,
+    /// Questions asked while `confirm` was up, shown after it in turn
+    /// (`AppState::ask_confirm`).
+    pub confirm_waiting: std::collections::VecDeque<confirm::Confirm>,
     pub notification: Option<Notification>,
     pub about: Option<crate::about_window::AboutWindow>,
     pub debug_log: Option<crate::about_window::DebugLogWindow>,

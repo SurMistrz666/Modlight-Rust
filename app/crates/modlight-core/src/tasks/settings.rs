@@ -657,6 +657,11 @@ pub struct TaskSettings {
     /// What the Shorten URL dialog asked for. Memory only: it can carry a password.
     #[serde(skip)]
     pub modlight_short_link: Option<modlight_api::ShortLinkOptions>,
+    /// The hotkey these settings were resolved for (`HotkeySettings::serial`), upstream's
+    /// `TaskSettingsReference`: a window's changes to a group the hotkey overrides go back
+    /// to that hotkey. Memory only.
+    #[serde(skip)]
+    pub hotkey: Option<u64>,
 }
 
 impl Default for TaskSettings {
@@ -700,6 +705,7 @@ impl Default for TaskSettings {
             watch_folder_list: Vec::new(),
             modlight_folder_id: None,
             modlight_short_link: None,
+            hotkey: None,
         }
     }
 }

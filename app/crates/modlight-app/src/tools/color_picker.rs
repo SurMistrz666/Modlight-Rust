@@ -207,6 +207,23 @@ impl ColorPickerWindow {
         );
     }
 
+    /// `OnPickScreenClick`: the window steps aside and the screen picker opens. The pick
+    /// answers this window only when it really starts: one already waiting, taking the
+    /// desktop or open answers someone else, and this window would stay minimised for
+    /// good (it minimises itself every frame until its pick answers).
+    fn pick_from_screen(&mut self, state: &mut AppState) {
+        let tools = &state.tools;
+        if tools.screen_picker.is_some() || tools.pending_pick.is_some() || tools.screen_pick_busy {
+            return;
+        }
+        self.minimized = true;
+        state.start_screen_pick(
+            super::screen_picker::PickTarget::ColorPicker(self.key),
+            self.screen_options.clone(),
+            0.25,
+        );
+    }
+
     fn copy(&mut self, state: &mut AppState, text: String) {
         picker::add_recent(&mut self.recent, self.current);
         state.set_recent_colors(&self.recent);
@@ -241,6 +258,7 @@ impl ToolWindow for ColorPickerWindow {
             fit_height: true,
             screen: None,
             position: None,
+            maximized: false,
         }
     }
 
@@ -712,12 +730,7 @@ impl ToolWindow for ColorPickerWindow {
         .on_hover_text(t(h::ColorPickerWindow_Pick_from_screen))
         .clicked()
         {
-            self.minimized = true;
-            state.start_screen_pick(
-                super::screen_picker::PickTarget::ColorPicker(self.key),
-                self.screen_options.clone(),
-                0.25,
-            );
+            self.pick_from_screen(state);
         }
         if kit::button_at(
             ui,
@@ -797,5 +810,51 @@ impl AppState {
             window.home = home;
             Box::new(window)
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn window(key: u64) -> ColorPickerWindow {
+        ColorPickerWindow::new(
+            key,
+            Purpose::Tool,
+            Color::RED,
+            ColorPickerOptions::default(),
+            ScreenColorPickerOptions::default(),
+            Vec::new(),
+        )
+    }
+
+    /// The pipette while another pick is under way (the screen colour picker's hotkey, the
+    /// editor's pipette, another colour picker): `start_screen_pick` turns it down and
+    /// nothing will ever answer this window, so it must not minimise; it used to, and then
+    /// minimised itself again every frame for good.
+    #[test]
+    fn a_pick_that_cannot_start_leaves_the_window_up() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.tools.pending_pick = Some(super::super::screen_picker::PendingPick {
+            at: 0.0,
+            target: super::super::screen_picker::PickTarget::ColorPicker(1),
+            options: ScreenColorPickerOptions::default(),
+        });
+        let mut second = window(2);
+        second.pick_from_screen(&mut state);
+        assert!(!second.minimized);
+        state.tools.pending_pick = None;
+        state.tools.screen_pick_busy = true;
+        second.pick_from_screen(&mut state);
+        assert!(!second.minimized);
+        state.tools.screen_pick_busy = false;
+
+        // Nothing under way: the window steps aside and its pick waits.
+        second.pick_from_screen(&mut state);
+        assert!(second.minimized);
+        assert!(matches!(
+            state.tools.pending_pick.as_ref().map(|p| &p.target),
+            Some(super::super::screen_picker::PickTarget::ColorPicker(2))
+        ));
     }
 }

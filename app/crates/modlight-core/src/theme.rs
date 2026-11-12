@@ -207,6 +207,46 @@ impl ThemeOptions {
             .unwrap_or(Rgba::parse(DEFAULT_ACCENT_COLOR_HEX).unwrap())
     }
 
+    /// The block as the settings file holds it, member by member, as Newtonsoft fills it
+    /// (`SettingsBase`'s error handler lets a member that does not convert keep its
+    /// default): a member of the wrong type costs that member only, never the skin, theme
+    /// and accent beside it. A blank or missing skin is the default (the property setter).
+    pub fn from_value(value: &serde_json::Value) -> ThemeOptions {
+        use serde_json::Value;
+        let mut options = ThemeOptions::default();
+        let Some(block) = value.as_object() else {
+            return options;
+        };
+        let text = |name: &str| block.get(name).and_then(Value::as_str);
+        let switch = |name: &str| block.get(name).and_then(Value::as_bool);
+        options.set_skin(text("Skin").unwrap_or_default());
+        if let Some(confirmed) = text("SkinConfirmed") {
+            options.skin_confirmed = confirmed.to_string();
+        }
+        // Newtonsoft reads an integer from a number or from its text.
+        let brand = block.get("BrandVersion").and_then(|v| match v {
+            Value::Number(n) => n.as_i64(),
+            Value::String(s) => s.trim().parse::<i64>().ok(),
+            _ => None,
+        });
+        if let Some(brand) = brand.and_then(|b| i32::try_from(b).ok()) {
+            options.brand_version = brand;
+        }
+        if let Some(theme) = text("Theme") {
+            options.theme = theme.to_string();
+        }
+        if let Some(follow) = switch("UseSystemTheme") {
+            options.use_system_theme = follow;
+        }
+        if let Some(accent) = text("AccentColorHex") {
+            options.accent_color_hex = accent.to_string();
+        }
+        if let Some(follow) = switch("UseSystemAccentColor") {
+            options.use_system_accent_color = follow;
+        }
+        options
+    }
+
     /// A blank skin id reads as the default, like the property setter.
     pub fn set_skin(&mut self, value: &str) {
         self.skin = if value.trim().is_empty() {

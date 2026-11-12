@@ -44,7 +44,9 @@ pub struct ScrollingWindow {
     pub status: Option<ScrollingStatus>,
     pub status_text: String,
     pub result: Option<Arc<RgbaImage>>,
-    texture: Option<egui::TextureHandle>,
+    /// The result on the GPU, in parts of at most one texture's side each, with where
+    /// each lies in the picture.
+    texture: Option<Vec<(egui::TextureHandle, Rect)>>,
     /// The options overlay, with its edits not yet saved.
     pub editing: Option<ScrollingCaptureOptions>,
     /// The area being captured, for the frame shown around it (`ShowRegion`).
@@ -238,13 +240,14 @@ impl ScrollingWindow {
         );
         let inner = preview.shrink(1.0);
         if let Some(result) = &self.result {
-            let texture = self.texture.get_or_insert_with(|| {
-                let color = egui::ColorImage::from_rgba_unmultiplied(
-                    [result.width() as usize, result.height() as usize],
-                    result.as_raw(),
-                );
-                ui.ctx()
-                    .load_texture("scrolling-result", color, egui::TextureOptions::NEAREST)
+            // Shown at full size, and up to 32768 px tall: one texture takes 8192.
+            let tiles = self.texture.get_or_insert_with(|| {
+                crate::media::tiled_textures(
+                    ui.ctx(),
+                    "scrolling-result",
+                    result,
+                    egui::TextureOptions::NEAREST,
+                )
             });
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
             egui::ScrollArea::both()
@@ -261,12 +264,14 @@ impl ScrollingWindow {
                         ),
                         size,
                     );
-                    ui.painter().image(
-                        texture.id(),
-                        image_rect,
-                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                        Color32::WHITE,
-                    );
+                    for (texture, part) in tiles.iter() {
+                        ui.painter().image(
+                            texture.id(),
+                            part.translate(image_rect.min.to_vec2()),
+                            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+                    }
                 });
         } else {
             paint_icon(
@@ -550,6 +555,13 @@ pub fn open(state: &mut AppState, settings: TaskSettings) {
     } else {
         state.scrolling = Some(ScrollingWindow::new(settings));
     }
+    // `if (!_captureOperation)`: an area is being chosen already (this window's own
+    // selection, or another capture's overlay holds the screen or is being prepared).
+    // Another selection now would take a picture of that overlay and put itself in its
+    // place, dropping what it was choosing.
+    if state.captures.overlay.is_some() || state.captures.busy {
+        return;
+    }
     select_area(state);
 }
 
@@ -743,6 +755,38 @@ mod tests {
     use super::*;
     use modlight_core::hotkeys::{FakeBackend, HotkeyManager, HotkeySettings, HotkeyType};
 
+    /// The result is shown at full size, and a scrolling capture is up to 32768 px tall:
+    /// it is uploaded in parts of at most one texture's side, which together cover it.
+    /// Uploaded whole, the GPU refused anything past 8192 px and the app ended.
+    #[test]
+    fn a_result_taller_than_a_texture_shows_in_parts() {
+        let state = crate::qa::state(&crate::qa::Look::default(), false);
+        let mut window = ScrollingWindow::new(state.default_task_settings());
+        let tall = crate::media::picture_past_a_texture();
+        let tall = image::imageops::rotate90(&tall);
+        window.result = Some(Arc::new(tall));
+        let colors = crate::media::test_colors();
+        let harness = crate::media::render(window, move |ui, window: &mut ScrollingWindow| {
+            let _ = window.ui(ui, &colors);
+        });
+        crate::media::assert_textures_fit(&harness.ctx);
+        let tiles = harness
+            .state()
+            .texture
+            .as_ref()
+            .expect("the result's textures");
+        let covered: f32 = tiles.iter().map(|(_, part)| part.area()).sum();
+        assert!(tiles.len() > 1);
+        assert_eq!(covered, 40.0 * 9000.0);
+        let bounds = tiles
+            .iter()
+            .fold(Rect::NOTHING, |all, (_, part)| all.union(*part));
+        assert_eq!(
+            bounds,
+            Rect::from_min_size(pos2(0.0, 0.0), vec2(40.0, 9000.0))
+        );
+    }
+
     fn edit_and_save(state: &mut AppState, delay: i64, method: ScrollMethod) {
         action(state, ScrollingAction::Options);
         let editing = state.scrolling.as_mut().unwrap().editing.as_mut().unwrap();
@@ -820,6 +864,106 @@ mod tests {
                 .scroll_delay,
             900,
             "the defaults stay as they were"
+        );
+    }
+
+    /// `if (!_captureOperation)`: while an overlay holds the screen (another capture's) or
+    /// the area is being prepared, the scrolling capture does not start a selection of its
+    /// own, which took a picture of that overlay and put itself in its place.
+    #[test]
+    fn no_second_selection_while_the_screen_is_taken() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let settings = state.default_task_settings();
+        let request = modlight_core::capture::region_request(
+            RegionKind::Default,
+            &settings,
+            state.captures.source.as_ref(),
+        )
+        .unwrap();
+        state.captures.overlay = Some(RegionOverlay::new(
+            RegionSession::new(request),
+            OverlayPurpose::Capture,
+            settings.clone(),
+            0.0,
+        ));
+        open(&mut state, settings.clone());
+        assert!(
+            !state.captures.busy,
+            "no desktop taken for a second overlay"
+        );
+        assert!(!state.scrolling.as_ref().unwrap().minimized);
+
+        // Pressed twice in a row: one selection.
+        state.captures.overlay = None;
+        state.scrolling = None;
+        open(&mut state, settings.clone());
+        assert!(state.captures.busy);
+        open(&mut state, settings);
+        let ctx = egui::Context::default();
+        let mut done = 0;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while done == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            for completion in state.rt.drain() {
+                completion(&mut state, &ctx);
+                done += 1;
+            }
+        }
+        // A second selection would have been started together with the first.
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        for completion in state.rt.drain() {
+            completion(&mut state, &ctx);
+            done += 1;
+        }
+        assert_eq!(done, 1);
+        assert!(matches!(
+            state.captures.overlay.as_ref().map(|o| &o.purpose),
+            Some(OverlayPurpose::ScrollingRegion)
+        ));
+    }
+
+    /// Two hotkeys with the same job, each with capture settings of its own: what the
+    /// second one's window saves goes to the second one (upstream's
+    /// `TaskSettingsReference` is that hotkey's settings), not to the first hotkey that
+    /// runs the same job.
+    #[test]
+    fn options_go_back_to_the_hotkey_they_came_from() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let own = || {
+            serde_json::json!({
+                "Job": "ScrollingCapture",
+                "UseDefaultCaptureSettings": false,
+                "CaptureSettings": { "ShowCursor": false }
+            })
+        };
+        let first = HotkeySettings {
+            task: own(),
+            ..HotkeySettings::new(HotkeyType::ScrollingCapture, 0)
+        };
+        let second = HotkeySettings {
+            task: own(),
+            ..HotkeySettings::new(HotkeyType::ScrollingCapture, 0)
+        };
+        state.captures.hotkeys =
+            HotkeyManager::new(Box::new(FakeBackend::default()), vec![first, second], false);
+        let defaults = state
+            .config
+            .get("DefaultTaskSettings")
+            .cloned()
+            .unwrap_or_default();
+        let settings = state.captures.hotkeys.hotkeys[1].task_settings(&defaults);
+        state.scrolling = Some(ScrollingWindow::new(settings));
+        edit_and_save(&mut state, 1500, ScrollMethod::DownArrow);
+        let hotkeys = &state.captures.hotkeys.hotkeys;
+        assert_eq!(
+            hotkeys[1].task["CaptureSettings"]["ScrollingCaptureOptions"]["ScrollDelay"],
+            1500
+        );
+        assert!(
+            hotkeys[0].task["CaptureSettings"]
+                .get("ScrollingCaptureOptions")
+                .is_none(),
+            "the first hotkey with that job keeps its own settings"
         );
     }
 }

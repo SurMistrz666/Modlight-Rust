@@ -58,6 +58,9 @@ pub const MAX_BODY_BYTES: usize = 64 * 1024;
 /// Connections handled at once; more are accepted only as earlier ones finish.
 const MAX_CONNECTIONS: usize = 16;
 
+/// How long the listener rests after `accept` failed before it tries again.
+const ACCEPT_RETRY: Duration = Duration::from_millis(100);
+
 /// The refusal code the authorize page posts when the person declines.
 pub const DENIED_ERROR: &str = "access_denied";
 
@@ -271,36 +274,67 @@ impl LoopbackListener {
         expected_state: &str,
         cancel: &CancellationToken,
     ) -> Option<Handoff> {
-        let (sender, mut receiver) = mpsc::channel::<Handoff>(MAX_CONNECTIONS);
-        let slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
-        let origin = Arc::new(self.allowed_origin.clone());
+        let listener = &self.listener;
+        wait_accepting(
+            || listener.accept(),
+            &self.allowed_origin,
+            expected_state,
+            cancel,
+        )
+        .await
+    }
+}
 
-        loop {
-            tokio::select! {
-                _ = cancel.cancelled() => return None,
-                Some(handoff) = receiver.recv() => {
-                    if nonce_equals(handoff.state.as_deref(), expected_state) {
-                        return Some(handoff);
+/// [`LoopbackListener::wait_for`] over any source of connections.
+///
+/// A failed `accept` (the process is out of file descriptors, say) is tried again after
+/// [`ACCEPT_RETRY`], not at once: a failure that persists would otherwise spin a core for
+/// the rest of the sign-in (up to ten minutes).
+async fn wait_accepting<A, F>(
+    mut accept: A,
+    allowed_origin: &str,
+    expected_state: &str,
+    cancel: &CancellationToken,
+) -> Option<Handoff>
+where
+    A: FnMut() -> F,
+    F: std::future::Future<Output = std::io::Result<(TcpStream, std::net::SocketAddr)>>,
+{
+    let (sender, mut receiver) = mpsc::channel::<Handoff>(MAX_CONNECTIONS);
+    let slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let origin = Arc::new(allowed_origin.to_string());
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return None,
+            Some(handoff) = receiver.recv() => {
+                if nonce_equals(handoff.state.as_deref(), expected_state) {
+                    return Some(handoff);
+                }
+                log::info!("Modlight sign-in: ignored a loopback body with the wrong state.");
+            }
+            accepted = accept() => {
+                let Ok((stream, _)) = accepted else {
+                    tokio::select! {
+                        _ = cancel.cancelled() => return None,
+                        _ = tokio::time::sleep(ACCEPT_RETRY) => {}
                     }
-                    log::info!("Modlight sign-in: ignored a loopback body with the wrong state.");
-                }
-                accepted = self.listener.accept() => {
-                    let Ok((stream, _)) = accepted else { continue };
-                    let Ok(permit) = slots.clone().try_acquire_owned() else {
-                        // Too many at once: drop it rather than queue unbounded work.
-                        drop(stream);
-                        continue;
-                    };
-                    let sender = sender.clone();
-                    let origin = origin.clone();
-                    tokio::spawn(async move {
-                        let _permit = permit;
-                        let read = tokio::time::timeout(CONNECTION_TIMEOUT, serve(stream, &origin)).await;
-                        if let Ok(Some(handoff)) = read {
-                            let _ = sender.send(handoff).await;
-                        }
-                    });
-                }
+                    continue;
+                };
+                let Ok(permit) = slots.clone().try_acquire_owned() else {
+                    // Too many at once: drop it rather than queue unbounded work.
+                    drop(stream);
+                    continue;
+                };
+                let sender = sender.clone();
+                let origin = origin.clone();
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let read = tokio::time::timeout(CONNECTION_TIMEOUT, serve(stream, &origin)).await;
+                    if let Ok(Some(handoff)) = read {
+                        let _ = sender.send(handoff).await;
+                    }
+                });
             }
         }
     }
@@ -673,5 +707,40 @@ mod tests {
         assert_eq!(display_name(&account), "a@b.c");
         account.name = Some("Alex".into());
         assert_eq!(display_name(&account), "Alex");
+    }
+
+    /// `accept` failing for good (the process is out of file descriptors, `EMFILE`) must
+    /// not spin a core while the person signs in: the wait tries again after a pause, and
+    /// Cancel still ends it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failing_accept_does_not_spin() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cancel = CancellationToken::new();
+        let stop = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            stop.cancel();
+        });
+        let counted = calls.clone();
+        let handoff = wait_accepting(
+            move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+                async {
+                    // Yields, so even a spinning wait sees the cancellation.
+                    tokio::task::yield_now().await;
+                    Err::<(TcpStream, std::net::SocketAddr), _>(std::io::Error::from_raw_os_error(
+                        24,
+                    ))
+                }
+            },
+            "http://127.0.0.1:8420",
+            "state",
+            &cancel,
+        )
+        .await;
+        assert_eq!(handoff, None);
+        let calls = calls.load(Ordering::Relaxed);
+        assert!(calls <= 10, "{calls} attempts to accept in half a second");
     }
 }

@@ -498,9 +498,16 @@ impl AppState {
                     process_name: Some(window.process_name.clone()),
                     ..TaskMetadata::default()
                 };
+                // `CaptureClientArea`: the window without its frame, where the platform
+                // tells it (Windows); a Mac records the window's rectangle.
+                let rect = if settings.capture_settings.capture_client_area {
+                    source.active_window_client_rect().unwrap_or(window.rect)
+                } else {
+                    window.rect
+                };
                 self.begin_recording(
                     output,
-                    window.rect,
+                    rect,
                     metadata,
                     settings,
                     false,
@@ -938,6 +945,89 @@ mod tests {
         }
         std::thread::sleep(std::time::Duration::from_millis(1000));
         assert_eq!(taken.load(Ordering::SeqCst), 1);
+    }
+
+    /// `ScreenRecordStartMethod.ActiveWindow` records the window's client area when the
+    /// task captures the client area (`GetActiveWindowClientRectangle`), where the platform
+    /// knows it; the whole window's rectangle was recorded, title bar and frame included.
+    #[test]
+    fn the_active_window_recording_keeps_to_the_client_area() {
+        use image::RgbaImage;
+        use modlight_core::capture::source::{
+            CaptureError, CaptureSource, FakeSource, ScreenInfo, WindowCapture, WindowInfo,
+        };
+
+        struct WithClient(FakeSource);
+        impl CaptureSource for WithClient {
+            fn screens(&self) -> Vec<ScreenInfo> {
+                self.0.screens()
+            }
+            fn cursor_position(&self) -> (i32, i32) {
+                self.0.cursor_position()
+            }
+            fn windows(&self) -> Vec<WindowInfo> {
+                self.0.windows()
+            }
+            fn active_window(&self) -> Option<WindowInfo> {
+                self.0.active_window()
+            }
+            fn capture_rect(&self, rect: IRect, cursor: bool) -> Result<RgbaImage, CaptureError> {
+                self.0.capture_rect(rect, cursor)
+            }
+            fn capture_window(
+                &self,
+                window: &WindowInfo,
+                how: WindowCapture,
+            ) -> Result<RgbaImage, CaptureError> {
+                self.0.capture_window(window, how)
+            }
+            fn active_window_client_rect(&self) -> Option<IRect> {
+                Some(IRect::new(98, 102, 400, 240))
+            }
+        }
+
+        let profile = tempfile::tempdir().unwrap();
+        let tools = profile.path().join(modlight_core::components::TOOLS_FOLDER);
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(
+            tools.join(modlight_core::download::tool::FFMPEG_FILE_NAME),
+            b"x",
+        )
+        .unwrap();
+        let env = crate::state::Env {
+            profile: profile.path().to_path_buf(),
+            qa: true,
+            frozen_now: None,
+            machine: "QA Mac".into(),
+            system_language: "en".into(),
+            system_locale: "en_US".into(),
+            reduce_motion: true,
+            system_dark: Some(true),
+        };
+        let region = |client_area: bool| {
+            let account = modlight_core::account::AccountStore::in_memory(
+                modlight_core::account::StoredAccount::default(),
+                "",
+            );
+            let mut state = AppState::new(
+                env.clone(),
+                modlight_core::config::AppConfig::in_memory(),
+                account,
+            );
+            state.captures.source = Arc::new(WithClient(crate::qa_capture::qa_desktop()));
+            let mut settings = state.default_task_settings();
+            settings.capture_settings.capture_client_area = client_area;
+            state.start_screen_recording(
+                ScreenRecordOutput::FFmpeg,
+                RecordStartMethod::ActiveWindow,
+                settings,
+            );
+            let recording = state.captures.recording.as_ref().expect("a recording");
+            recording.control.abort();
+            recording.control.snapshot().region
+        };
+        assert_eq!(region(true), IRect::new(98, 102, 400, 240));
+        assert_eq!(region(false), IRect::new(90, 70, 420, 300));
     }
 
     /// While recording the button says upstream's `Strings.Pause` (`UpdateUI`), which

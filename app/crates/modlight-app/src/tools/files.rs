@@ -106,7 +106,8 @@ impl AppState {
 }
 
 /// `ImageHelpers.LoadImage`: any picture the `image` crate reads, turned the way its
-/// EXIF orientation says (`RotateImageByExifOrientationData`).
+/// EXIF orientation says while `RotateImageByExifOrientationData` is on (the app copies
+/// the setting to the tools every frame, `jobs::apply_app_options`).
 pub fn load_image(path: &Path) -> Option<RgbaImage> {
     modlight_tools::images::load(path).ok()
 }

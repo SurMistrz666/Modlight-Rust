@@ -50,6 +50,23 @@ pub fn store(c: C) -> C {
     if c.a == 255 { c } else { unpremul(premul(c)) }
 }
 
+/// Whether an effect may make a picture of `w` by `h`: one the app could open as a
+/// picture ([`modlight_core::image_decode::fits`]: 32768 px a side, 512 MiB). Effects
+/// whose size grows with their values ask before they allocate, and a larger result is
+/// refused with this error (the editor keeps its last preview, Apply does nothing).
+/// Upstream computes the same sizes and lets `new SKBitmap` try: Skew at 89 by 89 degrees
+/// on a 1920 x 1080 screenshot asks for about 7 gigapixels (28 GB), in the editor's
+/// preview on the UI thread.
+pub fn check_size(w: i64, h: i64) -> Result<(), String> {
+    if w > 0 && h > 0 && modlight_core::image_decode::fits(w as u64, h as u64) {
+        Ok(())
+    } else {
+        Err(format!(
+            "The result would be {w} x {h} pixels, larger than a picture may be."
+        ))
+    }
+}
+
 impl Bitmap {
     /// `new SKBitmap(w, h)`: transparent.
     pub fn new(w: i32, h: i32) -> Bitmap {

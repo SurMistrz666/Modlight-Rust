@@ -34,12 +34,13 @@ impl PinState {
         }
     }
 
-    /// `ChangeScale`: true when the size changed.
+    /// `ChangeScale`: true when the size changed. `delta` is a step from the settings
+    /// file (any number): it saturates instead of wrapping past the limits.
     pub fn change_scale(&mut self, delta: i64) -> bool {
         if self.minimized {
             return false;
         }
-        let value = (self.scale + delta).clamp(SCALE_MIN, SCALE_MAX);
+        let value = self.scale.saturating_add(delta).clamp(SCALE_MIN, SCALE_MAX);
         let changed = value != self.scale;
         self.scale = value;
         changed
@@ -50,7 +51,10 @@ impl PinState {
         if self.minimized {
             return;
         }
-        self.opacity = (self.opacity + delta).clamp(OPACITY_MIN, OPACITY_MAX);
+        self.opacity = self
+            .opacity
+            .saturating_add(delta)
+            .clamp(OPACITY_MIN, OPACITY_MAX);
     }
 
     /// `ResetImage`.
@@ -218,6 +222,25 @@ mod tests {
         state.reset();
         assert_eq!(state.scale_text(), "100%");
         assert_eq!(state.window_opacity(), 1.0);
+    }
+
+    /// `ScaleStep` and `OpacityStep` come from the settings file as they are (the options
+    /// window keeps them to 1..100 and 1..90, a hand-edited or imported file need not). A
+    /// huge step overflowed: a debug build panicked on the UI thread, a release build
+    /// wrapped and a step up shrank the picture to the smallest scale.
+    #[test]
+    fn a_huge_step_goes_to_the_limit() {
+        let options = PinToScreenOptions::default();
+        let mut state = PinState::new(&options);
+        assert!(state.change_scale(i64::MAX));
+        assert_eq!(state.scale, SCALE_MAX);
+        assert!(state.change_scale(-i64::MAX));
+        assert_eq!(state.scale, SCALE_MIN);
+        state.opacity = 50;
+        state.change_opacity(i64::MAX);
+        assert_eq!(state.opacity, OPACITY_MAX);
+        state.change_opacity(-i64::MAX);
+        assert_eq!(state.opacity, OPACITY_MIN);
     }
 
     #[test]

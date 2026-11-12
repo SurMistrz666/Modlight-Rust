@@ -288,10 +288,8 @@ impl BeforeUpload {
         );
         if let Some(image) = &self.image {
             let texture = self.texture.get_or_insert_with(|| {
-                let color = egui::ColorImage::from_rgba_unmultiplied(
-                    [image.width() as usize, image.height() as usize],
-                    image.as_raw(),
-                );
+                // Past one texture's side the GPU refuses it and the app ends.
+                let color = crate::media::texture_color_image(ui.ctx(), image);
                 ui.ctx().load_texture(
                     format!("before-upload-{}", self.task),
                     color,
@@ -431,5 +429,26 @@ impl BeforeUpload {
             )));
         }
         outcome
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A picture past one texture's side is shown shrunk to one texture; uploaded whole,
+    /// the GPU refuses it and the app ends as the window opens.
+    #[test]
+    fn a_picture_larger_than_a_texture_still_shows() {
+        let mut info = TaskInfo::new(Default::default());
+        info.data_type = DataType::Image;
+        info.metadata.image = Some(Arc::new(crate::media::picture_past_a_texture()));
+        let window = BeforeUpload::new(1, info, true);
+        let colors = crate::media::test_colors();
+        let harness = crate::media::render(window, move |ui, window: &mut BeforeUpload| {
+            let _ = window.ui(ui, &colors);
+        });
+        assert!(harness.state().texture.is_some());
+        crate::media::assert_textures_fit(&harness.ctx);
     }
 }

@@ -412,10 +412,8 @@ impl AfterUpload {
         );
         if let Some(image) = &self.image {
             let texture = self.texture.get_or_insert_with(|| {
-                let color = egui::ColorImage::from_rgba_unmultiplied(
-                    [image.width() as usize, image.height() as usize],
-                    image.as_raw(),
-                );
+                // Past one texture's side the GPU refuses it and the app ends.
+                let color = crate::media::texture_color_image(ui.ctx(), image);
                 ui.ctx().load_texture(
                     format!("after-upload-{}", self.key),
                     color,
@@ -586,5 +584,26 @@ impl AfterUpload {
             action = Some(AfterUploadAction::Close);
         }
         action
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A picture past one texture's side (a 61 MP photo, three monitors, a long scrolling
+    /// capture) is shown shrunk to one texture. The window uploaded it whole, which the GPU
+    /// refuses: wgpu's default handler then ends the app as the window opens.
+    #[test]
+    fn a_picture_larger_than_a_texture_still_shows() {
+        let info = TaskInfo::new(Default::default());
+        let mut window = AfterUpload::new(1, info, Vec::new(), false);
+        window.set_image(Arc::new(crate::media::picture_past_a_texture()));
+        let colors = crate::media::test_colors();
+        let harness = crate::media::render(window, move |ui, window: &mut AfterUpload| {
+            let _ = window.ui(ui, &colors, 0.0);
+        });
+        assert!(harness.state().texture.is_some());
+        crate::media::assert_textures_fit(&harness.ctx);
     }
 }

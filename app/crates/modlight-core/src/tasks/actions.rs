@@ -143,15 +143,13 @@ impl ExternalProgram {
     }
 }
 
-/// Whether the output is the input itself. Windows compares without case, as upstream
-/// does (`OrdinalIgnoreCase`): "a.png" with the output extension "PNG" is the same file
-/// there, and deleting the input would delete the output.
+/// Whether the output is the input itself, compared without case as upstream does
+/// (`OrdinalIgnoreCase`) on every system: "a.png" with the output extension "PNG" is the
+/// same file on Windows and on a Mac's usual case-insensitive volume, and deleting the
+/// input would delete the output. On a case-sensitive volume they are two files, and the
+/// input is kept, as upstream keeps it.
 fn same_path(output: &Path, input: &Path) -> bool {
-    if cfg!(windows) {
-        output.to_string_lossy().to_lowercase() == input.to_string_lossy().to_lowercase()
-    } else {
-        output == input
-    }
+    output.to_string_lossy().to_lowercase() == input.to_string_lossy().to_lowercase()
 }
 
 /// `ExternalProgram.CheckExtension(path, extensions)`.
@@ -216,6 +214,45 @@ mod tests {
             ExternalProgram::default().arguments(input, input),
             [format!("{folder}a b; rm -rf ~.png")]
         );
+    }
+
+    /// An output path that differs from the input only in case is the input itself on a
+    /// Mac's usual (case-insensitive) volume as on Windows: it is never handed over for
+    /// deletion, or deleting the "input" would delete the program's output, the only copy.
+    #[test]
+    fn an_output_differing_only_in_case_is_never_deleted() {
+        let folder = if cfg!(windows) { "C:\\tmp\\" } else { "/tmp/" };
+        let input = PathBuf::from(format!("{folder}shot.png"));
+        let output = PathBuf::from(format!("{folder}shot.PNG"));
+        assert!(same_path(&output, &input));
+        assert!(!same_path(
+            &PathBuf::from(format!("{folder}shot.webp")),
+            &input
+        ));
+    }
+
+    /// The same with a real program on a Mac: `cp` onto the same file under another case
+    /// leaves the picture where it was.
+    #[cfg(unix)]
+    #[test]
+    fn a_program_whose_output_is_its_input_keeps_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("shot.png");
+        std::fs::write(&input, "picture").unwrap();
+        let case_insensitive = dir.path().join("SHOT.png").exists();
+        let program = ExternalProgram {
+            is_active: true,
+            path: Some("/bin/cp".into()),
+            args: Some("$input $output".into()),
+            output_extension: Some("PNG".into()),
+            delete_input_file: true,
+            ..ExternalProgram::default()
+        };
+        let result = program.run(&input).unwrap();
+        assert_eq!(result.pending_delete, None);
+        if case_insensitive {
+            assert_eq!(std::fs::read(&result.path).unwrap(), b"picture");
+        }
     }
 
     #[cfg(unix)]

@@ -2446,23 +2446,29 @@ fn advanced(ui: &mut egui::Ui, ctx: &mut TaskPagesCtx, b: &mut Binder) {
                                 .join(", "),
                             _ => defaults.join(", "),
                         };
-                        let mut value = current.clone();
+                        // `Split(',', RemoveEmptyEntries | TrimEntries)`.
+                        let split = |text: &str| -> Vec<String> {
+                            text.split(',')
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_string)
+                                .collect()
+                        };
                         row(ui, colors, TASK_ROW, &format!("{}:", t(label)), |ui| {
                             let id = ui.make_persistent_id(("advanced-list", member));
-                            let response = crate::widgets::Field {
-                                height: 32.0,
-                                id: Some(id),
-                                enabled: ui.is_enabled(),
-                                ..crate::widgets::Field::new(&mut value)
-                            }
-                            .show(ui, colors);
-                            if response.changed() {
-                                let list: Vec<Value> = value
-                                    .split(',')
-                                    .map(str::trim)
-                                    .filter(|s| !s.is_empty())
-                                    .map(|s| json!(s))
-                                    .collect();
+                            // The box keeps a comma and a space while they are typed, as
+                            // upstream's does; the list is stored split at every key.
+                            let stored = split(&current);
+                            let edited = crate::settings_kit::edited_text(
+                                ui,
+                                colors,
+                                id,
+                                current.clone(),
+                                |typed| split(typed) == stored,
+                            );
+                            if let Some(value) = edited {
+                                let list: Vec<Value> =
+                                    split(&value).into_iter().map(Value::String).collect();
                                 b.set(&a(member), Value::Array(list));
                             }
                         });
@@ -3488,6 +3494,73 @@ mod tests {
         assert_eq!(
             document["UploadSettings"]["CustomTimeZone"]["Id"],
             serde_json::json!("Central European Standard Time")
+        );
+    }
+
+    /// A list of the Advanced page (image and text extensions) is typed as one line with
+    /// commas, as upstream's text box takes it. The box showed the stored list joined
+    /// back after every key, so a comma (and the space after it) went the moment it was
+    /// typed: "png, webp" became the one extension "pngwebp".
+    #[test]
+    fn a_list_box_takes_a_second_item_as_it_is_typed() {
+        use egui_kittest::kittest::Queryable;
+        let theme = modlight_core::theme::resolve(
+            &modlight_core::theme::ThemeOptions::default(),
+            Some(true),
+            None,
+        );
+        let colors = Colors::new(&theme);
+        // Every other box of the page holds text, so the empty one is the image list.
+        let document = serde_json::json!({
+            "AdvancedSettings": { "ImageExtensions": [], "TextCustom": "c" }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let mut fonts_set = false;
+        let mut pages = TaskPagesState::default();
+        let mut auto_increment = 0;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(900.0, 2400.0))
+            .build_ui_state(
+                move |ui, root: &mut serde_json::Map<String, Value>| {
+                    if !fonts_set {
+                        fonts_set = true;
+                        ui.ctx().set_fonts(crate::theme::fonts());
+                        ui.ctx().request_repaint();
+                        return;
+                    }
+                    let mut ctx = TaskPagesCtx {
+                        colors: &colors,
+                        is_default: true,
+                        state: &mut pages,
+                        asks: Vec::new(),
+                        auto_increment: &mut auto_increment,
+                        auto_increment_changed: false,
+                        dev_mode: false,
+                        dialogs: false,
+                    };
+                    let mut binder = Binder::new(root);
+                    page(ui, &mut ctx, &mut binder, "task.advanced");
+                },
+                document,
+            );
+        harness.run_steps(2);
+        harness
+            .get_by(|n| {
+                n.role() == egui::accesskit::Role::TextInput && n.value().as_deref() == Some("")
+            })
+            .focus();
+        harness.run();
+        for typed in "png, webp".chars() {
+            harness
+                .get_by(|n| n.is_focused())
+                .type_text(&typed.to_string());
+            harness.run();
+        }
+        assert_eq!(
+            harness.state()["AdvancedSettings"]["ImageExtensions"],
+            serde_json::json!(["png", "webp"])
         );
     }
 }

@@ -150,12 +150,48 @@ pub fn html_encode(text: &str) -> String {
 /// leaves the text as it is (and says so in the log).
 pub fn regex_replace(input: &str, pattern: &str, replacement: &str) -> String {
     match regex::Regex::new(pattern) {
-        Ok(regex) => regex.replace_all(input, replacement).into_owned(),
+        Ok(regex) => regex
+            .replace_all(input, dotnet_replacement(replacement).as_str())
+            .into_owned(),
         Err(error) => {
             log::warn!("Modlight: the URL replacement pattern could not be used: {error}");
             input.to_string()
         }
     }
+}
+
+/// A .NET replacement string in the regex crate's syntax. .NET reads `$` and the digits
+/// after it as a group number and stops there (`$1_thumb` is group 1, then `_thumb`); the
+/// regex crate reads letters, digits and `_` after `$` as one group name (`$1_thumb` is a
+/// group called `1_thumb`, which does not exist, so nothing). Numbered references become
+/// `${n}`; `$$` and `${name}` mean the same in both and stay.
+fn dotnet_replacement(replacement: &str) -> String {
+    let mut out = String::with_capacity(replacement.len());
+    let mut chars = replacement.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '$' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some('$') => {
+                chars.next();
+                out.push_str("$$");
+            }
+            Some(d) if d.is_ascii_digit() => {
+                let mut number = String::new();
+                while let Some(d) = chars.peek().filter(|d| d.is_ascii_digit()) {
+                    number.push(*d);
+                    chars.next();
+                }
+                out.push_str("${");
+                out.push_str(&number);
+                out.push('}');
+            }
+            _ => out.push('$'),
+        }
+    }
+    out
 }
 
 /// `new UploadInfoParser().Parse(info, pattern)`.
@@ -222,6 +258,34 @@ pub fn url_encode(text: &str) -> String {
 mod tests {
     use super::*;
     use chrono::Timelike;
+
+    /// "URL regex replace" takes .NET's replacement syntax: `$1` is group 1 even with a
+    /// letter, digit or `_` right after it. Read with the regex crate's own rules
+    /// `$1_thumb` was a group named `1_thumb`, nothing, and the copied link lost its path.
+    #[test]
+    fn url_replacements_read_group_numbers_as_dotnet_does() {
+        let pattern = "^https://a\\.example/(.+)$";
+        let url = "https://a.example/k3P9xQ";
+        assert_eq!(
+            regex_replace(url, pattern, "https://cdn.example/$1_thumb"),
+            "https://cdn.example/k3P9xQ_thumb"
+        );
+        assert_eq!(
+            regex_replace(url, pattern, "https://cdn.example/$1x"),
+            "https://cdn.example/k3P9xQx"
+        );
+        // The default, `${name}`, `$$` and a lone `$` keep their meaning.
+        assert_eq!(
+            regex_replace(url, "^https?://(.+)$", "https://$1"),
+            "https://a.example/k3P9xQ"
+        );
+        assert_eq!(
+            regex_replace(url, "^https://(?<rest>.+)$", "s://${rest}"),
+            "s://a.example/k3P9xQ"
+        );
+        assert_eq!(regex_replace("ab", "b", "$$1"), "a$1");
+        assert_eq!(regex_replace("ab", "b", "x$"), "ax$");
+    }
 
     /// `GetFileName` with "Use custom time zone": the zone the settings name
     /// (`UploadSettings.CustomTimeZone`, a `TimeZoneInfo` as Newtonsoft writes it). UTC is

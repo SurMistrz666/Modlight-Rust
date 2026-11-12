@@ -20,7 +20,7 @@ pub struct PreparedImage {
 pub fn prepare_image(
     image: &RgbaImage,
     settings: &TaskSettings,
-    _strip_png_color_space: bool,
+    strip_png_color_space: bool,
 ) -> PreparedImage {
     let images = &settings.image_settings;
     let mut prepared = PreparedImage {
@@ -33,6 +33,10 @@ pub fn prepare_image(
         ),
         format: images.image_format,
     };
+    // `SaveImageAsStream` with `PNGStripColorSpaceInformation`: before the size is weighed.
+    if strip_png_color_space && images.image_format == ImageFormat::PNG {
+        prepared.bytes = strip_png_color_space_chunks(&prepared.bytes);
+    }
     let limit = images.image_auto_use_jpeg_size.max(0) as usize * 1000;
     if images.image_auto_use_jpeg
         && images.image_format != ImageFormat::JPEG
@@ -46,9 +50,36 @@ pub fn prepare_image(
         };
         prepared.format = ImageFormat::JPEG;
     }
-    // A PNG written here carries no gAMA/cHRM/sRGB/iCCP chunks to begin with, so
-    // `PNGStripColorSpaceInformation` has nothing to strip.
     prepared
+}
+
+/// `ImageHelpers.PNGStripColorSpaceInformation` (`PNGStripChunks` of gAMA, cHRM, sRGB and
+/// iCCP): the PNG without its colour space chunks, every other chunk as it was. The PNG
+/// encoder used here writes none of them today, so this guards what a later encoder (an
+/// embedded display profile) would add. Bytes that are not a whole PNG are kept as they
+/// are.
+pub fn strip_png_color_space_chunks(png: &[u8]) -> Vec<u8> {
+    const SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if !png.starts_with(SIGNATURE) {
+        return png.to_vec();
+    }
+    let mut out = SIGNATURE.to_vec();
+    let mut at = SIGNATURE.len();
+    while at < png.len() {
+        // Length (4), type (4), data, CRC (4).
+        let Some(head) = png.get(at..at + 8) else {
+            return png.to_vec();
+        };
+        let length = u32::from_be_bytes([head[0], head[1], head[2], head[3]]) as usize;
+        let Some(end) = length.checked_add(at + 12).filter(|end| *end <= png.len()) else {
+            return png.to_vec();
+        };
+        if !matches!(&head[4..8], b"gAMA" | b"cHRM" | b"sRGB" | b"iCCP") {
+            out.extend_from_slice(&png[at..end]);
+        }
+        at = end;
+    }
+    out
 }
 
 /// `SaveImageAsStream`.
@@ -213,6 +244,46 @@ mod tests {
         RgbaImage::from_fn(w, h, |x, y| {
             Rgba([(x * 7) as u8, (y * 13) as u8, 90, alpha])
         })
+    }
+
+    /// `PNGStripColorSpaceInformation`: a PNG loses its gAMA, cHRM, sRGB and iCCP chunks
+    /// and keeps everything else (the picture reads back the same).
+    #[test]
+    fn a_png_loses_its_colour_space_chunks_when_asked() {
+        use image::ImageEncoder;
+        let image = picture(6, 4, 255);
+        let mut with_profile = Vec::new();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut with_profile);
+        encoder.set_icc_profile(vec![0; 132]).unwrap();
+        encoder
+            .write_image(image.as_raw(), 6, 4, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        // An sRGB chunk (rendering intent 0) after the header, as GDI+ writes one.
+        let header_end = 8 + 4 + 4 + 13 + 4;
+        let mut png = with_profile[..header_end].to_vec();
+        png.extend_from_slice(&[0, 0, 0, 1]);
+        png.extend_from_slice(b"sRGB");
+        png.extend_from_slice(&[0, 0xAE, 0xCE, 0x1C, 0xE9]);
+        png.extend_from_slice(&with_profile[header_end..]);
+        let has = |bytes: &[u8], kind: &[u8]| bytes.windows(4).any(|w| w == kind);
+        assert!(has(&png, b"iCCP") && has(&png, b"sRGB"));
+
+        let stripped = strip_png_color_space_chunks(&png);
+        assert!(!has(&stripped, b"iCCP") && !has(&stripped, b"sRGB"));
+        let back = image::load_from_memory(&stripped).unwrap().to_rgba8();
+        assert_eq!(back, image);
+        // Not a PNG, or cut short: kept as it is.
+        assert_eq!(strip_png_color_space_chunks(b"GIF89a"), b"GIF89a");
+        assert_eq!(strip_png_color_space_chunks(&png[..40]), &png[..40]);
+
+        let mut settings = TaskSettings::default();
+        settings.image_settings.image_auto_use_jpeg = false;
+        let prepared = prepare_image(&image, &settings, true);
+        assert_eq!(prepared.format, ImageFormat::PNG);
+        assert_eq!(
+            image::load_from_memory(&prepared.bytes).unwrap().to_rgba8(),
+            image
+        );
     }
 
     #[test]

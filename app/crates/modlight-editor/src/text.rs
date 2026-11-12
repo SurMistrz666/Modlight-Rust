@@ -17,6 +17,26 @@ use tiny_skia::{Path, PathBuilder};
 /// The families the editor treats as Avalonia's `FontFamily.Default`.
 pub const DEFAULT_FAMILY: &str = "Inter";
 
+/// The system's faces for characters neither the family asked for nor the bundled Inter
+/// (Latin only) has, as Avalonia asks the platform's font fallback: Cyrillic, Greek,
+/// Arabic, Hebrew, Thai, Chinese, Japanese, Korean, symbols. Families that are not
+/// installed are skipped.
+const FALLBACK_FAMILIES: &[&str] = if cfg!(windows) {
+    &[
+        "Segoe UI",
+        "Segoe UI Symbol",
+        "Microsoft YaHei",
+        "Yu Gothic",
+        "Malgun Gothic",
+        "Nirmala UI",
+        "Leelawadee UI",
+        "Ebrima",
+        "Segoe UI Emoji",
+    ]
+} else {
+    &["Helvetica", "Arial Unicode MS"]
+};
+
 pub(crate) const INTER_REGULAR_LATIN: &[u8] =
     include_bytes!("../../../assets/fonts/Inter-Regular-latin.ttf");
 pub(crate) const INTER_REGULAR_EXT: &[u8] =
@@ -201,7 +221,7 @@ impl FontSystem {
         // which the port does not bundle; italics are simulated.
         faces.extend(self.inter(request.bold));
         if system_fonts_enabled() {
-            for fallback in ["Helvetica", "Arial Unicode MS"] {
+            for fallback in FALLBACK_FAMILIES {
                 if let Some((face, _, _)) = self.query(fallback, false, false) {
                     faces.push(face);
                 }

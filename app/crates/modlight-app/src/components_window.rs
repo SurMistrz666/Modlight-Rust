@@ -1214,7 +1214,7 @@ fn ask_remove(state: &mut AppState, id: &'static str) {
         crate::dialogs::confirm::ConfirmAction::RemoveComponent(id.to_string()),
     );
     confirm.title = modlight_core::title();
-    state.windows.confirm = Some(confirm);
+    state.ask_confirm(confirm);
 }
 
 /// The Remove question was answered Yes.

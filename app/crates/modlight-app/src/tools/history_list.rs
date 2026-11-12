@@ -115,6 +115,8 @@ pub struct HistoryWindow {
     /// The settings dialog's toggles while it is open.
     draft: (bool, bool),
     scroll_to: Option<usize>,
+    /// The size, place and state remembered when the window opened.
+    opened: Option<modlight_tools::settings::WindowState>,
 }
 
 impl HistoryWindow {
@@ -136,7 +138,6 @@ impl HistoryWindow {
         HistoryWindow {
             key,
             data: HistoryData::new(store, false),
-            settings,
             search,
             advanced: false,
             adv: Advanced::new(),
@@ -153,6 +154,10 @@ impl HistoryWindow {
             started: false,
             draft: (false, false),
             scroll_to: None,
+            opened: settings
+                .remember_window_state
+                .then(|| settings.window_state.clone()),
+            settings,
         }
     }
 
@@ -613,8 +618,7 @@ impl ToolWindow for HistoryWindow {
             title,
             vec2(1300.0, 700.0),
             vec2(850.0, 560.0),
-            self.settings.remember_window_state,
-            &self.settings.window_state,
+            self.opened.as_ref(),
         )
     }
 
@@ -1086,8 +1090,9 @@ impl HistoryWindow {
 impl AppState {
     /// `TaskHelpers.OpenHistory`.
     pub fn open_history(&mut self) {
-        let settings: HistorySettings =
+        let mut settings: HistorySettings =
             modlight_tools::settings::read(self.config.get("HistorySettings"));
+        shared::keep_on_screen(&mut settings.window_state, &self.display_rects());
         let store = self.history_store();
         self.tools
             .open_keyed(|key| Box::new(HistoryWindow::new(key, store, settings)));

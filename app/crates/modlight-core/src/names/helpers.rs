@@ -173,8 +173,9 @@ pub fn get_random_line_from_file(path: &str) -> std::io::Result<String> {
 }
 
 /// What `File.ReadAllText` with `Encoding.UTF8` makes of the bytes: the byte order mark
-/// decides (UTF-32 before UTF-16, since both start with FF FE), UTF-8 otherwise.
-fn decode_text(bytes: &[u8]) -> String {
+/// decides (UTF-32 before UTF-16, since both start with FF FE), UTF-8 otherwise. A
+/// `StreamReader` (how Newtonsoft reads a settings file) reads them the same way.
+pub(crate) fn decode_text(bytes: &[u8]) -> String {
     fn units16(bytes: &[u8], big_endian: bool) -> String {
         let units: Vec<u16> = bytes
             .chunks(2)

@@ -149,11 +149,41 @@ pub fn interactive_sticker_size(size: u32) -> u32 {
     ((size as f64 / step).round() * step).max(64.0) as u32
 }
 
-type StickerCache = Mutex<HashMap<(String, u32, u32), Option<Arc<RgbaImage>>>>;
+type CacheKey = (String, u32, u32);
 
-fn cache() -> &'static StickerCache {
-    static CACHE: OnceLock<StickerCache> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+/// The stickers and picker cells rendered so far, by sequence, size and padding.
+#[derive(Default)]
+struct RenderCache {
+    map: HashMap<CacheKey, Option<Arc<RgbaImage>>>,
+    /// What the pictures in `map` take.
+    bytes: usize,
+}
+
+const CACHE_ENTRIES: usize = 512;
+/// Resizing an emoji renders it at each size the drag passes through.
+const CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+impl RenderCache {
+    fn get(&self, key: &CacheKey) -> Option<Option<Arc<RgbaImage>>> {
+        self.map.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: CacheKey, value: Option<Arc<RgbaImage>>) {
+        let size = value.as_ref().map_or(0, |i| i.as_raw().len());
+        if self.map.len() > CACHE_ENTRIES || self.bytes + size > CACHE_BYTES {
+            self.map.clear();
+            self.bytes = 0;
+        }
+        if let Some(old) = self.map.insert(key, value) {
+            self.bytes -= old.map_or(0, |i| i.as_raw().len());
+        }
+        self.bytes += size;
+    }
+}
+
+fn cache() -> &'static Mutex<RenderCache> {
+    static CACHE: OnceLock<Mutex<RenderCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(RenderCache::default()))
 }
 
 /// `RenderStickerBitmap(sequence, size)`: the square bitmap of an emoji annotation.
@@ -172,14 +202,10 @@ fn render_cached(sequence: &str, size: u32, padding: u32) -> Option<Arc<RgbaImag
     }
     let key = (sequence.to_string(), size, padding);
     if let Some(found) = cache().lock().unwrap().get(&key) {
-        return found.clone();
+        return found;
     }
     let rendered = render_square(&to_glyph(sequence), size, padding).map(Arc::new);
-    let mut map = cache().lock().unwrap();
-    if map.len() > 512 {
-        map.clear();
-    }
-    map.insert(key, rendered.clone());
+    cache().lock().unwrap().insert(key, rendered.clone());
     rendered
 }
 
@@ -363,6 +389,29 @@ mod tests {
         assert_eq!(grinning.search_score("face"), 2);
         assert_eq!(grinning.search_score("emotion"), 3);
         assert_eq!(grinning.search_score("zzz"), i32::MAX);
+    }
+
+    /// Resizing an emoji renders its sticker at every size the drag passes through, and
+    /// the cache kept up to 512 of them whatever they took: one drag to 800 pixels left
+    /// about 400 MB behind, a drag to 2000 pixels gigabytes, until the app quit.
+    #[test]
+    fn the_sticker_cache_keeps_under_its_memory_budget() {
+        let mut cache = RenderCache::default();
+        for size in (160..1200u32).step_by(4) {
+            let sticker = Arc::new(RgbaImage::new(size, size));
+            cache.insert(("1f600".into(), size, STICKER_PADDING), Some(sticker));
+            let held: usize = cache.map.values().flatten().map(|i| i.as_raw().len()).sum();
+            assert_eq!(held, cache.bytes);
+            assert!(
+                held <= CACHE_BYTES.max(size as usize * size as usize * 4),
+                "{} MB held at size {size}",
+                held >> 20
+            );
+        }
+        // A picture already there is replaced, not counted twice.
+        cache.insert(("1f600".into(), 1196, STICKER_PADDING), None);
+        let held: usize = cache.map.values().flatten().map(|i| i.as_raw().len()).sum();
+        assert_eq!(held, cache.bytes);
     }
 
     #[test]

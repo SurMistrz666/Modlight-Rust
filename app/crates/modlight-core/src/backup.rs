@@ -170,13 +170,29 @@ impl ImportReport {
     }
 }
 
+/// A backup read whole and found to hold settings documents, not written yet
+/// ([`read_import`], then [`write_import`]).
+#[derive(Clone, Debug)]
+pub struct PendingImport {
+    /// The settings files it restores: the name, the bytes and the document they hold.
+    files: Vec<(String, Vec<u8>, Map<String, Value>)>,
+    /// Entries left out, as in [`ImportReport::refused`].
+    refused: Vec<String>,
+}
+
 /// `Import(archivePath)`: the settings files of the backup go into `profile`, replacing
 /// what is there. Nothing is written unless the whole archive could be read.
 pub fn import(archive: &Path, profile: &Path) -> Result<ImportReport, String> {
+    write_import(read_import(archive)?, profile)
+}
+
+/// The first half of [`import`], the slow one (the archive may be large): the archive
+/// read and every settings file in it read as a document. Nothing is written.
+pub fn read_import(archive: &Path) -> Result<PendingImport, String> {
     let file = std::fs::File::open(archive).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     let mut total: u64 = 0;
-    let mut report = ImportReport::default();
+    let mut refused = Vec::new();
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index).map_err(|e| e.to_string())?;
@@ -186,7 +202,7 @@ pub fn import(archive: &Path, profile: &Path) -> Result<ImportReport, String> {
             && !files.iter().any(|(taken, _)| *taken == name);
         if !restored {
             if !PASSED_OVER.contains(&name.as_str()) {
-                report.refused.push(name);
+                refused.push(name);
             }
             continue;
         }
@@ -204,16 +220,34 @@ pub fn import(archive: &Path, profile: &Path) -> Result<ImportReport, String> {
     }
     let mut documents = Vec::new();
     for (name, bytes) in files {
-        let Ok(Value::Object(mut incoming)) = serde_json::from_slice::<Value>(&bytes) else {
+        // Read as the settings load reads them (a byte order mark passed over), so the
+        // checks see what the app will run with.
+        let Some(incoming) = crate::config::parse_object(&bytes) else {
             return Err(format!("{name} in the backup is not a settings document."));
         };
-        let current =
-            std::fs::read(profile.join(&name)).ok().and_then(
-                |bytes| match serde_json::from_slice::<Value>(&bytes) {
-                    Ok(Value::Object(map)) => Some(map),
-                    _ => None,
-                },
-            );
+        documents.push((name, bytes, incoming));
+    }
+    Ok(PendingImport {
+        files: documents,
+        refused,
+    })
+}
+
+/// The second half of [`import`], quick (two small documents): what the restored
+/// settings would switch on by themselves is checked against the settings as they are
+/// in `profile` now, then the files are written. The app runs it on its UI thread right
+/// before it loads them again, so no save of the settings it runs with can come between
+/// the write and the load and put the old ones back.
+pub fn write_import(pending: PendingImport, profile: &Path) -> Result<ImportReport, String> {
+    let mut report = ImportReport {
+        refused: pending.refused,
+        ..ImportReport::default()
+    };
+    let mut documents = Vec::new();
+    for (name, bytes, mut incoming) in pending.files {
+        let current = std::fs::read(profile.join(&name))
+            .ok()
+            .and_then(|bytes| crate::config::parse_object(&bytes));
         let disabled = disable_new_auto_run(&name, &mut incoming, current.as_ref());
         let bytes = if disabled.is_empty() {
             bytes
@@ -596,6 +630,34 @@ mod tests {
             account.credential().unwrap().host,
             "http://127.0.0.1:8420",
             "the token still goes only where it came from"
+        );
+    }
+
+    /// A settings file with a byte order mark in front (a Windows tool saved it) is a
+    /// settings document, as Newtonsoft reads it; and what it switches on to run by
+    /// itself still comes in switched off.
+    #[test]
+    fn a_settings_file_with_a_byte_order_mark_imports_with_its_checks() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        let mut application = b"\xEF\xBB\xBF".to_vec();
+        application.extend(
+            serde_json::to_vec(&serde_json::json!({
+                "ShowTray": false,
+                "DefaultTaskSettings": { "ExternalPrograms": [evil()] }
+            }))
+            .unwrap(),
+        );
+        let hostile = archive(dir.path(), &[(APPLICATION_CONFIG_FILE, &application)]);
+        let report = import(&hostile, &profile).unwrap();
+        assert_eq!(report.written, [APPLICATION_CONFIG_FILE]);
+        assert_eq!(report.disabled.len(), 1, "{:?}", report.disabled);
+        let config = crate::config::AppConfig::load(&profile);
+        assert!(!config.show_tray());
+        assert_eq!(
+            config.get("DefaultTaskSettings").unwrap()["ExternalPrograms"][0]["IsActive"],
+            serde_json::json!(false)
         );
     }
 

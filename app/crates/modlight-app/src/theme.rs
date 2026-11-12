@@ -269,9 +269,17 @@ fn font_set(geist: bool) -> FontDefinitions {
             "inter-semibold-ext",
         ),
     );
-    fonts
-        .families
-        .insert(icon_family(), vec!["lucide".to_string()]);
+    // Lucide first, so every icon (and the row height) is Lucide's; the text faces behind
+    // it, because Lucide has neither '◻' nor '?' for epaint's replacement glyph: alone it
+    // logged "Failed to find replacement characters" at every start and drew a code point
+    // it lacks as nothing.
+    let mut icons = vec!["lucide".to_string()];
+    icons.extend(chain(
+        "geist-regular",
+        "inter-regular-latin",
+        "inter-regular-ext",
+    ));
+    fonts.families.insert(icon_family(), icons);
     fonts
 }
 
@@ -372,4 +380,56 @@ pub fn apply_style(ctx: &egui::Context, colors: &Colors) {
             egui::FontId::new(12.0, FontFamily::Monospace),
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The width `text` takes in `family` with the app's fonts (`geist`: Graphite's set).
+    fn width_of(text: &str, family: FontFamily, geist: bool) -> f32 {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(font_set(geist));
+        // Fonts set in a pass take effect in the next one.
+        for _ in 0..2 {
+            ctx.run_ui(Default::default(), |_| {})
+                .textures_delta
+                .clear();
+        }
+        let width = ctx
+            .fonts_mut(|f| {
+                f.layout_no_wrap(
+                    text.to_string(),
+                    egui::FontId::new(16.0, family),
+                    Color32::WHITE,
+                )
+            })
+            .size()
+            .x;
+        ctx.run_ui(Default::default(), |_| {})
+            .textures_delta
+            .clear();
+        width
+    }
+
+    /// Every family has a replacement glyph. The icon family held Lucide alone, which has
+    /// neither '◻' nor '?': epaint logged "Failed to find replacement characters" at every
+    /// start and drew any code point Lucide lacks as nothing at all.
+    #[test]
+    fn a_character_the_icon_font_lacks_is_still_drawn() {
+        for geist in [false, true] {
+            assert!(width_of("A", icon_family(), geist) > 0.0, "geist {geist}");
+            assert!(
+                width_of("\u{10FFFD}", icon_family(), geist) > 0.0,
+                "geist {geist}"
+            );
+        }
+        // The icons themselves are Lucide's, at Lucide's size.
+        let icon = modlight_core::icons::CLOUD.to_string();
+        assert_eq!(
+            width_of(&icon, icon_family(), false),
+            width_of(&icon, icon_family(), true)
+        );
+        assert!(width_of(&icon, icon_family(), false) > 0.0);
+    }
 }

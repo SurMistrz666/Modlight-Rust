@@ -607,13 +607,30 @@ fn with_spaces(name: &str) -> String {
 
 /// One hotkey (`HotkeySettings`): the binding and the task settings it runs with, kept
 /// as the file has them so members this build does not read survive.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct HotkeySettings {
     pub info: HotkeyInfo,
     /// The `TaskSettings` object, as JSON.
     pub task: Value,
     /// Not saved: whether the system took the key.
     pub status: HotkeyStatus,
+    /// Not saved: which hotkey this is while the app runs. The task settings resolved from
+    /// it carry it (upstream's `TaskSettingsReference`), so what a window changes in them
+    /// goes back to this hotkey, not to another one with the same job.
+    pub serial: u64,
+}
+
+/// Hotkeys are the same when everything saved about them is (the serial is not).
+impl PartialEq for HotkeySettings {
+    fn eq(&self, other: &HotkeySettings) -> bool {
+        self.info == other.info && self.task == other.task && self.status == other.status
+    }
+}
+
+/// A serial no other hotkey of this run has.
+fn next_serial() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl HotkeySettings {
@@ -623,6 +640,7 @@ impl HotkeySettings {
             info: HotkeyInfo::new(hotkey),
             task: json!({ "Job": job.name() }),
             status: HotkeyStatus::NotConfigured,
+            serial: next_serial(),
         }
     }
 
@@ -661,9 +679,12 @@ impl HotkeySettings {
         using_default_settings(&self.task)
     }
 
-    /// `GetSafeTaskSettings`: the defaults, with whatever this hotkey overrides.
+    /// `GetSafeTaskSettings`: the defaults, with whatever this hotkey overrides, and which
+    /// hotkey they came from (`TaskSettingsReference`).
     pub fn task_settings(&self, defaults: &Value) -> crate::tasks::TaskSettings {
-        resolve_task_settings(&self.task, defaults)
+        let mut settings = resolve_task_settings(&self.task, defaults);
+        settings.hotkey = Some(self.serial);
+        settings
     }
 
     fn from_value(value: &Value) -> HotkeySettings {
@@ -677,6 +698,7 @@ impl HotkeySettings {
                 .cloned()
                 .unwrap_or_else(|| json!({})),
             status: HotkeyStatus::NotConfigured,
+            serial: next_serial(),
         }
     }
 
@@ -1327,6 +1349,7 @@ mod tests {
                 "ImageSettings": { "ImageFormat": "BMP" }
             }),
             status: HotkeyStatus::NotConfigured,
+            serial: 0,
         };
         let settings = hotkey.task_settings(&defaults);
         assert_eq!(settings.job, HotkeyType::PrintScreen);
@@ -1365,6 +1388,7 @@ mod tests {
                 "ToolsSettings": { "ScreenColorPickerInfoText": "mine" }
             }),
             status: HotkeyStatus::NotConfigured,
+            serial: 0,
         };
         let settings = hotkey.task_settings(&defaults);
         assert!(settings.capture_settings.show_cursor);

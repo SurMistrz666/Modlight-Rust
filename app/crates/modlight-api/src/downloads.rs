@@ -204,7 +204,8 @@ pub fn time_of(value: Option<&Value>) -> Option<DateTime<Utc>> {
         Value::String(text) => parse_time(text.trim()),
         Value::Number(number) => {
             let value = number.as_i64()?;
-            if value.abs() >= 100_000_000_000 {
+            // `unsigned_abs`: the server's number, and `i64::MIN` has no `abs`.
+            if value.unsigned_abs() >= 100_000_000_000 {
                 Utc.timestamp_millis_opt(value).single()
             } else {
                 Utc.timestamp_opt(value, 0).single()
@@ -305,6 +306,19 @@ mod tests {
         assert_eq!(time_of(Some(&Value::from("yesterday"))), None);
         assert_eq!(time_of(Some(&Value::Null)), None);
         assert_eq!(time_of(None), None);
+    }
+
+    /// The listing is the server's: absurd times are no time, not a panic (`i64::MIN`
+    /// has no absolute value; a build's `built` reads it).
+    #[test]
+    fn absurd_times_are_no_time() {
+        assert_eq!(time_of(Some(&Value::from(i64::MIN))), None);
+        assert_eq!(time_of(Some(&Value::from(i64::MAX))), None);
+        let listing = parse_downloads(
+            r#"{"platforms":[{"platform":"macos","builds":[{"id":"x","built":-9223372036854775808}]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(listing.builds_for("macos").next().unwrap().built, None);
     }
 
     /// A stand-in that answers once with `status` and `body`, and hands back the request.

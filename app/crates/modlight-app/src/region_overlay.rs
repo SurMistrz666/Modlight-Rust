@@ -159,6 +159,7 @@ impl RegionOverlay {
                 scale: self.session.request.scale,
                 primary: true,
                 name: String::new(),
+                pixel_size: None,
             });
         }
         screens

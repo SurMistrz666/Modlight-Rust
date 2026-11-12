@@ -69,6 +69,8 @@ pub struct ImageHistoryWindow {
     started: bool,
     draft: Draft,
     scroll_to_row: Option<usize>,
+    /// The size, place and state remembered when the window opened.
+    opened: Option<modlight_tools::settings::WindowState>,
 }
 
 impl ImageHistoryWindow {
@@ -85,7 +87,6 @@ impl ImageHistoryWindow {
         ImageHistoryWindow {
             key,
             data: HistoryData::new(store, true),
-            settings,
             search,
             pending_filter: None,
             filtered: Vec::new(),
@@ -99,6 +100,10 @@ impl ImageHistoryWindow {
             started: false,
             draft: Draft::default(),
             scroll_to_row: None,
+            opened: settings
+                .remember_window_state
+                .then(|| settings.window_state.clone()),
+            settings,
         }
     }
 
@@ -484,8 +489,10 @@ impl HistoryHost for ImageHistoryWindow {
         self.anchor = None;
         self.selected.retain(|_| false);
         self.thumbs.clear();
+        // The decodes already running go on (their pictures are dropped when they land,
+        // and they count down as they do): `in_flight` keeps counting them, so at most
+        // four run at once, as `ImageHistoryThumbnailLoader`'s semaphore allows.
         self.thumb_version += 1;
-        self.in_flight = 0;
         self.scroll_to_row = Some(0);
         self.load_next_batch();
     }
@@ -533,8 +540,7 @@ impl ToolWindow for ImageHistoryWindow {
             title,
             vec2(1100.0, 720.0),
             vec2(720.0, 500.0),
-            self.settings.remember_window_state,
-            &self.settings.window_state,
+            self.opened.as_ref(),
         )
     }
 
@@ -986,8 +992,9 @@ impl ImageHistoryWindow {
 impl AppState {
     /// `TaskHelpers.OpenImageHistory`.
     pub fn open_image_history(&mut self) {
-        let settings: ImageHistorySettings =
+        let mut settings: ImageHistorySettings =
             modlight_tools::settings::read(self.config.get("ImageHistorySettings"));
+        shared::keep_on_screen(&mut settings.window_state, &self.display_rects());
         let store = self.history_store();
         self.tools
             .open_keyed(|key| Box::new(ImageHistoryWindow::new(key, store, settings)));
@@ -1039,6 +1046,22 @@ mod tests {
         assert_eq!(window.selected, vec![id]);
         shared::run(&mut window, &mut state, Act::Favorite);
         assert!(window.filtered.is_empty());
+    }
+
+    /// Filtering again (every search keystroke, a favourite under the favourites filter)
+    /// set the count of running decodes to 0 while they still ran; the next frame started
+    /// four more, and the old ones counting down as they landed let more start again: with
+    /// typing, many full-size pictures were decoded at once.
+    #[test]
+    fn filtering_again_keeps_counting_the_running_decodes() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let mut window = ImageHistoryWindow::new(1, None, ImageHistorySettings::default());
+        window.qa_load(&mut state, Vec::new());
+        window.in_flight = WORKERS;
+        let version = window.thumb_version;
+        window.refilter(&mut state);
+        assert_ne!(window.thumb_version, version);
+        assert_eq!(window.in_flight, WORKERS);
     }
 
     #[test]

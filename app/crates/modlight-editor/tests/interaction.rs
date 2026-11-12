@@ -23,6 +23,10 @@ struct App {
 }
 
 fn harness() -> Harness<'static, App> {
+    harness_on(Harness::builder())
+}
+
+fn harness_on(builder: egui_kittest::HarnessBuilder<App>) -> Harness<'static, App> {
     modlight_core::l10n::set_thread_language(Some(modlight_core::l10n::Language::English));
     modlight_editor::text::set_system_fonts_enabled(false);
     let options = ImageEditorOptions {
@@ -38,7 +42,7 @@ fn harness() -> Harness<'static, App> {
         colors: Colors::default_skin(true),
         frames: 0,
     };
-    let mut h = Harness::builder()
+    let mut h = builder
         .with_size(egui::vec2(1200.0, 800.0))
         .with_pixels_per_point(1.0)
         .with_max_steps(8)
@@ -220,6 +224,38 @@ fn crop_with_the_handles_and_the_crop_button() {
     golden(&export(&mut h), "cropped");
 }
 
+/// Cmd+V seen by the host's key monitor while one of the editor's text fields has the
+/// keyboard (here the effect browser's search box) is that field's paste: upstream's
+/// `OnKeyDown` skips every shortcut while a `TextBox` is focused. It used to paste the
+/// copied annotation, or the clipboard's picture, onto the canvas as well.
+#[test]
+fn the_hosts_paste_leaves_a_focused_text_field_alone() {
+    use modlight_editor::editor::Request;
+    let mut h = harness();
+    h.state_mut().editor.toggle_effects_panel();
+    h.run_steps(3);
+    assert!(
+        h.ctx.egui_wants_keyboard_input(),
+        "the search box has the focus"
+    );
+    {
+        let app = h.state_mut();
+        let _ = app.editor.take_requests();
+        app.view.paste_shortcut(&mut app.editor);
+        assert!(
+            !app.editor.take_requests().contains(&Request::Paste),
+            "the paste went to the canvas too"
+        );
+    }
+    // Without a focused field the same key pastes onto the canvas.
+    h.state_mut().editor.toggle_effects_panel();
+    h.run_steps(3);
+    assert!(!h.ctx.egui_wants_keyboard_input());
+    let app = h.state_mut();
+    app.view.paste_shortcut(&mut app.editor);
+    assert!(app.editor.take_requests().contains(&Request::Paste));
+}
+
 #[test]
 fn cmd_wheel_zooms_one_level_and_the_context_menu_deletes() {
     let mut h = harness();
@@ -268,4 +304,77 @@ fn cmd_wheel_zooms_one_level_and_the_context_menu_deletes() {
     h.get_by_label("Delete").click();
     h.run_steps(2);
     assert!(h.state().editor.core.annotations().is_empty());
+}
+
+/// The text box over a text annotation is an egui text box at the annotation's size
+/// times the zoom. egui asserts that every glyph fits its font atlas (as wide as the
+/// largest texture, here 2048): a large text (sizes grow with Resize image, or come
+/// from the options) edited zoomed in ended the app.
+#[test]
+fn editing_a_huge_text_zoomed_in_does_not_crash() {
+    use modlight_editor::model::Annotation;
+    let mut h = harness();
+    {
+        let e = &mut h.state_mut().editor;
+        let mut text = Annotation::text();
+        text.start = Point::new(10.0, 10.0);
+        text.end = Point::new(600.0, 390.0);
+        if let Some(t) = text.text_data_mut() {
+            t.text = "WM".into();
+            t.font_size = 900.0;
+        }
+        let id = text.id;
+        e.core.add_annotation(text);
+        e.set_zoom(4.0);
+        modlight_editor::editor::input::show_text_editor(e, id);
+    }
+    h.run_steps(3);
+    assert!(h.state().editor.text_editing.is_some());
+}
+
+/// An effect may hand back an empty picture (the effect library's crop does for an area
+/// outside the image, its X box goes to 100000). The live preview showed it as the
+/// picture: the canvas then made a texture of nothing. The preview keeps the picture.
+#[test]
+fn an_empty_effect_preview_keeps_the_picture() {
+    use modlight_editor::effects::{
+        Category, EffectContext, ImageEffect, ParamDef, ParamValues, register_effects,
+    };
+    struct Empty;
+    impl ImageEffect for Empty {
+        fn id(&self) -> &str {
+            "qa_empty_result"
+        }
+        fn name(&self) -> &str {
+            "Empty result"
+        }
+        fn category(&self) -> Category {
+            Category::Filters
+        }
+        fn icon(&self) -> char {
+            'x'
+        }
+        fn parameters(&self) -> Vec<ParamDef> {
+            vec![ParamDef::checkbox("on", "On", true)]
+        }
+        fn apply(
+            &self,
+            _: &image::RgbaImage,
+            _: &ParamValues,
+            _: &EffectContext,
+        ) -> Result<image::RgbaImage, String> {
+            Ok(image::RgbaImage::new(0, 0))
+        }
+    }
+    register_effects([std::sync::Arc::new(Empty) as std::sync::Arc<dyn ImageEffect>]);
+    let mut h = harness_on(Harness::builder().wgpu());
+    h.state_mut().editor.run_effect("qa_empty_result");
+    h.run_steps(3);
+    // The GPU gets the canvas's textures (an empty one is a wgpu validation error).
+    h.render().expect("the frame renders");
+    let shown = h.state().editor.display_image().unwrap();
+    assert_eq!(shown.dimensions(), (640, 400));
+    h.state_mut().editor.apply_effect_dialog();
+    h.run_steps(2);
+    assert_eq!(h.state().editor.image_size(), (640, 400));
 }

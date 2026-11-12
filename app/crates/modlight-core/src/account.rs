@@ -189,9 +189,14 @@ impl AccountStore {
     /// Load the account of `profile`, with its token from `credentials`.
     pub fn load(profile: &Path, credentials: Box<dyn CredentialStore>) -> AccountStore {
         let path = profile.join(UPLOADERS_CONFIG_FILE);
-        let account = std::fs::read_to_string(&path)
+        // Read as Newtonsoft's `StreamReader` reads it: a byte order mark (a Windows tool
+        // saved the file) picks the encoding and is not part of the text.
+        let account = std::fs::read(&path)
             .ok()
-            .and_then(|text| serde_json::from_str::<UploadersFile>(&text).ok())
+            .and_then(|bytes| {
+                let text = crate::names::helpers::decode_text(&bytes);
+                serde_json::from_str::<UploadersFile>(&text).ok()
+            })
             .map(|file| file.modlight_account)
             .unwrap_or_default();
         // The file says whether the account is signed in: every sign-in writes
@@ -548,6 +553,29 @@ mod tests {
         let reloaded = store();
         assert_eq!(reloaded.host(), "https://files.example.com");
         assert_eq!(reloaded.credential().unwrap().token, "tok-456");
+    }
+
+    /// `UploadersConfig.json` with a byte order mark in front (Windows tools write one;
+    /// Newtonsoft reads past it) is the account as it was, not a signed-out one.
+    #[test]
+    fn an_account_file_with_a_byte_order_mark_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = dir.path().join("credentials");
+        let store = || {
+            AccountStore::load(
+                dir.path(),
+                Box::new(FileCredentialStore::new(credentials.clone())),
+            )
+        };
+        store().save_sign_in(&signed("ToqOse")).unwrap();
+        let path = dir.path().join(UPLOADERS_CONFIG_FILE);
+        let mut bytes = b"\xEF\xBB\xBF".to_vec();
+        bytes.extend(std::fs::read(&path).unwrap());
+        std::fs::write(&path, bytes).unwrap();
+        let again = store();
+        assert_eq!(again.host(), "http://127.0.0.1:8420");
+        assert!(again.is_signed_in());
+        assert_eq!(again.display_name(), "Alex Rivera");
     }
 
     #[test]

@@ -258,8 +258,10 @@ impl LineReader {
             .unwrap_or(0);
         let speed = parse_double(fields[4]).unwrap_or(0.0);
         let eta = parse_double(fields[5]).map(|v| v as i32).unwrap_or(-1);
+        // The figures are the site's (a `Content-Length` yt-dlp passes on): summed
+        // saturating, so an absurd one cannot overflow.
         if status == "finished" {
-            self.completed_bytes += downloaded;
+            self.completed_bytes = self.completed_bytes.saturating_add(downloaded);
             return Some(Progress {
                 percent: 100.0,
                 downloaded: self.completed_bytes,
@@ -272,8 +274,8 @@ impl LineReader {
         if status != "downloading" {
             return None;
         }
-        let done = self.completed_bytes + downloaded;
-        let whole = self.completed_bytes + total;
+        let done = self.completed_bytes.saturating_add(downloaded);
+        let whole = self.completed_bytes.saturating_add(total);
         let percent = if whole > 0 {
             (done as f64 * 100.0 / whole as f64).clamp(0.0, 100.0)
         } else {
@@ -668,6 +670,30 @@ mod tests {
         assert_eq!(audio.total, 4_194_304 + 200_000);
         assert!(reader.read("@ML|garbage").is_none());
         assert!(reader.read("@ML|error|1|2|3|4|5").is_none());
+    }
+
+    /// yt-dlp passes on what the site says about sizes; an absurd `Content-Length` on a
+    /// second stream must not overflow the sum of the streams (a panic in the reader in
+    /// a debug build, a negative size in a release one).
+    #[test]
+    fn absurd_sizes_do_not_overflow() {
+        let format = DownloadFormat::new(MediaKind::Video, Quality::Best, AudioFormat::M4a);
+        let mut reader = LineReader::new(format, true);
+        let max = i64::MAX;
+        reader.read(&format!("@ML|finished|{max}|{max}|NA|NA|NA"));
+        let Some(RunEvent::Progress(p)) =
+            reader.read(&format!("@ML|finished|{max}|{max}|NA|NA|NA"))
+        else {
+            panic!()
+        };
+        assert_eq!(p.downloaded, max);
+        let Some(RunEvent::Progress(p)) =
+            reader.read(&format!("@ML|downloading|{max}|{max}|NA|1|1"))
+        else {
+            panic!()
+        };
+        assert_eq!((p.downloaded, p.total), (max, max));
+        assert!((0.0..=100.0).contains(&p.percent));
     }
 
     #[test]

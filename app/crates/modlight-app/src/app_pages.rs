@@ -701,23 +701,21 @@ fn sanitized_text(
     member: &str,
     default: &str,
 ) -> bool {
-    let mut value = b.str(&[member], default);
+    use modlight_core::names::file_helpers::sanitize_path;
+    let stored = b.str(&[member], default);
     let id = ui.make_persistent_id(("app-path", member));
-    let response = Field {
-        height: 32.0,
-        enabled: ui.is_enabled(),
-        id: Some(id),
-        ..Field::new(&mut value)
+    // The stored value is trimmed: the box keeps a space while it is typed (upstream's
+    // setter stores the cleaned text and leaves the box alone).
+    let edited = crate::settings_kit::edited_text(ui, colors, id, stored.clone(), |typed| {
+        sanitize_path(typed) == stored
+    });
+    match edited {
+        Some(value) => {
+            b.set(&[member], json!(sanitize_path(&value)));
+            true
+        }
+        None => false,
     }
-    .show(ui, colors);
-    if response.changed() {
-        b.set(
-            &[member],
-            json!(modlight_core::names::file_helpers::sanitize_path(&value)),
-        );
-        return true;
-    }
-    false
 }
 
 fn backup(ui: &mut Ui, ctx: &mut AppPagesCtx, b: &mut Binder) {
@@ -2159,7 +2157,7 @@ impl crate::state::AppState {
                     crate::dialogs::confirm::ConfirmAction::ResetSettings,
                 );
                 confirm.title = format!("Modlight - {}", t(s::Confirmation));
-                self.windows.confirm = Some(confirm);
+                self.ask_confirm(confirm);
             }
             // Printing is not part of this phase.
             AppPageAsk::ImagePrintSettings => self.open_print_settings(),
@@ -2344,49 +2342,70 @@ impl crate::state::AppState {
         if !path.is_file() {
             return;
         }
-        // The import compares what it restores with the settings as they are now.
-        self.save_config();
+        self.start_backup_import(path);
+    }
+
+    /// `ImportAsync`: the archive is read off the UI thread; the files are written by the
+    /// completion, on the UI thread, right before the settings are loaded again. Written
+    /// by the worker, a save in between (the main window's bounds, a settings sync in the
+    /// same frame) put the old settings back over them, the load read those, and the
+    /// import was lost while the status line said it had worked.
+    fn start_backup_import(&mut self, path: std::path::PathBuf) {
         self.app_status(
             t(s::ApplicationSettingsWindow_ImportingBackup).to_string(),
             true,
         );
-        let profile = self.env.profile.clone();
         self.rt.spawn_blocking(move || {
-            let result = modlight_core::backup::import(&path, &profile);
-            move |state: &mut crate::state::AppState, _ctx: &egui::Context| match result {
-                Ok(report) => {
-                    state.reload_settings_files(false);
-                    let mut text = format(
-                        t(s::ApplicationSettingsWindow_BackupImportedFrom),
-                        &[Arg::from(path.display().to_string())],
-                    );
-                    // What the backup held but did not get in is said out loud, in the
-                    // status line and in a message the person has to close.
-                    let notes = report.notes();
-                    if !notes.is_empty() {
-                        let body = notes.join("\n\n");
-                        log::warn!("Backup import: {}", body.replace('\n', " "));
-                        text.push_str("\n\n");
-                        text.push_str(&body);
-                        state.uploads.windows.messages.push_back(
-                            crate::dialogs::message::MessageBox::new(
-                                "Modlight",
-                                &body,
-                                modlight_core::tasks::host::MessageIcon::Warning,
-                            ),
-                        );
-                    }
-                    state.app_status(text, false);
-                }
-                Err(error) => {
-                    log::warn!("Backup import: {error}");
-                    state.app_status(
-                        t(s::ApplicationSettingsWindow_BackupImportFailed).to_string(),
-                        false,
-                    );
-                }
+            let read = modlight_core::backup::read_import(&path);
+            move |state: &mut crate::state::AppState, _ctx: &egui::Context| {
+                // The import compares what it restores with the settings as they are now.
+                let result = read.and_then(|pending| {
+                    state.save_config();
+                    modlight_core::backup::write_import(pending, &state.env.profile)
+                });
+                state.backup_imported(&path, result);
             }
         });
+    }
+
+    fn backup_imported(
+        &mut self,
+        path: &std::path::Path,
+        result: Result<modlight_core::backup::ImportReport, String>,
+    ) {
+        match result {
+            Ok(report) => {
+                self.reload_settings_files(false);
+                let mut text = format(
+                    t(s::ApplicationSettingsWindow_BackupImportedFrom),
+                    &[Arg::from(path.display().to_string())],
+                );
+                // What the backup held but did not get in is said out loud, in the
+                // status line and in a message the person has to close.
+                let notes = report.notes();
+                if !notes.is_empty() {
+                    let body = notes.join("\n\n");
+                    log::warn!("Backup import: {}", body.replace('\n', " "));
+                    text.push_str("\n\n");
+                    text.push_str(&body);
+                    self.uploads.windows.messages.push_back(
+                        crate::dialogs::message::MessageBox::new(
+                            "Modlight",
+                            &body,
+                            modlight_core::tasks::host::MessageIcon::Warning,
+                        ),
+                    );
+                }
+                self.app_status(text, false);
+            }
+            Err(error) => {
+                log::warn!("Backup import: {error}");
+                self.app_status(
+                    t(s::ApplicationSettingsWindow_BackupImportFailed).to_string(),
+                    false,
+                );
+            }
+        }
     }
 
     /// The reset question was answered Yes (`ResetAsync`).
@@ -2508,6 +2527,53 @@ mod tests {
         );
     }
 
+    /// A save of the settings the app runs with, in the frame the import finishes (the
+    /// main window's bounds, written a second after they stop changing, are saved before
+    /// the frame runs the completions): the import's files were written by the worker, the
+    /// save put the old settings back over them, and the load read those. The import was
+    /// lost while the status line said it had worked. The files are now written by the
+    /// completion, right before the load.
+    #[test]
+    fn a_save_while_a_backup_imports_does_not_undo_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(
+            elsewhere.join(modlight_core::config::APPLICATION_CONFIG_FILE),
+            r#"{"UploadLimit":7}"#,
+        )
+        .unwrap();
+        let archive = dir.path().join("backup.sxb");
+        modlight_core::backup::export(&elsewhere, &archive, true, false).unwrap();
+
+        let profile = dir.path().join("profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::write(
+            profile.join(modlight_core::config::APPLICATION_CONFIG_FILE),
+            r#"{"UploadLimit":3}"#,
+        )
+        .unwrap();
+        let mut state = profile_state(&profile);
+        assert_eq!(state.config.get("UploadLimit"), Some(&json!(3)));
+        state.start_backup_import(archive);
+        let mut finished = Vec::new();
+        let started = std::time::Instant::now();
+        while finished.is_empty() && started.elapsed().as_secs() < 10 {
+            finished.extend(state.rt.drain());
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!finished.is_empty(), "the import never finished");
+        // Something saves the settings on screen before the completion runs.
+        state.save_config();
+        let ctx = egui::Context::default();
+        for completion in finished {
+            completion(&mut state, &ctx);
+        }
+        assert_eq!(state.config.get("UploadLimit"), Some(&json!(7)));
+        let stored = modlight_core::config::AppConfig::load(&profile);
+        assert_eq!(stored.get("UploadLimit"), Some(&json!(7)));
+    }
+
     /// `ExportAsync` saves every settings file first (`SaveAllSettings`), so a backup
     /// carries the hotkeys this installation runs with even when they were never changed
     /// (no `HotkeysConfig.json` yet): restored elsewhere, they replace that one's.
@@ -2544,6 +2610,52 @@ mod tests {
         assert_eq!(
             modlight_core::hotkeys::load(&restored).len(),
             modlight_core::hotkeys::default_hotkeys().len()
+        );
+    }
+
+    /// A path typed into a box of the Paths page keeps its spaces. The stored value is
+    /// `SanitizePath` of the text, which trims it, and the box showed the stored value
+    /// back: a space vanished the moment it was typed at the end ("Application Support"
+    /// came out "ApplicationSupport"). Upstream's setter stores the cleaned text and leaves
+    /// the box as typed.
+    #[test]
+    fn a_path_box_keeps_a_space_while_it_is_typed() {
+        use egui_kittest::kittest::Queryable;
+        let theme = modlight_core::theme::resolve(
+            &modlight_core::theme::ThemeOptions::default(),
+            Some(true),
+            None,
+        );
+        let colors = Colors::new(&theme);
+        let mut fonts_set = false;
+        let mut harness = egui_kittest::Harness::new_ui_state(
+            move |ui, root: &mut serde_json::Map<String, Value>| {
+                if !fonts_set {
+                    fonts_set = true;
+                    ui.ctx().set_fonts(crate::theme::fonts());
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                let mut b = Binder::new(root);
+                sanitized_text(ui, &colors, &mut b, "SaveImageSubFolderPattern", "");
+            },
+            serde_json::Map::new(),
+        );
+        harness.run_steps(2);
+        harness
+            .get_by(|n| n.role() == egui::accesskit::Role::TextInput)
+            .focus();
+        harness.run();
+        for typed in "My Shots %y ".chars() {
+            harness
+                .get_by(|n| n.is_focused())
+                .type_text(&typed.to_string());
+            harness.run();
+        }
+        assert_eq!(
+            harness.state()["SaveImageSubFolderPattern"],
+            json!("My Shots %y"),
+            "stored trimmed, the inner spaces kept"
         );
     }
 

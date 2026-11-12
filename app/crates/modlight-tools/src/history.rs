@@ -355,8 +355,9 @@ fn has_linked_image(item: &HistoryItem, image_history: bool) -> bool {
     has_image_url(item, image_history) && !item.thumbnail_url.trim().is_empty()
 }
 
+/// `Path.HasExtension`: a dot with nothing after it is no extension.
 fn has_extension(path: &str) -> bool {
-    Path::new(path).extension().is_some()
+    Path::new(path).extension().is_some_and(|e| !e.is_empty())
 }
 
 /// `CopyValues`: each selected item's text, one a line; `None` when none has one. The
@@ -639,7 +640,8 @@ pub fn renamed(file_path: &str, new_name: &str) -> Option<(String, String)> {
         return None;
     }
     let mut name = new_name.to_string();
-    if let Some(extension) = path.extension() {
+    // `if (Path.HasExtension(path)) newName += Path.GetExtension(path)`.
+    if let Some(extension) = path.extension().filter(|e| !e.is_empty()) {
         name.push('.');
         name.push_str(&extension.to_string_lossy());
     }
@@ -647,22 +649,32 @@ pub fn renamed(file_path: &str, new_name: &str) -> Option<(String, String)> {
     Some((name, new_path.to_string_lossy().into_owned()))
 }
 
+/// The most a preview download reads.
+pub const PREVIEW_LIMIT: usize = 32 * 1024 * 1024;
+
 /// `PreviewHttpClient.GetByteArrayAsync`: an uploaded picture for the preview, up to
-/// 32 MB, decoded under the app's limits.
+/// [`PREVIEW_LIMIT`], decoded under the app's limits. The body is read a piece at a time
+/// and given up past the limit: an answer without a `Content-Length` (chunked) is not
+/// read whole first.
 pub async fn fetch_preview(url: &str) -> Option<image::RgbaImage> {
-    const LIMIT: u64 = 32 * 1024 * 1024;
     let client = reqwest::Client::builder()
         .user_agent(modlight_core::components::net::user_agent())
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .ok()?;
-    let response = client.get(url).send().await.ok()?.error_for_status().ok()?;
-    if response.content_length().is_some_and(|l| l > LIMIT) {
+    let mut response = client.get(url).send().await.ok()?.error_for_status().ok()?;
+    if response
+        .content_length()
+        .is_some_and(|l| l > PREVIEW_LIMIT as u64)
+    {
         return None;
     }
-    let bytes = response.bytes().await.ok()?;
-    if bytes.len() as u64 > LIMIT {
-        return None;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if bytes.len() + chunk.len() > PREVIEW_LIMIT {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
     }
     modlight_core::image_decode::from_bytes(&bytes)
         .ok()
@@ -853,6 +865,93 @@ mod tests {
         };
         assert_eq!(renamed(old, "New"), Some(("New.png".into(), new.into())));
         assert_eq!(renamed(old, " OLD "), None);
+    }
+
+    /// `Path.HasExtension("shot.")` is false: renamed to "x" the file is "x" (not "x."),
+    /// and the list window's rename and file path entries are off for it, as upstream.
+    #[test]
+    fn a_name_ending_in_a_dot_has_no_extension() {
+        let (dotted, renamed_to) = if cfg!(windows) {
+            ("C:\\a\\shot.", "C:\\a\\x")
+        } else {
+            ("/a/shot.", "/a/x")
+        };
+        assert_eq!(renamed(dotted, "x"), Some(("x".into(), renamed_to.into())));
+        let item = HistoryItem {
+            file_path: dotted.into(),
+            ..HistoryItem::default()
+        };
+        let menu = MenuState::of(&[&item]).unwrap();
+        assert!(!menu.valid_path);
+        assert!(!menu.copy_enabled(CopyFormat::FilePath));
+        assert_eq!(copy_text(&[&item], CopyFormat::FilePath, false), None);
+    }
+
+    /// A stub on 127.0.0.1 answering one request with a chunked body (no `Content-Length`):
+    /// `body`, then, when `endless`, megabyte chunks far past the limit and a wait with the
+    /// body never ended.
+    fn chunked_stub(body: Vec<u8>, endless: bool) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}/p.png", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut head = [0u8; 4096];
+            let _ = stream.read(&mut head);
+            let chunk = |stream: &mut std::net::TcpStream, data: &[u8]| -> bool {
+                stream
+                    .write_all(format!("{:x}\r\n", data.len()).as_bytes())
+                    .and_then(|_| stream.write_all(data))
+                    .and_then(|_| stream.write_all(b"\r\n"))
+                    .is_ok()
+            };
+            let header =
+                "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: chunked\r\n\r\n";
+            if stream.write_all(header.as_bytes()).is_err() {
+                return;
+            }
+            if !body.is_empty() && !chunk(&mut stream, &body) {
+                return;
+            }
+            if endless {
+                let megabyte = vec![0u8; 1024 * 1024];
+                for _ in 0..64 {
+                    if !chunk(&mut stream, &megabyte) {
+                        return;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(40));
+            } else {
+                let _ = stream.write_all(b"0\r\n\r\n");
+            }
+        });
+        address
+    }
+
+    /// The preview reads at most 32 MB. A server that sends no `Content-Length` (a chunked
+    /// answer) was read whole before the size was checked: memory grew with whatever came,
+    /// and a body that never ends held the preview until the 30 s timeout.
+    #[test]
+    fn a_preview_without_a_length_stops_at_the_limit() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let png = crate::images::png(&image::RgbaImage::new(3, 2));
+        let url = chunked_stub(png, false);
+        let small = runtime.block_on(fetch_preview(&url));
+        assert_eq!(small.map(|i| i.dimensions()), Some((3, 2)));
+
+        let url = chunked_stub(Vec::new(), true);
+        let started = std::time::Instant::now();
+        assert!(runtime.block_on(fetch_preview(&url)).is_none());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(15),
+            "read on past the limit for {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

@@ -114,6 +114,9 @@ impl ModlightApp {
 
         // The quick task menu, at the pointer.
         if let Some((menu, _)) = state.captures.quick_menu.as_mut() {
+            // `placementWindow.Activate()`: the menu takes the focus when it opens, also
+            // over another app (a hotkey capture), so that a click elsewhere closes it.
+            let first_frame = menu.at.is_none();
             let at = *menu.at.get_or_insert_with(|| {
                 let (x, y) = state.captures.source.cursor_position();
                 pos2(x as f32 - 10.0, y as f32 - 10.0)
@@ -134,6 +137,9 @@ impl ModlightApp {
                 ViewportId::from_hash_of("quick-task-menu"),
                 builder,
                 |ui, _| {
+                    if first_frame {
+                        ui.ctx().send_viewport_cmd(ViewportCommand::Focus);
+                    }
                     let (command, rect) = menu.ui(ui, &colors);
                     let wanted = rect.size() + vec2(2.0, 2.0);
                     if (wanted - size).length() > 0.5 {
@@ -143,10 +149,10 @@ impl ModlightApp {
                         ui.ctx()
                             .send_viewport_cmd(ViewportCommand::InnerSize(wanted));
                     }
-                    let lost = ui.ctx().input(|i| {
-                        i.viewport().focused == Some(false) || i.key_pressed(egui::Key::Escape)
-                    });
-                    (command, lost)
+                    let (focused, escape) = ui
+                        .ctx()
+                        .input(|i| (i.viewport().focused, i.key_pressed(egui::Key::Escape)));
+                    (command, menu.focus_lost(focused) || escape)
                 },
             );
             match picked {

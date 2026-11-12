@@ -767,7 +767,12 @@ impl Canvas {
         } else {
             egui::FontFamily::Proportional
         };
-        let font = egui::FontId::new((data.font_size * g.z).max(1.0), family.clone());
+        // egui asserts that every glyph fits its font atlas (as wide as the largest
+        // texture): the box writes no larger than a quarter of that, whatever size the
+        // annotation has (sizes grow with Resize image and come from the options).
+        let atlas = ui.input(|i| i.max_texture_side).clamp(512, 16 * 1024) as f32;
+        let largest = atlas / 4.0 / g.ppp.max(0.5);
+        let font = egui::FontId::new((data.font_size * g.z).clamp(1.0, largest), family.clone());
         let (rect, padding, fill, border) = if edit.balloon {
             let fill = crate::color::Color::parse(&a.fill_color)
                 .filter(|c| c.a > 0)

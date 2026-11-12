@@ -27,6 +27,10 @@ pub struct ScreenInfo {
     pub primary: bool,
     #[serde(default)]
     pub name: String,
+    /// The display's size in physical pixels where the platform reads it (Windows'
+    /// `Screen.Bounds` in a per-monitor DPI aware process), for the monitor list.
+    #[serde(default)]
+    pub pixel_size: Option<(i32, i32)>,
 }
 
 /// One window (`WindowInfo`), front to back in a list.
@@ -96,6 +100,12 @@ pub trait CaptureSource: Send + Sync {
     }
     /// Bring a window to the front before it is taken (`WindowInfo.Activate`).
     fn activate_window(&self, _window: &WindowInfo) {}
+
+    /// The active window's client area in desktop points
+    /// (`CaptureHelpers.GetActiveWindowClientRectangle`), where the platform knows one.
+    fn active_window_client_rect(&self) -> Option<IRect> {
+        None
+    }
 
     /// `GetScreenBounds`: every display together.
     fn screen_bounds(&self) -> IRect {
@@ -226,6 +236,7 @@ impl FakeSource {
                 scale,
                 primary: true,
                 name: "Built-in Retina Display".into(),
+                pixel_size: None,
             },
             ScreenInfo {
                 id: 2,
@@ -234,6 +245,7 @@ impl FakeSource {
                 scale,
                 primary: false,
                 name: "External Display".into(),
+                pixel_size: None,
             },
         ];
         let windows = vec![

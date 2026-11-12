@@ -17,7 +17,12 @@
 //!   make it decide to;
 //! * the token travels in `x-api-key` only, which is what lets the server lift its size
 //!   ceiling for this request before it has read a byte of the body;
-//! * no deadline: a capture of several gigabytes legitimately takes hours.
+//! * no overall deadline: a large capture on a slow line legitimately takes long. What
+//!   ends a dead one is a stall: nothing of the body taken by the connection and no
+//!   answer for [`LIVE_STALL_TIMEOUT`] (`HttpWebRequest.ReadWriteTimeout`, which bounded
+//!   every read and write of upstream's upload). A laptop that sleeps mid-upload leaves a
+//!   socket that neither delivers nor fails; without this the task said "uploading" for
+//!   ever and never reached the offline queue.
 //!
 //! The source is read and written in chunks of the caller's buffer size
 //! (`2^BufferSizePower` KiB in the settings), and progress is told after each chunk as
@@ -47,6 +52,9 @@
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use chrono::{NaiveDate, NaiveDateTime};
 use futures_util::Stream;
@@ -54,6 +62,7 @@ use reqwest::Body;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
+use tokio::time::{Instant, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
 use crate::client::{API_KEY_HEADER, Api, Credential};
@@ -76,6 +85,13 @@ pub const DEFAULT_BUFFER_SIZE: usize = 32 * 1024;
 
 /// The largest power the settings offer (8 MiB per write).
 const MAX_BUFFER_SIZE_POWER: u32 = 13;
+
+/// How long a live upload may move nothing before it is given up as a dead link (see the
+/// module notes): `HttpWebRequest.ReadWriteTimeout`'s default, five minutes.
+pub const LIVE_STALL_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How often the stall watch looks.
+const LIVE_STALL_POLL: Duration = Duration::from_secs(5);
 
 /// Bytes per write for the `BufferSizePower` setting: `2^power` KiB, as `WorkerTask`
 /// computes it. Clamped to the range the settings page offers, so a hand-edited value
@@ -249,13 +265,35 @@ impl Api {
     /// `progress` is called on this task after each chunk has been handed to the
     /// connection, with (file bytes sent so far, file length). Cancelling `cancel` drops
     /// the connection at once, whatever it was doing, and ends with
-    /// [`LiveOutcome::Cancelled`].
+    /// [`LiveOutcome::Cancelled`]. Nothing moving for [`LIVE_STALL_TIMEOUT`] ends it as
+    /// [`LiveOutcome::NoAnswer`] (see the module notes).
     pub async fn upload(
+        &self,
+        credential: &Credential,
+        upload: LiveUpload,
+        progress: impl FnMut(u64, u64) + Send,
+        cancel: &CancellationToken,
+    ) -> LiveOutcome {
+        self.upload_watching(
+            credential,
+            upload,
+            progress,
+            cancel,
+            LIVE_STALL_TIMEOUT,
+            LIVE_STALL_POLL,
+        )
+        .await
+    }
+
+    /// [`Api::upload`] with another stall watch (the tests' short one).
+    async fn upload_watching(
         &self,
         credential: &Credential,
         upload: LiveUpload,
         mut progress: impl FnMut(u64, u64) + Send,
         cancel: &CancellationToken,
+        stall: Duration,
+        poll: Duration,
     ) -> LiveOutcome {
         if cancel.is_cancelled() {
             return LiveOutcome::Cancelled;
@@ -272,7 +310,11 @@ impl Api {
         let content_length = head.len() as u64 + length + tail.len() as u64;
 
         let (told, mut sent) = mpsc::unbounded_channel();
+        let started = Instant::now();
+        let activity = Arc::new(AtomicU64::new(0));
         let body = LiveBody {
+            started,
+            activity: Arc::clone(&activity),
             head: Some(head),
             reader,
             remaining: length,
@@ -301,14 +343,27 @@ impl Api {
         };
         tokio::pin!(exchange);
 
+        let poll = poll.max(Duration::from_millis(1));
+        let mut watch = tokio::time::interval_at(started + poll, poll);
+        watch.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut telling = true;
         // The answer is looked at before the cancellation: an upload the server has
         // already stored cannot be un-stored by a click that arrived with its answer.
+        // The watch covers the wait for the answer after the last byte too, as tus's does.
         let result = loop {
             tokio::select! {
                 biased;
                 result = &mut exchange => break result,
                 _ = cancel.cancelled() => return LiveOutcome::Cancelled,
+                _ = watch.tick() => {
+                    let quiet = started
+                        .elapsed()
+                        .saturating_sub(Duration::from_millis(activity.load(Ordering::Relaxed)));
+                    if quiet > stall {
+                        log::info!("Modlight: the upload stopped moving, so it was dropped.");
+                        return LiveOutcome::NoAnswer(ApiError::Timeout.to_string());
+                    }
+                }
                 moved = sent.recv(), if telling => match moved {
                     Some(bytes) => progress(bytes, length),
                     None => telling = false,
@@ -468,6 +523,10 @@ impl Reader {
 
 /// The request body, produced as the connection asks for it.
 struct LiveBody {
+    started: Instant,
+    /// Milliseconds after `started` of the last part handed out: what the stall watch
+    /// looks at.
+    activity: Arc<AtomicU64>,
     head: Option<Vec<u8>>,
     reader: Reader,
     remaining: u64,
@@ -485,7 +544,13 @@ impl LiveBody {
         futures_util::stream::unfold(Some(self), |body| async move {
             let mut body = body?;
             match body.next_part().await {
-                Ok(Some(part)) => Some((Ok(part), Some(body))),
+                Ok(Some(part)) => {
+                    // Being asked for more is the connection taking what came before.
+                    let since =
+                        u64::try_from(body.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    body.activity.store(since, Ordering::Relaxed);
+                    Some((Ok(part), Some(body)))
+                }
                 Ok(None) => None,
                 // An error ends the body, and with it the request.
                 Err(error) => Some((Err(error), None)),
@@ -625,6 +690,50 @@ mod tests {
         assert_eq!(buffer_size_for_power(0), 1024);
         assert_eq!(buffer_size_for_power(13), 8 * 1024 * 1024);
         assert_eq!(buffer_size_for_power(40), 8 * 1024 * 1024);
+    }
+
+    /// A server (or a link) that takes the upload and then says nothing (a laptop that
+    /// slept mid-upload leaves such a socket): the upload ends as "no answer", which
+    /// the task hands to the offline queue, instead of uploading for ever.
+    #[tokio::test]
+    async fn an_upload_nobody_answers_ends() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    // Takes the request, never answers, holds the connection.
+                    let mut buffer = [0u8; 4096];
+                    while let Ok(read) = stream.read(&mut buffer).await {
+                        if read == 0 {
+                            break;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_secs(600)).await;
+                });
+            }
+        });
+        let api = Api::new("test").unwrap();
+        let credential = Credential::new(host.as_str(), "token");
+        let upload = LiveUpload::new("shot.png", UploadSource::Bytes(vec![7u8; 1000]));
+        let ended = tokio::time::timeout(
+            Duration::from_secs(10),
+            api.upload_watching(
+                &credential,
+                upload,
+                |_, _| {},
+                &CancellationToken::new(),
+                Duration::from_millis(500),
+                Duration::from_millis(50),
+            ),
+        )
+        .await
+        .expect("an upload that nothing answers ends");
+        assert!(
+            matches!(ended, LiveOutcome::NoAnswer(_)),
+            "a dead link is no answer, for the queue to take: {ended:?}"
+        );
     }
 
     #[test]

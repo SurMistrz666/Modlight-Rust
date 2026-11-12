@@ -15,14 +15,24 @@ pub fn on_start(state: &mut AppState) {
     crate::update_window::on_startup(state);
 }
 
-/// A window centred on the screen (`WindowStartupLocation="CenterScreen"`).
-fn builder(title: &str, size: Vec2, resizable: bool) -> ViewportBuilder {
+/// A window centred on the screen (`WindowStartupLocation="CenterScreen"`) as it opens;
+/// one that is open already is not placed again (`app::builder` says why).
+fn builder(
+    ctx: &egui::Context,
+    viewport: ViewportId,
+    title: &str,
+    size: Vec2,
+    resizable: bool,
+) -> ViewportBuilder {
     let mut builder = ViewportBuilder::default()
         .with_title(title)
         .with_inner_size(size)
         .with_resizable(resizable)
         .with_minimize_button(false)
         .with_maximize_button(resizable);
+    if crate::app::is_open(ctx, viewport) {
+        return builder;
+    }
     if let Some((x, y, w, h)) = crate::platform::system::visible_frame() {
         let area = Rect::from_min_size(pos2(x, y), vec2(w, h));
         builder = builder.with_position(pos2(
@@ -38,7 +48,10 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
     crate::download_tab::tick(state);
 
     if state.components.window.is_some() {
+        let viewport = ViewportId::from_hash_of("components");
         let builder = builder(
+            ctx,
+            viewport,
             t(s::Components_Title),
             vec2(
                 crate::components_window::WIDTH,
@@ -50,14 +63,10 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
             crate::components_window::MIN_WIDTH,
             crate::components_window::MIN_HEIGHT,
         ));
-        let (asked, closed) = ctx.show_viewport_immediate(
-            ViewportId::from_hash_of("components"),
-            builder,
-            |ui, _| {
-                let close = ui.ctx().input(|i| i.viewport().close_requested());
-                (crate::components_window::window_ui(ui, state), close)
-            },
-        );
+        let (asked, closed) = ctx.show_viewport_immediate(viewport, builder, |ui, _| {
+            let close = ui.ctx().input(|i| i.viewport().close_requested());
+            (crate::components_window::window_ui(ui, state), close)
+        });
         if asked || closed {
             crate::components_window::window_closed(state);
         }
@@ -66,9 +75,12 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
     if state.updates.message.is_some() {
         let height = state.updates.message_height;
         let size = vec2(crate::update_window::MESSAGE_WIDTH, height);
+        let viewport = ViewportId::from_hash_of("update-message");
         let (answer, closed) = ctx.show_viewport_immediate(
-            ViewportId::from_hash_of("update-message"),
+            viewport,
             builder(
+                ctx,
+                viewport,
                 t(helpers::UpdateMessageBox_UpdateMessageBox_update_is_available),
                 size,
                 false,
@@ -104,9 +116,16 @@ pub fn viewports(ctx: &egui::Context, state: &mut AppState) {
             crate::update_window::DOWNLOADER_WIDTH,
             crate::update_window::DOWNLOADER_HEIGHT,
         );
+        let viewport = ViewportId::from_hash_of("update-downloader");
         let (asked, closed) = ctx.show_viewport_immediate(
-            ViewportId::from_hash_of("update-downloader"),
-            builder(t(helpers::DownloaderWindow_Title), size, false),
+            viewport,
+            builder(
+                ctx,
+                viewport,
+                t(helpers::DownloaderWindow_Title),
+                size,
+                false,
+            ),
             |ui, _| {
                 let close = ui.ctx().input(|i| i.viewport().close_requested());
                 (crate::update_window::downloader_ui(ui, state), close)

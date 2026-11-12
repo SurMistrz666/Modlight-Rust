@@ -312,6 +312,42 @@ pub fn text(ui: &mut Ui, colors: &Colors, b: &mut Binder, path: &[&str], default
     false
 }
 
+/// `TextBox.form-control` over a value stored in another form than it is typed (a path
+/// trimmed by `SanitizePath`, a list split at its commas): `shown` is the stored value as
+/// text, `stores_as_shown(typed)` whether `typed` stores what is stored now. While the box
+/// has the focus it shows what was typed, as upstream's text box does: showing the stored
+/// form back took a space or a comma away the moment it was typed. Returns the text when
+/// it changed this frame.
+pub fn edited_text(
+    ui: &mut Ui,
+    colors: &Colors,
+    id: egui::Id,
+    shown: String,
+    stores_as_shown: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let typed_id = id.with("typed");
+    let focused = ui.memory(|m| m.has_focus(id));
+    let mut value = ui
+        .data(|d| d.get_temp::<String>(typed_id))
+        .filter(|typed| focused && stores_as_shown(typed))
+        .unwrap_or(shown);
+    let response = Field {
+        height: 32.0,
+        enabled: ui.is_enabled(),
+        id: Some(id),
+        ..Field::new(&mut value)
+    }
+    .show(ui, colors);
+    if !response.has_focus() {
+        ui.data_mut(|d| d.remove::<String>(typed_id));
+    }
+    if response.changed() {
+        ui.data_mut(|d| d.insert_temp(typed_id, value.clone()));
+        return Some(value);
+    }
+    None
+}
+
 /// `Button.compact`: 32 tall, 10,4 padding, the label in Text.
 pub fn compact_button(ui: &mut Ui, colors: &Colors, label: &str) -> egui::Response {
     let look = Look {

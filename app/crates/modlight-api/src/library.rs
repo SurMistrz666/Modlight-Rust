@@ -32,6 +32,17 @@ pub const MAX_MOTION_BYTES: usize = 4 * 1024 * 1024;
 /// Ids the delete endpoint accepts in one request: the server's own MAX_IDS.
 pub const MAX_DELETE_IDS: usize = 500;
 
+/// How long a download waits for the server to start answering. A conversion is made
+/// before its first byte, and the server gives its longest one 150 seconds
+/// (`AV_WEB_TIMEOUT_MS`); this is twice that.
+pub const DOWNLOAD_ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How long a download's body may bring nothing before the download is given up on:
+/// HttpClient's default timeout, which bounded upstream's `DownloadToFileAsync`. Measured
+/// from the last bytes rather than over the whole file (upstream's ran over the whole
+/// file), so a large file on a slow line still arrives.
+pub const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(100);
+
 /// Which uploads to list (`GetUploadsAsync`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UploadQuery {
@@ -344,11 +355,35 @@ impl Api {
     /// person agreed to replace stays as it was until there is something to replace it
     /// with. (Upstream wrote straight into `path` and deleted it on any failure, which
     /// took the old file with it even when nothing had been received.)
+    ///
+    /// A server that stops sending ends the download ([`DOWNLOAD_STALL_TIMEOUT`],
+    /// [`DOWNLOAD_ANSWER_TIMEOUT`]) as a failure, its part file removed: without a
+    /// deadline a dropped link kept the download (and a hidden part file in the person's
+    /// folder) for ever.
     pub async fn download_to_file(
         &self,
         credential: &Credential,
         link: &str,
         path: &Path,
+    ) -> ApiResult<()> {
+        self.download_to_file_within(
+            credential,
+            link,
+            path,
+            DOWNLOAD_ANSWER_TIMEOUT,
+            DOWNLOAD_STALL_TIMEOUT,
+        )
+        .await
+    }
+
+    /// [`Api::download_to_file`] with other deadlines (the tests' short ones).
+    async fn download_to_file_within(
+        &self,
+        credential: &Credential,
+        link: &str,
+        path: &Path,
+        answer: Duration,
+        stall: Duration,
     ) -> ApiResult<()> {
         use futures_util::StreamExt;
 
@@ -360,7 +395,10 @@ impl Api {
             });
         };
         let (request, grant) = self.content_request(Method::GET, &url, credential);
-        let response = request.send().await.map_err(ApiError::from_reqwest)?;
+        let response = tokio::time::timeout(answer, request.send())
+            .await
+            .map_err(|_| ApiError::Timeout)?
+            .map_err(ApiError::from_reqwest)?;
         let status = response.status();
         if status == StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
@@ -386,7 +424,10 @@ impl Api {
                 .await
                 .map_err(|e| ApiError::Transport(e.to_string()))?;
             let mut stream = response.bytes_stream();
-            while let Some(chunk) = stream.next().await {
+            while let Some(chunk) = tokio::time::timeout(stall, stream.next())
+                .await
+                .map_err(|_| ApiError::Timeout)?
+            {
                 let chunk = chunk.map_err(ApiError::from_reqwest)?;
                 file.write_all(&chunk)
                     .await
@@ -413,7 +454,7 @@ impl Api {
 
 /// Where a download is written until it is whole: a hidden name beside `path`, unique to
 /// this download, so a rename moves it into place on the same volume.
-fn part_path(path: &Path) -> std::path::PathBuf {
+pub(crate) fn part_path(path: &Path) -> std::path::PathBuf {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -541,5 +582,80 @@ mod tests {
             .unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"new report");
         assert_eq!(leftovers(folder.path()), vec!["report.pdf"]);
+    }
+
+    /// A server that answers, sends part of the body and then nothing more (a dropped
+    /// link, a laptop that slept) ends the download as a failure; upstream's ran inside
+    /// HttpClient's 100 s timeout. The file it would have replaced stays, and no hidden
+    /// part file is left in the person's folder.
+    #[tokio::test]
+    async fn a_download_that_stalls_ends_and_cleans_up() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buffer = [0u8; 4096];
+                    let _ = stream.read(&mut buffer).await;
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n0123456789")
+                        .await;
+                    // Then nothing, with the connection held open.
+                    tokio::time::sleep(Duration::from_secs(600)).await;
+                });
+            }
+        });
+        let api = Api::new("test").unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("report.pdf");
+        std::fs::write(&path, b"the old report").unwrap();
+        let credential = Credential::new(host.as_str(), "token");
+        let ended = tokio::time::timeout(
+            Duration::from_secs(10),
+            api.download_to_file_within(
+                &credential,
+                &format!("{host}/a/report/download"),
+                &path,
+                Duration::from_secs(5),
+                Duration::from_millis(500),
+            ),
+        )
+        .await
+        .expect("the download ends when the server stops sending");
+        assert_eq!(ended, Err(ApiError::Timeout));
+        assert_eq!(std::fs::read(&path).unwrap(), b"the old report");
+        assert_eq!(leftovers(folder.path()), vec!["report.pdf"]);
+    }
+
+    /// A server that takes the connection and never answers ends the download too.
+    #[tokio::test]
+    async fn a_server_that_never_answers_ends_the_download() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(stream);
+            }
+        });
+        let api = Api::new("test").unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("clip.mp4");
+        let credential = Credential::new(host.as_str(), "token");
+        let ended = tokio::time::timeout(
+            Duration::from_secs(10),
+            api.download_to_file_within(
+                &credential,
+                &format!("{host}/a/clip/download"),
+                &path,
+                Duration::from_millis(500),
+                Duration::from_millis(500),
+            ),
+        )
+        .await
+        .expect("the download ends when nothing answers");
+        assert_eq!(ended, Err(ApiError::Timeout));
+        assert!(leftovers(folder.path()).is_empty());
     }
 }

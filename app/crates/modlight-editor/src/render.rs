@@ -593,10 +593,22 @@ pub fn draw_annotation(target: &mut Pixmap, a: &Annotation, transform: Transform
 
     let device = map_rect(&transform, visual_bounds(a));
     let reach = sigma * 3.0 + 2.0;
-    let left = (device.left - reach).floor().max(-(ox.abs() + reach));
-    let top = (device.top - reach).floor().max(-(oy.abs() + reach));
-    let right = (device.right + reach).ceil();
-    let bottom = (device.bottom + reach).ceil();
+    // Only the part that can show: the target grown by the shadow's offset and blur on
+    // every side. Zoomed in on a large annotation, its whole extent would take
+    // gigabytes, and past the size limit below the shadow was dropped.
+    let (margin_x, margin_y) = (ox.abs() + reach, oy.abs() + reach);
+    let left = (device.left - reach).floor().max(-margin_x);
+    let top = (device.top - reach).floor().max(-margin_y);
+    let right = (device.right + reach)
+        .ceil()
+        .min((target.width() as f32 + margin_x).ceil());
+    let bottom = (device.bottom + reach)
+        .ceil()
+        .min((target.height() as f32 + margin_y).ceil());
+    if right <= left || bottom <= top {
+        // Wholly outside the target.
+        return;
+    }
     let (w, h) = (
         (right - left).max(1.0) as u32,
         (bottom - top).max(1.0) as u32,
@@ -1266,6 +1278,29 @@ mod tests {
         // The head is 8 px wide each side at width 4; behind the tip it is solid.
         assert_eq!(pixel(&target, 95, 24)[3], 255);
         assert_eq!(pixel(&target, 50, 26)[3], 0);
+    }
+
+    /// A shadowed annotation far larger than the target (zoomed in on a long arrow or on a
+    /// rectangle round a whole screenshot) keeps its shadow. The shadow's layer was as
+    /// large as the whole annotation on the device: past 16384 pixels the shadow was
+    /// dropped, below that every redraw at 300 or 400 % took gigabytes.
+    #[test]
+    fn a_shadow_shows_when_the_annotation_is_far_larger_than_the_target() {
+        let mut target = Pixmap::new(200, 200).unwrap();
+        let mut r = Annotation::rectangle();
+        r.start = Point::new(10.0, 10.0);
+        r.end = Point::new(4800.0, 40.0);
+        r.stroke_color = "#FFFF0000".into();
+        r.fill_color = "#FFFF0000".into();
+        r.shadow.enabled = true;
+        // Four device pixels per image pixel: the rectangle covers y 40 to 160 and runs
+        // far past the target's right edge; its shadow (offset 3, 3) reaches y 172.
+        let transform = Transform::from_scale(4.0, 4.0);
+        draw_annotation(&mut target, &r, transform);
+        assert_eq!(pixel(&target, 100, 100), [255, 0, 0, 255]);
+        let shadow = pixel(&target, 100, 166);
+        assert!(shadow[3] > 20, "no shadow under the rectangle: {shadow:?}");
+        assert_eq!(pixel(&target, 100, 198)[3], 0);
     }
 
     #[test]

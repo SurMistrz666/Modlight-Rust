@@ -118,7 +118,10 @@ pub fn resize_canvas(
 ) -> Option<RgbaImage> {
     let width = image.width() as i32 + left + right;
     let height = image.height() as i32 + top + bottom;
-    if width <= 0 || height <= 0 {
+    // Up to 10000 px on each side: past what the app could open as a picture, the
+    // operation is refused as the effect library refuses its preview.
+    if width <= 0 || height <= 0 || !modlight_core::image_decode::fits(width as u64, height as u64)
+    {
         return None;
     }
     let fill = Rgba([background.r, background.g, background.b, background.a]);
@@ -201,6 +204,18 @@ pub fn auto_crop(image: &RgbaImage, color: Rgba<u8>, tolerance: i32) -> RgbaImag
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Resize canvas takes up to 10000 px on each side; a result the app could not open
+    /// as a picture (`image_decode::fits`) is refused, as the effect library refuses its
+    /// preview, instead of allocating gigabytes on the UI thread.
+    #[test]
+    fn a_canvas_larger_than_a_picture_may_be_is_refused() {
+        let clear = crate::color::Color::rgba(0, 0, 0, 0);
+        let wide = RgbaImage::new(12_800, 1);
+        assert!(resize_canvas(&wide, 10_000, 0, 10_000, 0, clear).is_none());
+        let grown = resize_canvas(&wide, 10, 2, 10, 2, clear).unwrap();
+        assert_eq!(grown.dimensions(), (12_820, 5));
+    }
 
     #[test]
     fn resize_target_keeps_the_aspect_ratio_on_the_largest_scale() {

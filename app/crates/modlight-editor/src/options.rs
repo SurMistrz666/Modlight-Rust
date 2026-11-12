@@ -335,8 +335,26 @@ fn color_of(hex: &str) -> Color {
 }
 
 impl ImageEditorOptions {
+    /// The options from the settings document. A member of an unexpected type
+    /// (Newtonsoft converts leniently, serde does not) falls back to its default alone;
+    /// the others are kept.
     pub fn from_value(value: &Value) -> ImageEditorOptions {
-        serde_json::from_value(value.clone()).unwrap_or_default()
+        if let Ok(options) = serde_json::from_value(value.clone()) {
+            return options;
+        }
+        let Value::Object(members) = value else {
+            return ImageEditorOptions::default();
+        };
+        let readable: Map<String, Value> = members
+            .iter()
+            .filter(|(name, member)| {
+                let mut one = Map::new();
+                one.insert((*name).clone(), (*member).clone());
+                serde_json::from_value::<ImageEditorOptions>(Value::Object(one)).is_ok()
+            })
+            .map(|(name, member)| (name.clone(), member.clone()))
+            .collect();
+        serde_json::from_value(Value::Object(readable)).unwrap_or_default()
     }
 
     pub fn to_value(&self) -> Value {
@@ -412,6 +430,40 @@ mod tests {
         let options = ImageEditorOptions::from_value(&value);
         assert_eq!(options.arrow_style, ArrowStyle::Line);
         assert_eq!(options.to_value()["FutureMember"], 42);
+    }
+
+    /// A member the port cannot read (a hand edit, a `null` string, a fraction where a
+    /// whole number goes, a list that is not one) loses only itself: the whole document
+    /// fell back to the defaults (every colour and size, the toolbar, the recent files,
+    /// the favourite effects).
+    #[test]
+    fn one_unreadable_member_keeps_the_others() {
+        let mut value = ImageEditorOptions {
+            thickness: 9,
+            quick_crop: false,
+            recent_image_files: vec!["a.png".into()],
+            ..ImageEditorOptions::default()
+        }
+        .to_value();
+        value["BackgroundImagePath"] = Value::Null;
+        value["CornerRadius"] = serde_json::json!(4.5);
+        value["ToolbarItems"] = serde_json::json!("not a list");
+        value["FutureMember"] = serde_json::json!([1, 2]);
+        let options = ImageEditorOptions::from_value(&value);
+        assert_eq!(options.thickness, 9);
+        assert!(!options.quick_crop);
+        assert_eq!(options.recent_image_files, vec!["a.png"]);
+        assert_eq!(options.corner_radius, 4);
+        assert_eq!(options.background_image_path, "");
+        assert!(options.toolbar_items.is_empty());
+        assert_eq!(
+            options.to_value()["FutureMember"],
+            serde_json::json!([1, 2])
+        );
+        assert_eq!(
+            ImageEditorOptions::from_value(&Value::Null),
+            ImageEditorOptions::default()
+        );
     }
 
     #[test]

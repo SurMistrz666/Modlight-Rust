@@ -10,7 +10,7 @@ use crate::helpers::{
     sample_transparent, smooth_step, wrap_angle,
 };
 use crate::sk::canvas::{rotation, scale_pixels};
-use crate::sk::{Bitmap, C, Canvas, Paint, Sampling, rect, round, roundd};
+use crate::sk::{Bitmap, C, Canvas, Paint, Sampling, check_size, rect, round, roundd};
 
 const M: Category = Category::Manipulations;
 use std::f32::consts::PI;
@@ -562,14 +562,17 @@ pub fn defs() -> Vec<Def> {
     ]
 }
 
-/// `ImageHelpers.Crop` (`ExtractSubset` of the part inside the image).
-pub fn crop_rect(source: &Bitmap, x: i32, y: i32, w: i32, h: i32) -> Bitmap {
+/// `ImageHelpers.Crop` (`ExtractSubset` of the part inside the image). An area with no
+/// part inside the image is an error: upstream returns an empty `SKBitmap`, a picture of
+/// nothing that the editor cannot show (a texture of nothing is a GPU validation error)
+/// nor upload.
+pub fn crop_rect(source: &Bitmap, x: i32, y: i32, w: i32, h: i32) -> Result<Bitmap, String> {
     let l = x.max(0);
     let t = y.max(0);
-    let r = (x + w).min(source.w);
-    let b = (y + h).min(source.h);
+    let r = x.saturating_add(w).min(source.w);
+    let b = y.saturating_add(h).min(source.h);
     if r - l <= 0 || b - t <= 0 {
-        return Bitmap::new(0, 0);
+        return Err("The area to crop is outside the image.".into());
     }
     let mut out = Bitmap::new(r - l, b - t);
     for yy in t..b {
@@ -577,16 +580,16 @@ pub fn crop_rect(source: &Bitmap, x: i32, y: i32, w: i32, h: i32) -> Bitmap {
             out.px[((yy - t) * (r - l) + (xx - l)) as usize] = source.get(xx, yy);
         }
     }
-    out
+    Ok(out)
 }
 
 fn auto_crop(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
     let tol = p.i("tolerance");
-    Ok(auto_crop_with(src, C::TRANSPARENT, tol))
+    auto_crop_with(src, C::TRANSPARENT, tol)
 }
 
 /// `AutoCropImageEffect(color, tolerance)`.
-pub fn auto_crop_with(src: &Bitmap, color: C, tol: i32) -> Bitmap {
+pub fn auto_crop_with(src: &Bitmap, color: C, tol: i32) -> Result<Bitmap, String> {
     let (w, hh) = (src.w, src.h);
     let match_color = if color == C::TRANSPARENT && w > 0 && hh > 0 {
         src.get(0, 0)
@@ -607,7 +610,7 @@ pub fn auto_crop_with(src: &Bitmap, color: C, tol: i32) -> Bitmap {
         }
     }
     if !has {
-        return Bitmap::new(1, 1);
+        return Ok(Bitmap::new(1, 1));
     }
     crop_rect(src, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
 }
@@ -620,7 +623,7 @@ fn crop(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
     if cw <= 0 || ch <= 0 {
         return Ok(src.clone());
     }
-    Ok(crop_rect(src, cx, cy, cw, ch))
+    crop_rect(src, cx, cy, cw, ch)
 }
 
 fn cylinder_wrap(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
@@ -1224,6 +1227,7 @@ fn resize_canvas(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
     if nw <= 0 || nh <= 0 {
         return Ok(src.clone());
     }
+    check_size(nw as i64, nh as i64)?;
     let mut canvas = Canvas::new(nw, nh);
     canvas.clear(p.c("background_color"));
     canvas.draw_bitmap(src, l as f32, t as f32, &Paint::default());
@@ -1286,6 +1290,9 @@ fn resize_image(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
         p.b("maintain_aspect_ratio"),
         anchor,
     );
+    // With the aspect ratio kept, one side typed on a long narrow picture can ask for
+    // the other in the millions.
+    check_size(w as i64, hh as i64)?;
     Ok(scale_pixels(src, w, hh, Sampling::CATMULL_ROM))
 }
 
@@ -1430,6 +1437,7 @@ fn scale(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
     if w <= 0 || hh <= 0 {
         return Ok(src.clone());
     }
+    check_size(w as i64, hh as i64)?;
     Ok(scale_pixels(src, w, hh, Sampling::CATMULL_ROM))
 }
 
@@ -1455,12 +1463,10 @@ fn skew(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
     let maxx = pts.iter().map(|p| p.x).fold(f32::MIN, f32::max);
     let maxy = pts.iter().map(|p| p.y).fold(f32::MIN, f32::max);
     let (nw, nh, ox, oy) = if p.b("auto_resize") {
-        (
-            1.max((maxx - minx).ceil() as i32),
-            1.max((maxy - miny).ceil() as i32),
-            -minx,
-            -miny,
-        )
+        // Near 90 degrees the sides grow with the tangent (57 times at 89).
+        let (nw, nh) = ((maxx - minx).ceil() as i64, (maxy - miny).ceil() as i64);
+        check_size(nw.max(1), nh.max(1))?;
+        (nw.max(1) as i32, nh.max(1) as i32, -minx, -miny)
     } else {
         (w as i32, hh as i32, 0.0, 0.0)
     };
@@ -1628,4 +1634,72 @@ fn wave_distortion(src: &Bitmap, p: &P) -> Result<Bitmap, String> {
         }
     }
     Ok(Bitmap::from_pixels(w, hh, px))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use modlight_editor::effects::{ImageEffect, ParamValue, ParamValues};
+
+    fn run(id: &str, source: &Bitmap, values: &[(&str, ParamValue)]) -> Result<Bitmap, String> {
+        let def = crate::find(id).unwrap();
+        let mut v = ParamValues::defaults(&def.parameters());
+        for (key, value) in values {
+            v.set(key, value.clone());
+        }
+        def.apply_bitmap(source, &v)
+    }
+
+    /// Effects whose size grows with their values refuse a result the app could not open
+    /// as a picture (`image_decode::fits`), before allocating it. Skew at 89 by 89 degrees
+    /// on a 1920 x 1080 screenshot asked for about 7 gigapixels (28 GB) in the editor's
+    /// preview, on the UI thread: the allocation fails (the app aborts) or the Mac swaps.
+    #[test]
+    fn effects_refuse_a_result_larger_than_a_picture_may_be() {
+        let n = ParamValue::Number;
+        let screenshot = Bitmap::new(1920, 1080);
+        let skew = [("horizontally", n(89.0)), ("vertically", n(89.0))];
+        assert!(run("skew", &screenshot, &skew).is_err());
+        // Past the side limit with few pixels, so the unrefused result stays cheap:
+        // 1 + 580 * tan(89 degrees) is 33 230 px wide.
+        let column = Bitmap::new(1, 580);
+        assert!(run("skew", &column, &[("horizontally", n(89.0))]).is_err());
+        let row = Bitmap::new(6600, 1);
+        assert!(run("scale", &row, &[("width_percentage", n(500.0))]).is_err());
+        let wide = Bitmap::new(12_800, 1);
+        let margins = [("left", n(10_000.0)), ("right", n(10_000.0))];
+        assert!(run("resize_canvas", &wide, &margins).is_err());
+        let narrow = Bitmap::new(10, 4000);
+        let keep = [
+            ("width", n(10_000.0)),
+            ("maintain_aspect_ratio", ParamValue::Bool(true)),
+        ];
+        assert!(run("resize_image", &narrow, &keep).is_err());
+        // Within the limits nothing changes.
+        let small = Bitmap::new(40, 30);
+        let skewed = run("skew", &small, &[("horizontally", n(45.0))]).unwrap();
+        assert_eq!((skewed.w, skewed.h), (70, 30));
+        let resized = run(
+            "resize_image",
+            &narrow,
+            &[("width", n(20.0)), keep[1].clone()],
+        );
+        assert_eq!(resized.map(|b| (b.w, b.h)), Ok((20, 8000)));
+    }
+
+    /// `ImageHelpers.Crop` of an area outside the image is an error, not a picture of
+    /// nothing (which the editor's canvas cannot show and a task cannot upload).
+    #[test]
+    fn a_crop_outside_the_image_is_an_error() {
+        let picture = Bitmap::new(40, 30);
+        assert!(crop_rect(&picture, 50, 0, 10, 10).is_err());
+        assert!(crop_rect(&picture, 0, -20, 10, 10).is_err());
+        assert!(crop_rect(&picture, i32::MAX, i32::MAX, i32::MAX, i32::MAX).is_err());
+        let part = crop_rect(&picture, 30, 20, 20, 20).unwrap();
+        assert_eq!((part.w, part.h), (10, 10));
+        // The effect itself clamps to the image, as upstream's `CropImageEffect` does.
+        let n = ParamValue::Number;
+        let outside = run("crop_image", &picture, &[("x", n(500.0)), ("y", n(500.0))]);
+        assert_eq!(outside.map(|b| (b.w, b.h)), Ok((40, 30)));
+    }
 }

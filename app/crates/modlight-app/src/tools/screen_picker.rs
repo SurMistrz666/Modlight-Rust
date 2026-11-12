@@ -378,7 +378,14 @@ impl AppState {
         options: ScreenColorPickerOptions,
         delay: f64,
     ) {
-        if self.tools.screen_picker.is_some() || self.tools.pending_pick.is_some() {
+        if self.tools.screen_picker.is_some()
+            || self.tools.pending_pick.is_some()
+            || self.tools.screen_pick_busy
+        {
+            // A pick is already under way (its desktop may still be being taken): this one
+            // does not start, and the window that asked (which stepped aside for it) comes
+            // back, instead of the second pick taking the first one's place.
+            self.screen_pick_finished(target, None);
             return;
         }
         self.tools.pending_pick = Some(PendingPick {
@@ -585,6 +592,45 @@ mod tests {
         assert_eq!(picker.color, Color::rgb(20, 20, 7));
         assert_eq!(picker.position, (-3, 1));
         assert_eq!(picker.info_text(), "#141407");
+    }
+
+    /// A second pick asked while one is under way (its desktop still being taken) does
+    /// not take the first one's place, and the window that asked, which minimised itself
+    /// for the pick, comes back instead of staying hidden for good.
+    #[test]
+    fn a_pick_asked_while_another_is_under_way_gives_the_window_back() {
+        use crate::tools::color_picker::{ColorPickerWindow, Purpose};
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let key = state.tools.open_keyed(|key| {
+            Box::new(ColorPickerWindow::new(
+                key,
+                Purpose::Tool,
+                Color::RED,
+                Default::default(),
+                Default::default(),
+                Vec::new(),
+            ))
+        });
+        state
+            .tools
+            .window_mut::<ColorPickerWindow>(key)
+            .unwrap()
+            .minimized = true;
+        state.tools.screen_pick_busy = true;
+        state.start_screen_pick(
+            PickTarget::ColorPicker(key),
+            ScreenColorPickerOptions::default(),
+            0.25,
+        );
+        assert!(state.tools.pending_pick.is_none(), "no second pick");
+        assert!(
+            !state
+                .tools
+                .window_mut::<ColorPickerWindow>(key)
+                .unwrap()
+                .minimized
+        );
+        assert!(state.tools.restore.contains(&key));
     }
 
     #[test]

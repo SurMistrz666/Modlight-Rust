@@ -975,8 +975,10 @@ fn draw_particles(e: &ClassicEffect, bmp: Bitmap) -> Bitmap {
                 break Some(r);
             }
         };
+        // No room for this one: upstream's `DrawImage` returns and the loop goes on (and
+        // the picture is still drawn over a particle background).
         let Some(r) = rect else {
-            return canvas.into_bitmap();
+            continue;
         };
         placed.push(r);
         canvas.save();
@@ -1233,6 +1235,33 @@ mod tests {
             preset.apply(&picture(40, 10)).unwrap().dimensions(),
             (40, 10)
         );
+    }
+
+    /// `DrawParticles.DrawImage` gives up on one particle after 1000 tries to place it
+    /// without overlap and goes on with the next; the picture is drawn over the particles
+    /// at the end when they are the background. A particle that finds no room must not
+    /// end the effect with the particles alone.
+    #[test]
+    fn a_particle_without_room_keeps_the_picture_over_the_background() {
+        let dir = tempfile::tempdir().unwrap();
+        RgbaImage::from_pixel(8, 8, image::Rgba([0, 0, 255, 255]))
+            .save(dir.path().join("particle.png"))
+            .unwrap();
+        let mut particles = ClassicEffect::new(Kind::DrawParticles);
+        particles.set(
+            "ImageFolder",
+            Value::Text(dir.path().to_string_lossy().into_owned()),
+        );
+        particles.set("ImageCount", Value::Int(3));
+        particles.set("Background", Value::Bool(true));
+        particles.set("NoOverlap", Value::Bool(true));
+        let preset = Preset {
+            name: String::new(),
+            effects: vec![particles],
+        };
+        // The first particle fills the picture; the second finds no room.
+        let img = RgbaImage::from_pixel(8, 8, image::Rgba([255, 0, 0, 255]));
+        assert_eq!(preset.apply(&img).unwrap(), img);
     }
 
     #[test]

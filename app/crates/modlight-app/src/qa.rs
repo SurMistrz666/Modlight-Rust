@@ -929,7 +929,7 @@ pub fn prepare(screen: &str, state: &mut AppState, ctx: &egui::Context) -> Vec2 
                 modlight_core::l10n::t(modlight_core::l10n::s::MySpace_DeleteConfirm),
                 &[modlight_core::l10n::Arg::from("mountain-sunset.jpg")],
             );
-            state.windows.confirm = Some(crate::dialogs::confirm::Confirm::new(
+            state.ask_confirm(crate::dialogs::confirm::Confirm::new(
                 modlight_core::l10n::t(modlight_core::l10n::s::MySpace_DeleteTitle),
                 &question,
                 crate::dialogs::confirm::ConfirmAction::Trash(vec!["8".into()]),

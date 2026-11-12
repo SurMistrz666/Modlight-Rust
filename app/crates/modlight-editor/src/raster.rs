@@ -152,7 +152,7 @@ pub fn resize(image: &RgbaImage, width: u32, height: u32, filter: Filter) -> Rgb
     let mut out = Planes {
         width: width as usize,
         height: height as usize,
-        data: vec![[0.0; 4]; (width * height) as usize],
+        data: vec![[0.0; 4]; width as usize * height as usize],
     };
     for y in 0..height as usize {
         let v = (y as f32 + 0.5) * sy;

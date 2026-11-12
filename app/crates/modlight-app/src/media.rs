@@ -70,19 +70,93 @@ impl Reel {
     }
 }
 
-/// Decode a still picture, shrunk to `max_width` when wider (never enlarged).
+/// The largest texture side of the app's GPU device: egui-wgpu asks wgpu for 8192 on
+/// every machine. A picture decoded off the UI thread for a texture is fitted inside it
+/// there; a larger texture fails the GPU's validation and the app ends.
+const TEXTURE_SIDE: u32 = 8192;
+
+/// Decode a still picture, shrunk to `max_width` when wider (never enlarged), and to one
+/// texture's height when taller: the server sends the original when it cannot make a
+/// thumbnail (a timeout, a picture past its pixel limit), and a narrow picture 10000 px
+/// tall stays that tall at the thumbnail's width.
 pub fn decode_still(bytes: &[u8], max_width: u32) -> Option<ColorImage> {
     let image = modlight_core::image_decode::from_bytes(bytes).ok()?;
     Some(to_color_image(shrink(image, max_width)))
 }
 
 fn shrink(image: DynamicImage, max_width: u32) -> DynamicImage {
-    if image.width() <= max_width || image.width() == 0 {
+    let (w, h) = (image.width(), image.height());
+    if (w <= max_width && h <= TEXTURE_SIDE) || w == 0 || h == 0 {
         return image;
     }
-    let height =
-        ((image.height() as f64 * max_width as f64 / image.width() as f64).round() as u32).max(1);
-    image.resize_exact(max_width, height, FilterType::CatmullRom)
+    let (width, height) = within(w, h, max_width.max(1), TEXTURE_SIDE);
+    image.resize_exact(width, height, FilterType::CatmullRom)
+}
+
+/// `w` by `h` scaled down to fit `max_w` by `max_h` (the shape kept, at least 1 by 1).
+fn within(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    if w <= max_w && h <= max_h {
+        return (w, h);
+    }
+    let scale = (max_w as f64 / w as f64).min(max_h as f64 / h as f64);
+    (
+        ((w as f64 * scale).round() as u32).clamp(1, max_w),
+        ((h as f64 * scale).round() as u32).clamp(1, max_h),
+    )
+}
+
+/// A picture for a texture that is shown at most `max_w` by `max_h` pixels: shrunk to fit
+/// when larger (the shape kept), never enlarged. The caller passes the size it shows the
+/// picture at, capped at the context's `max_texture_side`: a texture past that fails the
+/// GPU's validation, and wgpu's default handler then ends the program.
+pub fn fitted_color_image(image: &image::RgbaImage, max_w: u32, max_h: u32) -> ColorImage {
+    let (w, h) = image.dimensions();
+    let (max_w, max_h) = (max_w.max(1), max_h.max(1));
+    if w <= max_w && h <= max_h {
+        return ColorImage::from_rgba_unmultiplied([w as usize, h as usize], image.as_raw());
+    }
+    let scale = (max_w as f64 / w as f64).min(max_h as f64 / h as f64);
+    let fitted_w = ((w as f64 * scale).round() as u32).clamp(1, max_w);
+    let fitted_h = ((h as f64 * scale).round() as u32).clamp(1, max_h);
+    let small = image::imageops::resize(image, fitted_w, fitted_h, FilterType::Triangle);
+    ColorImage::from_rgba_unmultiplied([fitted_w as usize, fitted_h as usize], small.as_raw())
+}
+
+/// A picture for one texture shown scaled to fit a window that can be resized: the whole
+/// picture when one texture holds it, else shrunk to the context's `max_texture_side`
+/// (8192 on the app's GPU device; a 61 MP photo or a long scrolling capture is larger).
+pub fn texture_color_image(ctx: &egui::Context, image: &image::RgbaImage) -> ColorImage {
+    let side = ctx.input(|i| i.max_texture_side).max(1) as u32;
+    fitted_color_image(image, side, side)
+}
+
+/// A picture shown at its full size, as textures of at most `max_texture_side` a side,
+/// each with the part of the picture it holds (in the picture's pixels): a scrolling
+/// capture is up to 32768 px tall, past what one texture takes.
+pub fn tiled_textures(
+    ctx: &egui::Context,
+    name: &str,
+    image: &image::RgbaImage,
+    options: TextureOptions,
+) -> Vec<(TextureHandle, egui::Rect)> {
+    let side = ctx.input(|i| i.max_texture_side).max(1) as u32;
+    let (w, h) = image.dimensions();
+    let mut tiles = Vec::new();
+    for top in (0..h).step_by(side as usize) {
+        for left in (0..w).step_by(side as usize) {
+            let (tw, th) = (side.min(w - left), side.min(h - top));
+            let part = image::imageops::crop_imm(image, left, top, tw, th).to_image();
+            let color =
+                ColorImage::from_rgba_unmultiplied([tw as usize, th as usize], part.as_raw());
+            let texture = ctx.load_texture(format!("{name}-{left}-{top}"), color, options);
+            let at = egui::Rect::from_min_size(
+                egui::pos2(left as f32, top as f32),
+                egui::vec2(tw as f32, th as f32),
+            );
+            tiles.push((texture, at));
+        }
+    }
+    tiles
 }
 
 pub fn to_color_image(image: DynamicImage) -> ColorImage {
@@ -123,6 +197,9 @@ pub fn decode_animation(bytes: &[u8]) -> Option<Animation> {
     if plan.frames < motion::MIN_FRAMES {
         return None;
     }
+    // The plan bounds the width only: a narrow animation keeps its height, which one
+    // texture may not hold.
+    let (width, height) = within(plan.width, plan.height, plan.width, TEXTURE_SIDE);
     let mut out = Animation {
         frames: Vec::new(),
         delays_ms: Vec::new(),
@@ -136,10 +213,10 @@ pub fn decode_animation(bytes: &[u8]) -> Option<Animation> {
         let delay = numerator.checked_div(denominator).unwrap_or(0) as i64;
         let buffer = frame.into_buffer();
         let image = DynamicImage::ImageRgba8(buffer);
-        let scaled = if image.width() == plan.width && image.height() == plan.height {
+        let scaled = if image.width() == width && image.height() == height {
             image
         } else {
-            image.resize_exact(plan.width, plan.height, FilterType::Triangle)
+            image.resize_exact(width, height, FilterType::Triangle)
         };
         out.frames.push(to_color_image(scaled));
         out.delays_ms.push(clamp_frame_delay(delay));
@@ -705,6 +782,65 @@ impl AppState {
     }
 }
 
+/// Runs `ui` with `state` in a headless egui (the app's fonts set, two passes) and gives
+/// the harness back: for tests of a window's drawing. Headless egui takes textures of at
+/// most 2048 px a side and asserts it, as the GPU device refuses larger ones.
+#[cfg(test)]
+pub(crate) fn render<S: 'static>(
+    state: S,
+    mut ui: impl FnMut(&mut egui::Ui, &mut S) + 'static,
+) -> egui_kittest::Harness<'static, S> {
+    let mut fonts_set = false;
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(940.0, 640.0))
+        .build_ui_state(
+            move |inner: &mut egui::Ui, state: &mut S| {
+                // The app's fonts take effect from the next pass on.
+                if !fonts_set {
+                    fonts_set = true;
+                    inner.ctx().set_fonts(crate::theme::fonts());
+                    inner.ctx().request_repaint();
+                    return;
+                }
+                ui(inner, state);
+            },
+            state,
+        );
+    harness.run_steps(2);
+    harness
+}
+
+/// Colours for a test of a window's drawing.
+#[cfg(test)]
+pub(crate) fn test_colors() -> crate::theme::Colors {
+    crate::theme::Colors::new(&modlight_core::theme::resolve(
+        &modlight_core::theme::ThemeOptions::default(),
+        Some(true),
+        None,
+    ))
+}
+
+/// A picture wider than one texture may be, headless (2048) or on the GPU (8192).
+#[cfg(test)]
+pub(crate) fn picture_past_a_texture() -> image::RgbaImage {
+    image::RgbaImage::from_pixel(9000, 40, image::Rgba([10, 120, 200, 255]))
+}
+
+/// Every texture alive in `ctx` fits one texture side.
+#[cfg(test)]
+pub(crate) fn assert_textures_fit(ctx: &egui::Context) {
+    let max = ctx.input(|i| i.max_texture_side);
+    let textures = ctx.tex_manager();
+    let textures = textures.read();
+    let mut count = 0;
+    for (_, meta) in textures.allocated() {
+        count += 1;
+        let [w, h] = meta.size;
+        assert!(w <= max && h <= max, "{} is {w}x{h}, over {max}", meta.name);
+    }
+    assert!(count > 0, "no texture at all");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -799,6 +935,22 @@ mod tests {
             assert!(decode_animation(&gif).is_none(), "{side}");
         }
         assert!(decode_animation(&animated_gif(3, 48, 48)).is_some());
+    }
+
+    /// The server sends the original when it cannot make a thumbnail (a timeout, a
+    /// picture past its pixel limit); a picture narrower than the thumbnail's width and
+    /// taller than a texture came out of the decode as it was, and the card's texture
+    /// ended the app. Stills and animations now fit one texture.
+    #[test]
+    fn a_narrow_picture_taller_than_a_texture_is_fitted_to_one() {
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(100, 10_000, image::Rgba([1, 2, 3, 255]))
+            .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+            .unwrap();
+        assert_eq!(decode_still(&png, 288).unwrap().size, [82, 8192]);
+        let gif = animated_gif(3, 4, 9_000);
+        let animation = decode_animation(&gif).expect("an animation");
+        assert_eq!(animation.frames[0].size, [4, 8192]);
     }
 
     #[test]

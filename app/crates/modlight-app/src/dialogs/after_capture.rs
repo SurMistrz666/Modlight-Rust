@@ -510,10 +510,8 @@ impl AfterCapture {
         );
         if let Some(image) = &self.image {
             let texture = self.texture.get_or_insert_with(|| {
-                let color = egui::ColorImage::from_rgba_unmultiplied(
-                    [image.width() as usize, image.height() as usize],
-                    image.as_raw(),
-                );
+                // Past one texture's side the GPU refuses it and the app ends.
+                let color = crate::media::texture_color_image(ui.ctx(), image);
                 ui.ctx().load_texture(
                     format!("after-capture-{}", self.key),
                     color,
@@ -620,5 +618,29 @@ pub fn radio(ui: &Ui, colors: &Colors, center: egui::Pos2, checked: bool, hovere
                 },
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A capture past one texture's side (three monitors side by side) is shown shrunk to
+    /// one texture; uploaded whole, the GPU refuses it and the app ends.
+    #[test]
+    fn a_picture_larger_than_a_texture_still_shows() {
+        let state = crate::qa::state(&crate::qa::Look::default(), false);
+        let settings = state.default_task_settings();
+        let metadata = TaskMetadata {
+            image: Some(Arc::new(crate::media::picture_past_a_texture())),
+            ..Default::default()
+        };
+        let window = AfterCapture::new(1, &settings, &metadata, None, &state.uploads.ctx);
+        let colors = crate::media::test_colors();
+        let harness = crate::media::render(window, move |ui, window: &mut AfterCapture| {
+            let _ = window.ui(ui, &colors);
+        });
+        assert!(harness.state().texture.is_some());
+        crate::media::assert_textures_fit(&harness.ctx);
     }
 }

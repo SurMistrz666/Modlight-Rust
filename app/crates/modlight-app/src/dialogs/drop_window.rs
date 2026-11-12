@@ -19,6 +19,8 @@ pub struct DropWindow {
     pub opacity: f32,
     pub hover_opacity: f32,
     pub hovered: bool,
+    /// The screen's working area the window was placed in when it opened.
+    pub area: Option<Rect>,
 }
 
 /// What happened this frame.
@@ -44,6 +46,7 @@ impl DropWindow {
             opacity: opacity.clamp(1, 255) as f32 / 255.0,
             hover_opacity: hover_opacity.clamp(1, 255) as f32 / 255.0,
             hovered: false,
+            area: None,
         }
     }
 

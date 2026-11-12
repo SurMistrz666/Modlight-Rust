@@ -321,3 +321,22 @@ fn minecraft_grass_fails_when_the_overlap_eats_the_picture() {
     .unwrap();
     assert_eq!(out.dimensions(), (7, 5));
 }
+
+/// Matrix digital rain draws a blurred glow under each of thousands of glyphs. Skia blurs
+/// a mask the size of each glyph; a blur of a canvas-sized layer per glyph made the
+/// effect take about half a minute on a 1600x1000 picture (minutes on a 4K screenshot),
+/// with the editor's preview waiting on it. The glow must cost what the glyph covers.
+#[test]
+fn many_small_blurred_shapes_do_not_blur_the_whole_canvas_each() {
+    let input = RgbaImage::from_fn(1600, 1000, |x, y| {
+        Rgba([(x * 3) as u8, (y * 5) as u8, ((x + y) * 7) as u8, 255])
+    });
+    let started = std::time::Instant::now();
+    let out = run_defaults("matrix_digital_rain", &input, &[]).unwrap();
+    let took = started.elapsed();
+    assert_eq!(out.dimensions(), (1600, 1000));
+    assert!(
+        took < std::time::Duration::from_secs(8),
+        "matrix digital rain took {took:?}"
+    );
+}

@@ -107,6 +107,7 @@ pub fn qa_desktop() -> FakeSource {
         scale: 1.0,
         primary: true,
         name: "QA Display".into(),
+        pixel_size: None,
     }];
     FakeSource::new(desktop, 1.0, screens, windows)
 }

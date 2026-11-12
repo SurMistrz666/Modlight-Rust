@@ -277,7 +277,11 @@ own output and two Developer ID apps.
   the destination and renamed over it only when the whole body has arrived. Upstream
   wrote straight into the destination and deleted it on any failure, so a file the
   person had agreed to replace was lost even when the server refused before sending a
-  byte.
+  byte. A body that brings nothing for 100 seconds (or an answer that has not started
+  after 300 seconds; the server allows a conversion 150) ends the download as a failure;
+  upstream's 100-second limit ran over the whole download, so a large file on a slow line
+  never arrived. Upload from URL writes the same way (upstream read the whole answer
+  before opening the file).
 - **The loose-files shelf's count** follows files in no folder that are moved, trashed,
   deleted or restored, as every folder's count does. Upstream skipped files whose folder
   is null, so the shelf kept its old count until the next reload.
@@ -373,6 +377,13 @@ own output and two Developer ID apps.
   is removed that run, since nobody knows which of them it still needs. Upstream read it
   as an empty queue, overwrote it on the next change and deleted every spooled capture
   (`modlight_core::upload::store`, test `an_unreadable_queue_file_is_kept_and_so_is_the_spool`).
+- **The queue's room check belongs to one account, and "Send now" asks again.** The answer
+  about the room left is trusted for a minute for the account it was asked about only, and
+  "Send now" drops it. Upstream kept one answer for a minute whoever was signed in, so the
+  next account's items were stopped with the previous account's figures, and "Send now"
+  pressed after freeing space (what its own comment expects) stopped the item again with
+  the old ones (`modlight_core::upload::queue`, tests `send_now_asks_for_the_room_again`,
+  `the_room_of_one_account_is_not_another_ones`).
 - **"Delete file locally" waits for the upload to succeed.** In a task that uploads, the
   after-capture task deletes the file only once the upload went through. When the upload
   failed, was refused, was stopped or cancelled (the before-upload window, the large-file
@@ -441,7 +452,14 @@ own output and two Developer ID apps.
   open; upstream closed after the error and the picture was lost. Moving, resizing,
   rotating, restyling or retyping an annotation leaves no undo step (as upstream) but
   counts as an unsaved change: upstream marked only undoable steps, so these edits made
-  after a save were dropped on close without the exit confirmation.
+  after a save were dropped on close without the exit confirmation. Turning the image
+  by 90 degrees or by a custom angle moves a rectangle, ellipse, text, balloon, picture,
+  emoji, cursor or effect as a whole: its centre goes with the image, its size stays and
+  it turns by the angle. Upstream moved two of its corners, which swaps width and height,
+  and turned it as well, so a blur or pixelation lay across what it hid (that showed in
+  the clear) and an inserted picture shrank. A picture loaded from an address on the
+  start screen opens only while the start screen still waits for it; upstream opened it
+  whenever the download ended, over a picture opened and annotated in the meantime.
 - **Aborting a screen recording** is final whenever it is pressed: while the paused
   parts are being joined, during the second pass (its hotkey: the window is hidden then)
   or while ffmpeg is still starting, nothing is kept or uploaded. Upstream read the abort

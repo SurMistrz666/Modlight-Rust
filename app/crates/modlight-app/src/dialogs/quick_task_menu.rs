@@ -137,6 +137,9 @@ pub struct QuickTaskMenu {
     pub presets: Vec<QuickTaskInfo>,
     /// Where the pointer was when the menu opened (desktop points, `-10` each way).
     pub at: Option<Pos2>,
+    /// The menu's window has had the keyboard focus: only from then on does losing it
+    /// close the menu.
+    pub had_focus: bool,
 }
 
 impl QuickTaskMenu {
@@ -144,7 +147,21 @@ impl QuickTaskMenu {
         QuickTaskMenu {
             presets: QuickTaskInfo::presets(config),
             at: None,
+            had_focus: false,
         }
+    }
+
+    /// Whether the menu's window lost the focus (`focused` as the window reports it each
+    /// frame), which closes the menu as a click elsewhere closes upstream's. A window
+    /// made while another app is in front (a hotkey capture) is not focused in its first
+    /// frames, before the focus it asks for (`placementWindow.Activate()`) arrives: that is
+    /// no loss.
+    pub fn focus_lost(&mut self, focused: Option<bool>) -> bool {
+        if focused == Some(true) {
+            self.had_focus = true;
+            return false;
+        }
+        self.had_focus && focused == Some(false)
     }
 
     /// The entries of `ShowMenuCore`. The commands are placeholders the window reads by
@@ -231,11 +248,32 @@ mod tests {
         let text = presets[0].text();
         assert!(text.contains(t(h::AfterCaptureTasks_SaveImageToFile)));
         assert!(text.contains(t(h::AfterUploadTasks_CopyURLToClipboard)));
-        let menu = QuickTaskMenu { presets, at: None };
+        let menu = QuickTaskMenu {
+            presets,
+            at: None,
+            had_focus: false,
+        };
         assert_eq!(menu.choice(0), Some(Some(None)));
         assert_eq!(menu.choice(usize::MAX), Some(None));
         assert_eq!(menu.choice(usize::MAX - 1), None);
         assert!(matches!(menu.choice(1), Some(Some(Some(_)))));
         set_thread_language(None);
+    }
+
+    /// A menu opened by a hotkey while another app is in front starts in a window that is
+    /// not focused yet (a Mac makes a new window key only in the active app): that must not
+    /// close it, or the capture it holds is dropped before anybody saw the menu. Once it had
+    /// the focus, losing it closes the menu as before.
+    #[test]
+    fn the_menu_stays_until_it_had_the_focus_and_lost_it() {
+        let mut menu = QuickTaskMenu::new(&AppConfig::in_memory());
+        assert!(
+            !menu.focus_lost(Some(false)),
+            "first frame, not focused yet"
+        );
+        assert!(!menu.focus_lost(None));
+        assert!(!menu.focus_lost(Some(false)));
+        assert!(!menu.focus_lost(Some(true)), "the focus arrived");
+        assert!(menu.focus_lost(Some(false)), "a click elsewhere");
     }
 }

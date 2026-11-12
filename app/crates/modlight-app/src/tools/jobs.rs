@@ -17,11 +17,13 @@ use crate::commands::Command;
 use crate::state::AppState;
 
 /// Where a task's options live in the settings, for writing them back: the defaults, or
-/// the first hotkey running `job` that overrides the group (`UseDefault<group>` false).
+/// the hotkey the settings came from (`TaskSettings::hotkey`, upstream's
+/// `TaskSettingsReference`) when it overrides the group (`UseDefault<group>` false). Settings
+/// that name no hotkey go to the first hotkey running `job` that overrides the group.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OptionsHome {
     Defaults,
-    Hotkey(HotkeyType, &'static str),
+    Hotkey(Option<u64>, HotkeyType, &'static str),
 }
 
 impl OptionsHome {
@@ -30,7 +32,7 @@ impl OptionsHome {
         if settings.use_default_tools_settings {
             OptionsHome::Defaults
         } else {
-            OptionsHome::Hotkey(settings.job, "UseDefaultToolsSettings")
+            OptionsHome::Hotkey(settings.hotkey, settings.job, "UseDefaultToolsSettings")
         }
     }
 
@@ -39,7 +41,7 @@ impl OptionsHome {
         if settings.use_default_capture_settings {
             OptionsHome::Defaults
         } else {
-            OptionsHome::Hotkey(settings.job, "UseDefaultCaptureSettings")
+            OptionsHome::Hotkey(settings.hotkey, settings.job, "UseDefaultCaptureSettings")
         }
     }
 }
@@ -102,10 +104,16 @@ impl AppState {
                 full.extend_from_slice(path);
                 modlight_tools::settings::write(self.config.values_mut(), &full, value);
             }
-            OptionsHome::Hotkey(job, flag) => {
+            OptionsHome::Hotkey(serial, job, flag) => {
                 let mut list = self.captures.hotkeys.hotkeys.clone();
                 let Some(hotkey) = list.iter_mut().find(|h| {
-                    h.job() == *job && h.task.get(*flag).and_then(|v| v.as_bool()) == Some(false)
+                    let this = match serial {
+                        // The hotkey the settings came from (another with the same job
+                        // has settings of its own); gone since, nothing is written.
+                        Some(serial) => h.serial == *serial,
+                        None => h.job() == *job,
+                    };
+                    this && h.task.get(*flag).and_then(|v| v.as_bool()) == Some(false)
                 }) else {
                     return;
                 };
@@ -351,10 +359,22 @@ impl AppState {
     }
 }
 
+/// The application settings the tools' helpers read from process-wide options, as
+/// upstream's main form copies them into `HelpersOptions`.
+pub fn apply_app_options(state: &AppState) {
+    let rotate = state
+        .config
+        .get("RotateImageByExifOrientationData")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    modlight_tools::images::set_rotate_by_exif(rotate);
+}
+
 /// Every frame: background results the tools wait for.
 pub fn tick(state: &mut AppState, _ctx: &egui::Context) {
     static INDEXER: std::sync::Once = std::sync::Once::new();
     INDEXER.call_once(|| modlight_core::tasks::upload_manager::set_folder_indexer(folder_indexer));
+    apply_app_options(state);
     static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
     if state.mode == crate::app::Mode::Normal && !state.env.qa {
         static VISION: std::sync::Once = std::sync::Once::new();
@@ -367,4 +387,64 @@ pub fn tick(state: &mut AppState, _ctx: &egui::Context) {
         state.tick_panics();
     }
     state.tick_screen_pick();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 4 x 2 JPEG whose EXIF says "turn 90 degrees clockwise" (orientation 6).
+    fn jpeg_turned_by_exif() -> Vec<u8> {
+        let mut jpeg = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(4, 2))
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        let mut tiff: Vec<u8> = b"II*\0".to_vec();
+        tiff.extend_from_slice(&8u32.to_le_bytes());
+        tiff.extend_from_slice(&1u16.to_le_bytes());
+        tiff.extend_from_slice(&0x0112u16.to_le_bytes());
+        tiff.extend_from_slice(&3u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&6u16.to_le_bytes());
+        tiff.extend_from_slice(&[0, 0]);
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend_from_slice(&tiff);
+        let mut out = jpeg[..2].to_vec();
+        out.extend_from_slice(&[0xFF, 0xE1]);
+        out.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+        out.extend_from_slice(&app1);
+        out.extend_from_slice(&jpeg[2..]);
+        out
+    }
+
+    /// `RotateImageByExifOrientationData` off: the tools (pin from a file, OCR of a file,
+    /// the viewer, the combiner) take a photo as it is stored, as upstream's
+    /// `ImageHelpers.LoadImage` does; on (the default) they turn it.
+    #[test]
+    fn the_exif_setting_reaches_the_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("portrait.jpg");
+        std::fs::write(&path, jpeg_turned_by_exif()).unwrap();
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.config.set(
+            "RotateImageByExifOrientationData",
+            serde_json::Value::Bool(false),
+        );
+        apply_app_options(&state);
+        let kept = super::super::files::load_image(&path).map(|i| i.dimensions());
+        state.config.set(
+            "RotateImageByExifOrientationData",
+            serde_json::Value::Bool(true),
+        );
+        apply_app_options(&state);
+        assert_eq!(kept, Some((4, 2)));
+        assert_eq!(
+            super::super::files::load_image(&path).map(|i| i.dimensions()),
+            Some((2, 4))
+        );
+    }
 }

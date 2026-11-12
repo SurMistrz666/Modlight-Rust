@@ -685,7 +685,7 @@ impl AppState {
         } else {
             (t(s::MySpace_DeleteTitle), ConfirmAction::Trash(targets))
         };
-        self.windows.confirm = Some(Confirm::new(title, &question, action));
+        self.ask_confirm(Confirm::new(title, &question, action));
     }
 
     fn remove_files(&mut self, ids: Vec<String>, mode: &'static str) {
@@ -759,10 +759,37 @@ impl AppState {
         self.remove_files(targets, "restore");
     }
 
+    /// Put a question up, or line it up behind the one on screen.
+    ///
+    /// The app has one confirmation window. Upstream's questions are modal message boxes,
+    /// answered one at a time; here a question asked while another was up (a notice's
+    /// "Delete file" over a Trash question, an empty-trash count that finished, the
+    /// components window) replaced it, and the first one was dropped without a word. Now
+    /// it waits its turn; the same question twice is asked once.
+    pub fn ask_confirm(&mut self, confirm: Confirm) {
+        // The question, not the window's layout (`content_height`), says whether it is
+        // the same one.
+        let same = |other: &Confirm| {
+            other.title == confirm.title
+                && other.text == confirm.text
+                && other.action == confirm.action
+        };
+        let windows = &mut self.windows;
+        if windows.confirm.is_none() {
+            windows.confirm = Some(confirm);
+        } else if !windows.confirm.as_ref().is_some_and(same)
+            && !windows.confirm_waiting.iter().any(same)
+        {
+            windows.confirm_waiting.push_back(confirm);
+        }
+    }
+
     pub fn confirm_finished(&mut self, outcome: ConfirmOutcome) {
         let Some(confirm) = self.windows.confirm.take() else {
             return;
         };
+        // The next question waiting, if any, comes up in its place.
+        self.windows.confirm = self.windows.confirm_waiting.pop_front();
         if outcome != ConfirmOutcome::Yes {
             if matches!(confirm.action, ConfirmAction::EmptyTrash { .. }) {
                 self.emptying_trash = false;
@@ -869,11 +896,10 @@ impl AppState {
                     t(s::MySpace_EmptyTrashConfirm),
                     &[Arg::from(ids.len()), Arg::from(cloud_size(bytes))],
                 );
-                // Not "busy" while the question is up: it is modal over the window, and
-                // the one confirmation window can be taken by a question asked elsewhere,
-                // which would otherwise leave the button disabled for good.
+                // Not "busy" while the question is up (or waits behind another one): it
+                // is modal over the window, and busy is for counting and deleting.
                 state.emptying_trash = false;
-                state.windows.confirm = Some(Confirm::new(
+                state.ask_confirm(Confirm::new(
                     t(s::MySpace_EmptyTrashTitle),
                     &question,
                     ConfirmAction::EmptyTrash { ids, bytes },
@@ -890,11 +916,12 @@ impl AppState {
         self.emptying_trash = true;
         let api = self.api.clone();
         self.rt.spawn(async move {
-            let mut affected = 0;
+            let mut affected: i64 = 0;
             let mut failure = None;
             for batch in ids.chunks(TRASH_DELETE_BATCH) {
                 match api.delete_uploads(&credential, batch, "permanent").await {
-                    Ok(result) => affected += result.affected,
+                    // The server's count: summed saturating, as the sizes are.
+                    Ok(result) => affected = affected.saturating_add(result.affected),
                     Err(error) => {
                         failure = Some(error);
                         break;
@@ -1405,7 +1432,7 @@ impl AppState {
                         Arg::from(cloud_size(window.selected_bytes())),
                     ],
                 );
-                self.windows.confirm = Some(Confirm::new(
+                self.ask_confirm(Confirm::new(
                     t(s::MySpace_DuplicatesTitle),
                     &question,
                     ConfirmAction::DuplicatesTrash,
@@ -1507,11 +1534,11 @@ impl AppState {
         window.status = t(s::MySpace_DuplicatesTrashing).to_string();
         let api = self.api.clone();
         self.rt.spawn(async move {
-            let mut affected = 0;
+            let mut affected: i64 = 0;
             let mut failure = None;
             for batch in ids.chunks(MAX_DELETE_IDS) {
                 match api.delete_uploads(&credential, batch, "trash").await {
-                    Ok(result) => affected += result.affected,
+                    Ok(result) => affected = affected.saturating_add(result.affected),
                     Err(error) => {
                         failure = Some(error);
                         break;
@@ -1523,7 +1550,7 @@ impl AppState {
                     return;
                 };
                 window.busy = false;
-                window.trashed += affected;
+                window.trashed = window.trashed.saturating_add(affected);
                 match failure {
                     Some(ApiError::Unauthorized) => window.fail(t(s::MySpace_TokenRejected)),
                     Some(error) => window.fail(&error.to_string()),
@@ -1829,10 +1856,33 @@ pub(crate) mod tests {
         assert!(!state.emptying_trash);
     }
 
+    /// Emptying a trash of more than one batch adds up the server's `affected` counts:
+    /// absurd ones panicked the deleting task (debug build), so its completion never came
+    /// and the Empty trash button stayed disabled; a release build reported a negative
+    /// number of files.
+    #[test]
+    fn absurd_counts_do_not_stop_emptying_the_trash() {
+        let body = format!(
+            r#"{{"mode":"permanent","requested":500,"affected":{}}}"#,
+            i64::MAX
+        );
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let host = server(Box::leak(reply.into_bytes().into_boxed_slice()));
+        let mut state = state_on(&host);
+        let ids: Vec<String> = (0..TRASH_DELETE_BATCH + 1).map(|i| i.to_string()).collect();
+        state.delete_trash(ids, 1);
+        assert!(state.emptying_trash);
+        settle(&mut state, |s| !s.emptying_trash);
+        assert!(!state.emptying_trash, "the deletion finished");
+    }
+
     /// The question about emptying the trash shares the one confirmation window with the
-    /// rest of the app; one asked elsewhere (a notice's "Delete file", the components
-    /// window) replaces it. That used to leave the trash "being emptied" for good, so its
-    /// button did nothing until the app was restarted.
+    /// rest of the app. Should anything put another question in its place (questions now
+    /// wait their turn, `ask_confirm`), the trash must not stay "being emptied" for good:
+    /// that left its button doing nothing until the app was restarted.
     #[test]
     fn a_replaced_empty_trash_question_does_not_disable_the_button() {
         let body = r#"{"page":1,"perPage":120,"total":1,"items":[{"id":"a","size":5}]}"#;

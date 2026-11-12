@@ -112,10 +112,25 @@ fn title_logo(ctx: &egui::Context, graphite: bool) -> Option<egui::TextureHandle
     })
 }
 
+/// What the app's context needs before its first frame, beyond the skin: egui's own
+/// keyboard shortcuts off, which upstream has no counterpart of. Its keyboard zoom
+/// scales every window at once on Cmd+Plus, Cmd+Minus and Cmd+0, which are the app's
+/// keys (a pinned picture's opacity, the editor's shortcuts). Its quit shortcut closes
+/// whatever window has the key on Cmd+Q (Ctrl+Q on Windows, where no menu takes it
+/// first): typed into the text upload window, it closed the window and dropped the text.
+/// A Mac's Quit stays the menu bar's.
+pub fn prepare_context(ctx: &egui::Context) {
+    ctx.options_mut(|options| {
+        options.zoom_with_keyboard = false;
+        options.quit_shortcuts.clear();
+    });
+}
+
 impl ModlightApp {
     pub fn new(cc: &eframe::CreationContext<'_>, mut state: AppState, mode: Mode) -> ModlightApp {
         let ctx = &cc.egui_ctx;
         state.mode = mode;
+        prepare_context(ctx);
         ctx.set_fonts(crate::theme::fonts());
         state.rt.attach(ctx);
         crate::theme::apply_style(ctx, &state.colors);
@@ -871,9 +886,9 @@ impl ModlightApp {
         let Some(window) = state.uploads.windows.drop_window.as_mut() else {
             return;
         };
-        let area = crate::platform::system::visible_frame()
-            .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h)))
-            .unwrap_or_else(|| Rect::from_min_size(pos2(0.0, 25.0), vec2(1440.0, 850.0)));
+        // The screen it opened on: a position that follows the key window's screen moves
+        // the window (see `builder`).
+        let area = *window.area.get_or_insert_with(screen_area);
         let builder = ViewportBuilder::default()
             .with_title(t(s::DragDropUploadWindow_DropHere))
             .with_decorations(false)
@@ -922,9 +937,8 @@ impl ModlightApp {
             return;
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
-        let area = crate::platform::system::visible_frame()
-            .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h)))
-            .unwrap_or_else(|| Rect::from_min_size(pos2(0.0, 25.0), vec2(1440.0, 850.0)));
+        // The corner of the screen it opened on (see `builder`).
+        let area = *notice.area.get_or_insert_with(screen_area);
         let size = notice.window_size();
         let position = notice.position(area);
         let builder = ViewportBuilder::default()
@@ -1065,6 +1079,14 @@ impl AppState {
     }
 }
 
+/// The working area of the screen with the key window, where notices and the drop
+/// window go (a laptop's screen when the system says nothing).
+fn screen_area() -> Rect {
+    crate::platform::system::visible_frame()
+        .map(|(x, y, w, h)| Rect::from_min_size(pos2(x, y), vec2(w, h)))
+        .unwrap_or_else(|| Rect::from_min_size(pos2(0.0, 25.0), vec2(1440.0, 850.0)))
+}
+
 /// Where a dialog opens: centred on an area (the main window for `CenterOwner`, the
 /// screen's visible frame for `CenterScreen`), and whether it stays on top (`Topmost`).
 #[derive(Clone, Copy, Debug)]
@@ -1090,9 +1112,26 @@ impl Placement {
     }
 }
 
-/// The builder of a dialog window centred where `place` says.
-fn builder(title: &str, size: Vec2, place: Placement, resizable: bool) -> ViewportBuilder {
-    let main = place.area;
+/// Whether the window of `viewport` is open already: the system has it, and eframe lists
+/// it in every frame's input.
+pub(crate) fn is_open(ctx: &egui::Context, viewport: ViewportId) -> bool {
+    ctx.input(|i| i.raw.viewports.contains_key(&viewport))
+}
+
+/// The builder of a dialog window centred where `place` says, as it opens. A window that
+/// is open already is not placed again: egui moves a window whenever the position its
+/// builder gives changes, so placing it every frame made a dialog follow the main window
+/// when that moved and, on a Mac, jump to the middle of the screen it was dragged to
+/// (`visible_frame` is the screen of the key window). Avalonia's `CenterOwner` and
+/// `CenterScreen` place a window once, when it opens.
+fn builder(
+    ctx: &egui::Context,
+    viewport: ViewportId,
+    title: &str,
+    size: Vec2,
+    place: Placement,
+    resizable: bool,
+) -> ViewportBuilder {
     let mut builder = ViewportBuilder::default()
         .with_title(title)
         .with_inner_size(size)
@@ -1102,10 +1141,12 @@ fn builder(title: &str, size: Vec2, place: Placement, resizable: bool) -> Viewpo
     if place.topmost {
         builder = builder.with_always_on_top();
     }
-    if let Some(main) = main {
+    if let Some(area) = place.area
+        && !is_open(ctx, viewport)
+    {
         builder = builder.with_position(pos2(
-            main.center().x - size.x / 2.0,
-            (main.center().y - size.y / 2.0).max(main.top()),
+            area.center().x - size.x / 2.0,
+            (area.center().y - size.y / 2.0).max(area.top()),
         ));
     }
     builder
@@ -1124,7 +1165,8 @@ pub(crate) fn dialog<R>(
 ) -> (Option<R>, bool) {
     let size = vec2(size.x, size.y.max(80.0).round());
     let viewport = ViewportId::from_hash_of(("dialog", id));
-    ctx.show_viewport_immediate(viewport, builder(title, size, place, false), |ui, _| {
+    let builder = builder(ctx, viewport, title, size, place, false);
+    ctx.show_viewport_immediate(viewport, builder, |ui, _| {
         let close = ui.ctx().input(|i| i.viewport().close_requested());
         let current = ui
             .ctx()
@@ -1150,7 +1192,7 @@ pub(crate) fn dialog_resizable<R>(
     mut add: impl FnMut(&mut Ui) -> R,
 ) -> (R, bool) {
     let viewport = ViewportId::from_hash_of(("dialog", id));
-    let builder = builder(title, size, place, true).with_min_inner_size(min);
+    let builder = builder(ctx, viewport, title, size, place, true).with_min_inner_size(min);
     ctx.show_viewport_immediate(viewport, builder, |ui, _| {
         let close = ui.ctx().input(|i| i.viewport().close_requested());
         (add(ui), close)
@@ -1160,6 +1202,85 @@ pub(crate) fn dialog_resizable<R>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Cmd+Plus, Cmd+Minus and Cmd+0 are the app's own keys (a pinned picture's opacity,
+    /// the editor's shortcuts): egui's default zooms the WHOLE interface on them, every
+    /// window at once, which upstream never does, and the main window's bounds were then
+    /// recorded in zoomed points (a smaller window at the next start). Its Cmd/Ctrl+Q
+    /// closed the window with the key.
+    #[test]
+    fn egui_s_own_shortcuts_do_not_zoom_or_close() {
+        let ctx = egui::Context::default();
+        prepare_context(&ctx);
+        let press = |key: egui::Key| egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+            ..Default::default()
+        };
+        for key in [egui::Key::Plus, egui::Key::Equals, egui::Key::Minus] {
+            ctx.run_ui(press(key), |_| {}).textures_delta.clear();
+            assert_eq!(ctx.zoom_factor(), 1.0, "{key:?}");
+        }
+        // Cmd/Ctrl+Q closes no window (a dialog's text with it).
+        let mut output = ctx.run_ui(press(egui::Key::Q), |_| {});
+        output.textures_delta.clear();
+        let commands = output
+            .viewport_output
+            .get(&ViewportId::ROOT)
+            .map(|v| v.commands.clone())
+            .unwrap_or_default();
+        assert!(!commands.contains(&ViewportCommand::Close), "{commands:?}");
+    }
+
+    /// A dialog is placed as it opens, and never again: egui moves a window each time
+    /// the position its builder gives changes, so a dialog placed every frame followed
+    /// the main window around and, on a Mac, jumped to the middle of the screen it was
+    /// dragged to.
+    #[test]
+    fn a_dialog_is_placed_once_as_it_opens() {
+        let ctx = egui::Context::default();
+        let id = ViewportId::from_hash_of(("dialog", "test"));
+        let size = vec2(400.0, 200.0);
+        let position = |raw: egui::RawInput, main: Rect| {
+            let mut placed = None;
+            ctx.run_ui(raw, |ui| {
+                placed = builder(
+                    ui.ctx(),
+                    id,
+                    "Test",
+                    size,
+                    Placement::owner(Some(main)),
+                    false,
+                )
+                .position;
+            })
+            .textures_delta
+            .clear();
+            placed
+        };
+        let main = Rect::from_min_size(pos2(100.0, 100.0), vec2(800.0, 600.0));
+        assert_eq!(
+            position(egui::RawInput::default(), main),
+            Some(pos2(300.0, 300.0)),
+            "centred on its owner as it opens"
+        );
+        // Open (eframe lists every window it has in the frame's input): the owner moved,
+        // and the dialog stays where it is.
+        let mut open = egui::RawInput::default();
+        open.viewports.insert(id, egui::ViewportInfo::default());
+        let moved = main.translate(vec2(500.0, 0.0));
+        assert_eq!(position(open, moved), None);
+        // Closed and opened again: placed again.
+        assert_eq!(
+            position(egui::RawInput::default(), moved),
+            Some(pos2(800.0, 300.0))
+        );
+    }
 
     /// The main window's frame report becomes what `SaveWindowBounds` records: the
     /// frame's top left corner and the client area's size, with the window's state.

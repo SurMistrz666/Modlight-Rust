@@ -441,9 +441,10 @@ impl ImageEffectsWindow {
 }
 
 /// `preset.ApplyEffects(source)`: an effect's failure (GDI+'s "Parameter is not valid."
-/// for a bitmap too large to make) or a panic becomes the error line.
+/// for a bitmap too large to make) or a panic becomes the error line (a handled panic: the
+/// error window is not shown for it).
 fn apply_guarded(preset: &Preset, source: &RgbaImage) -> Result<Option<RgbaImage>, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| preset.try_apply(source)))
+    super::boxes::caught(|| preset.try_apply(source))
         .map_err(|panic| {
             panic
                 .downcast_ref::<&str>()
@@ -2015,8 +2016,7 @@ impl PackagerWindow {
         let assets = self.assets_folder.trim().to_string();
         let output = self.package_file.trim().to_string();
         let folder = self.effects_folder.to_string_lossy().into_owned();
-        let inside = format!("{}/", folder.trim_end_matches('/')).to_lowercase();
-        if !assets.is_empty() && !assets.to_lowercase().starts_with(&inside) {
+        if !assets.is_empty() && !is_below(&assets, &folder, std::path::MAIN_SEPARATOR) {
             self.status = t(fx::ImageEffectPackagerWindow_Assets_must_be_inside).to_string();
             return;
         }
@@ -2039,6 +2039,14 @@ impl PackagerWindow {
             Err(error) => self.status = error,
         }
     }
+}
+
+/// `assets.StartsWith(_effectsFolder + Path.DirectorySeparatorChar,
+/// OrdinalIgnoreCase)`: a path below the folder, written with the system's separator
+/// (a backslash on Windows, where the folder and a picked folder are written with it).
+fn is_below(path: &str, folder: &str, separator: char) -> bool {
+    let inside = format!("{}{separator}", folder.trim_end_matches(separator)).to_lowercase();
+    path.to_lowercase().starts_with(&inside)
 }
 
 impl ToolWindow for PackagerWindow {
@@ -2313,24 +2321,32 @@ impl AppState {
     }
 
     /// `ImageSettingsReference` of a task: the defaults, or the hotkey that overrides
-    /// its image settings.
+    /// its image settings: the very hotkey the settings came from (`TaskSettings::hotkey`,
+    /// as `OptionsHome` finds it), else the first one running the same job.
     pub fn image_settings_target(&self, settings: &TaskSettings) -> TaskTarget {
         if settings.use_default_image_settings {
             return TaskTarget::Defaults;
         }
-        self.captures
-            .hotkeys
-            .hotkeys
-            .iter()
-            .position(|h| {
-                h.job() == settings.job
-                    && h.task
-                        .get("UseDefaultImageSettings")
-                        .and_then(|v| v.as_bool())
-                        == Some(false)
-            })
-            .map(TaskTarget::Hotkey)
-            .unwrap_or(TaskTarget::Defaults)
+        let hotkeys = &self.captures.hotkeys.hotkeys;
+        let overrides = |h: &modlight_core::hotkeys::HotkeySettings| {
+            h.task
+                .get("UseDefaultImageSettings")
+                .and_then(|v| v.as_bool())
+                == Some(false)
+        };
+        // Another hotkey with the same job has presets of its own.
+        let own = settings.hotkey.and_then(|serial| {
+            hotkeys
+                .iter()
+                .position(|h| h.serial == serial && overrides(h))
+        });
+        own.or_else(|| {
+            hotkeys
+                .iter()
+                .position(|h| h.job() == settings.job && overrides(h))
+        })
+        .map(TaskTarget::Hotkey)
+        .unwrap_or(TaskTarget::Defaults)
     }
 
     /// `ClipboardHelpers.GetImage`: a picture, or a picture file, on the clipboard.
@@ -2455,7 +2471,7 @@ impl AppState {
                 crate::dialogs::confirm::ConfirmAction::EnableImageEffects,
             );
             confirm.title = modlight_core::APP_NAME.to_string();
-            self.windows.confirm = Some(confirm);
+            self.ask_confirm(confirm);
         }
     }
 
@@ -2933,6 +2949,96 @@ mod tests {
         let g = harness.state();
         assert_eq!(location_of(g, C::rgb(0, 255, 0)), 20.0, "{:?}", g.stops);
         assert_eq!(location_of(g, C::rgb(255, 0, 0)), 100.0, "{:?}", g.stops);
+    }
+
+    /// The packager accepts an assets folder below the image effects folder, written the
+    /// way the system writes paths: on Windows the default (`effects_folder.join(name)`)
+    /// and a picked folder use backslashes, which a check for "folder/" always refused.
+    #[test]
+    fn the_assets_folder_check_follows_the_system_separator() {
+        let folder = std::env::temp_dir().join("ImageEffects");
+        let default = PackagerWindow::new(1, String::new(), "Preset", folder.clone());
+        assert!(is_below(
+            &default.assets_folder,
+            &folder.to_string_lossy(),
+            std::path::MAIN_SEPARATOR
+        ));
+        // As upstream runs on Windows.
+        let windows = "C:\\Data\\Modlight\\ImageEffects";
+        assert!(is_below(
+            "c:\\data\\modlight\\imageeffects\\Preset",
+            windows,
+            '\\'
+        ));
+        assert!(is_below(
+            "C:\\Data\\Modlight\\ImageEffects\\Preset",
+            &format!("{windows}\\"),
+            '\\'
+        ));
+        assert!(!is_below(
+            "C:\\Data\\Modlight\\ImageEffectsOther\\Preset",
+            windows,
+            '\\'
+        ));
+        assert!(!is_below(windows, windows, '\\'));
+        assert!(!is_below(
+            "/Library/Application Support/Modlight/Elsewhere",
+            "/Library/Application Support/Modlight/ImageEffects",
+            '/'
+        ));
+    }
+
+    /// Two hotkeys with the same job and image settings of their own: the presets edited
+    /// from the second one's task are its own (upstream's `ImageSettingsReference` is that
+    /// hotkey's settings). The lookup by job found the first one, so the second hotkey's
+    /// Image effects window showed and changed the first one's presets.
+    #[test]
+    fn presets_go_back_to_the_hotkey_they_came_from() {
+        use modlight_core::hotkeys::{FakeBackend, HotkeyManager, HotkeySettings, HotkeyType};
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let own = || {
+            json!({
+                "Job": "PrintScreen",
+                "UseDefaultImageSettings": false,
+                "ImageSettings": {}
+            })
+        };
+        let first = HotkeySettings {
+            task: own(),
+            ..HotkeySettings::new(HotkeyType::PrintScreen, 0)
+        };
+        let second = HotkeySettings {
+            task: own(),
+            ..HotkeySettings::new(HotkeyType::PrintScreen, 0)
+        };
+        state.captures.hotkeys =
+            HotkeyManager::new(Box::new(FakeBackend::default()), vec![first, second], false);
+        let defaults = state
+            .config
+            .get("DefaultTaskSettings")
+            .cloned()
+            .unwrap_or_default();
+        let settings = state.captures.hotkeys.hotkeys[1].task_settings(&defaults);
+        let home = state.image_settings_target(&settings);
+        assert_eq!(home, TaskTarget::Hotkey(1));
+        let presets = vec![Preset {
+            name: "Second's own".into(),
+            effects: Vec::new(),
+        }];
+        state.save_image_effect_presets(home, &presets);
+        assert_eq!(state.image_effect_presets(TaskTarget::Hotkey(1)), presets);
+        assert!(
+            state.captures.hotkeys.hotkeys[0].task["ImageSettings"]
+                .get("ImageEffectPresets")
+                .is_none(),
+            "the first hotkey with that job keeps its own presets"
+        );
+        // Settings that name no hotkey still go to the first one with the job.
+        let unnamed = TaskSettings {
+            hotkey: None,
+            ..settings
+        };
+        assert_eq!(state.image_settings_target(&unnamed), TaskTarget::Hotkey(0));
     }
 
     #[test]

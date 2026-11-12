@@ -444,8 +444,30 @@ impl ToolWindow for ErrorWindow {
 /// Panics seen on background threads, waiting for the error window.
 static PANICS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
+thread_local! {
+    /// How many [`caught`] calls this thread is inside: a panic there is handled by the
+    /// code that asked, not unhandled.
+    static CATCHING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// `catch_unwind` for a panic the caller handles itself (an image effect's failure
+/// becomes its error line): the panic hook logs it but does not show it as an unhandled
+/// exception (`ThreadException` fires only for exceptions nobody caught).
+pub fn caught<R>(f: impl FnOnce() -> R) -> std::thread::Result<R> {
+    struct Leave;
+    impl Drop for Leave {
+        fn drop(&mut self) {
+            CATCHING.with(|c| c.set(c.get().saturating_sub(1)));
+        }
+    }
+    CATCHING.with(|c| c.set(c.get() + 1));
+    let _leave = Leave;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+}
+
 /// `Application.ThreadException` / `UnhandledException` on a Mac: a panic outside the UI
-/// thread is logged and shown in the error window (the real app only).
+/// thread is logged and shown in the error window (the real app only). A panic inside
+/// [`caught`] is only logged.
 pub fn install_panic_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -465,11 +487,17 @@ pub fn install_panic_hook() {
             thread.name().unwrap_or("unnamed"),
             modlight_core::title()
         );
-        log::error!("Unhandled exception: {details}");
-        if thread.name() != Some("main")
-            && let Ok(mut panics) = PANICS.lock()
-        {
-            panics.push((message, details));
+        // `try_with`: a panic while the thread's locals are being torn down must not
+        // panic again inside the hook.
+        if CATCHING.try_with(|c| c.get() > 0).unwrap_or(false) {
+            log::warn!("Caught panic: {details}");
+        } else {
+            log::error!("Unhandled exception: {details}");
+            if thread.name() != Some("main")
+                && let Ok(mut panics) = PANICS.lock()
+            {
+                panics.push((message, details));
+            }
         }
         previous(info);
     }));
@@ -527,6 +555,58 @@ impl AppState {
             .unwrap_or_default();
         for (title, details) in panics {
             self.open_error_window(&title, &details, true);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn queued(message: &str) -> bool {
+        PANICS
+            .lock()
+            .map(|p| p.iter().any(|(m, _)| m == message))
+            .unwrap_or(false)
+    }
+
+    /// Upstream's error window is for exceptions nobody caught. An image effect's panic
+    /// that `apply_guarded` turns into its error line (on tokio's blocking threads: the
+    /// preview, the after-capture preset) was queued for the window too, which then said
+    /// "unhandled exception" and offered to quit. A panic nobody catches still is.
+    #[test]
+    fn only_panics_nobody_caught_reach_the_error_window() {
+        static HOOK: std::sync::Once = std::sync::Once::new();
+        HOOK.call_once(install_panic_hook);
+        let handled = std::thread::Builder::new()
+            .name("effect-preview".into())
+            .spawn(|| caught(|| panic!("caught-by-the-effect-1f3a")).is_err())
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(handled);
+        assert!(!queued("caught-by-the-effect-1f3a"));
+        let crashed = std::thread::Builder::new()
+            .name("worker".into())
+            .spawn(|| panic!("nobody-caught-this-1f3a"))
+            .unwrap()
+            .join();
+        assert!(crashed.is_err());
+        assert!(queued("nobody-caught-this-1f3a"));
+        // A caught panic leaves the thread as it was: the next one is unhandled again.
+        let after = std::thread::Builder::new()
+            .name("worker".into())
+            .spawn(|| {
+                let _ = caught(|| panic!("caught-first-1f3a"));
+                panic!("then-unhandled-1f3a")
+            })
+            .unwrap()
+            .join();
+        assert!(after.is_err());
+        assert!(!queued("caught-first-1f3a"));
+        assert!(queued("then-unhandled-1f3a"));
+        if let Ok(mut panics) = PANICS.lock() {
+            panics.retain(|(m, _)| !m.ends_with("-1f3a"));
         }
     }
 }

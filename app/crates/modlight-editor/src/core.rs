@@ -221,8 +221,11 @@ impl EditorCore {
         self.apply_image_operation(effect, false, None)
     }
 
+    /// Resizes the image; a size past the pictures the app opens at all
+    /// (`image_decode::fits`) is refused, as its memory would end the app.
     pub fn resize_image(&mut self, width: u32, height: u32) -> bool {
-        if width == 0 || height == 0 {
+        if !modlight_core::image_decode::fits(width as u64, height as u64) {
+            log::warn!("Modlight: the editor refused to resize the image to {width}x{height}");
             return false;
         }
         let Some(source) = &self.source else {
@@ -351,31 +354,7 @@ impl EditorCore {
 
     fn transform_annotations(&mut self, f: &dyn Fn(Point) -> Point) {
         for a in &mut self.annotations {
-            // `SetTailPoint(transform(GetEffectiveTailPoint()))`, with the tail taken
-            // before the body moves: a default tail follows the body, so taking it after
-            // (upstream's order) would move it twice.
-            let balloon_tail =
-                matches!(a.kind, Kind::SpeechBalloon(_)).then(|| balloon_effective_tail_point(a));
-            a.start = f(a.start);
-            a.end = f(a.end);
-            match &mut a.kind {
-                Kind::Freehand { points, .. } => {
-                    for p in points.iter_mut() {
-                        *p = f(*p);
-                    }
-                }
-                Kind::Number(n) if n.tail_initialized => {
-                    n.tail_point = f(n.tail_point);
-                }
-                // A bent line keeps its shape (upstream left the curve point behind).
-                Kind::Line { curve, .. } | Kind::Arrow { curve, .. } if curve.activated => {
-                    curve.point = f(curve.point);
-                }
-                _ => {}
-            }
-            if let Some(tail) = balloon_tail {
-                set_balloon_tail(a, f(tail));
-            }
+            transform_points(a, f);
         }
     }
 
@@ -390,14 +369,32 @@ impl EditorCore {
     }
 
     fn rotate_annotations_orthogonal(&mut self, angle: i32, old_w: f32, old_h: f32) {
-        self.transform_annotations(&|p| match angle {
-            90 => Point::new(old_h - p.y, p.x),
-            180 => Point::new(old_w - p.x, old_h - p.y),
-            270 => Point::new(p.y, old_w - p.x),
-            _ => p,
-        });
+        self.rotate_annotations(
+            &|p| match angle {
+                90 => Point::new(old_h - p.y, p.x),
+                180 => Point::new(old_w - p.x, old_h - p.y),
+                270 => Point::new(p.y, old_w - p.x),
+                _ => p,
+            },
+            angle as f32,
+        );
+    }
+
+    /// Turns every annotation with the image: `f` moves a point of the image, `angle` is
+    /// the turn. A box drawn turned about its centre keeps its size, its centre goes
+    /// where `f` puts it and it turns by `angle`. Upstream moved two corners of the box
+    /// (which swaps its width and height at 90 degrees) and turned it as well, so a blur
+    /// or a frame lay across what it covered and a picture shrank.
+    fn rotate_annotations(&mut self, f: &dyn Fn(Point) -> Point, angle: f32) {
         for a in &mut self.annotations {
-            a.rotation = normalize_angle(a.rotation + angle as f32);
+            if turns_about_its_centre(a) {
+                let c = a.bounds().center();
+                let to = f(c);
+                a.translate(to.x - c.x, to.y - c.y);
+            } else {
+                transform_points(a, f);
+            }
+            a.rotation = normalize_angle(a.rotation + angle);
         }
     }
 
@@ -414,18 +411,18 @@ impl EditorCore {
         let (sin, cos) = rad.sin_cos();
         let (cx, cy) = (old_w / 2.0, old_h / 2.0);
         let (tx, ty) = (new_w / 2.0, new_h / 2.0);
-        self.transform_annotations(&|p| {
-            let nx = cx + (p.x - cx) * cos - (p.y - cy) * sin;
-            let ny = cy + (p.x - cx) * sin + (p.y - cy) * cos;
-            if auto_resize {
-                Point::new(nx - cx + tx, ny - cy + ty)
-            } else {
-                Point::new(nx, ny)
-            }
-        });
-        for a in &mut self.annotations {
-            a.rotation = normalize_angle(a.rotation + angle);
-        }
+        self.rotate_annotations(
+            &|p| {
+                let nx = cx + (p.x - cx) * cos - (p.y - cy) * sin;
+                let ny = cy + (p.x - cx) * sin + (p.y - cy) * cos;
+                if auto_resize {
+                    Point::new(nx - cx + tx, ny - cy + ty)
+                } else {
+                    Point::new(nx, ny)
+                }
+            },
+            angle,
+        );
     }
 
     fn flip_annotations(&mut self, flip_h: bool, flip_v: bool, width: f32, height: f32) {
@@ -919,6 +916,51 @@ impl EditorCore {
     }
 }
 
+/// Moves every point of an annotation through `f` (an image operation's mapping).
+fn transform_points(a: &mut Annotation, f: &dyn Fn(Point) -> Point) {
+    // `SetTailPoint(transform(GetEffectiveTailPoint()))`, with the tail taken before the
+    // body moves: a default tail follows the body, so taking it after (upstream's order)
+    // would move it twice.
+    let balloon_tail =
+        matches!(a.kind, Kind::SpeechBalloon(_)).then(|| balloon_effective_tail_point(a));
+    a.start = f(a.start);
+    a.end = f(a.end);
+    match &mut a.kind {
+        Kind::Freehand { points, .. } => {
+            for p in points.iter_mut() {
+                *p = f(*p);
+            }
+        }
+        Kind::Number(n) if n.tail_initialized => {
+            n.tail_point = f(n.tail_point);
+        }
+        // A bent line keeps its shape (upstream left the curve point behind).
+        Kind::Line { curve, .. } | Kind::Arrow { curve, .. } if curve.activated => {
+            curve.point = f(curve.point);
+        }
+        _ => {}
+    }
+    if let Some(tail) = balloon_tail {
+        set_balloon_tail(a, f(tail));
+    }
+}
+
+/// The annotations drawn as a box turned by `rotation` about its centre (their visuals'
+/// `RotateTransform`): a turn of the image moves them whole.
+fn turns_about_its_centre(a: &Annotation) -> bool {
+    matches!(
+        a.kind,
+        Kind::Rectangle { .. }
+            | Kind::Ellipse { .. }
+            | Kind::Text(_)
+            | Kind::SpeechBalloon(_)
+            | Kind::Image { .. }
+            | Kind::Cursor { .. }
+            | Kind::Emoji { .. }
+            | Kind::Effect(_)
+    )
+}
+
 fn normalize_angle(mut angle: f32) -> f32 {
     while angle >= 360.0 {
         angle -= 360.0;
@@ -1048,6 +1090,28 @@ mod tests {
         assert_eq!(core.annotations()[0].start.x, 50.0);
     }
 
+    /// The corners of an annotation as drawn (turned about its centre), as a box.
+    fn drawn_box(a: &Annotation) -> Rect {
+        let b = a.bounds();
+        let corners = [
+            Point::new(b.left, b.top),
+            Point::new(b.right, b.top),
+            Point::new(b.left, b.bottom),
+            Point::new(b.right, b.bottom),
+        ]
+        .map(|p| p.rotate_around(b.center(), a.rotation));
+        let r = |v: f32| (v * 100.0).round() / 100.0;
+        Rect::new(
+            r(corners.iter().map(|p| p.x).fold(f32::MAX, f32::min)),
+            r(corners.iter().map(|p| p.y).fold(f32::MAX, f32::min)),
+            r(corners.iter().map(|p| p.x).fold(f32::MIN, f32::max)),
+            r(corners.iter().map(|p| p.y).fold(f32::MIN, f32::max)),
+        )
+    }
+
+    /// A box turns with the image as a whole: same size, turned by the angle, over the
+    /// pixels it covered. Upstream moved two of its corners (swapping its width and
+    /// height) and then turned it too, so it lay across what it covered.
     #[test]
     fn rotation_moves_annotations_with_the_image() {
         let mut core = core_with(100, 50);
@@ -1055,8 +1119,18 @@ mod tests {
         assert!(core.rotate_90_clockwise());
         assert_eq!(core.source().unwrap().dimensions(), (50, 100));
         let a = &core.annotations()[0];
-        assert_eq!(a.start, Point::new(45.0, 10.0));
         assert_eq!(a.rotation, 90.0);
+        assert_eq!((a.bounds().width(), a.bounds().height()), (20.0, 10.0));
+        // x 10..30, y 5..15 of the old image is x 35..45, y 10..30 of the turned one.
+        assert_eq!(drawn_box(a), Rect::new(35.0, 10.0, 45.0, 30.0));
+
+        let mut core = core_with(100, 50);
+        core.add_annotation(rect(10.0, 5.0, 20.0, 10.0));
+        assert!(core.rotate_90_counter_clockwise());
+        assert_eq!(
+            drawn_box(&core.annotations()[0]),
+            Rect::new(5.0, 70.0, 15.0, 90.0)
+        );
     }
 
     #[test]
@@ -1086,7 +1160,12 @@ mod tests {
     /// with the body, instead of moving the body and then the new default again.
     #[test]
     fn a_default_balloon_tail_moves_once_with_the_image() {
-        let tail = |core: &EditorCore| balloon_effective_tail_point(&core.annotations()[0]);
+        // Where the tail's tip is drawn (the balloon turned about its centre).
+        let tail = |core: &EditorCore| {
+            let a = &core.annotations()[0];
+            let p = balloon_effective_tail_point(a).rotate_around(a.bounds().center(), a.rotation);
+            Point::new((p.x * 100.0).round() / 100.0, (p.y * 100.0).round() / 100.0)
+        };
         // The default tail of a 200 x 100 balloon at (100, 100) is (200, 230).
         let mut core = core_with(400, 300);
         core.add_annotation(balloon(100.0, 100.0, 200.0, 100.0));

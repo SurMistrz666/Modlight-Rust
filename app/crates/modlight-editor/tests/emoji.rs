@@ -33,3 +33,24 @@ fn segoe_ui_emoji_paints_in_colour() {
         }
     }
 }
+
+/// Text in a script that neither the family asked for nor the bundled Inter (Latin only)
+/// has takes a Windows font, as Avalonia's fallback does: Chinese, Japanese and Korean
+/// were drawn as empty boxes (the fallbacks named were the Mac's).
+#[test]
+fn text_beyond_latin_finds_a_windows_font() {
+    use modlight_editor::model::TextAlign;
+    use modlight_editor::text::{FontRequest, layout};
+    let request = FontRequest {
+        family: "Segoe UI".into(),
+        bold: false,
+        italic: false,
+    };
+    for text in ["Zażółć", "Привет", "中文字", "日本語", "한국어"] {
+        let laid = layout(text, &request, 40.0, None, TextAlign::Left);
+        assert!(
+            laid.lines[0].glyphs.iter().all(|g| g.glyph != 0),
+            "{text} has glyphs no font drew"
+        );
+    }
+}

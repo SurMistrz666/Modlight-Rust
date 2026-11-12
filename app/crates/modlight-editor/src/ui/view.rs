@@ -30,6 +30,8 @@ pub struct EditorView {
     /// The host watches Cmd+V itself (an AppKit key monitor, since egui reports a paste
     /// only when the clipboard holds text) and calls [`EditorView::paste_shortcut`].
     pub host_watches_paste: bool,
+    /// A text field of the editor had the keyboard when the last frame ended.
+    typing: bool,
     context_menu_open: bool,
     /// The rectangles the toolbars took this frame (tests).
     pub toolbar_rects: Vec<Rect>,
@@ -40,9 +42,11 @@ impl EditorView {
         EditorView::default()
     }
 
-    /// Cmd+V seen by the host's key monitor.
+    /// Cmd+V seen by the host's key monitor. A text field with the keyboard (the effect
+    /// search, a numeric box, a colour's hex) takes it itself, as upstream's `OnKeyDown`
+    /// skips its shortcuts while a `TextBox` is focused.
     pub fn paste_shortcut(&mut self, editor: &mut Editor) {
-        if editor.modal.is_none() && editor.text_editing.is_none() {
+        if editor.modal.is_none() && editor.text_editing.is_none() && !self.typing {
             editor.request(Request::Paste);
         }
     }
@@ -104,6 +108,7 @@ impl EditorView {
         }
         self.dialogs.show(ui, colors, editor, view);
         editor.pump();
+        self.typing = ui.ctx().egui_wants_keyboard_input();
     }
 
     // ------------------------------------------------------------------ keyboard

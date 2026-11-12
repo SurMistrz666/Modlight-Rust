@@ -431,6 +431,8 @@ impl CaptureSource for MacSource {
                 scale,
                 primary,
                 name: names.get(&id).cloned().unwrap_or_default(),
+                // A Mac's menus give sizes in points, as the system's own settings do.
+                pixel_size: None,
             })
             .collect()
     }

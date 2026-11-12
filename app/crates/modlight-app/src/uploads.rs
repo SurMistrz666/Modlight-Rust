@@ -254,6 +254,16 @@ impl AppState {
         if let Ok(mut shared) = self.uploads.ctx.settings.write() {
             *shared = settings;
         }
+        // `Program.Settings.PNGStripColorSpaceInformation`, read by `SaveImageAsStream`.
+        let strip = self
+            .config
+            .get("PNGStripColorSpaceInformation")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        self.uploads
+            .ctx
+            .strip_png_color_space
+            .store(strip, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Keep the queue's idea of who is signed in in step with the account.
@@ -709,9 +719,11 @@ impl AppState {
         let file = PathBuf::from(&path);
         match action {
             ToastAction::CloseNotification | ToastAction::CopyImageToClipboard => {}
-            // `AnnotateImageFromFile`; pinning arrives with phase 5.
+            // `AnnotateImageFromFile`, for a picture only (`ExecuteAction` checks
+            // `IsImageFile`): a click on the notice of an uploaded PDF or zip does nothing,
+            // where the editor would have said it cannot open the file.
             ToastAction::AnnotateImage => {
-                if !path.is_empty() {
+                if !path.is_empty() && modlight_core::names::file_helpers::is_image_file(&path) {
                     self.annotate_file(&file);
                 }
             }
@@ -761,7 +773,7 @@ impl AppState {
             }
             ToastAction::DeleteFile => {
                 if !path.is_empty() && file.is_file() {
-                    self.windows.confirm = Some(crate::dialogs::confirm::Confirm::new(
+                    self.ask_confirm(crate::dialogs::confirm::Confirm::new(
                         t(s::MainForm_tsmiDeleteSelectedFile_Click_File_delete_confirmation),
                         t(s::MainForm_tsmiDeleteSelectedFile_Click_Do_you_really_want_to_delete_this_file_),
                         crate::dialogs::confirm::ConfirmAction::DeleteLocalFile(file),
@@ -983,6 +995,13 @@ impl AppState {
 
     /// The file picker (`UploadManager.UploadFile()`), into `folder` when one is named.
     pub fn pick_and_upload(&mut self, folder: Option<String>) {
+        let settings = self.targeted_settings(folder.clone());
+        self.pick_and_upload_with(folder, settings);
+    }
+
+    /// The file picker with the task settings the files go up with
+    /// (`UploadManager.UploadFile(taskSettings)`: a hotkey's own).
+    pub fn pick_and_upload_with(&mut self, folder: Option<String>, settings: TaskSettings) {
         if self.env.qa {
             return;
         }
@@ -1002,12 +1021,17 @@ impl AppState {
                 &egui::Context::default(),
             );
         }
-        let settings = self.targeted_settings(folder);
         self.upload_files_with(paths, settings);
     }
 
     /// `UploadFolder`.
     pub fn pick_folder_and_upload(&mut self) {
+        let settings = self.default_task_settings();
+        self.pick_folder_and_upload_with(settings);
+    }
+
+    /// `UploadFolder(taskSettings)`: with a hotkey's own settings.
+    pub fn pick_folder_and_upload_with(&mut self, settings: TaskSettings) {
         if self.env.qa {
             return;
         }
@@ -1023,7 +1047,6 @@ impl AppState {
             &egui::Context::default(),
         );
         // `UploadFile(selectedPath)`: the folder's files, asked about when many.
-        let settings = self.default_task_settings();
         self.upload_files_with(vec![folder], settings);
     }
 
@@ -1203,8 +1226,9 @@ impl AppState {
 
     pub fn text_upload_finished(&mut self, text: Option<String>) {
         self.uploads.windows.text_upload = None;
+        let job = self.captures.upload_jobs.text.take();
         if let Some(text) = text.filter(|t| !t.is_empty()) {
-            let settings = self.default_task_settings();
+            let settings = job.unwrap_or_else(|| self.default_task_settings());
             let ctx = self.uploads.ctx.clone();
             upload_manager::upload_text(&mut self.uploads.tasks, &text, &settings, false, &ctx);
         }
@@ -1222,8 +1246,9 @@ impl AppState {
 
     pub fn url_upload_finished(&mut self, url: Option<String>) {
         self.uploads.windows.url_upload = None;
+        let job = self.captures.upload_jobs.url.take();
         if let Some(url) = url {
-            let settings = self.default_task_settings();
+            let settings = job.unwrap_or_else(|| self.default_task_settings());
             let ctx = self.uploads.ctx.clone();
             upload_manager::download_and_upload(&mut self.uploads.tasks, &url, &settings, &ctx);
         }
@@ -1244,8 +1269,9 @@ impl AppState {
         request: Option<crate::dialogs::shorten_url::ShortenRequest>,
     ) {
         self.uploads.windows.shorten_url = None;
+        let job = self.captures.upload_jobs.shorten.take();
         if let Some(request) = request {
-            let mut settings = self.default_task_settings();
+            let mut settings = job.unwrap_or_else(|| self.default_task_settings());
             settings.modlight_short_link = Some(request.options);
             let ctx = self.uploads.ctx.clone();
             upload_manager::shorten_url(&mut self.uploads.tasks, &request.url, &settings, &ctx);
@@ -1266,9 +1292,17 @@ impl AppState {
 
     pub fn drop_window_outcome(&mut self, outcome: DropOutcome) {
         match outcome {
-            DropOutcome::Close => self.uploads.windows.drop_window = None,
+            DropOutcome::Close => {
+                self.uploads.windows.drop_window = None;
+                self.captures.upload_jobs.drop = None;
+            }
             DropOutcome::Dropped(files) => {
-                let settings = self.default_task_settings();
+                let settings = self
+                    .captures
+                    .upload_jobs
+                    .drop
+                    .clone()
+                    .unwrap_or_else(|| self.default_task_settings());
                 self.upload_files_with(files, settings);
             }
             DropOutcome::StartDrag => {}
@@ -1869,6 +1903,124 @@ mod tests {
         state.run_clipboard_content(picture(), settings);
         assert!(state.captures.quick_menu.is_some(), "the quick task menu");
         assert!(state.uploads.tasks.tasks.is_empty());
+    }
+
+    /// The notice of a finished upload of `path`.
+    fn notice_for(path: &Path) -> crate::notification::Notification {
+        use modlight_core::tasks::host::NotificationConfig;
+        use modlight_core::tasks::settings::ToastClickAction;
+        let general = TaskSettings::default().general_settings;
+        crate::notification::Notification::task(
+            NotificationConfig {
+                duration_ms: 3000.0,
+                fade_ms: 1000.0,
+                placement: general.toast_window_placement,
+                size: general.toast_window_size,
+                left_click: general.toast_window_left_click_action,
+                right_click: general.toast_window_right_click_action,
+                middle_click: ToastClickAction::AnnotateImage,
+                button_size: general.toast_window_button_size,
+                buttons: Vec::new(),
+                auto_hide: true,
+                file_path: path.display().to_string(),
+                image: None,
+                title: "Modlight".into(),
+                text: "https://files.example.com/a/report".into(),
+                url: "https://files.example.com/a/report".into(),
+            },
+            0.0,
+        )
+    }
+
+    /// "Annotate image" from a finished upload's notice (the middle click's default) is
+    /// for pictures: on the notice of an uploaded PDF it does nothing, as upstream's
+    /// `ExecuteAction` checks `IsImageFile`, instead of a corner notice that the file
+    /// could not be opened. A picture still opens in the editor.
+    #[test]
+    fn annotate_from_a_notice_is_for_pictures_only() {
+        use crate::notification::ToastAction;
+        let dir = tempfile::tempdir().unwrap();
+        let pdf = dir.path().join("report.pdf");
+        std::fs::write(&pdf, b"%PDF-1.7 not a picture").unwrap();
+        let png = dir.path().join("shot.png");
+        image::RgbaImage::new(4, 4).save(&png).unwrap();
+
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        state.windows.notification = Some(notice_for(&pdf));
+        state.notification_action(ToastAction::AnnotateImage, true);
+        assert!(
+            state.toasts.is_empty(),
+            "no notice about a file that is not a picture"
+        );
+        assert!(state.windows.editors.sessions.is_empty(), "no editor");
+
+        state.windows.notification = Some(notice_for(&png));
+        state.notification_action(ToastAction::AnnotateImage, true);
+        assert_eq!(state.windows.editors.sessions.len(), 1, "the picture opens");
+    }
+
+    /// "Strip color space information from PNG images" reaches the tasks
+    /// (`TaskContext::strip_png_color_space`, read by `prepare_image`), at start and
+    /// whenever the settings change: it was never set, so the box did nothing.
+    #[test]
+    fn the_png_colour_space_setting_reaches_the_tasks() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        assert!(!state.uploads.ctx.png_strip_color_space());
+        state
+            .config
+            .set("PNGStripColorSpaceInformation", serde_json::json!(true));
+        state.sync_upload_settings();
+        assert!(state.uploads.ctx.png_strip_color_space());
+        state
+            .config
+            .set("PNGStripColorSpaceInformation", serde_json::json!(false));
+        state.sync_upload_settings();
+        assert!(!state.uploads.ctx.png_strip_color_space());
+    }
+
+    /// The app has one confirmation window. A notice's "Delete file" asked while another
+    /// question is up (here My space's Trash question) waits its turn, as upstream's
+    /// modal message boxes do; it used to replace the question on screen, which was then
+    /// dropped without an answer.
+    #[test]
+    fn a_question_asked_while_another_is_up_waits_its_turn() {
+        use crate::dialogs::confirm::{Confirm, ConfirmAction, ConfirmOutcome};
+        use crate::notification::ToastAction;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("shot.png");
+        std::fs::write(&file, b"x").unwrap();
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        let trash = Confirm::new(
+            "Delete",
+            "Move \"a.png\" to the trash?",
+            ConfirmAction::Trash(vec!["a".into()]),
+        );
+        state.windows.confirm = Some(trash.clone());
+
+        state.windows.notification = Some(notice_for(&file));
+        state.notification_action(ToastAction::DeleteFile, true);
+        assert_eq!(
+            state.windows.confirm.as_ref(),
+            Some(&trash),
+            "the question on screen stays"
+        );
+        // Asked twice, it is asked once; so is the question on screen, laid out or not.
+        state.windows.notification = Some(notice_for(&file));
+        state.notification_action(ToastAction::DeleteFile, true);
+        if let Some(shown) = state.windows.confirm.as_mut() {
+            shown.content_height = 321.0;
+        }
+        state.ask_confirm(trash.clone());
+        assert_eq!(state.windows.confirm_waiting.len(), 1);
+
+        state.confirm_finished(ConfirmOutcome::No);
+        assert!(matches!(
+            state.windows.confirm.as_ref().map(|c| &c.action),
+            Some(ConfirmAction::DeleteLocalFile(path)) if *path == file
+        ));
+        state.confirm_finished(ConfirmOutcome::No);
+        assert_eq!(state.windows.confirm, None);
+        assert!(file.is_file(), "No deletes nothing");
     }
 
     #[test]

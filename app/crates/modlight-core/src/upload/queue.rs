@@ -278,7 +278,18 @@ struct Inner {
     send_cancel: Option<CancellationToken>,
     quota_asked: Option<DateTime<Utc>>,
     quota_remaining: Option<i64>,
+    /// Whose room `quota_remaining` is ([`quota_owner`]).
+    quota_for: Option<String>,
     last_progress_event: Option<Instant>,
+}
+
+/// The account a quota answer is about: its server and its tag.
+fn quota_owner(account: &QueueAccount) -> String {
+    format!(
+        "{}\n{}",
+        account.host.trim_end_matches('/').to_ascii_lowercase(),
+        account.tag
+    )
 }
 
 struct Shared {
@@ -320,6 +331,7 @@ impl UploadQueue {
                     send_cancel: None,
                     quota_asked: None,
                     quota_remaining: None,
+                    quota_for: None,
                     last_progress_event: None,
                 }),
                 store,
@@ -558,6 +570,10 @@ impl UploadQueue {
 
     /// Try this one right now, and forgive it its history (`SendNow`): a person pressing
     /// this is asserting that something has changed.
+    ///
+    /// Not upstream: the room left is asked again too. "Something has changed" is most
+    /// often "I freed space", and upstream's answer from up to a minute ago stopped the
+    /// item again with the old figures.
     pub fn send_now(&self, id: &str) {
         {
             let now = self.now();
@@ -574,6 +590,7 @@ impl UploadQueue {
             item.server_attempts = 0;
             item.backoff_seconds = 0;
             item.next_attempt_utc = now;
+            inner.quota_asked = None;
         }
         self.persist();
         self.emit(QueueEvent::Changed);
@@ -854,12 +871,20 @@ impl UploadQueue {
     /// Ask whether the account still has room before sending anything (`HasRoom`):
     /// without it a full account would read as "the server will not take a file this
     /// size", true and useless.
+    ///
+    /// Not upstream: an answer is trusted only for the account it is about. Upstream's
+    /// minute-long answer outlived a switch of account, and the next account's items were
+    /// stopped as "no room" with the previous account's figures.
     async fn has_room(&self, id: &str, account: &QueueAccount) -> bool {
         let now = self.now();
-        let stale = self
-            .lock()
-            .quota_asked
-            .is_none_or(|asked| now - asked > QUOTA_FRESHNESS);
+        let owner = quota_owner(account);
+        let stale = {
+            let inner = self.lock();
+            inner.quota_for.as_deref() != Some(owner.as_str())
+                || inner
+                    .quota_asked
+                    .is_none_or(|asked| now - asked > QUOTA_FRESHNESS)
+        };
         if stale {
             let answer = tokio::time::timeout(
                 Duration::from_secs(30),
@@ -876,6 +901,7 @@ impl UploadQueue {
                     let mut inner = self.lock();
                     inner.quota_asked = Some(now);
                     inner.quota_remaining = remaining;
+                    inner.quota_for = Some(owner);
                 }
                 Err(error) => {
                     log::warn!("Modlight queue could not read the account's quota: {error}");

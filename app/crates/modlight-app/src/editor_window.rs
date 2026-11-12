@@ -45,6 +45,9 @@ pub struct EditorSession {
     /// The options the window opened with: closing writes back only the members this
     /// window changed (upstream's windows share one live options object).
     opened_options: serde_json::Value,
+    /// The window's size and state as it opened (`RememberWindowState`, `WindowWidth`,
+    /// `WindowHeight`, `IsWindowMaximized`); the options follow the window afterwards.
+    opened_window: (bool, f64, f64, bool),
 }
 
 /// The editor windows and their counter.
@@ -56,7 +59,8 @@ pub struct EditorWindows {
     pub paste: bool,
 }
 
-/// `ImageHelpers.SaveImage` by the file's extension (png, jpg, gif, bmp, tif).
+/// `ImageHelpers.SaveImage` by the file's extension (`GetImageFormat`: png, jpg, jpeg,
+/// jpe, jfif, gif, bmp, tif, tiff; PNG for anything else).
 pub fn encode_for_path(
     image: &RgbaImage,
     path: &Path,
@@ -67,7 +71,7 @@ pub fn encode_for_path(
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     let format = match ext.as_str() {
-        "jpg" | "jpeg" => ImageFormat::JPEG,
+        "jpg" | "jpeg" | "jpe" | "jfif" => ImageFormat::JPEG,
         "gif" => ImageFormat::GIF,
         "bmp" => ImageFormat::BMP,
         "tif" | "tiff" => ImageFormat::TIFF,
@@ -189,6 +193,12 @@ impl AppState {
         };
         let options = self.editor_options();
         let opened_options = options.to_value();
+        let opened_window = (
+            options.remember_window_state,
+            options.window_width,
+            options.window_height,
+            options.is_window_maximized,
+        );
         let mut editor = Editor::new(options, config);
         let path_text = path.as_ref().map(|p| p.to_string_lossy().into_owned());
         match image {
@@ -213,6 +223,7 @@ impl AppState {
             title: String::new(),
             save_failed: false,
             opened_options,
+            opened_window,
         });
     }
 
@@ -551,16 +562,7 @@ impl AppState {
                 self.rt.spawn(async move {
                     let result = download_image(&url).await;
                     move |state: &mut AppState, _: &egui::Context| {
-                        let Some(s) = state.session(key) else {
-                            return;
-                        };
-                        match result {
-                            Ok(image) => {
-                                s.editor.modal = None;
-                                s.editor.load_bitmap(image, None);
-                            }
-                            Err(message) => s.editor.start_screen_status(&message),
-                        }
+                        state.editor_url_loaded(key, result)
                     }
                 });
             }
@@ -570,6 +572,31 @@ impl AppState {
                     s.closed = true;
                 }
             }
+        }
+    }
+
+    /// The end of the start screen's "Load image from URL" (`OnLoadFromUrlRequested`):
+    /// the picture opens, or the start screen says what went wrong. Only while the start
+    /// screen still waits for it: a person who left it meanwhile (closed it, opened or
+    /// made a picture) keeps their work, which upstream replaced without asking.
+    fn editor_url_loaded(&mut self, key: u64, result: Result<RgbaImage, String>) {
+        let Some(s) = self.session(key) else {
+            return;
+        };
+        let waiting = matches!(
+            &s.editor.modal,
+            Some(modlight_editor::editor::Modal::StartScreen(screen)) if screen.url_loading
+        );
+        if !waiting {
+            log::info!("Modlight: a picture downloaded after its start screen was left is dropped");
+            return;
+        }
+        match result {
+            Ok(image) => {
+                s.editor.modal = None;
+                s.editor.load_bitmap(image, None);
+            }
+            Err(message) => s.editor.start_screen_status(&message),
         }
     }
 
@@ -730,17 +757,19 @@ fn decode_downloaded(bytes: &[u8]) -> Result<RgbaImage, String> {
 }
 
 /// The window builder: the saved size when "Remember window state" is on, otherwise
-/// maximised (`WindowState="Maximized"`).
+/// maximised (`WindowState="Maximized"`). Always the size the window opened with: the
+/// options follow the window every frame, and egui resizes a window whose builder's
+/// size changed, which fought a resize by hand.
 fn builder(session: &EditorSession) -> ViewportBuilder {
-    let o = &session.editor.options;
-    let remember = o.remember_window_state && o.window_width > 0.0 && o.window_height > 0.0;
+    let (remember, width, height, maximized) = session.opened_window;
+    let remember = remember && width > 0.0 && height > 0.0;
     let mut builder = ViewportBuilder::default()
         .with_title(session.editor.window_title())
         .with_min_inner_size(vec2(640.0, 420.0));
     if remember {
         builder = builder
-            .with_inner_size(vec2(o.window_width as f32, o.window_height as f32))
-            .with_maximized(o.is_window_maximized);
+            .with_inner_size(vec2(width as f32, height as f32))
+            .with_maximized(maximized);
     } else {
         builder = builder
             .with_inner_size(vec2(1280.0, 720.0))
@@ -1046,6 +1075,83 @@ mod tests {
             session.editor.image_file_path.as_deref(),
             Some(kept.as_str())
         );
+    }
+
+    /// "Remember window state" stores the window's size every frame, and the window's
+    /// builder was made from that stored size. egui turns a builder whose size changed
+    /// into a resize of the window, so each frame of a resize by hand asked for the size
+    /// of the frame before and the window fought the pointer. The builder keeps the
+    /// size the window opened with.
+    #[test]
+    fn the_window_builder_keeps_the_size_it_opened_with() {
+        let (mut state, key) = editor_state(None, false);
+        let s = state.session(key).unwrap();
+        let opened = builder(s);
+        // What `editor_viewports` writes while the window is resized by hand.
+        s.editor.options.is_window_maximized = false;
+        s.editor.options.window_width = 900.0;
+        s.editor.options.window_height = 500.0;
+        let now = builder(s);
+        assert_eq!(now.inner_size, opened.inner_size);
+        assert_eq!(now.maximized, opened.maximized);
+    }
+
+    /// A download started on the start screen that ends after the person left it (closed
+    /// the start screen, opened or made a picture and began drawing) is dropped. It
+    /// replaced that picture with its annotations and history (no question, no undo), or,
+    /// when it failed, brought the start screen back over the work.
+    #[test]
+    fn a_late_url_download_leaves_the_work_alone() {
+        use modlight_editor::editor::Modal;
+        let (mut state, key) = editor_state(None, false);
+        let start_loading = |state: &mut AppState| {
+            let s = state.session(key).unwrap();
+            s.editor.show_start_screen();
+            if let Some(Modal::StartScreen(screen)) = &mut s.editor.modal {
+                screen.url_loading = true;
+            }
+        };
+        start_loading(&mut state);
+        {
+            let s = state.session(key).unwrap();
+            s.editor.close_modal();
+            s.editor.load_image(
+                RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255])),
+                None,
+            );
+            let mut r = modlight_editor::model::Annotation::rectangle();
+            r.end = modlight_editor::geom::Point::new(10.0, 10.0);
+            s.editor.core.add_annotation(r);
+        }
+        let downloaded = RgbaImage::from_pixel(20, 10, image::Rgba([9, 9, 9, 255]));
+        state.editor_url_loaded(key, Ok(downloaded.clone()));
+        let s = state.session(key).unwrap();
+        assert_eq!(s.editor.image_size(), (40, 30), "the work was replaced");
+        assert_eq!(s.editor.core.annotations().len(), 1);
+        state.editor_url_loaded(key, Err("timed out".into()));
+        assert!(state.session(key).unwrap().editor.modal.is_none());
+
+        // Still waiting on the start screen: the picture opens.
+        start_loading(&mut state);
+        state.editor_url_loaded(key, Ok(downloaded));
+        let s = state.session(key).unwrap();
+        assert_eq!(s.editor.image_size(), (20, 10));
+        assert!(s.editor.modal.is_none());
+    }
+
+    /// `ImageHelpers.GetImageFormat`: `.jpe` and `.jfif` are JPEG as well. Saving a
+    /// picture opened from `photo.jfif` (a browser's usual name for a saved JPEG) wrote
+    /// PNG bytes under that name.
+    #[test]
+    fn jfif_and_jpe_names_are_saved_as_jpeg() {
+        let settings = modlight_core::tasks::TaskSettings::default();
+        let image = RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255]));
+        for name in ["photo.jfif", "photo.JPE", "photo.jpeg"] {
+            let bytes = encode_for_path(&image, Path::new(name), &settings);
+            assert_eq!(bytes.get(..3), Some(&[0xFF, 0xD8, 0xFF][..]), "{name}");
+        }
+        let png = encode_for_path(&image, Path::new("photo.webp"), &settings);
+        assert_eq!(png.get(1..4), Some(&b"PNG"[..]));
     }
 
     /// S3: an address that answers with a small file claiming an enormous picture gets

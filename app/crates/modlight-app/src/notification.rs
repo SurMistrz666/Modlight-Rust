@@ -117,6 +117,9 @@ pub struct Notification {
     pub pointer_inside: bool,
     /// The card's size last frame, which the window is sized to.
     pub card_size: Vec2,
+    /// The screen's working area the notice was placed in when it opened: it stays in
+    /// that corner, wherever the key window goes meanwhile.
+    pub area: Option<Rect>,
     /// The picture of a finished capture (`NotificationWindowConfig.Image`).
     pub image: Option<std::sync::Arc<image::RgbaImage>>,
     pub texture: Option<egui::TextureHandle>,
@@ -170,6 +173,7 @@ impl Notification {
             fade_started: None,
             pointer_inside: false,
             card_size: vec2(400.0, 100.0),
+            area: None,
             image: None,
             texture: None,
             left_click: ToastAction::CloseNotification,
@@ -217,6 +221,7 @@ impl Notification {
             fade_started: None,
             pointer_inside: false,
             card_size: vec2(400.0, 100.0),
+            area: None,
             image,
             texture: None,
             left_click: action(config.left_click),
@@ -599,10 +604,11 @@ impl Notification {
         );
         painter.rect_filled(card, SURFACE_RADIUS, colors.background_popup());
         let texture = self.texture.get_or_insert_with(|| {
-            let color = egui::ColorImage::from_rgba_unmultiplied(
-                [image.width() as usize, image.height() as usize],
-                image.as_raw(),
-            );
+            // The card's size in pixels, never past what one texture may hold.
+            let pixels = ui.ctx().pixels_per_point();
+            let max_side = ui.ctx().input(|i| i.max_texture_side).max(1) as u32;
+            let side = |points: f32| ((points * pixels).ceil() as u32).clamp(1, max_side);
+            let color = crate::media::fitted_color_image(&image, side(preview.x), side(preview.y));
             ui.ctx()
                 .load_texture("notification-preview", color, egui::TextureOptions::LINEAR)
         });
@@ -868,6 +874,53 @@ mod tests {
         assert!(!tip.tick(8.7).1);
         assert!(tip.tick(9.8).1);
         assert_eq!(nearest_icon_size(20.0), 18.0);
+    }
+
+    /// A picture wider or taller than the GPU takes (8192 px in the app, 2048 in a test
+    /// context) is shown through a texture of the card's size: a texture of the full
+    /// picture failed wgpu's validation, whose default handler ends the program (a 61 MP
+    /// photo uploaded with "Show notification" on, a long scrolling capture).
+    #[test]
+    fn a_picture_larger_than_a_texture_still_shows() {
+        let mut notice = Notification::tip("Done", "Modlight", None, &settings(), 0.0);
+        notice.image = Some(std::sync::Arc::new(image::RgbaImage::from_pixel(
+            3000,
+            40,
+            image::Rgba([10, 120, 200, 255]),
+        )));
+        notice.has_image = true;
+        let theme = modlight_core::theme::resolve(
+            &modlight_core::theme::ThemeOptions::default(),
+            Some(true),
+            None,
+        );
+        let colors = Colors::new(&theme);
+        let mut fonts_set = false;
+        let mut harness = egui_kittest::Harness::new_ui_state(
+            move |ui, notice: &mut Notification| {
+                // The app's fonts take effect from the next pass on.
+                if !fonts_set {
+                    fonts_set = true;
+                    ui.ctx().set_fonts(crate::theme::fonts());
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                let _ = notice.ui(ui, &colors, 1.0);
+            },
+            notice,
+        );
+        harness.run_steps(2);
+        let texture = harness.state().texture.clone().expect("a texture");
+        let [w, h] = texture.size();
+        let max = harness.ctx.input(|i| i.max_texture_side);
+        assert!(w <= max && h <= max, "{w}x{h} over {max}");
+        // The card's own size at most (400 wide, at this context's scale), the shape kept.
+        let ppp = harness.ctx.pixels_per_point();
+        assert!(w as f32 <= (400.0 * ppp).ceil(), "{w}");
+        assert!(
+            h >= 1 && (w as f32 / h as f32 - 3000.0 / 40.0).abs() < 8.0,
+            "{w}x{h}"
+        );
     }
 
     #[test]

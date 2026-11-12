@@ -57,6 +57,38 @@ pub struct PendingImage {
     pub skip_quick_menu: bool,
 }
 
+/// `HotkeyForm`'s repeat limit: when the last system hotkey press was taken (UI seconds).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RepeatLimit {
+    last: Option<f64>,
+}
+
+impl RepeatLimit {
+    /// `CheckRepeatLimitTime`: whether a press at `now` is taken, `limit_ms` after the last
+    /// one at the earliest; a press taken starts the wait again.
+    pub fn allow(&mut self, now: f64, limit_ms: f64) -> bool {
+        if limit_ms > 0.0
+            && let Some(last) = self.last
+            && (now - last) * 1000.0 < limit_ms
+        {
+            return false;
+        }
+        self.last = Some(now);
+        true
+    }
+}
+
+/// The task settings a hotkey opened an upload window with (`ExecuteJob` hands each of
+/// them `safeTaskSettings`): what that window uploads with when it answers. `None`: the
+/// window was opened from a menu, and uploads with the defaults.
+#[derive(Default)]
+pub struct UploadJobs {
+    pub text: Option<TaskSettings>,
+    pub url: Option<TaskSettings>,
+    pub shorten: Option<TaskSettings>,
+    pub drop: Option<TaskSettings>,
+}
+
 /// Everything captures need, held by the app state.
 pub struct Captures {
     pub source: SharedSource,
@@ -66,8 +98,14 @@ pub struct Captures {
     /// A picture is being taken on the background pool.
     pub busy: bool,
     pub hotkeys: HotkeyManager,
+    /// `HotkeyRepeatLimit` between system hotkey presses.
+    pub repeat_limit: RepeatLimit,
+    /// The settings of the upload windows a hotkey opened.
+    pub upload_jobs: UploadJobs,
     pub after_capture: VecDeque<(AfterCapture, PendingImage)>,
     pub quick_menu: Option<(crate::dialogs::quick_task_menu::QuickTaskMenu, PendingImage)>,
+    /// Pictures whose quick task menu waits for the one showing to close.
+    pub quick_menu_waiting: VecDeque<PendingImage>,
     pub recording: Option<crate::recording_ui::Recording>,
     pub auto_capture: crate::dialogs::auto_capture::AutoCaptureState,
     /// Hotkeys pressed this frame (QA and tests press them through here).
@@ -103,8 +141,11 @@ impl Captures {
             scheduled: Vec::new(),
             busy: false,
             hotkeys: HotkeyManager::new(Box::new(FakeBackend::default()), Vec::new(), false),
+            repeat_limit: RepeatLimit::default(),
+            upload_jobs: UploadJobs::default(),
             after_capture: VecDeque::new(),
             quick_menu: None,
+            quick_menu_waiting: VecDeque::new(),
             recording: None,
             auto_capture: Default::default(),
             simulated: Vec::new(),
@@ -173,21 +214,8 @@ impl AppState {
         self.end_orphaned_hotkey_capture();
         let mut pressed: Vec<HotkeySettings> = Vec::new();
         if self.mode == Mode::Normal && !self.env.qa {
-            for id in crate::platform::hotkeys::SystemHotkeys::pressed() {
-                // `DisableHotkeysOnFullscreen`.
-                let fullscreen_block = self
-                    .config
-                    .get("DisableHotkeysOnFullscreen")
-                    .and_then(|v| v.as_bool())
-                    == Some(true)
-                    && crate::platform::system::active_window_fullscreen();
-                if fullscreen_block {
-                    continue;
-                }
-                if let Some(hotkey) = self.captures.hotkeys.triggered(id) {
-                    pressed.push(hotkey.clone());
-                }
-            }
+            let ids = crate::platform::hotkeys::SystemHotkeys::pressed();
+            pressed = self.system_hotkeys_pressed(ids);
         }
         for index in std::mem::take(&mut self.captures.simulated) {
             if !self.captures.hotkeys.ignore
@@ -207,6 +235,40 @@ impl AppState {
             self.execute_job(hotkey.job(), settings);
         }
         any
+    }
+
+    /// The hotkeys the system's presses stand for (`HotkeyForm.WndProc` and
+    /// `HotkeyManager`'s handler): a press closer than `HotkeyRepeatLimit` milliseconds
+    /// (500 unless set, never under 200) to the last press taken is dropped, whichever
+    /// key it was (`CheckRepeatLimitTime`), so a key pressed twice in a hurry starts one
+    /// capture, not a second one over the first; then the full-screen rule.
+    pub(crate) fn system_hotkeys_pressed(&mut self, ids: Vec<u32>) -> Vec<HotkeySettings> {
+        let limit = self
+            .config
+            .get("HotkeyRepeatLimit")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(500.0)
+            .max(200.0);
+        let mut pressed = Vec::new();
+        for id in ids {
+            if !self.captures.repeat_limit.allow(self.time, limit) {
+                continue;
+            }
+            // `DisableHotkeysOnFullscreen`.
+            let fullscreen_block = self
+                .config
+                .get("DisableHotkeysOnFullscreen")
+                .and_then(|v| v.as_bool())
+                == Some(true)
+                && crate::platform::system::active_window_fullscreen();
+            if fullscreen_block {
+                continue;
+            }
+            if let Some(hotkey) = self.captures.hotkeys.triggered(id) {
+                pressed.push(hotkey.clone());
+            }
+        }
+        pressed
     }
 
     /// `TaskHelpers.ToggleHotkeys` with the default task settings.
@@ -245,14 +307,37 @@ impl AppState {
         use HotkeyType::*;
         match job {
             None => {}
-            FileUpload => self.pick_and_upload(Option::None),
-            FolderUpload => self.pick_folder_and_upload(),
+            FileUpload => self.pick_and_upload_with(Option::None, settings),
+            FolderUpload => self.pick_folder_and_upload_with(settings),
             ClipboardUpload => self.clipboard_upload(settings),
             ClipboardUploadWithContentViewer => self.open_clipboard_viewer(settings, false),
-            UploadText => self.open_text_upload(),
-            UploadURL => self.open_url_upload(),
-            DragDropUpload => self.open_drop_window(),
-            ShortenURL => self.open_shorten_url(),
+            // The windows keep the hotkey's settings for their answer (`safeTaskSettings`);
+            // one already open from a menu stays as it is.
+            UploadText => {
+                let opens = self.uploads.windows.text_upload.is_none();
+                self.open_text_upload();
+                if opens && self.uploads.windows.text_upload.is_some() {
+                    self.captures.upload_jobs.text = Some(settings);
+                }
+            }
+            UploadURL => {
+                let opens = self.uploads.windows.url_upload.is_none();
+                self.open_url_upload();
+                if opens && self.uploads.windows.url_upload.is_some() {
+                    self.captures.upload_jobs.url = Some(settings);
+                }
+            }
+            DragDropUpload => {
+                self.open_drop_window();
+                self.captures.upload_jobs.drop = Some(settings);
+            }
+            ShortenURL => {
+                let opens = self.uploads.windows.shorten_url.is_none();
+                self.open_shorten_url();
+                if opens && self.uploads.windows.shorten_url.is_some() {
+                    self.captures.upload_jobs.shorten = Some(settings);
+                }
+            }
             StopUploads => self.uploads.tasks.stop_all(&self.uploads.ctx),
             PrintScreen => self.capture_with(CaptureKind::Fullscreen, settings, false),
             ActiveWindow => self.capture_with(CaptureKind::ActiveWindow, settings, false),
@@ -365,8 +450,14 @@ impl AppState {
         let now = self.time;
         let mut due = Vec::new();
         let mut index = 0;
+        // While an overlay holds the screen a capture that comes due waits for it to
+        // close: taken now, its picture would be of the overlay, and a region kind would
+        // put its own overlay in the place of the open one (upstream opens a second one).
         while index < self.captures.scheduled.len() {
-            if self.captures.scheduled[index].at <= now && !self.captures.busy {
+            if self.captures.scheduled[index].at <= now
+                && !self.captures.busy
+                && self.captures.overlay.is_none()
+            {
                 due.push(self.captures.scheduled.remove(index));
             } else {
                 index += 1;
@@ -405,6 +496,21 @@ impl AppState {
         }
         self.tick_auto_capture(ctx);
         self.tick_recording(ctx);
+        // A hotkey's settings go with its upload window: none once the window is gone.
+        let windows = &self.uploads.windows;
+        let jobs = &mut self.captures.upload_jobs;
+        if windows.text_upload.is_none() {
+            jobs.text = None;
+        }
+        if windows.url_upload.is_none() {
+            jobs.url = None;
+        }
+        if windows.shorten_url.is_none() {
+            jobs.shorten = None;
+        }
+        if windows.drop_window.is_none() {
+            jobs.drop = None;
+        }
         // Files Finder handed to "Upload with Modlight".
         let files = crate::platform::integration::take_service_files();
         if !files.is_empty() {
@@ -467,7 +573,7 @@ impl AppState {
         use crate::dialogs::confirm::{Confirm, ConfirmAction};
         match &self.windows.confirm {
             None => {
-                self.windows.confirm = Some(Confirm::new(
+                self.ask_confirm(Confirm::new(
                     title,
                     &format!("{denied}\n\n{}", t(mac::ScreenRecordingOpenSettings)),
                     ConfirmAction::OpenScreenRecordingSettings,
@@ -645,6 +751,12 @@ impl AppState {
             && job.has(AfterCaptureTasks::ShowQuickTaskMenu)
             && pending.file.is_none()
         {
+            if self.captures.quick_menu.is_some() {
+                // Upstream opens a menu per picture; here one shows at a time and the
+                // next waits for it, instead of taking its place (and its picture).
+                self.captures.quick_menu_waiting.push_back(pending);
+                return;
+            }
             let menu = crate::dialogs::quick_task_menu::QuickTaskMenu::new(&self.config);
             self.captures.quick_menu = Some((menu, pending));
             return;
@@ -741,6 +853,12 @@ impl AppState {
                 pending.skip_quick_menu = true;
                 self.run_image_task(pending);
             }
+        }
+        // The next picture's menu, if one waits.
+        if self.captures.quick_menu.is_none()
+            && let Some(next) = self.captures.quick_menu_waiting.pop_front()
+        {
+            self.run_image_task(next);
         }
     }
 
@@ -840,7 +958,9 @@ impl AppState {
         self.config_dirty = true;
     }
 
-    /// The tray and the capture menu's monitor list: "1. 1440x900".
+    /// The tray and the capture menu's monitor list: "1. 1440x900", the size in pixels
+    /// where the platform gives them (Windows, as upstream's `BuildMonitorMenu`), else in
+    /// points (a Mac).
     pub fn monitor_entries(&self) -> Vec<(String, IRect, bool)> {
         self.captures
             .source
@@ -848,11 +968,8 @@ impl AppState {
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                (
-                    format!("{}. {}x{}", i + 1, s.bounds.width, s.bounds.height),
-                    s.bounds,
-                    i == 0,
-                )
+                let (width, height) = s.pixel_size.unwrap_or((s.bounds.width, s.bounds.height));
+                (format!("{}. {width}x{height}", i + 1), s.bounds, i == 0)
             })
             .collect()
     }
@@ -1008,6 +1125,8 @@ impl AppState {
         use crate::dialogs::auto_capture::AutoCaptureAction as A;
         match action {
             A::Execute => self.auto_capture_execute(),
+            // The screen is another capture's (an overlay open or being prepared).
+            A::SelectRegion if self.captures.overlay.is_some() || self.captures.busy => {}
             A::SelectRegion => {
                 let settings = self
                     .captures
@@ -1605,6 +1724,252 @@ mod tests {
                 .any(|e| matches!(e, crate::state::Effect::PlaySound(..))),
             "no sound"
         );
+    }
+
+    /// `HotkeyForm.CheckRepeatLimitTime`: a system hotkey press closer than
+    /// `HotkeyRepeatLimit` (500 ms unless set, at least 200) to the last one taken is
+    /// dropped, whichever key it is; the setting was never read, so a key pressed twice in
+    /// a hurry ran its job twice (two region captures, the second over the first).
+    #[test]
+    fn hotkey_presses_closer_than_the_repeat_limit_are_dropped() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.captures.hotkeys = HotkeyManager::new(
+            Box::new(FakeBackend::default()),
+            modlight_core::hotkeys::default_hotkeys(),
+            false,
+        );
+        state.captures.hotkeys.register_all();
+        let region = state.captures.hotkeys.id_of(0).expect("registered");
+        let other = state.captures.hotkeys.id_of(1).expect("registered");
+        state.time = 10.0;
+        assert_eq!(state.system_hotkeys_pressed(vec![region, region]).len(), 1);
+        state.time = 10.3;
+        assert!(
+            state.system_hotkeys_pressed(vec![other]).is_empty(),
+            "any key within 500 ms"
+        );
+        state.time = 10.6;
+        assert_eq!(state.system_hotkeys_pressed(vec![region]).len(), 1);
+        // A setting under upstream's floor of 200 ms counts as 200.
+        state.config.set("HotkeyRepeatLimit", serde_json::json!(50));
+        state.time = 10.75;
+        assert!(state.system_hotkeys_pressed(vec![region]).is_empty());
+        state.time = 10.85;
+        assert_eq!(state.system_hotkeys_pressed(vec![region]).len(), 1);
+        state
+            .config
+            .set("HotkeyRepeatLimit", serde_json::json!(2000));
+        state.time = 12.0;
+        assert!(state.system_hotkeys_pressed(vec![region]).is_empty());
+        state.time = 12.9;
+        assert_eq!(state.system_hotkeys_pressed(vec![region]).len(), 1);
+    }
+
+    /// An overlay of a capture, open over the fake desktop.
+    fn open_overlay(state: &mut AppState) {
+        let settings = state.default_task_settings();
+        let request = capture::region_request(
+            RegionKind::Default,
+            &settings,
+            state.captures.source.as_ref(),
+        )
+        .unwrap();
+        state.captures.overlay = Some(RegionOverlay::new(
+            RegionSession::new(request),
+            OverlayPurpose::Capture,
+            settings,
+            0.0,
+        ));
+    }
+
+    /// A capture that comes due (after its delay) while an overlay holds the screen
+    /// waits for the overlay to close: taken at once it photographed the overlay, and a
+    /// region capture put its overlay in the place of the open one, whose selection was
+    /// lost.
+    #[test]
+    fn a_capture_that_comes_due_waits_for_the_open_overlay() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let ctx = egui::Context::default();
+        open_overlay(&mut state);
+        state.captures.scheduled.push(Scheduled {
+            at: 0.5,
+            kind: CaptureKind::Region(RegionKind::Default),
+            settings: state.default_task_settings(),
+            auto_hide: false,
+            hidden: false,
+        });
+        state.time = 1.0;
+        state.tick_captures(&ctx);
+        assert_eq!(state.captures.scheduled.len(), 1, "it waits");
+        assert!(!state.captures.busy);
+        // The overlay closes; the next frame takes the capture.
+        state.captures.overlay.as_mut().unwrap().session.cancel();
+        state.tick_captures(&ctx);
+        assert!(state.captures.overlay.is_none());
+        state.tick_captures(&ctx);
+        assert!(state.captures.scheduled.is_empty());
+        assert!(state.captures.busy, "the desktop is being taken now");
+    }
+
+    /// The auto capture's "Select region" while another capture's overlay is open (or
+    /// being prepared) asks nothing: the desktop is not taken again for a second overlay
+    /// that would replace the first.
+    #[test]
+    fn the_auto_capture_area_waits_for_the_screen() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        open_overlay(&mut state);
+        state.auto_capture_action(crate::dialogs::auto_capture::AutoCaptureAction::SelectRegion);
+        assert!(!state.captures.busy);
+        assert!(matches!(
+            state.captures.overlay.as_ref().map(|o| &o.purpose),
+            Some(OverlayPurpose::Capture)
+        ));
+    }
+
+    /// `ExecuteJob` hands the upload jobs the hotkey's own task settings
+    /// (`safeTaskSettings`): a "Upload text" or "Drag and drop upload" key whose task has
+    /// after-upload tasks of its own uploads with those, not with the defaults. Opened from
+    /// a menu, the same windows upload with the defaults.
+    #[test]
+    fn upload_hotkeys_upload_with_their_own_settings() {
+        use modlight_core::tasks::settings::AfterUploadTasks;
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let own = |job: HotkeyType| HotkeySettings {
+            task: serde_json::json!({
+                "Job": job.name(),
+                "UseDefaultAfterUploadJob": false,
+                "AfterUploadJob": "OpenURL"
+            }),
+            ..HotkeySettings::new(job, 0)
+        };
+        state.captures.hotkeys = HotkeyManager::new(
+            Box::new(FakeBackend::default()),
+            vec![own(HotkeyType::UploadText), own(HotkeyType::DragDropUpload)],
+            false,
+        );
+        let defaults = state.default_task_settings().after_upload_job;
+        assert_ne!(defaults, AfterUploadTasks::OpenURL);
+        let last_job = |state: &AppState| {
+            state
+                .uploads
+                .tasks
+                .tasks
+                .last()
+                .expect("a task")
+                .info()
+                .settings
+                .after_upload_job
+        };
+
+        state.captures.simulated.push(0);
+        assert!(state.pump_hotkeys());
+        assert!(state.uploads.windows.text_upload.is_some());
+        state.text_upload_finished(Some("hello".into()));
+        assert_eq!(last_job(&state), AfterUploadTasks::OpenURL);
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, "x").unwrap();
+        state.captures.simulated.push(1);
+        assert!(state.pump_hotkeys());
+        state.drop_window_outcome(crate::dialogs::drop_window::DropOutcome::Dropped(vec![
+            file.clone(),
+        ]));
+        assert_eq!(last_job(&state), AfterUploadTasks::OpenURL);
+
+        // From the menus: the defaults.
+        state.drop_window_outcome(crate::dialogs::drop_window::DropOutcome::Close);
+        state.run(
+            crate::commands::Command::UploadText,
+            &egui::Context::default(),
+        );
+        state.text_upload_finished(Some("hello".into()));
+        assert_eq!(last_job(&state), defaults);
+        state.run(
+            crate::commands::Command::DragDropUpload,
+            &egui::Context::default(),
+        );
+        state.drop_window_outcome(crate::dialogs::drop_window::DropOutcome::Dropped(vec![
+            file,
+        ]));
+        assert_eq!(last_job(&state), defaults);
+    }
+
+    /// `BuildMonitorMenu` lists each monitor's size in pixels (upstream's process is per
+    /// monitor DPI aware): a 2560 by 1440 monitor at 150 % is "2560x1440", not the
+    /// "1707x960" of the app's points. Where the platform gives no pixel size (a Mac), the
+    /// size is in points as before.
+    #[test]
+    fn the_monitor_list_gives_pixels_where_the_platform_has_them() {
+        use modlight_core::capture::source::{CaptureSource, FakeSource, ScreenInfo};
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let sample = FakeSource::sample();
+        let screens = vec![
+            ScreenInfo {
+                pixel_size: Some((2560, 1440)),
+                bounds: IRect::new(0, 0, 1707, 960),
+                ..sample.screens()[0].clone()
+            },
+            ScreenInfo {
+                bounds: IRect::new(1707, 0, 1280, 720),
+                ..sample.screens()[1].clone()
+            },
+        ];
+        state.captures.source = Arc::new(FakeSource::new(
+            sample.desktop().clone(),
+            1.0,
+            screens,
+            sample.windows(),
+        ));
+        let entries = state.monitor_entries();
+        assert_eq!(entries[0].0, "1. 2560x1440");
+        assert_eq!(
+            entries[0].1,
+            IRect::new(0, 0, 1707, 960),
+            "captures in points"
+        );
+        assert_eq!(entries[1].0, "2. 1280x720");
+    }
+
+    /// A second picture whose task shows the quick task menu, while the first one's menu
+    /// is still open (another capture key pressed meanwhile): upstream opens a menu per
+    /// picture. The port's one menu took the second picture and dropped the first without
+    /// a word; now the second menu waits and opens when the first one closes.
+    #[test]
+    fn a_second_quick_task_menu_waits_for_the_first() {
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        let mut settings = state.default_task_settings();
+        settings.after_capture_job =
+            AfterCaptureTasks::ShowQuickTaskMenu.with(AfterCaptureTasks::SaveImageToFile);
+        let picture = |title: &str| PendingImage {
+            metadata: TaskMetadata {
+                image: Some(Arc::new(image::RgbaImage::new(4, 4))),
+                window_title: Some(title.into()),
+                ..TaskMetadata::default()
+            },
+            settings: settings.clone(),
+            file: None,
+            skip_quick_menu: false,
+        };
+        let title = |state: &AppState| {
+            state
+                .captures
+                .quick_menu
+                .as_ref()
+                .and_then(|(_, p)| p.metadata.window_title.clone())
+        };
+        state.run_image_task(picture("first"));
+        state.run_image_task(picture("second"));
+        assert_eq!(title(&state).as_deref(), Some("first"));
+        let tasks = state.uploads.tasks.tasks.len();
+        // "Continue" on the first: its task starts, the second menu opens.
+        state.quick_menu_finished(Some(None));
+        assert_eq!(state.uploads.tasks.tasks.len(), tasks + 1);
+        assert_eq!(title(&state).as_deref(), Some("second"));
+        // Closed without a choice: nothing more waits.
+        state.quick_menu_finished(None);
+        assert!(state.captures.quick_menu.is_none());
+        assert!(state.captures.quick_menu_waiting.is_empty());
     }
 
     /// `selectedWindow.Text.Truncate(50, "...")`: at most 50 characters with the dots.

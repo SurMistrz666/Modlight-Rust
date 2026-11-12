@@ -53,6 +53,8 @@ pub struct WindowSpec {
     pub screen: Option<Rect>,
     /// Where the window opens (a remembered place); centred when `None`.
     pub position: Option<egui::Pos2>,
+    /// Opens maximised (`WindowState = Maximized`, a remembered state).
+    pub maximized: bool,
 }
 
 impl WindowSpec {
@@ -65,6 +67,7 @@ impl WindowSpec {
             fit_height: false,
             screen: None,
             position: None,
+            maximized: false,
         }
     }
 
@@ -77,6 +80,7 @@ impl WindowSpec {
             fit_height: false,
             screen: None,
             position: None,
+            maximized: false,
         }
     }
 }
@@ -185,8 +189,14 @@ pub fn with_window<T: ToolWindow, R>(
     result
 }
 
-/// A window centred on the screen (`WindowStartupLocation="CenterScreen"`).
-fn builder(spec: &WindowSpec, size: Vec2) -> ViewportBuilder {
+/// A window centred on the screen (`WindowStartupLocation="CenterScreen"`), or at its
+/// remembered place, as it opens.
+fn builder(
+    ctx: &egui::Context,
+    viewport: ViewportId,
+    spec: &WindowSpec,
+    size: Vec2,
+) -> ViewportBuilder {
     if let Some(screen) = spec.screen {
         let mut builder = ViewportBuilder::default()
             .with_title(spec.title.clone())
@@ -212,6 +222,16 @@ fn builder(spec: &WindowSpec, size: Vec2) -> ViewportBuilder {
     }
     if spec.topmost {
         builder = builder.with_always_on_top();
+    }
+    if spec.maximized {
+        builder = builder.with_maximized(true);
+    }
+    // Placed only as it opens, as `app::builder` places the dialogs (UI-07): egui moves a
+    // window whenever the position its builder gives changes, and `visible_frame` is the
+    // screen of the key window on a Mac, so a tool window dragged to another screen
+    // jumped to the middle of it.
+    if crate::app::is_open(ctx, viewport) {
+        return builder;
     }
     if let Some(position) = spec.position {
         return builder.with_position(position);
@@ -264,7 +284,7 @@ fn draw_windows(ctx: &egui::Context, state: &mut AppState) {
         };
         let id = ViewportId::from_hash_of(("tool-window", key));
         let (close_asked, closes_itself) =
-            ctx.show_viewport_immediate(id, builder(&spec, size), |ui, _| {
+            ctx.show_viewport_immediate(id, builder(ctx, id, &spec, size), |ui, _| {
                 let close = ui.ctx().input(|i| i.viewport().close_requested());
                 if spec.fit_height {
                     let current = ui
@@ -332,6 +352,35 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tool window is placed as it opens, not in every frame: a builder that gave its
+    /// position every frame moved it back whenever that position changed (on a Mac, to
+    /// the middle of the screen it was dragged to, the screen of the key window).
+    #[test]
+    fn a_tool_window_is_placed_once_as_it_opens() {
+        let ctx = egui::Context::default();
+        let id = ViewportId::from_hash_of(("tool-window", 7_u64));
+        let mut spec = WindowSpec::fixed("Tool", vec2(400.0, 300.0));
+        spec.position = Some(pos2(120.0, 80.0));
+        let position = |raw: egui::RawInput| {
+            let mut placed = None;
+            ctx.run_ui(raw, |ui| {
+                placed = builder(ui.ctx(), id, &spec, spec.size).position;
+            })
+            .textures_delta
+            .clear();
+            placed
+        };
+        assert_eq!(
+            position(egui::RawInput::default()),
+            Some(pos2(120.0, 80.0)),
+            "at its place as it opens"
+        );
+        // Open (eframe lists every window it has in the frame's input): left where it is.
+        let mut open = egui::RawInput::default();
+        open.viewports.insert(id, egui::ViewportInfo::default());
+        assert_eq!(position(open), None);
+    }
 
     /// A window that, while it draws, answers another window by key (as a dialog answers
     /// the window that opened it: the analyze options' Save, the image effects' "clear

@@ -124,8 +124,25 @@ impl Editor {
         let Some(effect) = effects::registry().get(&dialog.effect_id) else {
             return;
         };
+        // The resize the core would refuse is not previewed either: with the aspect
+        // ratio kept, one box typed in can ask for a side in the millions, whichever
+        // library implements the effect.
+        if effects::operation_for(effect.id()) == Some(Operation::ResizeImage) {
+            let (w, h) =
+                effects::builtin::resize_target(preview.original.dimensions(), &dialog.values);
+            if !modlight_core::image_decode::fits(w as u64, h as u64) {
+                log::warn!("Modlight: the editor did not preview a resize to {w}x{h}");
+                return;
+            }
+        }
         let context = EffectContext { is_preview: true };
         match effect.apply(&preview.original, &dialog.values, &context) {
+            // An empty picture (a crop outside the image) is no preview: the canvas
+            // cannot show it (a texture of nothing is a GPU validation error) and Apply
+            // refuses it anyway.
+            Ok(result) if result.width() == 0 || result.height() == 0 => {
+                log::warn!("effect preview failed: the effect gave an empty picture");
+            }
             Ok(result) => {
                 if let Some(p) = &mut self.preview {
                     p.latest = Some(Arc::new(result));
@@ -386,6 +403,81 @@ mod tests {
         assert_eq!(e.core.source().unwrap().get_pixel(0, 0).0[0], 251);
         assert!(e.preview.is_none());
         assert!(!e.is_effects_panel_open);
+    }
+
+    /// Resize image with "Maintain aspect ratio" works out the other side from the box
+    /// typed in: on a long narrow picture (a scrolling capture) a large width gives a
+    /// height in the millions. The preview and Apply went ahead and crashed (an overflow
+    /// in the resampler, or the allocation); now the picture stays as it is.
+    #[test]
+    fn a_resize_far_past_the_picture_limits_is_refused() {
+        let mut e = Editor::new(ImageEditorOptions::default(), EditorConfig::default());
+        e.load_image(RgbaImage::from_pixel(10, 4000, Rgba([1, 2, 3, 255])), None);
+        e.run_effect("resize_image");
+        e.set_effect_value("maintain_aspect_ratio", ParamValue::Bool(true));
+        e.set_effect_value("width", ParamValue::Number(10000.0));
+        e.apply_effect_dialog();
+        assert_eq!(e.image_size(), (10, 4000));
+        assert!(!e.core.can_undo());
+        // A size within the limits still resizes, keeping the ratio.
+        e.run_effect("resize_image");
+        e.set_effect_value("maintain_aspect_ratio", ParamValue::Bool(true));
+        e.set_effect_value("width", ParamValue::Number(20.0));
+        e.apply_effect_dialog();
+        assert_eq!(e.image_size(), (20, 8000));
+    }
+
+    /// An effect over a band of the picture stays over that band when the picture is
+    /// turned. Upstream (and the port) turned the band's corners, which swaps its width
+    /// and height, and then turned the band by the angle as well: a blur over a line of
+    /// text ended up across it, the text in the clear.
+    #[test]
+    fn an_effect_stays_on_its_band_when_the_image_turns() {
+        let mut e = Editor::new(ImageEditorOptions::default(), EditorConfig::default());
+        e.load_image(
+            RgbaImage::from_pixel(100, 60, Rgba([255, 255, 255, 255])),
+            None,
+        );
+        let mut band = crate::model::Annotation::effect(crate::model::EffectKind::Highlight);
+        band.start = crate::geom::Point::new(10.0, 10.0);
+        band.end = crate::geom::Point::new(90.0, 20.0);
+        let id = band.id;
+        e.core.add_annotation(band);
+        e.refresh_effect(id);
+        e.pump();
+        let yellow = |img: &RgbaImage, x: u32, y: u32| img.get_pixel(x, y).0 == [255, 255, 0, 255];
+        let before = e.snapshot().unwrap();
+        assert!(yellow(&before, 50, 15) && !yellow(&before, 50, 40));
+
+        e.run_operation(
+            Operation::Rotate90Clockwise,
+            &effects::ParamValues::default(),
+        );
+        // The band now runs down the picture: x 40 to 50, y 10 to 90.
+        let after = e.snapshot().unwrap();
+        assert_eq!(after.dimensions(), (60, 100));
+        for (x, y) in [(45, 15), (45, 50), (45, 85)] {
+            assert!(yellow(&after, x, y), "({x}, {y}) is not highlighted");
+        }
+        for (x, y) in [(15, 50), (30, 50), (55, 50)] {
+            assert!(!yellow(&after, x, y), "({x}, {y}) is highlighted");
+        }
+
+        // The same with a custom angle of 90 (the arbitrary rotation's path).
+        e.undo();
+        e.run_operation(Operation::RotateCustomAngle, &{
+            let mut v = effects::ParamValues::defaults(
+                &effects::registry()
+                    .get("rotate_custom_angle")
+                    .unwrap()
+                    .parameters(),
+            );
+            v.set("angle", ParamValue::Number(90.0));
+            v
+        });
+        let turned = e.snapshot().unwrap();
+        assert_eq!(turned.dimensions(), (60, 100));
+        assert!(yellow(&turned, 45, 85) && !yellow(&turned, 15, 50));
     }
 
     #[test]

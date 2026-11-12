@@ -12,7 +12,7 @@ pub mod raster;
 pub mod rect_aa;
 pub mod text;
 
-pub use bitmap::{Bitmap, pixel_op, premul, store, unpremul};
+pub use bitmap::{Bitmap, check_size, pixel_op, premul, store, unpremul};
 pub use blend::Blend;
 pub use canvas::{Canvas, Cap, ColorFilter, Join, Paint, Sampling, Shader, Style, rect, rect_xywh};
 pub use color::{C, byte, clamp_to_byte, round, roundd};

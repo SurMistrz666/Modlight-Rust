@@ -71,6 +71,8 @@ impl CaptureSource for ScreenSource {
                 scale,
                 primary: monitor.primary,
                 name: self.names.name(&monitor.device),
+                // `BuildMonitorMenu` (a per-monitor DPI aware process) shows pixels.
+                pixel_size: Some((monitor.bounds.width, monitor.bounds.height)),
             })
             .collect()
     }
@@ -146,6 +148,17 @@ impl CaptureSource for ScreenSource {
             return Err(CaptureError::Nothing);
         }
         gdi::capture_pixels(rect, how.cursor)
+    }
+
+    /// `GetActiveWindowClientRectangle`: the foreground window's client area, in points;
+    /// none for one of this app's own windows, as [`active_window`](Self::active_window).
+    fn active_window_client_rect(&self) -> Option<IRect> {
+        let _pixels = PhysicalPixels::enter();
+        let hwnd = foreground()?;
+        if window_pid(hwnd) == own_pid() {
+            return None;
+        }
+        client_rect(hwnd).map(|rect| rect_to_points(rect, primary_scale()))
     }
 
     /// `CursorData`: the pointer's picture (physical pixels, transparent) and its top

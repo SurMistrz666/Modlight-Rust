@@ -380,25 +380,28 @@ fn expand_path(path: &str) -> String {
     expand_env(path.trim())
 }
 
-/// Replaces `token` case-insensitively (`string.Replace(..., OrdinalIgnoreCase)`).
+/// Replaces `token` case-insensitively (`string.Replace(..., OrdinalIgnoreCase)`). The
+/// tokens are ASCII, so they are matched byte by byte in the text itself: a match starts
+/// and ends on ASCII bytes, never inside a character, whatever the rest of the text
+/// becomes in lower case.
 fn replace_ci(text: &str, token: &str, value: &str) -> String {
-    let lower = text.to_lowercase();
-    let token_l = token.to_lowercase();
-    if lower.len() != text.len() || !lower.contains(&token_l) {
-        return if lower.len() != text.len() {
-            text.replace(token, value)
-        } else {
-            text.to_string()
-        };
+    let (bytes, key) = (text.as_bytes(), token.as_bytes());
+    if key.is_empty() {
+        return text.to_string();
     }
     let mut out = String::with_capacity(text.len());
-    let mut i = 0;
-    while let Some(pos) = lower[i..].find(&token_l) {
-        out.push_str(&text[i..i + pos]);
-        out.push_str(value);
-        i += pos + token_l.len();
+    let (mut last, mut i) = (0, 0);
+    while i + key.len() <= bytes.len() {
+        if bytes[i..i + key.len()].eq_ignore_ascii_case(key) {
+            out.push_str(&text[last..i]);
+            out.push_str(value);
+            i += key.len();
+            last = i;
+        } else {
+            i += 1;
+        }
     }
-    out.push_str(&text[i..]);
+    out.push_str(&text[last..]);
     out
 }
 
@@ -1334,6 +1337,23 @@ mod tests {
         let s = expand_text_variables("%WIDTH x %height%n%y", (640, 480));
         let year = Local::now().year().to_string();
         assert_eq!(s, format!("640 x 480\n{year}"));
+    }
+
+    /// The tokens are found ignoring case in any text. Lowercasing does not keep byte
+    /// offsets: "İ" grows by a byte and "ẞ" shrinks by one, so offsets found in the
+    /// lowercased text cut the original inside a character (a panic of the editor's
+    /// preview), and text whose length changed kept upper-case tokens unreplaced.
+    #[test]
+    fn text_variables_expand_next_to_letters_that_change_length_in_lower_case() {
+        assert_eq!(expand_text_variables("İ%widthẞ", (640, 480)), "İ640ẞ");
+        assert_eq!(
+            expand_text_variables("İSTANBUL %WIDTH", (640, 480)),
+            "İSTANBUL 640"
+        );
+        assert_eq!(
+            expand_text_variables("\u{212A}%Height\u{212A}", (640, 480)),
+            "\u{212A}480\u{212A}"
+        );
     }
 
     #[test]

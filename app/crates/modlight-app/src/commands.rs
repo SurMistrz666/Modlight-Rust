@@ -189,7 +189,11 @@ impl AppState {
             Command::UploadText => self.open_text_upload(),
             Command::PasteText => self.open_paste_window(),
             Command::UploadUrl => self.open_url_upload(),
-            Command::DragDropUpload => self.open_drop_window(),
+            Command::DragDropUpload => {
+                // A new drop window, with the defaults (a hotkey's took its own).
+                self.open_drop_window();
+                self.captures.upload_jobs.drop = None;
+            }
             Command::ShortenUrl => self.open_shorten_url(),
             Command::CancelTask(id) => self.cancel_task(id),
             Command::QueueSendNow(id) => self.uploads.queue.send_now(&id),
