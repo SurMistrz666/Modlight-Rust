@@ -3667,6 +3667,9 @@ Proszę wybrać inny skrót klawiszowy lub zamknąć konfliktową aplikację i p
   <data name="MySpace_DetailsCode" xml:space="preserve">
     <value>Kod</value>
   </data>
+  <data name="MySpace_DetailsOnDisk" xml:space="preserve">
+    <value>Na dysku</value>
+  </data>
   <data name="MySpace_DetailsFolder" xml:space="preserve">
     <value>Folder</value>
   </data>
@@ -4600,6 +4603,12 @@ Proszę wybrać inny skrót klawiszowy lub zamknąć konfliktową aplikację i p
   </data>
   <data name="MySpace_CopyLink" xml:space="preserve">
     <value>Kopiuj link</value>
+  </data>
+  <data name="MySpace_CopyContents" xml:space="preserve">
+    <value>Kopiuj plik do schowka</value>
+  </data>
+  <data name="MySpace_RevealLocal" xml:space="preserve">
+    <value>Zlokalizuj na dysku</value>
   </data>
   <data name="MySpace_OpenInBrowser" xml:space="preserve">
     <value>Otwórz w przeglądarce</value>

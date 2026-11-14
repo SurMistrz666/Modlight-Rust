@@ -392,6 +392,47 @@ fn dd_small(colors: &Colors) -> Look {
         .icon(13.0, None)
 }
 
+/// One About row: the label on the left, the value right-aligned and wrapped.
+fn fact_row(
+    ui: &mut Ui,
+    colors: &Colors,
+    inner: f32,
+    fact: &details::Fact,
+    sense: Sense,
+) -> egui::Response {
+    ui.add_space(2.0);
+    let label = layout(
+        ui,
+        wrapped(
+            &fact.label,
+            12.0,
+            Weight::Normal,
+            colors.text_secondary(),
+            94.0,
+        ),
+    );
+    let value_w = inner - 94.0 - 12.0;
+    let value_job = if fact.mono {
+        let mut j = job(&fact.value, 12.0, Weight::Normal, colors.text());
+        j.sections[0].format.font_id = egui::FontId::monospace(12.0);
+        j.wrap.max_width = value_w;
+        j.halign = egui::Align::RIGHT;
+        j
+    } else {
+        let mut j = wrapped(&fact.value, 13.0, Weight::Normal, colors.text(), value_w);
+        j.halign = egui::Align::RIGHT;
+        j
+    };
+    let value = layout(ui, value_job);
+    let h = label.size().y.max(value.size().y);
+    let (r, response) = ui.allocate_exact_size(vec2(inner, h), sense);
+    ui.painter().galley(r.min, label, colors.text_secondary());
+    ui.painter()
+        .galley(pos2(r.right(), r.top()), value, colors.text());
+    ui.add_space(2.0);
+    response
+}
+
 #[allow(clippy::too_many_arguments)]
 fn sections(
     ui: &mut Ui,
@@ -528,36 +569,16 @@ fn sections(
     block(ui, width, 7.0, |ui, inner| {
         section_title(ui, colors, t(s::MySpace_DetailsAbout));
         for fact in details::facts(file) {
-            ui.add_space(2.0);
-            let label = layout(
-                ui,
-                wrapped(
-                    &fact.label,
-                    12.0,
-                    Weight::Normal,
-                    colors.text_secondary(),
-                    94.0,
-                ),
-            );
-            let value_w = inner - 94.0 - 12.0;
-            let value_job = if fact.mono {
-                let mut j = job(&fact.value, 12.0, Weight::Normal, colors.text());
-                j.sections[0].format.font_id = egui::FontId::monospace(12.0);
-                j.wrap.max_width = value_w;
-                j.halign = egui::Align::RIGHT;
-                j
-            } else {
-                let mut j = wrapped(&fact.value, 13.0, Weight::Normal, colors.text(), value_w);
-                j.halign = egui::Align::RIGHT;
-                j
-            };
-            let value = layout(ui, value_job);
-            let h = label.size().y.max(value.size().y);
-            let (r, _) = ui.allocate_exact_size(vec2(inner, h), Sense::hover());
-            ui.painter().galley(r.min, label, colors.text_secondary());
-            ui.painter()
-                .galley(pos2(r.right(), r.top()), value, colors.text());
-            ui.add_space(2.0);
+            fact_row(ui, colors, inner, &fact, Sense::hover());
+        }
+        // Where it lies on this computer; a click shows it in Explorer.
+        if let Some(path) = state.local_copy(&file.id) {
+            let response = fact_row(ui, colors, inner, &details::local_fact(&path), Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(t(s::MySpace_RevealLocal));
+            if response.clicked() {
+                asked.push(Ask::Command(Command::RevealLocal(file.id.clone())));
+            }
         }
     });
     rule(ui, colors, width, 4.0, 4.0);

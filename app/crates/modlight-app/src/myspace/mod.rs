@@ -24,12 +24,19 @@ impl AppState {
     ///   trash, for good (Cmd+Option+Backspace too).
     /// * Left, Right, Escape: the drawer, when it has the keyboard.
     /// * Escape: clear the selection.
+    /// * Cmd+C: the links of the selection. Cmd+Shift+C: the files themselves.
     pub fn my_space_keys(&mut self, ctx: &egui::Context) {
         if ctx.memory(|m| m.focused().is_some()) || ctx.egui_wants_keyboard_input() {
             return;
         }
-        let events = ctx.input(|i| i.events.clone());
+        let (events, shift) = ctx.input(|i| (i.events.clone(), i.modifiers.shift));
         for event in events {
+            // egui-winit hands Cmd+C (and Cmd+Shift+C) over as `Event::Copy`, without a
+            // key press of C.
+            if event == egui::Event::Copy {
+                self.my_space_copy(shift);
+                continue;
+            }
             let egui::Event::Key {
                 key,
                 pressed: true,
@@ -98,5 +105,21 @@ impl AppState {
         if key == Key::Escape && !self.space.clear_selection() && self.details.present {
             self.details.close(self.time);
         }
+    }
+
+    /// The selection, or the file in the drawer when nothing is selected.
+    fn my_space_copy(&mut self, contents: bool) {
+        let mut files = self.space.selected_ids();
+        if files.is_empty() {
+            files.extend(self.details.file.clone().filter(|_| self.details.open));
+        }
+        if files.is_empty() {
+            return;
+        }
+        self.push(if contents {
+            Command::CopyContents(files)
+        } else {
+            Command::CopyLinks(files)
+        });
     }
 }

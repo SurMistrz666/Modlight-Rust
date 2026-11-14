@@ -383,6 +383,23 @@ pub fn base_of(url: Option<&str>, ext: Option<&str>) -> String {
     }
 }
 
+/// The file's code in one of its links, whatever the domain: `/{tag}/{code}.{ext}`,
+/// `/{tag}/{code}/raw.{ext}`, or the same without the tag. This is what ties an entry of
+/// the upload history (which knows the file on disk) to a file of the library.
+pub fn code_in_link(link: &str) -> Option<&str> {
+    let link = link.split(['?', '#']).next()?;
+    let (_, host_and_path) = link.split_once("://")?;
+    let (_, path) = host_and_path.split_once('/')?;
+    let mut stems = path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.split('.').next().unwrap_or(s))
+        .rev();
+    let last = stems.next()?;
+    let code = if last == "raw" { stems.next()? } else { last };
+    (!code.is_empty()).then_some(code)
+}
+
 /// One file, everything a card and its menus need, derived from the listing row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CloudFile {
@@ -607,6 +624,22 @@ mod tests {
             raw_url: Some(format!("https://h.example/T/Bocugavi42/raw.{ext}")),
             copy_url: Some(format!("https://h.example/T/Bocugavi42.{ext}")),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_code_is_found_in_every_shape_of_link() {
+        for link in [
+            "https://h.example/T/Bocugavi42.png",
+            "https://h.example/T/Bocugavi42/raw.png",
+            "https://other.example/T/Bocugavi42",
+            "https://h.example/Bocugavi42.png?x=1",
+            "https://h.example/Bocugavi42/raw",
+        ] {
+            assert_eq!(code_in_link(link), Some("Bocugavi42"), "{link}");
+        }
+        for link in ["", "https://h.example", "https://h.example/", "not a link"] {
+            assert_eq!(code_in_link(link), None, "{link}");
         }
     }
 

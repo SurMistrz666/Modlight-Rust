@@ -161,8 +161,27 @@ fn library_menu(state: &AppState, id: &str, targets: &[String], many: bool) -> V
         copyable > 0,
         copy_as(targets),
     ));
+    let local = state.local_copy(id).is_some();
+    // One file can be downloaded for it; several only from this computer.
+    let contents = if many {
+        targets.iter().any(|t| state.local_copy(t).is_some())
+    } else {
+        local || file.has_media_base()
+    };
+    entries.push(Entry::item_if(
+        t(s::MySpace_CopyContents),
+        icons::CLIPBOARD_COPY,
+        Command::CopyContents(targets.to_vec()),
+        contents,
+    ));
     entries.push(Entry::Separator);
     if !many {
+        entries.push(Entry::item_if(
+            t(s::MySpace_RevealLocal),
+            icons::FOLDER_SEARCH,
+            Command::RevealLocal(id.to_string()),
+            local,
+        ));
         entries.push(Entry::item_if(
             t(s::MySpace_OpenInBrowser),
             icons::EXTERNAL_LINK,

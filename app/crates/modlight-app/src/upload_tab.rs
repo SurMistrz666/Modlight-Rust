@@ -7,6 +7,7 @@
 //! store for earlier sessions, and whatever the queue made of what it held), because
 //! none of them alone is complete.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -189,9 +190,30 @@ pub struct UploadTab {
     pub history_read: bool,
     pub loading_history: bool,
     pub history_error: String,
+    /// The file each upload was sent from, by the code in its link: the whole history
+    /// store and this session, not just the rows on screen (My space shows it).
+    pub local_files: HashMap<String, PathBuf>,
 }
 
 impl UploadTab {
+    /// Note where the upload behind `link` lies on this computer.
+    pub fn remember_local(&mut self, link: &str, path: &str) {
+        if let Some(code) = modlight_core::library::files::code_in_link(link)
+            && !path.is_empty()
+        {
+            self.local_files
+                .insert(code.to_string(), PathBuf::from(path));
+        }
+    }
+
+    /// The file on disk the upload with `code` was sent from, while it is still there.
+    pub fn local_file(&self, code: &str) -> Option<&Path> {
+        self.local_files
+            .get(code)
+            .map(PathBuf::as_path)
+            .filter(|path| path.is_file())
+    }
+
     fn key(&mut self) -> u64 {
         self.next_key += 1;
         self.next_key
@@ -310,6 +332,7 @@ impl UploadTab {
         if !is_upload(state) || state.status.is_busy() {
             return;
         }
+        self.remember_local(&state.info.result.url, state.info.file_path());
         let row = self.row_from_task(id, state);
         self.insert(row);
     }
