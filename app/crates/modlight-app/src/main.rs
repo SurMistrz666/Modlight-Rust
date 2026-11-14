@@ -253,6 +253,25 @@ fn handed_to_running_instance(args: &Args) -> bool {
     }
 }
 
+/// wgpu on DX12 with a swap chain made from a DirectComposition visual: the one Windows
+/// surface that offers an alpha mode. The default (Vulkan, or DX12 from the HWND) is opaque
+/// only, so every transparent window came out black. `WGPU_BACKEND` and
+/// `WGPU_DX12_PRESENTATION_SYSTEM` still override both.
+#[cfg(windows)]
+fn windows_wgpu_options() -> eframe::WgpuConfiguration {
+    use eframe::egui_wgpu::{WgpuSetup, WgpuSetupCreateNew};
+    use eframe::wgpu;
+    let mut setup = WgpuSetupCreateNew::without_display_handle();
+    let descriptor = &mut setup.instance_descriptor;
+    descriptor.backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::DX12);
+    descriptor.backend_options.dx12.presentation_system =
+        wgpu::Dx12SwapchainKind::from_env().unwrap_or(wgpu::Dx12SwapchainKind::DxgiFromVisual);
+    eframe::WgpuConfiguration {
+        wgpu_setup: WgpuSetup::CreateNew(setup),
+        ..Default::default()
+    }
+}
+
 fn main() -> ExitCode {
     let args = match parse() {
         Ok(args) => args,
@@ -375,7 +394,10 @@ fn main() -> ExitCode {
     }
     #[cfg(windows)]
     {
-        viewport = viewport.with_decorations(false);
+        // Transparent here only so egui-wgpu gives every window's surface an alpha mode
+        // (it reads this flag of the main viewport for all of them): the region overlay,
+        // the recording frame and the pins see through. The main window paints itself.
+        viewport = viewport.with_decorations(false).with_transparent(true);
     }
     // `RestoreWindowBounds`: the remembered size and place, on a screen that exists (the
     // screens are asked for only when there is something to put on one).
@@ -436,6 +458,8 @@ fn main() -> ExitCode {
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
+        #[cfg(windows)]
+        wgpu_options: windows_wgpu_options(),
         ..Default::default()
     };
     let mode = if qa_mode { Mode::Qa } else { Mode::Normal };
@@ -443,6 +467,11 @@ fn main() -> ExitCode {
         modlight_core::APP_NAME,
         options,
         Box::new(move |cc| {
+            // The main window exists by now; every window after it shares its class.
+            #[cfg(windows)]
+            if !platform::windows::transparent_window_backgrounds() {
+                log::warn!("No window to give the transparent background; overlays may be white");
+            }
             let mut app = ModlightApp::new(cc, state, mode);
             app.start_hidden = start_hidden;
             Ok(Box::new(app))
