@@ -10,6 +10,13 @@ members = [
     "crates/modlight-tools",
 ]
 resolver = "3"
+exclude = ["vendor"]
+
+# eframe 0.36.2 as published, with one fix in `src/native/run.rs` (`new_events`): the
+# frames of invisible windows (the app in the tray) ran without the event loop, so a
+# capture opening its overlay from the tray panicked. 0.37.0 has the same code.
+[patch.crates-io]
+eframe = { path = "vendor/eframe" }
 
 [workspace.package]
 version = "0.7.7"
