@@ -115,8 +115,8 @@ fails before the fix on "a copy of the task's bytes, not the original").
 
 | Id | Severity | Where | What | Recommendation |
 | --- | --- | --- | --- | --- |
-| NF-01 | Low | `modlight-app/src/sync.rs` (`tick_settings_sync` / `settings_round_done`), `modlight-core/src/sync/engine.rs` (`apply_report`) | A round plans from the document built when it starts. A setting changed here while the round is out (a tray toggle of an after-capture task, a "don't show again", anything outside the settings window, which is the only thing `apply_report` checks) is overwritten when the round ends in Adopt, and the marker then records the server's document, so the change is never pushed. Same in upstream (`SyncAsync` builds `local` first, `Adopt` checks only the settings window). | Needs a change of a few hundredths of a second to a few seconds wide. If wanted: keep the digest of the document the round was planned from and, in `settings_round_done`, skip an Adopt when `document::build(&self.config)` no longer has that digest (the next round then sees a local change and pushes it). |
-| NF-02 | Low | `modlight-core/src/tasks/worker.rs` (`do_after_capture_jobs`, `SaveImageToFileWithDialog`) | When writing to the chosen path fails, the save panel opens again with the first name, where upstream opens it with the name just chosen (`Info.FileName`). | Cosmetic; pass `self.lock().info.file_name` on each pass of the loop. |
+| NF-01 (fixed in round 2b) | Low | `modlight-app/src/sync.rs` (`tick_settings_sync` / `settings_round_done`), `modlight-core/src/sync/engine.rs` (`apply_report`) | A round plans from the document built when it starts. A setting changed here while the round is out (a tray toggle of an after-capture task, a "don't show again", anything outside the settings window, which is the only thing `apply_report` checks) is overwritten when the round ends in Adopt, and the marker then records the server's document, so the change is never pushed. Same in upstream (`SyncAsync` builds `local` first, `Adopt` checks only the settings window). | Needs a change of a few hundredths of a second to a few seconds wide. If wanted: keep the digest of the document the round was planned from and, in `settings_round_done`, skip an Adopt when `document::build(&self.config)` no longer has that digest (the next round then sees a local change and pushes it). |
+| NF-02 (fixed in round 2b) | Low | `modlight-core/src/tasks/worker.rs` (`do_after_capture_jobs`, `SaveImageToFileWithDialog`) | When writing to the chosen path fails, the save panel opens again with the first name, where upstream opens it with the name just chosen (`Info.FileName`). | Cosmetic; pass `self.lock().info.file_name` on each pass of the loop. |
 | NF-03 | Info | `modlight-core/src/tasks/worker.rs` (`thread_do_work`, "Delete file locally") | With "Process images during file upload" a file upload becomes an after-capture job, so "Delete file locally" in the after-capture tasks deletes the ORIGINAL file the person picked once it is up, even with "Use after-capture tasks during file upload" off. Same as upstream (`Info.Job == TaskJob.Job`), and what ShareX means by processing the image as a capture. | The owner's decision; if unwanted, require `use_after_capture_tasks_during_file_upload` for a `Job` made by `file_upload` too. |
 
 Leads checked and found correct: hotkey task settings per "use default" group
@@ -151,3 +151,44 @@ Found 7, fixed 4 (TASK-01..04, each with a test that fails before the fix), not 
 (NF-01..03, low or the owner's decision). New tests: four in `tasks::worker::tests`,
 one in `uploads::tests`. `TaskEffect::PinToScreen` now carries the task's settings and
 there is a new `TaskEffect::ShowQrCode`; nothing else in the app matches on them.
+
+## Round 2b (the owner asked to fix NF-01 and NF-02)
+
+NF-03 stays as it is, on purpose: it is what "Delete file locally" is for, as in upstream.
+
+### NF-01 fixed: a change made while a sync round is out is no longer overwritten by an Adopt
+
+`modlight-app/src/sync.rs` (`tick_settings_sync`, `settings_round_done`). The round now
+carries the digest of the document it was planned from (`planned_from`). When it ends in
+Adopt and the machine's document no longer has that digest (a setting changed here
+while the round was out, outside the settings window), nothing is applied and the
+marker does not move; the schedule is nudged, so the next round (within the debounce)
+reads "local change the server never confirmed" and pushes it. Commented as not upstream
+(`Adopt` there checks only for an open settings window). An installation never
+confirmed for the account still adopts on the next round (the fresh-install guard is
+unchanged).
+
+Test: `sync::tests::a_change_made_while_a_round_is_out_survives_an_adopt` (the change
+stays, the marker stays, and `decide` on the next round's inputs gives Push). Before the
+fix the adopt replaced the change and moved the marker (checked by disabling the guard).
+The two existing round tests pass the digest of the unchanged document.
+
+### NF-02 fixed: a failed save-as asks again with the name just chosen
+
+`modlight-core/src/tasks/worker.rs` (`do_after_capture_jobs`, `SaveImageToFileWithDialog`).
+The panel's name is read from the task on each pass of the loop, so after a failed write
+it opens with the name chosen the time before, as upstream's `sfd.FileName =
+Info.FileName`.
+
+Test: `tasks::worker::tests::a_failed_save_as_asks_again_with_the_name_just_chosen`
+(a chosen folder that is a file; asked `first.png`, `first.png` before the fix,
+`first.png`, `chosen.png` after).
+
+### Checks run at the end of round 2b
+
+- `cargo fmt --all`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings` (macOS): clean.
+- `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`:
+  clean.
+- `cargo test --workspace`: 45 suites, 1072 passed, 0 failed, 4 ignored.
+- Snapshots: none changed. Migrations: none.

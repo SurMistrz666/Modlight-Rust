@@ -95,6 +95,9 @@ impl AppState {
         }
         let tag = self.account.account().tag.clone();
         let local = document::build(&self.config);
+        // What the round decides from: an Adopt is applied only if this is still what the
+        // machine holds when the answer comes back.
+        let planned_from = document::digest(Some(&local));
         let marker = self.config.cloud_marker();
         let mut sync = self.sync.clone();
         let backup = self.config.backup_folder();
@@ -113,17 +116,19 @@ impl AppState {
             )
             .await;
             Box::new(move |state: &mut AppState, ctx: &egui::Context| {
-                state.settings_round_done(&credential, sync, report, ctx)
+                state.settings_round_done(&credential, sync, report, &planned_from, ctx)
             })
         });
     }
 
     /// A round finished: keep what it learned and apply what it decided, on this thread.
+    /// `planned_from` is the digest of the document the round was planned from.
     pub(crate) fn settings_round_done(
         &mut self,
         credential: &Credential,
         sync: SyncState,
         report: SyncReport,
+        planned_from: &str,
         ctx: &egui::Context,
     ) {
         self.sync_running = false;
@@ -141,6 +146,18 @@ impl AppState {
         self.sync = sync;
         let editor_open = self.windows.settings.is_some();
         let adopted = matches!(report.apply, SyncApply::Adopt { .. });
+        // Not upstream (`Adopt` checks only for an open settings window): a setting changed
+        // here while the round was out (a tray toggle, a "don't show again") is a local
+        // change the round never saw. Adopting would overwrite it and move the marker past
+        // it, so it would never be sent. Stood down, neither moves: the next round reads
+        // the machine as changed since the marker and pushes it.
+        if adopted && document::digest(Some(&document::build(&self.config))) != planned_from {
+            log::debug!(
+                "Modlight settings sync: settings changed here while the round was out, so nothing was replaced."
+            );
+            self.schedule.nudge(Instant::now());
+            return;
+        }
         if !apply_report(&mut self.config, &report.apply, editor_open) {
             return;
         }
@@ -216,7 +233,8 @@ mod tests {
             refused: true,
             oversize_reported: false,
         };
-        app.settings_round_done(&old, refused, adopt_report("Polish"), &ctx);
+        let planned_from = document::digest(Some(&document::build(&app.config)));
+        app.settings_round_done(&old, refused, adopt_report("Polish"), &planned_from, &ctx);
         assert!(!app.sync_running);
         assert!(
             !app.sync.refused,
@@ -227,9 +245,68 @@ mod tests {
 
         // The same round for the account still signed in applies.
         let current = app.credential().unwrap();
-        app.settings_round_done(&current, SyncState::default(), adopt_report("Polish"), &ctx);
+        app.settings_round_done(
+            &current,
+            SyncState::default(),
+            adopt_report("Polish"),
+            &planned_from,
+            &ctx,
+        );
         assert_eq!(app.config.get("Language"), Some(&json!("Polish")));
         assert_eq!(app.config.cloud_marker().version, 7);
+    }
+
+    /// A setting changed here while a round was out (not in the settings window, which
+    /// `apply_report` already waits for) survives a round that ends in Adopt, and is still
+    /// sent: the marker stays where it was, so the next round reads a local change and
+    /// pushes it. The adopt used to replace it and move the marker past it.
+    #[test]
+    fn a_change_made_while_a_round_is_out_survives_an_adopt() {
+        use modlight_core::sync::{account_key, decide};
+        let ctx = egui::Context::default();
+        let mut app = state(&Look::default(), true);
+        app.config.set("Language", json!("English"));
+        let current = app.credential().unwrap();
+        let key = account_key(&current.host, &app.account.account().tag);
+        let planned_from = document::digest(Some(&document::build(&app.config)));
+        let before = CloudMarker {
+            account: key.clone(),
+            version: 6,
+            digest: planned_from.clone(),
+        };
+        app.config.set_cloud_marker(&before);
+
+        // The round is out; meanwhile a setting changes here, outside the settings window.
+        app.config.set("UploadLimit", json!(3));
+        let adopt = adopt_report("Polish");
+        let remote = match &adopt.apply {
+            SyncApply::Adopt { document, .. } => document::digest(Some(document)),
+            _ => unreachable!(),
+        };
+        app.settings_round_done(&current, SyncState::default(), adopt, &planned_from, &ctx);
+
+        assert_eq!(
+            app.config.get("UploadLimit"),
+            Some(&json!(3)),
+            "the change stays"
+        );
+        assert_eq!(app.config.get("Language"), Some(&json!("English")));
+        assert_eq!(
+            app.config.cloud_marker(),
+            before,
+            "the marker does not move"
+        );
+        let local = document::digest(Some(&document::build(&app.config)));
+        let next = decide(
+            Some(&key),
+            Some(&before.account),
+            before.version,
+            Some(&before.digest),
+            Some(&local),
+            7,
+            Some(&remote),
+        );
+        assert_eq!(next.action, SyncAction::Push, "the next round sends it");
     }
 
     fn adopted(skin: &str) -> ThemeChange {

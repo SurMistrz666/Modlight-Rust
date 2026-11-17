@@ -720,11 +720,12 @@ impl WorkerTask {
             }
 
             if job.has(AfterCaptureTasks::SaveImageToFileWithDialog) {
-                let file_name = self.lock().info.file_name.clone();
                 let folder = ctx.screenshots_folder(&settings, Some(&metadata));
                 // Upstream asks again when writing fails; the panel is asked once per
-                // failure the same way.
+                // failure the same way, with the name just chosen (`sfd.FileName =
+                // Info.FileName`, which the chosen path renamed).
                 loop {
+                    let file_name = self.lock().info.file_name.clone();
                     let answer = ctx
                         .channel
                         .ask(
@@ -1790,5 +1791,63 @@ mod tests {
         let sent = std::fs::read(&item.source_path).unwrap();
         assert_eq!(&sent[..2], &[0xFF, 0xD8], "the JPEG the task made");
         assert!(original.is_file(), "the original is left alone");
+    }
+
+    /// When the picture cannot be written where the save panel said, the panel opens
+    /// again with the name just chosen there (`sfd.FileName = Info.FileName`), not the
+    /// name the task started with.
+    #[test]
+    fn a_failed_save_as_asks_again_with_the_name_just_chosen() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let profile = tempfile::tempdir().unwrap();
+        let (ctx, receiver) = context(&runtime, profile.path());
+        // A file where the chosen folder should be: the write fails.
+        let blocker = profile.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let mut settings = TaskSettings {
+            after_capture_job: AfterCaptureTasks::SaveImageToFileWithDialog,
+            ..TaskSettings::default()
+        };
+        settings
+            .general_settings
+            .show_toast_notification_after_task_completed = false;
+        let metadata = TaskMetadata {
+            image: Some(Arc::new(image::RgbaImage::new(16, 8))),
+            ..TaskMetadata::default()
+        };
+        let task = WorkerTask::image_upload(metadata, settings, Some("first"), &ctx);
+        task.start(&ctx);
+        let mut asked = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match receiver.recv_timeout(left) {
+                Ok(TaskMessage::Event {
+                    task: id,
+                    event: TaskEvent::TaskCompleted,
+                }) if id == task.id => break,
+                Ok(TaskMessage::Ask {
+                    question: TaskQuestion::SaveAs { file_name, .. },
+                    reply,
+                    ..
+                }) => {
+                    let answer = if asked.is_empty() {
+                        Some(blocker.join("chosen.png"))
+                    } else {
+                        None
+                    };
+                    asked.push(file_name);
+                    let _ = reply.send(TaskAnswer::SaveAs(answer));
+                }
+                Ok(TaskMessage::Ask { question, .. }) => panic!("not expected: {question:?}"),
+                Ok(_) => {}
+                Err(error) => panic!("the task did not end: {error}"),
+            }
+        }
+        assert_eq!(asked, ["first.png", "chosen.png"]);
     }
 }
