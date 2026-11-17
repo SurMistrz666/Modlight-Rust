@@ -241,7 +241,7 @@ async fn create_paste(ctx: ActionCtx) -> ActionResult {
         .bind(&encryption)
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
+        crate::upload::finalize::commit_reserved_row(tx, &session.user.id, size).await?;
         Ok((code, user_code, expires_at, max_views, password_hash.is_some()))
     }
     .await;

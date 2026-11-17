@@ -137,20 +137,44 @@ pub enum AcceptInviteResult {
 /// to that mailbox and the token proves the recipient read it, which is a
 /// stronger demonstration than the confirmation mail would have been.
 pub async fn accept_invite(db: &PgPool, token: &str, password: &str) -> anyhow::Result<AcceptInviteResult> {
-    // `password.length` counts UTF-16 code units.
     if password.is_empty() || password.encode_utf16().count() < INVITE_PASSWORD_MIN {
         return Ok(AcceptInviteResult::WeakPassword);
     }
     let Some(subject) = read_invite(db, token).await? else {
         return Ok(AcceptInviteResult::Invalid);
     };
-    crate::credentials::write_credential_password(db, &subject.user_id, password).await?;
+    // Hashed before the transaction: scrypt takes a while, the claim must not.
+    let hash = crate::auth::password::hash_password(password).await?;
+    // Not upstream, which read the invitation, wrote the password and only
+    // then revoked it: two acceptances of one link at the same moment both
+    // read it, both succeeded, and the last password won. The invitation is
+    // now CLAIMED first (deleted, if it is still there and still valid), in
+    // one transaction with the password: the second acceptance waits for the
+    // first, finds nothing left to claim and is refused; a failure on the way
+    // leaves the invitation as it was.
+    let mut tx = db.begin().await?;
+    let claimed: Option<String> = sqlx::query_scalar(
+        r#"DELETE FROM "verification" WHERE "identifier" = $1 AND "value" = $2 AND "expires_at" > $3 RETURNING "id""#,
+    )
+    .bind(format!("{PREFIX}{}", digest(token)))
+    .bind(&subject.user_id)
+    .bind(JsDate::now())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if claimed.is_none() {
+        return Ok(AcceptInviteResult::Invalid);
+    }
+    crate::credentials::write_credential_hash(&mut tx, &subject.user_id, &hash).await?;
     sqlx::query(r#"UPDATE "user" SET "email_verified" = true, "updated_at" = $2 WHERE "id" = $1"#)
         .bind(&subject.user_id)
         .bind(JsDate::now())
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
-    revoke_invites(db, &subject.user_id).await?;
+    sqlx::query(r#"DELETE FROM "verification" WHERE "identifier" LIKE 'invite:%' AND "value" = $1"#)
+        .bind(&subject.user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(AcceptInviteResult::Ok { user_id: subject.user_id, email: subject.email })
 }
 

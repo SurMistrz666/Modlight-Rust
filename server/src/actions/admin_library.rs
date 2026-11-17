@@ -156,13 +156,14 @@ const ACCOUNT_DELETE_BATCH: i64 = 500;
 
 /// Delete an account, with the files going either way.
 ///
-/// Files first, account second: if the account removal fails afterwards, the
-/// operator sees `files-removed` and can retry; the other order would leave
-/// rows quietly ownerless with no error to act on. "keep" needs no work:
-/// `uploads.owner_id` is ON DELETE SET NULL, so dropping the account is what
-/// orphans the rows. Self-deletion is refused here as well as by Better Auth:
-/// an admin removing their own account is how an install ends up with no
-/// administrator at all.
+/// "delete": the account's sessions and API tokens end first, then its files
+/// go, then the account (see `remove_account`, which sends the files round
+/// again when an upload landed meanwhile). If the account cannot be removed,
+/// the operator sees `files-removed` and can retry; the other order would
+/// leave rows quietly ownerless with no error to act on. "keep" needs no
+/// work: `uploads.owner_id` is ON DELETE SET NULL, so dropping the account is
+/// what orphans the rows. Self-deletion is refused: an admin removing their
+/// own account is how an install ends up with no administrator at all.
 async fn delete_user_account(ctx: ActionCtx) -> ActionResult {
     let session = ctx.require_admin().await?;
     let refuse = |reason: &str| Ok(json!({ "ok": false, "reason": reason }));
@@ -178,55 +179,39 @@ async fn delete_user_account(ctx: ActionCtx) -> ActionResult {
     };
     let disposition = ctx.args.raw(1).and_then(Value::as_str);
 
-    let mut deleted = 0i64;
-    let mut bytes = 0i64;
-    let mut failed = 0i64;
-    if disposition == Some("delete") {
-        // Batched: an account can hold thousands of rows. Rows storage refused
-        // are parked in `stuck` and excluded from the next query, or they
-        // would come back in every batch and spin forever once only they are left.
-        let storage = ctx.state.storage.get()?;
-        let mut stuck: Vec<Uuid> = Vec::new();
-        loop {
-            let batch: Vec<DeletableMedia> = sqlx::query_as(
-                r#"select "id", "owner_id", "size", "storage_key", "thumb_key" from "uploads"
-                   where ("uploads"."owner_id" = $1
-                          and (cardinality($2::uuid[]) = 0 or "uploads"."id" <> all($2::uuid[])))
-                   limit $3"#,
-            )
-            .bind(&user_id)
-            .bind(&stuck)
-            .bind(ACCOUNT_DELETE_BATCH)
-            .fetch_all(&ctx.state.db)
-            .await?;
-            if batch.is_empty() {
-                break;
-            }
-            let result = delete_media_bulk(&ctx.state.db, storage.as_ref(), &batch).await?;
-            deleted += result.deleted;
-            bytes += result.bytes;
-            if result.failed > 0 {
-                // delete_media_bulk removes exactly the rows it cleared, so
-                // whatever is still there is what it could not touch.
-                let ids: Vec<Uuid> = batch.iter().map(|r| r.id).collect();
-                let survivors: Vec<Uuid> =
-                    sqlx::query_scalar(r#"select "id" from "uploads" where "uploads"."id" = any($1)"#)
-                        .bind(&ids)
-                        .fetch_all(&ctx.state.db)
-                        .await?;
-                stuck.extend(survivors);
-                failed = stuck.len() as i64;
-            }
-        }
+    let deleting = disposition == Some("delete");
+    if deleting {
+        // Not upstream: the account stops acting before its files go. Its
+        // sessions and API tokens end here, so no new upload, paste or
+        // conversion starts; one already under way is caught by the final step.
+        let mut tx = ctx.state.db.begin().await?;
+        sqlx::query(r#"DELETE FROM "session" WHERE "user_id" = $1"#).bind(&user_id).execute(&mut *tx).await?;
+        sqlx::query(r#"DELETE FROM "api_tokens" WHERE "user_id" = $1"#).bind(&user_id).execute(&mut *tx).await?;
+        tx.commit().await?;
     }
 
-    crate::invites::revoke_invites(&ctx.state.db, &user_id).await?;
-
-    // `auth.api.removeUser({ body: { userId }, headers })`: the admin's own
-    // session authorises it; any APIError is the refusal below.
-    let call = crate::auth::server::remove_user(&ctx.state, &ctx.headers, ctx.peer, &user_id).await;
-    call.apply_cookies(&ctx);
-    if call.json().is_err() {
+    let mut deleted = 0i64;
+    let mut bytes = 0i64;
+    // Rows storage refused: parked, excluded from every later query, and left
+    // to become orphans (reported as such).
+    let mut stuck: Vec<Uuid> = Vec::new();
+    let mut removed = false;
+    for _ in 0..ACCOUNT_DELETE_ATTEMPTS {
+        if deleting {
+            let storage = ctx.state.storage.get()?;
+            let (d, b) = delete_files_of(&ctx, storage.as_ref(), &user_id, &mut stuck).await?;
+            deleted += d;
+            bytes += b;
+        }
+        if remove_account(&ctx.state.db, &user_id, deleting.then_some(stuck.as_slice())).await? {
+            removed = true;
+            break;
+        }
+    }
+    let failed = stuck.len() as i64;
+    if !removed {
+        // Files kept arriving (or the account could not be removed): it is
+        // still there, and the operator is told so.
         return refuse(if deleted > 0 { "files-removed" } else { "forbidden" });
     }
 
@@ -240,6 +225,94 @@ async fn delete_user_account(ctx: ActionCtx) -> ActionResult {
         "failed": failed,
         "orphaned": if disposition == Some("keep") { impact.files } else { failed },
     }))
+}
+
+/// How often the final step may find new files and send the deletion round
+/// again before it gives up.
+const ACCOUNT_DELETE_ATTEMPTS: usize = 5;
+
+/// Delete every file of the account, in batches, except the `stuck` ones;
+/// rows storage refused join `stuck`. Returns (files, bytes) removed.
+async fn delete_files_of(
+    ctx: &ActionCtx,
+    storage: &dyn crate::storage::StorageDriver,
+    user_id: &str,
+    stuck: &mut Vec<Uuid>,
+) -> Result<(i64, i64), ActionError> {
+    let (mut deleted, mut bytes) = (0i64, 0i64);
+    loop {
+        let batch: Vec<DeletableMedia> = sqlx::query_as(
+            r#"select "id", "owner_id", "size", "storage_key", "thumb_key" from "uploads"
+               where ("uploads"."owner_id" = $1
+                      and (cardinality($2::uuid[]) = 0 or "uploads"."id" <> all($2::uuid[])))
+               limit $3"#,
+        )
+        .bind(user_id)
+        .bind(&*stuck)
+        .bind(ACCOUNT_DELETE_BATCH)
+        .fetch_all(&ctx.state.db)
+        .await?;
+        if batch.is_empty() {
+            return Ok((deleted, bytes));
+        }
+        let result = delete_media_bulk(&ctx.state.db, storage, &batch).await?;
+        deleted += result.deleted;
+        bytes += result.bytes;
+        if result.failed > 0 {
+            // delete_media_bulk removes exactly the rows it cleared, so
+            // whatever is still there is what it could not touch.
+            let ids: Vec<Uuid> = batch.iter().map(|r| r.id).collect();
+            let survivors: Vec<Uuid> =
+                sqlx::query_scalar(r#"select "id" from "uploads" where "uploads"."id" = any($1)"#)
+                    .bind(&ids)
+                    .fetch_all(&ctx.state.db)
+                    .await?;
+            stuck.extend(survivors);
+        }
+    }
+}
+
+/// Remove the account itself, as Better Auth's `removeUser` does (sessions,
+/// logins, the user; with the invitations of it), in ONE transaction that
+/// first locks the user row.
+///
+/// Not upstream, which deleted the files and then called `removeUser`: an
+/// upload that finished in between was in no batch, and dropping the account
+/// orphaned it while the action reported success. The lock waits for an
+/// insert still in progress (its foreign-key check holds the user row) and
+/// makes any later one fail; with `remaining` (the "delete" disposition), a
+/// file that landed meanwhile, other than the `remaining` ones storage
+/// refused, means false: nothing is removed and the caller deletes again.
+async fn remove_account(db: &sqlx::PgPool, user_id: &str, remaining: Option<&[Uuid]>) -> Result<bool, ActionError> {
+    let mut tx = db.begin().await?;
+    let found: Option<String> = sqlx::query_scalar(r#"SELECT "id" FROM "user" WHERE "id" = $1 FOR UPDATE"#)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if found.is_none() {
+        return Ok(false);
+    }
+    if let Some(stuck) = remaining {
+        let landed: i64 = sqlx::query_scalar(
+            r#"select count(*) from "uploads" where "owner_id" = $1 and not ("id" = any($2::uuid[]))"#,
+        )
+        .bind(user_id)
+        .bind(stuck)
+        .fetch_one(&mut *tx)
+        .await?;
+        if landed > 0 {
+            return Ok(false);
+        }
+    }
+    sqlx::query(r#"DELETE FROM "verification" WHERE "identifier" LIKE 'invite:%' AND "value" = $1"#)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(r#"DELETE FROM "session" WHERE "user_id" = $1"#).bind(user_id).execute(&mut *tx).await?;
+    sqlx::query(r#"DELETE FROM "account" WHERE "user_id" = $1"#).bind(user_id).execute(&mut *tx).await?;
+    sqlx::query(r#"DELETE FROM "user" WHERE "id" = $1"#).bind(user_id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------

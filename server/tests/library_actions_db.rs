@@ -471,6 +471,65 @@ async fn recalculating_quotas_corrects_every_drifted_counter() {
 
 // ── uploads ─────────────────────────────────────────────────────────────────
 
+/// An upload that finished while "Delete the account and its files" ran: it
+/// was in no batch, the account went, and the file was left ownerless while
+/// the action reported success. Now the account's sessions and tokens end
+/// first, and the final step waits for the insert and deletes it too.
+#[tokio::test]
+async fn an_upload_landing_during_an_account_deletion_is_deleted_with_it() {
+    let Some(h) = Harness::new().await else { return };
+    h.user("adm", "adm", "admin").await;
+    h.user("gone", "gone", "user").await;
+    let adm = h.session("adm").await;
+    h.session("gone").await;
+    modlight_server::api_token::create_api_token(&h.pool, "gone", "app", modlight_server::api_token::TokenScope::Full)
+        .await
+        .unwrap();
+    for i in 0..2 {
+        h.upload(Some("gone"), &format!("g{i}"), 100, "").await;
+        h.put(&format!("gone/g{i}.png"), b"gone", 7200);
+    }
+    // An upload's finish, under way: its row is written, not yet committed
+    // (its foreign-key check holds the account row).
+    let mut finishing = h.pool.begin().await.unwrap();
+    let late: Uuid = sqlx::query_scalar(
+        r#"insert into "uploads" ("owner_id", "code", "filename", "ext", "mime_type", "size", "storage_key", "delete_token")
+           values ('gone', 'late001', 'late.png', 'png', 'image/png', 50, 'gone/late001.png', 'tok-late') returning "id""#,
+    )
+    .fetch_one(&mut *finishing)
+    .await
+    .unwrap();
+    h.put("gone/late001.png", b"late", 0);
+
+    let lands = async {
+        for _ in 0..500 {
+            let waiting: i64 = sqlx::query_scalar(
+                r#"select count(*) from pg_stat_activity
+                   where datname = current_database() and wait_event_type = 'Lock' and pid <> pg_backend_pid()"#,
+            )
+            .fetch_one(&h.pool)
+            .await
+            .unwrap();
+            if waiting > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        finishing.commit().await.unwrap();
+    };
+    let (out, ()) = tokio::join!(h.rpc(Some(&adm), "admin", "deleteUserAccount", json!(["gone", "delete"])), lands);
+    assert_eq!(out["ok"], json!({ "ok": true, "deleted": 3, "bytes": 250, "failed": 0, "orphaned": 0 }));
+    let left: i64 = sqlx::query_scalar(r#"select count(*) from "uploads" where "id" = $1"#)
+        .bind(late)
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "the late upload was left ownerless");
+    assert!(!h.exists("gone/late001.png"));
+    assert_eq!(h.scalar_i64(r#"select count(*) from "api_tokens" where "user_id" = 'gone'"#).await, 0);
+    assert_eq!(h.scalar_i64(r#"select count(*) from "user" where "id" = 'gone'"#).await, 0);
+}
+
 #[tokio::test]
 async fn upload_actions_reach_own_rows_and_audit_an_admins_touch() {
     let Some(h) = Harness::new().await else { return };

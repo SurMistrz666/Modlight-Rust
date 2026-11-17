@@ -997,21 +997,14 @@ async fn set_user_quota(ctx: ActionCtx) -> ActionResult {
 async fn recalculate_user_quota(ctx: ActionCtx) -> ActionResult {
     ctx.require_admin().await?;
     let user_id = js::pg_text(js(ctx.args.raw(0)));
-    // sum(bigint) is numeric; upstream read it as a string and took `Number()`.
-    let total: String =
-        sqlx::query_scalar(r#"SELECT coalesce(sum("size"), 0)::text FROM "uploads" WHERE "owner_id" = $1"#)
-            .bind(user_id.as_deref())
-            .fetch_one(&ctx.state.db)
-            .await?;
-    let used = crate::config::js_number(&total);
-    sqlx::query(r#"UPDATE "user" SET "used_quota" = $1, "updated_at" = $2 WHERE "id" = $3"#)
-        .bind(used as i64)
-        .bind(now())
-        .bind(user_id.as_deref())
-        .execute(&ctx.state.db)
-        .await?;
+    // Not upstream: under the account's row lock, with what uploads in progress
+    // have reserved (`recount_used_quota`). No account: nothing to count, 0.
+    let used = match user_id.as_deref() {
+        Some(id) => crate::upload::finalize::recount_used_quota(&ctx.state.db, id).await?.map_or(0, |(_, after)| after),
+        None => 0,
+    };
     ctx.revalidate_path("/dashboard/admin");
-    crate::rpc::ok(&json!({ "used": Num(used) }))
+    crate::rpc::ok(&json!({ "used": Num(used as f64) }))
 }
 
 // ---------------------------------------------------------------------------

@@ -129,9 +129,39 @@ pub fn quota_fits(used: Option<i64>, max: Option<i64>, size: i64) -> bool {
     remaining_quota(used, max).is_none_or(|left| size <= left)
 }
 
+/// Not upstream: the bytes uploads (and pastes) in progress have reserved and
+/// whose row has not landed yet, per account. `used_quota` counts them from
+/// the reservation on, but no row shows them, so a recalculation from the rows
+/// alone took them away (and the account went over its quota once the files
+/// landed). This process is the only writer of reservations; every change of
+/// it happens while the transaction that changes `used_quota` (or inserts the
+/// row) still holds the account row, so `recount_used_quota`, which locks that
+/// row first, always reads it in step with the database.
+static IN_FLIGHT: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, i64>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn add_in_flight(user_id: &str, delta: i64) {
+    let mut map = IN_FLIGHT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let left = {
+        let entry = map.entry(user_id.to_string()).or_insert(0);
+        *entry += delta;
+        *entry
+    };
+    if left <= 0 {
+        map.remove(user_id);
+    }
+}
+
+/// Bytes reserved for `user_id` by uploads still in progress.
+pub fn in_flight_bytes(user_id: &str) -> i64 {
+    IN_FLIGHT.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(user_id).copied().unwrap_or(0)
+}
+
 /// Reserve `size` bytes against the owner's quota, atomically: the predicate
-/// is in the UPDATE's WHERE, so two concurrent uploads cannot both pass.
-pub(crate) async fn reserve_quota(db: &PgPool, user_id: &str, size: i64) -> Result<(), FinalizeError> {
+/// is in the UPDATE's WHERE, so two concurrent uploads cannot both pass. The
+/// reservation is in flight until [`commit_reserved_row`] or [`release_quota`].
+pub async fn reserve_quota(db: &PgPool, user_id: &str, size: i64) -> Result<(), FinalizeError> {
+    let mut tx = db.begin().await?;
     let reserved: Option<Option<i64>> = sqlx::query_scalar(
         r#"update "user" set "used_quota" = coalesce("user"."used_quota", 0) + $1, "updated_at" = $2
            where ("user"."id" = $3 and (
@@ -143,25 +173,88 @@ pub(crate) async fn reserve_quota(db: &PgPool, user_id: &str, size: i64) -> Resu
     .bind(size)
     .bind(JsDate::now())
     .bind(user_id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?;
     if reserved.is_none() {
         return Err(FinalizeError::QuotaExceeded);
+    }
+    add_in_flight(user_id, size);
+    if let Err(err) = tx.commit().await {
+        add_in_flight(user_id, -size);
+        return Err(err.into());
     }
     Ok(())
 }
 
 /// Give a reservation back when the upload it was made for never landed.
-pub(crate) async fn release_quota(db: &PgPool, user_id: &str, size: i64) -> sqlx::Result<()> {
+pub async fn release_quota(db: &PgPool, user_id: &str, size: i64) -> sqlx::Result<()> {
+    let mut tx = db.begin().await?;
     sqlx::query(
         r#"update "user" set "used_quota" = greatest(coalesce("user"."used_quota", 0) - $1, 0), "updated_at" = $2 where "user"."id" = $3"#,
     )
     .bind(size)
     .bind(JsDate::now())
     .bind(user_id)
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
+    add_in_flight(user_id, -size);
+    if let Err(err) = tx.commit().await {
+        add_in_flight(user_id, size);
+        return Err(err);
+    }
     Ok(())
+}
+
+/// Commit the transaction that inserted the row a reservation of `size` was
+/// made for: from then on the row carries the bytes. The insert's foreign-key
+/// check holds the account row until this commit, so a recount sees either
+/// the reservation or the row, never both and never neither.
+pub async fn commit_reserved_row(
+    tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: &str,
+    size: i64,
+) -> sqlx::Result<()> {
+    add_in_flight(user_id, -size);
+    if let Err(err) = tx.commit().await {
+        add_in_flight(user_id, size);
+        return Err(err);
+    }
+    Ok(())
+}
+
+/// Not upstream: set an account's `used_quota` to what it really holds, the
+/// sizes of its rows (the trash included: it still occupies disk) plus what
+/// uploads in progress have reserved. The account row is locked FIRST and the
+/// rows are summed after, in one transaction: upstream read every sum, then
+/// wrote each total, so a refund or a reservation committed in between was
+/// overwritten (an account credited or charged twice by one file). `None`
+/// when there is no such account; otherwise (before, after).
+pub async fn recount_used_quota(db: &PgPool, user_id: &str) -> sqlx::Result<Option<(i64, i64)>> {
+    let mut tx = db.begin().await?;
+    let before: Option<Option<i64>> =
+        sqlx::query_scalar(r#"select "used_quota" from "user" where "user"."id" = $1 for update"#)
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(before) = before else {
+        return Ok(None);
+    };
+    let rows: i64 =
+        sqlx::query_scalar(r#"select coalesce(sum("size"), 0)::bigint from "uploads" where "uploads"."owner_id" = $1"#)
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let (before, after) = (before.unwrap_or(0), rows + in_flight_bytes(user_id));
+    if before != after {
+        sqlx::query(r#"update "user" set "used_quota" = $1, "updated_at" = $2 where "user"."id" = $3"#)
+            .bind(after)
+            .bind(JsDate::now())
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(Some((before, after)))
 }
 
 /// Bytes the ingest is still going to consume on the storage filesystem: 0 for
@@ -460,7 +553,7 @@ pub async fn finalize_upload(
         .bind(metadata_kept)
         .fetch_one(&mut *tx)
         .await?;
-        tx.commit().await?;
+        commit_reserved_row(tx, &owner.id, reserved).await?;
         // The object an S3 tus upload left in the bucket: its ciphertext, or
         // its cleaned copy, now lives at `storage_key`.
         if let Some(existing) = input.existing_key

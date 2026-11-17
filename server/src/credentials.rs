@@ -17,15 +17,22 @@ use crate::db::types::JsDate;
 
 pub async fn write_credential_password(db: &PgPool, user_id: &str, password: &str) -> anyhow::Result<()> {
     let hash = crate::auth::password::hash_password(password).await?;
+    let mut conn = db.acquire().await?;
+    write_credential_hash(&mut conn, user_id, &hash).await
+}
+
+/// [`write_credential_password`] with the hash already made, on a connection
+/// the caller chose (a transaction that has to include it).
+pub async fn write_credential_hash(conn: &mut sqlx::PgConnection, user_id: &str, hash: &str) -> anyhow::Result<()> {
     let now = JsDate::now();
     // drizzle's `$onUpdate` stamps `updated_at` on every UPDATE of `account`.
     let updated = sqlx::query(
         r#"UPDATE "account" SET "password" = $1, "updated_at" = $2 WHERE "user_id" = $3 AND "provider_id" = 'credential' RETURNING "id""#,
     )
-    .bind(&hash)
+    .bind(hash)
     .bind(now)
     .bind(user_id)
-    .fetch_all(db)
+    .fetch_all(&mut *conn)
     .await?;
     if !updated.is_empty() {
         return Ok(());
@@ -37,9 +44,9 @@ pub async fn write_credential_password(db: &PgPool, user_id: &str, password: &st
     .bind(uuid::Uuid::new_v4().to_string())
     // Better Auth keys credential accounts by user id.
     .bind(user_id)
-    .bind(&hash)
+    .bind(hash)
     .bind(now)
-    .execute(db)
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }

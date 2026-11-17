@@ -55,14 +55,14 @@ pub fn is_missing_object_error(err: &anyhow::Error) -> bool {
 
 /// The refund statement: `used_quota = GREATEST(0, used_quota - amount)`
 /// (drizzle's `$onUpdate` stamps `updated_at` on every user update).
-async fn refund_quota(db: &PgPool, owner_id: &str, amount: i64) -> sqlx::Result<()> {
+async fn refund_quota(db: &mut sqlx::PgConnection, owner_id: &str, amount: i64) -> sqlx::Result<()> {
     sqlx::query(
         r#"update "user" set "used_quota" = GREATEST(0, "user"."used_quota" - $1), "updated_at" = $2 where "user"."id" = $3"#,
     )
     .bind(amount)
     .bind(JsDate::now())
     .bind(owner_id)
-    .execute(db)
+    .execute(&mut *db)
     .await?;
     Ok(())
 }
@@ -82,8 +82,6 @@ pub async fn delete_media_bulk(
         return Ok(BulkDeleteResult::default());
     }
     let mut removable: Vec<Uuid> = Vec::new();
-    // owner id -> bytes to refund, in first-seen order (a JS Map).
-    let mut refunds: indexmap::IndexMap<String, i64> = indexmap::IndexMap::new();
     let mut bytes = 0i64;
     let mut failed = 0i64;
     for slice in rows.chunks(STORAGE_CONCURRENCY) {
@@ -115,26 +113,35 @@ pub async fn delete_media_bulk(
     // read: two deletes of the same files at once (a double-clicked "Empty
     // trash", two API calls) both get this far, and refunding what was read
     // credited the owner twice, a quota that went down by more than was freed.
+    // Each batch's rows and their refunds go in ONE transaction: a quota
+    // recount (which locks the account row first) sees either both or neither.
     let handed: std::collections::HashMap<Uuid, &DeletableMedia> = rows.iter().map(|r| (r.id, r)).collect();
     for batch in removable.chunks(ROW_BATCH) {
+        let mut tx = db.begin().await?;
         let gone: Vec<GoneRow> = sqlx::query_as(
             r#"delete from "uploads" where "uploads"."id" = any($1)
                returning "id", "owner_id", "size", "storage_key", "thumb_key""#,
         )
         .bind(batch)
-        .fetch_all(db)
+        .fetch_all(&mut *tx)
         .await?;
-        for row in gone {
-            if let Some(read) = handed.get(&row.id) {
-                delete_moved_objects(db, storage, read, &row).await;
-            }
-            if let Some(owner) = row.owner_id {
+        // owner id -> bytes to refund; in one order, so two of these never
+        // wait on each other's accounts.
+        let mut refunds: std::collections::BTreeMap<&str, i64> = std::collections::BTreeMap::new();
+        for row in &gone {
+            if let Some(owner) = row.owner_id.as_deref() {
                 *refunds.entry(owner).or_insert(0) += row.size;
             }
         }
-    }
-    for (owner, amount) in &refunds {
-        refund_quota(db, owner, *amount).await?;
+        for (owner, amount) in &refunds {
+            refund_quota(&mut tx, owner, *amount).await?;
+        }
+        tx.commit().await?;
+        for row in &gone {
+            if let Some(read) = handed.get(&row.id) {
+                delete_moved_objects(db, storage, read, row).await;
+            }
+        }
     }
     Ok(BulkDeleteResult { deleted: removable.len() as i64, bytes, failed })
 }
@@ -149,21 +156,24 @@ pub async fn delete_media_hard(db: &PgPool, storage: &dyn StorageDriver, media: 
     purge_derived(storage, &media.id.to_string()).await;
     // Refunded only when this call removed the row (see `delete_media_bulk`):
     // a second delete of the same file credits nothing.
+    // The row and its refund in one transaction (see `delete_media_bulk`).
+    let mut tx = db.begin().await?;
     let gone: Option<GoneRow> = sqlx::query_as(
         r#"delete from "uploads" where "uploads"."id" = $1
            returning "id", "owner_id", "size", "storage_key", "thumb_key""#,
     )
     .bind(media.id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?;
     let Some(gone) = gone else {
         return Ok(());
     };
-    delete_moved_objects(db, storage, media, &gone).await;
     // No owner means the file outlived its account: no quota counter to credit.
-    if let Some(owner) = gone.owner_id {
-        refund_quota(db, &owner, gone.size).await?;
+    if let Some(owner) = gone.owner_id.as_deref() {
+        refund_quota(&mut tx, owner, gone.size).await?;
     }
+    tx.commit().await?;
+    delete_moved_objects(db, storage, media, &gone).await;
     Ok(())
 }
 

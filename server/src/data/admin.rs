@@ -6,7 +6,7 @@
 //! the guarding. The pure helpers at the bottom (key normalisation) are
 //! unit-tested.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::os::unix::ffi::OsStrExt;
 
 use serde::Serialize;
@@ -285,40 +285,22 @@ const MAX_RECALC_REPORT: usize = 50;
 /// Orphans are excluded by construction: they group under a NULL owner, which
 /// matches no account.
 pub async fn recalculate_all_quotas(db: &PgPool) -> sqlx::Result<QuotaRecalcResult> {
-    let accounts =
-        sqlx::query_as::<_, (String, String, Option<i64>)>(r#"SELECT "id", "email", "used_quota" FROM "user""#)
-            .fetch_all(db);
-    let sums = sqlx::query_as::<_, (Option<String>, Option<i64>)>(
-        r#"SELECT "owner_id", coalesce(sum("size"), 0)::bigint FROM "uploads"
-           WHERE "owner_id" IS NOT NULL GROUP BY "owner_id""#,
-    )
-    .fetch_all(db);
-    let (accounts, sums) = tokio::try_join!(accounts, sums)?;
-
-    // `if (s.ownerId)`: a truthy owner only.
-    let actual: HashMap<String, i64> = sums
-        .into_iter()
-        .filter_map(|(owner, total)| owner.filter(|o| !o.is_empty()).map(|o| (o, total.unwrap_or(0))))
-        .collect();
-
+    let accounts = sqlx::query_as::<_, (String, String)>(r#"SELECT "id", "email" FROM "user""#).fetch_all(db).await?;
     let mut changes = Vec::new();
     let mut corrected = 0;
     let mut drift = 0;
     let total = accounts.len() as i64;
-    for (id, email, used) in accounts {
-        let before = used.unwrap_or(0);
-        let after = actual.get(&id).copied().unwrap_or(0);
+    // One account at a time, each under its own row lock (see
+    // `recount_used_quota`): not upstream's read-everything-then-write, which
+    // overwrote what uploads and deletes did in between, and dropped what
+    // uploads in progress had reserved.
+    for (id, email) in accounts {
+        let Some((before, after)) = crate::upload::finalize::recount_used_quota(db, &id).await? else {
+            continue; // deleted meanwhile
+        };
         if before == after {
             continue;
         }
-        // `user.updated_at` has `$onUpdate(() => new Date())` in the schema, so
-        // drizzle's update writes it too.
-        sqlx::query(r#"UPDATE "user" SET "used_quota" = $1, "updated_at" = $2 WHERE "id" = $3"#)
-            .bind(after)
-            .bind(JsDate::now())
-            .bind(&id)
-            .execute(db)
-            .await?;
         corrected += 1;
         drift += after - before;
         if changes.len() < MAX_RECALC_REPORT {

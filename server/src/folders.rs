@@ -11,10 +11,9 @@
 
 use std::collections::HashMap;
 
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
-use crate::data::folders::{descendant_folder_ids, would_create_cycle};
 use crate::db::models::{Columns, Folder, JsDate};
 use crate::naming::{js_slice_utf8, slugify_name};
 use crate::storage::StorageDriver;
@@ -106,7 +105,7 @@ pub async fn get_owned_folder(db: &PgPool, user_id: &str, id: &str) -> FolderRes
 /// Slugs are unique per (owner, parent): pick a friendly free slug instead of
 /// surfacing a constraint violation. Does NOT exclude the folder itself
 /// (renaming to the same name moves the slug to `-2`, as upstream).
-async fn free_slug(db: &PgPool, user_id: &str, parent_id: Option<&str>, name: &str) -> FolderResult<String> {
+async fn free_slug(db: &mut PgConnection, user_id: &str, parent_id: Option<&str>, name: &str) -> FolderResult<String> {
     let base = {
         let s = slugify_name(name);
         if s.is_empty() { "folder".to_string() } else { s }
@@ -121,7 +120,7 @@ async fn free_slug(db: &PgPool, user_id: &str, parent_id: Option<&str>, name: &s
                 )
                 .bind(user_id)
                 .bind(&slug)
-                .fetch_optional(db)
+                .fetch_optional(&mut *db)
                 .await?
             }
             Some(parent) => {
@@ -131,7 +130,7 @@ async fn free_slug(db: &PgPool, user_id: &str, parent_id: Option<&str>, name: &s
                 .bind(user_id)
                 .bind(parent)
                 .bind(&slug)
-                .fetch_optional(db)
+                .fetch_optional(&mut *db)
                 .await?
             }
         };
@@ -146,28 +145,72 @@ async fn free_slug(db: &PgPool, user_id: &str, parent_id: Option<&str>, name: &s
     }
 }
 
-/// How many levels down `folder_id` sits. 0 for the root (no folder).
-async fn depth_of(db: &PgPool, user_id: &str, folder_id: Option<&str>) -> FolderResult<usize> {
-    let Some(folder_id) = folder_id.filter(|f| !f.is_empty()) else {
-        return Ok(0);
-    };
-    let rows: Vec<(Uuid, Option<Uuid>)> =
-        sqlx::query_as(r#"select "id", "parent_id" from "folders" where "folders"."owner_id" = $1"#)
-            .bind(user_id)
-            .fetch_all(db)
-            .await?;
-    let by_id: HashMap<String, Option<Uuid>> = rows.iter().map(|(id, p)| (id.to_string(), *p)).collect();
+/// One folder of an owner's tree: its id and its parent.
+type TreeRow = (Uuid, Option<Uuid>);
+
+/// Lock this owner's folder tree for a change of its shape, and read it as it
+/// is once the lock is held. Not upstream, which read the tree, decided, and
+/// wrote in separate statements: a folder created inside a subtree while that
+/// subtree was being deleted with its contents survived with a parent that no
+/// longer exists (and its files stayed live), and two moves at once (A into
+/// B, B into A) both passed the cycle check. Creating a subfolder, moving and
+/// deleting now take these row locks first, in one order, so they queue; the
+/// tree is read again AFTER the lock (a statement that waited for the lock
+/// still sees the rows of its own start, not a folder inserted meanwhile).
+async fn lock_tree(conn: &mut PgConnection, user_id: &str) -> sqlx::Result<Vec<TreeRow>> {
+    sqlx::query(r#"select "id" from "folders" where "folders"."owner_id" = $1 order by "id" for update"#)
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query_as(r#"select "id", "parent_id" from "folders" where "folders"."owner_id" = $1"#)
+        .bind(user_id)
+        .fetch_all(&mut *conn)
+        .await
+}
+
+/// `id` and every folder beneath it (a cycle already in the data ends the walk).
+fn subtree_of(rows: &[TreeRow], id: Uuid) -> Vec<Uuid> {
+    let mut children_of: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    for (child, parent) in rows {
+        if let Some(parent) = parent {
+            children_of.entry(*parent).or_default().push(*child);
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![id];
+    while let Some(cur) = stack.pop() {
+        if !seen.insert(cur) {
+            continue;
+        }
+        if let Some(children) = children_of.get(&cur) {
+            stack.extend(children.iter().copied());
+        }
+        out.push(cur);
+    }
+    out
+}
+
+/// How many levels down `folder` sits. 0 for the root (no folder).
+fn depth_in(rows: &[TreeRow], folder: Option<Uuid>) -> usize {
+    let by_id: HashMap<Uuid, Option<Uuid>> = rows.iter().copied().collect();
     let mut depth = 0;
     let mut seen = std::collections::HashSet::new();
-    let mut cur = by_id.get_key_value(folder_id).map(|(k, v)| (k.clone(), *v));
-    while let Some((id, parent)) = cur {
+    let mut cur = folder.filter(|f| by_id.contains_key(f));
+    while let Some(id) = cur {
         if !seen.insert(id) {
             break;
         }
         depth += 1;
-        cur = parent.and_then(|p| by_id.get_key_value(&p.to_string()).map(|(k, v)| (k.clone(), *v)));
+        cur = by_id.get(&id).copied().flatten();
     }
-    Ok(depth)
+    depth
+}
+
+/// A caller's folder id among the locked rows; "not found" otherwise (gone
+/// meanwhile, someone else's, or not a uuid at all: one answer).
+fn locked_folder(rows: &[TreeRow], id: &str) -> Result<Uuid, FolderOpError> {
+    Uuid::parse_str(id).ok().filter(|u| is_uuid(id) && rows.iter().any(|(r, _)| r == u)).ok_or_else(not_found)
 }
 
 /// Trim and bound a name the way `folders.name` needs it. `name` is the raw
@@ -199,19 +242,26 @@ pub async fn create_folder_for(
     name: Option<&serde_json::Value>,
     parent_id: Option<&str>,
 ) -> FolderResult<FolderRecord> {
+    let mut tx = db.begin().await?;
     if let Some(parent) = parent_id.filter(|p| !p.is_empty()) {
         get_owned_folder(db, user_id, parent).await?;
-        if depth_of(db, user_id, Some(parent)).await? >= MAX_FOLDER_DEPTH {
+        // Under the tree lock: a parent deleted meanwhile is "not found".
+        let rows = lock_tree(&mut tx, user_id).await?;
+        let parent = locked_folder(&rows, parent)?;
+        if depth_in(&rows, Some(parent)) >= MAX_FOLDER_DEPTH {
             return Err(too_deep().into());
         }
     }
     let clean = clean_name(name, Some("Folder"))?;
-    let slug = free_slug(db, user_id, parent_id, &clean).await?;
+    let slug = free_slug(&mut tx, user_id, parent_id, &clean).await?;
     let sql = format!(
         r#"insert into "folders" ("owner_id", "parent_id", "name", "slug") values ($1, $2::uuid, $3, $4) returning {}"#,
         Folder::COLUMNS
     );
-    Ok(sqlx::query_as(&sql).bind(user_id).bind(parent_id).bind(&clean).bind(&slug).fetch_one(db).await?)
+    let row: Folder =
+        sqlx::query_as(&sql).bind(user_id).bind(parent_id).bind(&clean).bind(&slug).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(row)
 }
 
 pub async fn rename_folder_for(
@@ -224,7 +274,7 @@ pub async fn rename_folder_for(
     // No fallback: renaming to nothing is a mistake.
     let clean = clean_name(name, None)?;
     let parent = f.parent_id.map(|p| p.to_string());
-    let slug = free_slug(db, user_id, parent.as_deref(), &clean).await?;
+    let slug = free_slug(&mut *db.acquire().await?, user_id, parent.as_deref(), &clean).await?;
     let sql = format!(
         r#"update "folders" set "name" = $1, "slug" = $2 where ("folders"."id" = $3::uuid and "folders"."owner_id" = $4) returning {}"#,
         Folder::COLUMNS
@@ -255,12 +305,18 @@ pub async fn delete_folder_for(
     with_contents: bool,
 ) -> FolderResult<DeleteFolderResult> {
     let f = get_owned_folder(db, user_id, id).await?;
+    let mut tx = db.begin().await?;
+    // Under the tree lock: nothing moves into, or is created inside, this
+    // folder until the delete is done, and the subtree is the one that exists.
+    let rows = lock_tree(&mut tx, user_id).await?;
+    let root = locked_folder(&rows, id)?;
     if !with_contents {
-        let mut tx = db.begin().await?;
+        // The parent as it is under the lock (a move may have changed it).
+        let parent = rows.iter().find(|(r, _)| *r == root).and_then(|(_, p)| *p);
         sqlx::query(
             r#"update "folders" set "parent_id" = $1 where ("folders"."parent_id" = $2 and "folders"."owner_id" = $3)"#,
         )
-        .bind(f.parent_id)
+        .bind(parent)
         .bind(f.id)
         .bind(user_id)
         .execute(&mut *tx)
@@ -278,11 +334,9 @@ pub async fn delete_folder_for(
         tx.commit().await?;
         return Ok(DeleteFolderResult { folders: 1, trashed: 0 });
     }
-    // descendant_folder_ids only walks rows belonging to this user.
-    let subtree: Vec<Uuid> =
-        descendant_folder_ids(db, user_id, id).await?.iter().filter_map(|s| Uuid::parse_str(s).ok()).collect();
+    // The locked rows are this user's only.
+    let subtree = subtree_of(&rows, root);
     let now = JsDate::now();
-    let mut tx = db.begin().await?;
     let trashed: Vec<Uuid> = sqlx::query_scalar(
         r#"select "id" from "uploads" where ("uploads"."owner_id" = $1 and "uploads"."folder_id" = any($2) and "uploads"."deleted_at" is null)"#,
     )
@@ -324,23 +378,33 @@ pub async fn move_folder_for(
     if let Some(parent) = new_parent_id.filter(|p| !p.is_empty()) {
         get_owned_folder(db, user_id, parent).await?;
     }
-    if would_create_cycle(db, user_id, id, new_parent_id).await? {
+    // The checks and the write under the tree lock: two moves at once can no
+    // longer both pass the cycle check (see `lock_tree`).
+    let mut tx = db.begin().await?;
+    let rows = lock_tree(&mut tx, user_id).await?;
+    let moving = locked_folder(&rows, id)?;
+    let parent = match new_parent_id.filter(|p| !p.is_empty()) {
+        Some(p) => Some(locked_folder(&rows, p)?),
+        None => None,
+    };
+    if parent.is_some_and(|p| subtree_of(&rows, moving).contains(&p)) {
         return Err(FolderOpError {
             reason: FolderIssue::Cycle,
             message: "A folder cannot be moved inside itself".into(),
         }
         .into());
     }
-    if depth_of(db, user_id, new_parent_id).await? >= MAX_FOLDER_DEPTH {
+    if depth_in(&rows, parent) >= MAX_FOLDER_DEPTH {
         return Err(too_deep().into());
     }
-    let slug = free_slug(db, user_id, new_parent_id, &f.name).await?;
+    let slug = free_slug(&mut tx, user_id, new_parent_id, &f.name).await?;
     let sql = format!(
         r#"update "folders" set "parent_id" = $1::uuid, "slug" = $2 where ("folders"."id" = $3::uuid and "folders"."owner_id" = $4) returning {}"#,
         Folder::COLUMNS
     );
     let row: Option<Folder> =
-        sqlx::query_as(&sql).bind(new_parent_id).bind(&slug).bind(id).bind(user_id).fetch_optional(db).await?;
+        sqlx::query_as(&sql).bind(new_parent_id).bind(&slug).bind(id).bind(user_id).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
     let parent_uuid = new_parent_id.and_then(|p| Uuid::parse_str(p).ok());
     Ok(row.unwrap_or(Folder { parent_id: parent_uuid, slug, ..f }))
 }
