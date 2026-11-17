@@ -85,8 +85,12 @@ pub enum TaskEffect {
     },
     /// Open the sign-in window without waiting for it (`GetInvalidConfigResult`).
     ShowSignIn,
-    /// `PinToScreen`: the picture pinned to the screen (phase 5).
-    PinToScreen(Arc<image::RgbaImage>),
+    /// `TaskHelpers.PinToScreen(image, taskSettings)`: the picture pinned to the screen
+    /// with the task's own pin options (phase 5).
+    PinToScreen(
+        Arc<image::RgbaImage>,
+        Box<crate::tasks::settings::TaskSettings>,
+    ),
     /// `TaskHelpers.OCRImage(image, taskSettings)` (`DoOCR`, phase 5).
     Ocr(
         Arc<image::RgbaImage>,
@@ -96,6 +100,8 @@ pub enum TaskEffect {
     AnalyzeImage(PathBuf, Box<crate::tasks::settings::TaskSettings>),
     /// `TaskHelpers.OpenQRCodeScanFromImageFile(filePath)` (phase 5).
     ScanQrCode(PathBuf),
+    /// `TaskHelpers.OpenQRCode(text)`: the after-upload "Show QR code" over the link.
+    ShowQrCode(String),
     /// `TaskHelpers.PrintImage(image)` (`SendImageToPrinter`, phase 5).
     PrintImage(Arc<image::RgbaImage>),
     /// The large-file warning's "don't show again".

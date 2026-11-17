@@ -365,10 +365,9 @@ impl AppState {
                             Some(&metadata),
                             counter,
                         );
-                        self.uploads
-                            .ctx
-                            .auto_increment
-                            .store(next, std::sync::atomic::Ordering::SeqCst);
+                        if next != counter {
+                            self.set_name_counter(next);
+                        }
                         folder.join(name)
                     }
                 };

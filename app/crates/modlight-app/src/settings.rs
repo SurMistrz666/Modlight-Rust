@@ -1565,10 +1565,7 @@ fn task_page(
         }
     }
     if auto_changed {
-        state.config.set(
-            "NameParserAutoIncrementNumber",
-            serde_json::json!(auto_increment),
-        );
+        state.set_name_counter(auto_increment);
     }
     if (changed && target == TaskTarget::Defaults) || auto_changed {
         state.save_config();

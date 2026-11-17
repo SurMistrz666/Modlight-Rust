@@ -666,7 +666,10 @@ impl WorkerTask {
             log::info!("Image copied to clipboard.");
         }
         if job.has(AfterCaptureTasks::PinToScreen) {
-            ctx.channel.effect(TaskEffect::PinToScreen(image.clone()));
+            ctx.channel.effect(TaskEffect::PinToScreen(
+                image.clone(),
+                Box::new(settings.clone()),
+            ));
         }
         if job.has(AfterCaptureTasks::SendImageToPrinter) {
             ctx.channel.effect(TaskEffect::PrintImage(image.clone()));
@@ -1128,7 +1131,21 @@ impl WorkerTask {
         if !gate::uploads_to_modlight(&info) {
             return false;
         }
-        let file_path = Some(PathBuf::from(info.file_path())).filter(|p| p.is_file());
+        // Not upstream (`Attach` takes the task's file whenever there is one): the file
+        // stands in for the upload only when it holds what this task was sending. A
+        // picture processed during a file upload (effects, annotations, another format)
+        // or a text saved with a byte order mark has its file still on disk, but the
+        // upload was the task's own bytes, and the queue must send those.
+        let file_path = Some(PathBuf::from(info.file_path()))
+            .filter(|p| p.is_file())
+            .filter(|p| match &data {
+                None => true,
+                Some(TaskData::File(source)) => source == p,
+                Some(TaskData::Bytes(bytes)) => {
+                    std::fs::metadata(p).is_ok_and(|m| m.len() == bytes.len() as u64)
+                        && std::fs::read(p).is_ok_and(|file| file == **bytes)
+                }
+            });
         let bytes = if file_path.is_none() {
             data.and_then(|d| d.bytes().ok())
         } else {
@@ -1300,7 +1317,10 @@ impl WorkerTask {
             };
             ctx.channel.effect(TaskEffect::OpenUrl(url));
         }
-        // Show QR code arrives with the QR tool (phase 5).
+        if settings.after_upload_job.has(AfterUploadTasks::ShowQRCode) {
+            ctx.channel
+                .effect(TaskEffect::ShowQrCode(info.result.to_string()));
+        }
     }
 
     /// `OnTaskCompleted`: the final status, then the one event the task list acts on.
@@ -1428,6 +1448,26 @@ mod tests {
                         settings: Box::new(info.settings),
                     });
                 }
+                Ok(TaskMessage::Ask { question, .. }) => panic!("not expected: {question:?}"),
+                Ok(_) => {}
+                Err(error) => panic!("the task did not end: {error}"),
+            }
+        }
+    }
+
+    /// Play the window until the task ends, as [`wait_for_end`] does, and return every
+    /// effect the task handed to it.
+    fn effects_until_end(receiver: &Receiver<TaskMessage>, id: u64) -> Vec<TaskEffect> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut effects = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match receiver.recv_timeout(left) {
+                Ok(TaskMessage::Event {
+                    task,
+                    event: TaskEvent::TaskCompleted,
+                }) if task == id => return effects,
+                Ok(TaskMessage::Effect(effect)) => effects.push(effect),
                 Ok(TaskMessage::Ask { question, .. }) => panic!("not expected: {question:?}"),
                 Ok(_) => {}
                 Err(error) => panic!("the task did not end: {error}"),
@@ -1621,5 +1661,134 @@ mod tests {
             });
             assert_eq!(Arc::strong_count(&picture), 1, "toast {toast}");
         }
+    }
+
+    /// "Show QR code" after the upload (`AfterUploadTasks.ShowQRCode`) opens the QR code
+    /// window over the link, as upstream's `TaskHelpers.OpenQRCode(Info.Result.ToString())`
+    /// does. It was offered in the menus and the task settings but did nothing.
+    #[test]
+    fn show_qr_code_after_upload_opens_the_link_as_a_code() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let stored = stand_in(&runtime, 200, r#"{"url":"http://127.0.0.1/u/qr"}"#);
+        let profile = tempfile::tempdir().unwrap();
+        let (ctx, receiver) = context_at(&runtime, profile.path(), Some(&stored));
+        let mut settings = TaskSettings {
+            after_capture_job: AfterCaptureTasks::UploadImageToHost,
+            after_upload_job: AfterUploadTasks::ShowQRCode,
+            ..TaskSettings::default()
+        };
+        settings
+            .general_settings
+            .show_toast_notification_after_task_completed = false;
+        let metadata = TaskMetadata {
+            image: Some(Arc::new(image::RgbaImage::new(16, 8))),
+            ..TaskMetadata::default()
+        };
+        let task = WorkerTask::image_upload(metadata, settings, None, &ctx);
+        task.start(&ctx);
+        let effects = effects_until_end(&receiver, task.id);
+        assert_eq!(task.status(), TaskStatus::Completed);
+        let shown: Vec<_> = effects
+            .iter()
+            .filter_map(|e| match e {
+                TaskEffect::ShowQrCode(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(shown, ["http://127.0.0.1/u/qr"]);
+    }
+
+    /// "Pin to screen" after a capture pins with the task's own settings
+    /// (`TaskHelpers.PinToScreen(image, Info.TaskSettings)`): a hotkey with its own tool
+    /// settings uses its pin options, and changes made in the pin go back to it. The
+    /// window used to pin with the default task settings whatever the hotkey said.
+    #[test]
+    fn pin_to_screen_carries_the_tasks_own_settings() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let profile = tempfile::tempdir().unwrap();
+        let (ctx, receiver) = context(&runtime, profile.path());
+        let mut settings = TaskSettings {
+            after_capture_job: AfterCaptureTasks::PinToScreen,
+            use_default_tools_settings: false,
+            hotkey: Some(42),
+            ..TaskSettings::default()
+        };
+        settings
+            .general_settings
+            .show_toast_notification_after_task_completed = false;
+        let metadata = TaskMetadata {
+            image: Some(Arc::new(image::RgbaImage::new(16, 8))),
+            ..TaskMetadata::default()
+        };
+        let task = WorkerTask::image_upload(metadata, settings, None, &ctx);
+        task.start(&ctx);
+        let effects = effects_until_end(&receiver, task.id);
+        let pinned: Vec<_> = effects
+            .iter()
+            .filter_map(|e| match e {
+                TaskEffect::PinToScreen(image, settings) => Some((image.width(), settings)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pinned.len(), 1);
+        assert_eq!(pinned[0].0, 16);
+        assert_eq!(pinned[0].1.hotkey, Some(42));
+        assert!(!pinned[0].1.use_default_tools_settings);
+    }
+
+    /// An image processed during a file upload ("Process images during file upload": the
+    /// effects, the editor, the image format) that could not go out is queued as the
+    /// task's own bytes. The queue used to take the original file because it was still
+    /// on disk, and sent the unprocessed picture under the processed name (`.jpg` here,
+    /// holding the PNG it was made from).
+    #[test]
+    fn a_processed_picture_is_queued_as_processed() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let unavailable = stand_in(&runtime, 503, r#"{"message":"Later."}"#);
+        let profile = tempfile::tempdir().unwrap();
+        let (ctx, receiver) = context_at(&runtime, profile.path(), Some(&unavailable));
+        if let Ok(mut settings) = ctx.settings.write() {
+            settings.max_upload_fail_retry = 0;
+        }
+        let original = profile.path().join("photo.png");
+        image::RgbaImage::from_pixel(16, 8, image::Rgba([200, 30, 30, 255]))
+            .save(&original)
+            .unwrap();
+        let mut settings = TaskSettings {
+            after_capture_job: AfterCaptureTasks::UploadImageToHost,
+            ..TaskSettings::default()
+        };
+        settings.advanced_settings.process_images_during_file_upload = true;
+        settings.image_settings.image_format = crate::tasks::settings::ImageFormat::JPEG;
+        settings
+            .general_settings
+            .show_toast_notification_after_task_completed = false;
+        let task = WorkerTask::file_upload(&original, settings, &ctx).unwrap();
+        task.start(&ctx);
+        wait_for_end(&receiver, task.id);
+        assert_eq!(task.status(), TaskStatus::Stopped, "handed to the queue");
+        let queued = ctx.queue.snapshot();
+        assert_eq!(queued.len(), 1);
+        let item = &queued[0];
+        assert_eq!(item.file_name, "photo.jpg");
+        assert!(
+            item.owns_source,
+            "a copy of the task's bytes, not the original"
+        );
+        let sent = std::fs::read(&item.source_path).unwrap();
+        assert_eq!(&sent[..2], &[0xFF, 0xD8], "the JPEG the task made");
+        assert!(original.is_file(), "the original is left alone");
     }
 }

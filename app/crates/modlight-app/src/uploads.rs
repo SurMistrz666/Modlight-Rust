@@ -207,6 +207,20 @@ impl AppState {
         settings
     }
 
+    /// `Program.Settings.NameParserAutoIncrementNumber` changed outside a task (the naming
+    /// page, the editor's own save): the counter the tasks name files with moves with the
+    /// settings file, or the next capture would carry on from the old value and write it
+    /// back over the new one.
+    pub fn set_name_counter(&mut self, value: i64) {
+        self.uploads
+            .ctx
+            .auto_increment
+            .store(value, std::sync::atomic::Ordering::SeqCst);
+        self.config
+            .set("NameParserAutoIncrementNumber", serde_json::json!(value));
+        self.config_dirty = true;
+    }
+
     /// Start the queue and read the history; called once when the window opens.
     pub fn start_uploads(&mut self) {
         self.sync_upload_settings();
@@ -664,15 +678,14 @@ impl AppState {
                 .messages
                 .push_back(MessageBox::new(&title, &text, icon)),
             TaskEffect::ShowSignIn => self.show_sign_in(),
-            // `TaskHelpers.PinToScreen(image)` (phase 5, `tools::pin`).
-            TaskEffect::PinToScreen(image) => {
-                let settings = self.default_task_settings();
-                self.pin_picture(image, &settings);
-            }
+            // `TaskHelpers.PinToScreen(image, taskSettings)` (phase 5, `tools::pin`): the
+            // task's own pin options, and its hotkey is where changes to them go.
+            TaskEffect::PinToScreen(image, settings) => self.pin_picture(image, &settings),
             // The other tools a task hands work to (phase 5, `tools`).
             TaskEffect::Ocr(image, settings) => self.ocr_image((*image).clone(), None, *settings),
             TaskEffect::AnalyzeImage(file, settings) => self.task_analyze_image(file, *settings),
             TaskEffect::ScanQrCode(file) => self.open_qr_code_scan(Some(file), None),
+            TaskEffect::ShowQrCode(text) => self.open_qr_code(Some(text)),
             TaskEffect::PrintImage(image) => self.print_image((*image).clone()),
             TaskEffect::DisableLargeFileWarning => {
                 self.config
@@ -1976,6 +1989,44 @@ mod tests {
             .set("PNGStripColorSpaceInformation", serde_json::json!(false));
         state.sync_upload_settings();
         assert!(!state.uploads.ctx.png_strip_color_space());
+    }
+
+    /// The counter set on the naming page (`NameParserAutoIncrementNumber`) is the one the
+    /// next capture is named with. The tasks keep their own copy of it, which the page
+    /// never updated: after a reset to 0 the next capture went on from the old value and
+    /// wrote it back over the reset.
+    #[test]
+    fn a_name_counter_set_in_the_settings_names_the_next_capture() {
+        use modlight_core::tasks::host::{TaskEffect, TaskMessage};
+        let mut state = crate::qa::state(&crate::qa::Look::default(), true);
+        let mut settings = state.default_task_settings();
+        settings.upload_settings.name_format_pattern = "shot-%i".into();
+        let name = |state: &AppState| state.uploads.ctx.file_name(&settings, Some("png"), None);
+        for _ in 0..5 {
+            name(&state);
+        }
+        assert_eq!(name(&state), "shot-6.png");
+
+        state.set_name_counter(0);
+        assert_eq!(
+            state.config.get("NameParserAutoIncrementNumber"),
+            Some(&serde_json::json!(0))
+        );
+        assert_eq!(name(&state), "shot-1.png");
+        let written: Vec<i64> = state
+            .uploads
+            .receiver
+            .try_iter()
+            .filter_map(|m| match m {
+                TaskMessage::Effect(TaskEffect::SetAutoIncrement(value)) => Some(value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            written.last(),
+            Some(&1),
+            "the step after the reset is saved"
+        );
     }
 
     /// The app has one confirmation window. A notice's "Delete file" asked while another
