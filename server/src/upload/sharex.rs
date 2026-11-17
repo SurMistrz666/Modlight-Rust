@@ -265,6 +265,16 @@ async fn upload(state: &AppState, req: axum::extract::Request) -> anyhow::Result
             }
         }
     };
+    // Not upstream: the account as it is NOW that the file has arrived, as the
+    // tus finish reads it. The row from the start of the request is as old as
+    // the body is long (minutes for a recording), and finalize follows its
+    // switches: "Remove metadata", the default file password (which "apply to
+    // existing files" may have just rewritten), hidden uploads, the default
+    // folder. Who may upload was settled by the token above.
+    let owner = match crate::auth::session::find_user(&state.db, &owner.id).await? {
+        Some(now) => now,
+        None => owner,
+    };
 
     // ── where should it land? ── An id this account does not own does NOT
     // fail the upload: the bytes are here, the account default applies and

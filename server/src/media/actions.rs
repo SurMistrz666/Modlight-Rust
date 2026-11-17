@@ -115,15 +115,21 @@ pub async fn delete_media_bulk(
     // read: two deletes of the same files at once (a double-clicked "Empty
     // trash", two API calls) both get this far, and refunding what was read
     // credited the owner twice, a quota that went down by more than was freed.
+    let handed: std::collections::HashMap<Uuid, &DeletableMedia> = rows.iter().map(|r| (r.id, r)).collect();
     for batch in removable.chunks(ROW_BATCH) {
-        let gone: Vec<(Option<String>, i64)> =
-            sqlx::query_as(r#"delete from "uploads" where "uploads"."id" = any($1) returning "owner_id", "size""#)
-                .bind(batch)
-                .fetch_all(db)
-                .await?;
-        for (owner, size) in gone {
-            if let Some(owner) = owner {
-                *refunds.entry(owner).or_insert(0) += size;
+        let gone: Vec<GoneRow> = sqlx::query_as(
+            r#"delete from "uploads" where "uploads"."id" = any($1)
+               returning "id", "owner_id", "size", "storage_key", "thumb_key""#,
+        )
+        .bind(batch)
+        .fetch_all(db)
+        .await?;
+        for row in gone {
+            if let Some(read) = handed.get(&row.id) {
+                delete_moved_objects(db, storage, read, &row).await;
+            }
+            if let Some(owner) = row.owner_id {
+                *refunds.entry(owner).or_insert(0) += row.size;
             }
         }
     }
@@ -143,16 +149,59 @@ pub async fn delete_media_hard(db: &PgPool, storage: &dyn StorageDriver, media: 
     purge_derived(storage, &media.id.to_string()).await;
     // Refunded only when this call removed the row (see `delete_media_bulk`):
     // a second delete of the same file credits nothing.
-    let gone: Option<(Option<String>, i64)> =
-        sqlx::query_as(r#"delete from "uploads" where "uploads"."id" = $1 returning "owner_id", "size""#)
-            .bind(media.id)
-            .fetch_optional(db)
-            .await?;
+    let gone: Option<GoneRow> = sqlx::query_as(
+        r#"delete from "uploads" where "uploads"."id" = $1
+           returning "id", "owner_id", "size", "storage_key", "thumb_key""#,
+    )
+    .bind(media.id)
+    .fetch_optional(db)
+    .await?;
+    let Some(gone) = gone else {
+        return Ok(());
+    };
+    delete_moved_objects(db, storage, media, &gone).await;
     // No owner means the file outlived its account: no quota counter to credit.
-    if let Some((Some(owner), size)) = gone {
-        refund_quota(db, &owner, size).await?;
+    if let Some(owner) = gone.owner_id {
+        refund_quota(db, &owner, gone.size).await?;
     }
     Ok(())
+}
+
+/// A row as its permanent delete removed it.
+#[derive(sqlx::FromRow)]
+struct GoneRow {
+    id: Uuid,
+    owner_id: Option<String>,
+    size: i64,
+    storage_key: String,
+    thumb_key: Option<String>,
+}
+
+/// The objects of the row the delete REMOVED, when they are no longer the
+/// ones the caller read (and already deleted). Between that read and the
+/// delete, the file-vault pass (switching encryption on or off) or an in-place
+/// conversion may have pointed the row at a new object and retired the old
+/// one; deleting only the old key left the new one in storage with nothing
+/// pointing at it: the bytes of a file deleted "forever", in plaintext after a
+/// pass that decrypts. A key some other row still points at is never touched.
+async fn delete_moved_objects(db: &PgPool, storage: &dyn StorageDriver, read: &DeletableMedia, gone: &GoneRow) {
+    let moved = [
+        Some(gone.storage_key.as_str()).filter(|k| *k != read.storage_key),
+        gone.thumb_key.as_deref().filter(|k| !k.is_empty() && Some(*k) != read.thumb_key.as_deref()),
+    ];
+    for key in moved.into_iter().flatten() {
+        match crate::vault::store::is_referenced(db, key).await {
+            Ok(false) => {
+                if let Err(err) = storage.delete(key).await
+                    && !is_missing_object_error(&err)
+                {
+                    tracing::error!("[delete] object left behind: {key} {err:#}");
+                }
+            }
+            Ok(true) => {}
+            Err(err) => tracing::error!("[delete] object left behind: {key} {err}"),
+        }
+    }
 }
 
 /// Soft-delete (move to trash). `WHERE deleted_at IS NULL` so trashing

@@ -446,6 +446,50 @@ async fn sharex_uploads_are_cleaned_before_they_are_described() {
     w.drop().await;
 }
 
+/// The account's switches are read when the file has ARRIVED, as tus reads
+/// them at its finish. A ShareX upload read them when its request started,
+/// before a body that can take minutes: "Remove metadata" switched on while a
+/// recording was still being sent let that file keep its location (and a
+/// default file password set meanwhile, "applied to existing files", missed
+/// it the same way).
+#[tokio::test]
+async fn a_sharex_upload_follows_a_switch_turned_on_while_it_was_sent() {
+    let w = world!();
+    let owner = w.user().await;
+    let token = w.token(&owner, TokenScope::Full).await;
+    let photo = phone_jpeg();
+    let boundary = "----strip";
+    let head = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"slow.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
+    );
+    let (half, rest) = photo.split_at(photo.len() / 2);
+    let mut tail = rest.to_vec();
+    tail.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    // Capacity 1: the second send returns only once the handler took the
+    // first chunk, so it has authenticated and is reading the body.
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(1);
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|c| (c, rx)) });
+    let upload = w.request(
+        Request::post("/upload")
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .header("x-api-key", &token),
+        Body::from_stream(stream),
+    );
+    let sender = async {
+        tx.send(Ok(bytes::Bytes::from(head.into_bytes()))).await.unwrap();
+        tx.send(Ok(bytes::Bytes::copy_from_slice(half))).await.unwrap();
+        tx.send(Ok(bytes::Bytes::new())).await.unwrap();
+        assert_eq!(w.switch(&token, true).await.status, StatusCode::OK);
+        tx.send(Ok(bytes::Bytes::from(tail))).await.unwrap();
+        drop(tx);
+    };
+    let (up, ()) = tokio::join!(upload, sender);
+    assert_eq!(up.status, StatusCode::CREATED, "{}", up.text());
+    let row = w.newest(&owner).await;
+    assert_clean("sharex sent across the switch", &w.stored(&row.storage_key));
+    w.drop().await;
+}
+
 #[tokio::test]
 async fn tus_uploads_from_the_panel_and_from_the_app_are_cleaned() {
     let w = world!();

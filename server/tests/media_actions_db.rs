@@ -119,3 +119,56 @@ async fn a_file_deleted_twice_is_refunded_once() {
     assert_eq!(left, 0);
     t.drop().await;
 }
+
+fn put_object(storage: &LocalDriver, key: &str, body: &[u8]) {
+    let path = storage.root().join(key);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, body).unwrap();
+}
+
+/// Point a row at a new object, as the file-vault pass (`switch_row`) or an
+/// in-place conversion does between a delete's read and its `DELETE`.
+async fn move_object(db: &PgPool, storage: &LocalDriver, media: &DeletableMedia, new_key: &str) {
+    put_object(storage, new_key, b"the new bytes");
+    sqlx::query(r#"update "uploads" set "storage_key" = $1 where "id" = $2"#)
+        .bind(new_key)
+        .bind(media.id)
+        .execute(db)
+        .await
+        .unwrap();
+}
+
+/// A permanent delete that read the row just before the vault pass (or a
+/// conversion) moved it to a new object: the row and the old object went, the
+/// new object stayed in storage with nothing pointing at it (after a pass that
+/// decrypts, the plaintext of a file deleted "forever"). Both shapes of the
+/// delete now also remove the object the removed row pointed at.
+#[tokio::test]
+async fn a_delete_that_raced_a_rewrite_leaves_no_object_behind() {
+    use modlight_server::storage::StorageDriver;
+    let t = db_or_skip!();
+    let db = &t.pool;
+    let dir = tempfile::tempdir().unwrap();
+    let storage = LocalDriver::new(dir.path().to_str().unwrap());
+    user_with_quota(db, "u1", 1000).await;
+
+    let one = trashed_upload(db, "u1", "ddddddd", 100).await;
+    put_object(&storage, &one.storage_key, b"old");
+    move_object(db, &storage, &one, "u1/ddddddd.0a1b2c3d4e5f.png").await;
+    delete_media_hard(db, &storage, &one).await.unwrap();
+    assert!(storage.stat(&one.storage_key).await.unwrap().is_none());
+    assert!(storage.stat("u1/ddddddd.0a1b2c3d4e5f.png").await.unwrap().is_none(), "the new object was left");
+    assert_eq!(used_quota(db, "u1").await, 900);
+
+    let rows = vec![trashed_upload(db, "u1", "eeeeeee", 100).await, trashed_upload(db, "u1", "fffffff", 200).await];
+    move_object(db, &storage, &rows[1], "u1/fffffff.0a1b2c3d4e5f.png").await;
+    // A key another row still points at is never touched.
+    let keeper = trashed_upload(db, "u1", "ggggggg", 50).await;
+    move_object(db, &storage, &rows[0], &keeper.storage_key).await;
+    let result = delete_media_bulk(db, &storage, &rows).await.unwrap();
+    assert_eq!((result.deleted, result.failed), (2, 0));
+    assert!(storage.stat("u1/fffffff.0a1b2c3d4e5f.png").await.unwrap().is_none(), "the new object was left");
+    assert!(storage.stat(&keeper.storage_key).await.unwrap().is_some(), "a live object was deleted");
+    assert_eq!(used_quota(db, "u1").await, 600);
+    t.drop().await;
+}
