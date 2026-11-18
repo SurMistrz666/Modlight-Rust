@@ -3,7 +3,8 @@
 //! `.Duplicates.cs`). Each network call runs on the runtime and finishes with a
 //! completion that checks it still belongs to the listing on screen.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use modlight_api::{
     ApiError, Credential, MAX_DELETE_IDS, UploadEdit, UploadQuery, escape_data_string,
@@ -13,13 +14,14 @@ use modlight_core::icons;
 use modlight_core::l10n::{Arg, format, s, t};
 use modlight_core::library::{CloudFile, LIBRARY_VIEWS, LinkFormat, convert, pager};
 use modlight_core::messages;
+use modlight_core::names::file_helpers;
 
 use crate::dialogs::confirm::{Confirm, ConfirmAction, ConfirmOutcome};
 use crate::dialogs::duplicates::{Duplicates, DuplicatesAction};
 use crate::dialogs::folder_delete::{FolderDelete, FolderDeleteChoice};
 use crate::dialogs::link_settings::{LinkSettings, LinkSettingsOutcome};
 use crate::dialogs::prompt::{Prompt, PromptOutcome, PromptPurpose};
-use crate::state::AppState;
+use crate::state::{AppState, Effect};
 use crate::vault::Waiting;
 
 /// Emptying the trash reads it in pages of this size...
@@ -471,6 +473,108 @@ impl AppState {
         }
     }
 
+    // ------------------------------------------------------------------ files on disk
+
+    /// The file on this computer a library file was uploaded from, while it is there
+    /// (the upload history knows it).
+    pub fn local_copy(&self, id: &str) -> Option<PathBuf> {
+        let file = self.space.file(id)?;
+        self.upload_tab.local_file(&file.code).map(Path::to_path_buf)
+    }
+
+    /// "Locate on disk": the file selected in Explorer (or the Finder).
+    pub fn reveal_local(&mut self, id: &str) {
+        if let Some(path) = self.local_copy(id) {
+            self.effects.push(Effect::Reveal(path));
+        }
+    }
+
+    /// The files themselves to the clipboard, to paste into a conversation. One file:
+    /// the copy on this computer, or a download of it when there is none. Several: the
+    /// ones on this computer.
+    pub fn copy_contents(&mut self, ids: &[String]) {
+        if let [id] = ids {
+            match self.local_copy(id) {
+                Some(path) => self.copy_file_contents(path),
+                None => self.download_for_clipboard(id),
+            }
+            return;
+        }
+        let files: Vec<PathBuf> = ids.iter().filter_map(|id| self.local_copy(id)).collect();
+        if let [only] = files.as_slice() {
+            self.copy_file_contents(only.clone());
+        } else if !files.is_empty() {
+            let names = files.len().to_string();
+            self.effects.push(Effect::CopyFiles(files));
+            self.copied_notice(&names);
+        }
+    }
+
+    /// A still picture goes as a picture, which is what a chat pastes; anything else,
+    /// a GIF included (a picture would lose the motion), goes as the file.
+    fn copy_file_contents(&mut self, path: PathBuf) {
+        let text = path.to_string_lossy().to_lowercase();
+        let still = file_helpers::is_image_file(&text) && !text.ends_with(".gif");
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match still
+            .then(|| crate::tools::files::load_image(&path))
+            .flatten()
+        {
+            Some(image) => self.effects.push(Effect::CopyImage(Arc::new(image))),
+            None => self.effects.push(Effect::CopyFiles(vec![path])),
+        }
+        self.copied_notice(&name);
+    }
+
+    fn copied_notice(&mut self, what: &str) {
+        let text = format(
+            t(s::TaskHelpers_OpenQuickScreenColorPicker_Copied_to_clipboard___0_),
+            &[Arg::from(what)],
+        );
+        self.notice(icons::CLIPBOARD_CHECK, &text, "", false);
+    }
+
+    /// A file that is not on this computer: downloaded into a folder of its own in the
+    /// temporary folder first. The folder is emptied each time, so it holds only the
+    /// file the clipboard may still point at.
+    fn download_for_clipboard(&mut self, id: &str) {
+        let Some(file) = self.space.file(id).filter(|f| f.has_media_base()).cloned() else {
+            return;
+        };
+        let Some(credential) = self.credential_or_sign_in() else {
+            return;
+        };
+        let folder = std::env::temp_dir()
+            .join(modlight_core::APP_NAME)
+            .join("Clipboard");
+        let _ = std::fs::remove_dir_all(&folder);
+        if let Err(error) = std::fs::create_dir_all(&folder) {
+            log::warn!("Modlight: no folder for the clipboard copy: {error}");
+            return;
+        }
+        // The name comes from the server: only its last part is used as a file name.
+        let name = Path::new(&file.name)
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_else(|| file.code.clone().into());
+        let path = folder.join(name);
+        let link = file.download_link();
+        let api = self.api.clone();
+        self.rt.spawn(async move {
+            let answer = api.download_to_file(&credential, &link, &path).await;
+            Box::new(
+                move |state: &mut AppState, _ctx: &egui::Context| match answer {
+                    Ok(()) => state.copy_file_contents(path),
+                    Err(ApiError::Locked(locked)) => state.vault_refused(&credential, &locked),
+                    Err(error) => state.report_failure(&error, &credential.host),
+                },
+            )
+        });
+    }
+
     // ------------------------------------------------------------------ edits
 
     fn edit_files(&mut self, ids: &[String], edit: UploadEdit, done: EditDone) {
@@ -512,6 +616,9 @@ impl AppState {
             {
                 self.media.bytes.rename(&old, new);
                 self.media.motion_bytes.rename(&old, new);
+                if let Some(path) = self.upload_tab.local_files.remove(&old) {
+                    self.upload_tab.local_files.insert(new.to_string(), path);
+                }
             }
         }
         match done {

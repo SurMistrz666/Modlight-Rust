@@ -1,6 +1,8 @@
 //! The details drawer's state (`ModlightDetailsModel.cs`): which file, open or sliding,
 //! and the brief "copied" acknowledgements.
 
+use std::path::Path;
+
 use modlight_core::format::{cloud_size, n0};
 use modlight_core::icons;
 use modlight_core::l10n::{Arg, format, s, t};
@@ -124,6 +126,15 @@ pub fn facts(file: &CloudFile) -> Vec<Fact> {
         mono: true,
     });
     out
+}
+
+/// The last About row when the file was uploaded from this computer and is still there.
+pub fn local_fact(path: &Path) -> Fact {
+    Fact {
+        label: t(s::MySpace_DetailsOnDisk).to_string(),
+        value: path.display().to_string(),
+        mono: false,
+    }
 }
 
 /// "1920 x 1080", when the server knows both.

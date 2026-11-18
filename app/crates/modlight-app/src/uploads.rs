@@ -327,6 +327,10 @@ impl AppState {
                     snapshot_due = true;
                     let row = self.upload_tab.row_from_queue(&outcome);
                     self.upload_tab.insert(row);
+                    if outcome.succeeded && !outcome.item.owns_source {
+                        self.upload_tab
+                            .remember_local(&outcome.link, &outcome.item.source_path);
+                    }
                     let ctx_tasks = self.uploads.ctx.clone();
                     if self
                         .uploads
@@ -1335,6 +1339,9 @@ impl AppState {
                 state.upload_tab.loading_history = false;
                 match items {
                     Ok(mut items) => {
+                        for item in &items {
+                            state.upload_tab.remember_local(&item.url, &item.file_path);
+                        }
                         items.retain(|item| !item.url.is_empty());
                         items.sort_by_key(|item| std::cmp::Reverse(item.date_time));
                         items.truncate(crate::upload_tab::MAX_HISTORY_ROWS);

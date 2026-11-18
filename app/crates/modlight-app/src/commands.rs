@@ -44,6 +44,10 @@ pub enum Command {
     ShowDetails(String),
     CopyLinks(Vec<String>),
     CopyAs(Vec<String>, LinkFormat),
+    /// The files themselves (a picture as a picture) to the clipboard.
+    CopyContents(Vec<String>),
+    /// Explorer at the file this one was uploaded from.
+    RevealLocal(String),
     OpenInBrowser(String),
     Download(String),
     DownloadAs(String, String),
@@ -166,6 +170,8 @@ impl AppState {
             Command::ShowDetails(id) => self.show_details(&id, ctx),
             Command::CopyLinks(ids) => self.copy_links(&ids),
             Command::CopyAs(ids, format) => self.copy_as(&ids, format),
+            Command::CopyContents(ids) => self.copy_contents(&ids),
+            Command::RevealLocal(id) => self.reveal_local(&id),
             Command::OpenInBrowser(id) => {
                 if let Some(file) = self.space.file(&id).filter(|f| f.can_open()) {
                     let link = file.open_link.clone();
