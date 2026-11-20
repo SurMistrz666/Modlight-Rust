@@ -53,6 +53,10 @@ fn general(value: f64) -> String {
     Culture::current().general(value)
 }
 
+/// `Environment.NewLine`: what `$n` becomes in the text the picker copies. A Windows
+/// clipboard holds CRLF lines; a bare LF pastes as one line into many Windows programs.
+const NEW_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
 /// `CodeMenuEntryPixelInfo.Parse`.
 pub fn pixel_info(input: &str, color: Color, x: i64, y: i64) -> String {
     let hex = color::to_hex(color, ColorFormat::Rgb);
@@ -77,7 +81,7 @@ pub fn pixel_info(input: &str, color: Color, x: i64, y: i64) -> String {
     text = replace_ignore_case(&text, "$name", &color::color_name(color));
     text = replace_ignore_case(&text, "$x", &x.to_string());
     text = replace_ignore_case(&text, "$y", &y.to_string());
-    text = replace_ignore_case(&text, "$n", "\n");
+    text = replace_ignore_case(&text, "$n", NEW_LINE);
 
     for (token, component) in [("$r1", color.r), ("$g1", color.g), ("$b1", color.b)] {
         for (whole, inside) in each_between(&text.clone(), &format!("{token}{{"), "}") {
@@ -179,7 +183,7 @@ mod tests {
         assert_eq!(pixel_info("$r255, $g255, $b255", c, 5, 6), "18, 140, 200");
         assert_eq!(
             pixel_info("RGB: $r255, $g255, $b255$nHex: $hex$nX: $x Y: $y", c, 5, 6),
-            "RGB: 18, 140, 200\nHex: 128cc8\nX: 5 Y: 6"
+            format!("RGB: 18, 140, 200{NEW_LINE}Hex: 128cc8{NEW_LINE}X: 5 Y: 6")
         );
         assert_eq!(pixel_info("$r1 $g1{1} $b1{0}", c, 0, 0), "0.071 0.5 1");
         assert_eq!(pixel_info("$c100 $k100", c, 0, 0), "91 21.57");
@@ -200,6 +204,19 @@ mod tests {
         );
         assert_eq!(screen_picker_text("", c, 0, 0), "");
         set_thread_culture(None);
+    }
+
+    /// `$n` in the copied text is `Environment.NewLine`, as upstream's
+    /// `CodeMenuEntryPixelInfo.Parse` writes it (and as the name parser's `%n` is): CRLF on
+    /// Windows. The magnifier's own label (`screen_picker_text`) is drawn, not copied, and
+    /// keeps a bare LF.
+    #[test]
+    fn copied_lines_end_as_the_system_ends_them() {
+        let c = Color::rgb(1, 2, 3);
+        let expected = if cfg!(windows) { "a\r\nb" } else { "a\nb" };
+        assert_eq!(pixel_info("a$nb", c, 0, 0), expected);
+        assert_eq!(pixel_info("a$Nb", c, 0, 0), expected);
+        assert_eq!(screen_picker_text("a$nb", c, 0, 0), "a\nb");
     }
 
     #[test]

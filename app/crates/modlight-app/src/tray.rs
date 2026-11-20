@@ -31,6 +31,10 @@ use crate::state::AppState;
 use modlight_core::hotkeys::HotkeyType;
 
 const EXIT: &str = "exit";
+/// A Mac: how long Exit waits for the window to save and close before the process
+/// leaves on its own.
+#[cfg(not(windows))]
+const EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 /// Ids of entries that bring the app forward (they open a window) start with this;
 /// the rest ("q") act quietly, without showing hidden windows.
 const SHOWS: &str = "w";
@@ -71,6 +75,12 @@ impl MenuCommands {
 
     /// The command an id stands for, if its menu is still known.
     fn command(&self, id: &str) -> Option<Command> {
+        // A Mac's Exit reaches the window as its own Quit, which saves the settings first
+        // (Windows answers it through `Tray::take_exit`).
+        #[cfg(not(windows))]
+        if id == EXIT {
+            return Some(Command::Quit);
+        }
         let (generation, index) = id.get(1..)?.split_once('.')?;
         let generation: u64 = generation.parse().ok()?;
         let index: usize = index.parse().ok()?;
@@ -445,13 +455,18 @@ impl Tray {
         let wake = ctx.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let id = event.id().0.clone();
-            // A Mac's hidden window may never be redrawn to receive a close: leave from
-            // here; the settings are saved as they change. Windows draws a hidden window
-            // on request, so there the window closes the app properly and the icon
-            // leaves the notification area with it.
+            // A Mac's Exit goes to the window as Quit, which writes what is held only in
+            // memory (the name counter, the recent items, the last save folder) before
+            // closing. A hidden window may never be redrawn to receive the close, so the
+            // process still leaves from here a moment later. Windows draws a hidden window
+            // on request, so there the window closes the app properly and the icon leaves
+            // the notification area with it.
             #[cfg(not(windows))]
             if id == EXIT {
-                std::process::exit(0);
+                std::thread::spawn(|| {
+                    std::thread::sleep(EXIT_GRACE);
+                    std::process::exit(0);
+                });
             }
             if id.starts_with(SHOWS) {
                 crate::platform::system::show_app_windows();
@@ -895,6 +910,22 @@ mod tests {
             table.begin();
         }
         assert_eq!(table.command(&settings), None);
+    }
+
+    /// A Mac's Exit in the menu bar extra quits through the window (`Command::Quit`, which
+    /// saves the settings before closing). It used to end the process from the menu's
+    /// handler, and what only the window's memory held was lost: with the default
+    /// settings the name counter (`NameParserAutoIncrementNumber`), the recent items and
+    /// the last save folder are written on quitting only.
+    #[cfg(not(windows))]
+    #[test]
+    fn exit_quits_through_the_window_which_saves_the_settings() {
+        let table = MenuCommands::default();
+        assert_eq!(table.command(EXIT), Some(Command::Quit));
+
+        let mut state = crate::qa::state(&crate::qa::Look::default(), false);
+        state.run(Command::Quit, &egui::Context::default());
+        assert!(state.quit_requested, "the window saves and closes");
     }
 
     #[test]
